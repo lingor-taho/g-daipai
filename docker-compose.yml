@@ -1,0 +1,34 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: gdaipai
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./src/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://user:password@db:5432/gdaipai
+    volumes:
+      - ./src:/app/src
+  worker:
+    build: .
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://user:password@db:5432/gdaipai
+    volumes:
+      - ./src:/app/src
+      - ./chrome-profiles:/chrome-profiles
+volumes:
+  db_data:

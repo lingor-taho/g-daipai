@@ -1,0 +1,267 @@
+﻿const express = require('express');
+const https = require('https');
+const { chromium } = require('playwright');
+
+const router = express.Router();
+const httpsAgent = new https.Agent({ keepAlive: true });
+
+function normalizeAuctionUrl(input) {
+  const match = String(input || '').match(/[a-zA-Z]?\d{8,10}/);
+  if (!match) return null;
+  const auctionId = match[0].toLowerCase();
+  return {
+    auctionId,
+    standardUrl: `https://auctions.yahoo.co.jp/jp/auction/${auctionId}`
+  };
+}
+
+function cleanupTitle(title, auctionId) {
+  return (title || '')
+    .replace(/ - .*/, '')
+    .trim() || ('商品 ' + auctionId);
+}
+
+function extractMeta(html, pattern) {
+  const match = html.match(pattern);
+  return match ? match[1].trim() : '';
+}
+
+function normalizeText(html) {
+  return String(html || '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parsePriceText(text) {
+  const match = String(text || '').match(/([\d,]+)\s*(?:円|JPY)?/);
+  return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
+}
+
+function extractImage(html) {
+  const patterns = [
+    /<meta[^>]*(?:property|name)=["']og:image["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]*(?:property|name)=["']twitter:image["'][^>]*content=["']([^"']+)["']/i,
+    /<img[^>]+(?:class|id)=["'][^"']*(?:mainImage|productMainImage|productImage)[^"']*["'][^>]+src=["']([^"']+)["']/i,
+    /<img[^>]+src=["']([^"']+)["'][^>]+(?:class|id)=["'][^"']*(?:mainImage|productMainImage|productImage)[^"']*["']/i
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return '';
+}
+
+function extractPrice(html) {
+  const currentPriceBlock = html.match(/<dt[^>]*>\s*(?:現在|current)\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i);
+  if (currentPriceBlock?.[1]) {
+    const currentPrice = parsePriceText(normalizeText(currentPriceBlock[1]));
+    if (currentPrice > 0) return currentPrice;
+  }
+
+  const patterns = [
+    /itemprop=["']price["'][^>]*content=["']([^"']+)["']/i,
+    /["']price["']\s*:\s*"?([\d,]+)/i,
+    /priceValue["']?\s*:\s*"?([\d,]+)/i,
+    /data-price=["']([^"']+)["']/i,
+    /class=["'][^"']*price[^"']*["'][^>]*>[\s\S]*?([\d,]+)\s*(?:円|JPY)?/i,
+    /([\d,]+)\s*(?:円|JPY)?\s*<\/span>/i
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return parseInt(match[1].replace(/,/g, ''), 10) || 0;
+  }
+  return 0;
+}
+
+function extractEndTime(html) {
+  const patterns = [
+    /itemprop=["']endDate["'][^>]*content=["']([^"']+)["']/i,
+    /["']priceValidUntil["']\s*:\s*["']([^"']+)["']/i,
+    /class=["']endedText[^"']*["'][^>]*>([^<]+)<\/span>/i,
+    /終了日時[^>]*>(\d{4}\/\d{1,2}\/\d{1,2}[^<]*)/i
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return '';
+}
+
+function parseProductHtml(html, auctionId, standardUrl) {
+  const title = cleanupTitle(extractMeta(html, /<title>([^<]+)<\/title>/i), auctionId);
+  return {
+    auctionId,
+    standardUrl,
+    title,
+    currentPrice: extractPrice(html),
+    endTime: extractEndTime(html),
+    imageUrl: extractImage(html)
+  };
+}
+
+function isUsefulProduct(product, auctionId) {
+  return Boolean(
+    product &&
+    (product.title && product.title !== '商品 ' + auctionId || product.imageUrl || Number(product.currentPrice) > 0)
+  );
+}
+
+function httpFetchHtml(url, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      agent: httpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,*/*',
+        'Accept-Language': 'ja-JP,ja;q=0.9'
+      }
+    }, response => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        response.resume();
+        const redirectUrl = new URL(response.headers.location, url).toString();
+        httpFetchHtml(redirectUrl, timeoutMs).then(resolve, reject);
+        return;
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        reject(new Error(`Yahoo returned ${response.statusCode}`));
+        return;
+      }
+
+      let data = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => data += chunk);
+      response.on('end', () => resolve(data));
+    });
+
+    request.on('error', reject);
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error('Yahoo request timeout'));
+    });
+  });
+}
+
+async function playwrightFetchHtml(url) {
+  const launchOptions = { headless: true };
+  if (process.env.YAHOO_PROXY_SERVER) {
+    launchOptions.proxy = {
+      server: process.env.YAHOO_PROXY_SERVER,
+      username: process.env.YAHOO_PROXY_USERNAME || undefined,
+      password: process.env.YAHOO_PROXY_PASSWORD || undefined
+    };
+  }
+
+  const browser = await chromium.launch(launchOptions);
+  try {
+    const page = await browser.newPage({
+      locale: 'ja-JP',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    return await page.content();
+  } finally {
+    await browser.close();
+  }
+}
+
+function createProductService({
+  cache = new Map(),
+  httpFetcher = httpFetchHtml,
+  playwrightFetcher = playwrightFetchHtml
+} = {}) {
+  function cacheProduct(rawProduct) {
+    const parsed = normalizeAuctionUrl(rawProduct?.auctionId || rawProduct?.url || rawProduct?.standardUrl);
+    if (!parsed) return null;
+    const product = {
+      auctionId: parsed.auctionId,
+      standardUrl: rawProduct.standardUrl || rawProduct.url || parsed.standardUrl,
+      title: rawProduct.title || ('商品 ' + parsed.auctionId),
+      currentPrice: Number(rawProduct.currentPrice || 0),
+      endTime: rawProduct.endTime || '',
+      imageUrl: rawProduct.imageUrl || '',
+      cachedAt: new Date().toISOString()
+    };
+    cache.set(parsed.auctionId, product);
+    return product;
+  }
+
+  async function fetchProduct(url) {
+    const parsed = normalizeAuctionUrl(url);
+    if (!parsed) {
+      const error = new Error('invalid product url');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const cached = cache.get(parsed.auctionId);
+
+    try {
+      const html = await httpFetcher(parsed.standardUrl);
+      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
+      if (isUsefulProduct(data, parsed.auctionId)) {
+        cacheProduct(data);
+        return { success: true, data, source: 'http' };
+      }
+    } catch (_) {}
+
+    try {
+      const html = await playwrightFetcher(parsed.standardUrl);
+      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
+      if (isUsefulProduct(data, parsed.auctionId)) {
+        cacheProduct(data);
+        return { success: true, data, source: 'playwright' };
+      }
+    } catch (_) {}
+
+    if (cached) {
+      return { success: true, data: cached, source: 'cache-fallback' };
+    }
+
+    return {
+      success: true,
+      data: {
+        auctionId: parsed.auctionId,
+        standardUrl: parsed.standardUrl,
+        title: '商品 ' + parsed.auctionId,
+        currentPrice: 0,
+        endTime: '',
+        imageUrl: '',
+        error: 'server could not fetch Yahoo product info'
+      },
+      source: 'fallback'
+    };
+  }
+
+  return { cacheProduct, fetchProduct };
+}
+
+const productService = createProductService();
+
+router.post('/cache', (req, res) => {
+  const product = productService.cacheProduct(req.body);
+  if (!product) return res.status(400).json({ error: 'auctionId is required' });
+  res.json({ success: true });
+});
+
+router.get('/fetch', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+
+  try {
+    const result = await productService.fetchProduct(url);
+    res.json(result);
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ error: e.message || '商品信息获取失败' });
+  }
+});
+
+module.exports = router;
+module.exports.createProductService = createProductService;
+module.exports.normalizeAuctionUrl = normalizeAuctionUrl;
+module.exports.parseProductHtml = parseProductHtml;
+module.exports.productService = productService;
+

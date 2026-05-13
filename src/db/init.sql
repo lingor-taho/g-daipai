@@ -1,0 +1,92 @@
+-- 用户表
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username VARCHAR(64) UNIQUE NOT NULL,
+  password_hash VARCHAR(256) NOT NULL,
+  role VARCHAR(32) DEFAULT 'user',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Yahoo 账号池
+CREATE TABLE IF NOT EXISTS yahoo_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_name VARCHAR(128) NOT NULL,
+  email VARCHAR(256) NOT NULL,
+  profile_dir VARCHAR(512),
+  status VARCHAR(32) DEFAULT 'idle',
+  error_msg TEXT,
+  last_used_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 竞拍任务
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  product_id VARCHAR(32) NOT NULL,
+  product_url TEXT NOT NULL,
+  product_title VARCHAR(512),
+  product_image_url TEXT,
+  current_price INTEGER,
+  end_time DATETIME,
+  max_price INTEGER NOT NULL,
+  strategy VARCHAR(32) DEFAULT 'direct',
+  start_minutes_before INTEGER,
+  start_seconds_before INTEGER,
+  status VARCHAR(32) DEFAULT 'pending',
+  is_highest_bidder INTEGER DEFAULT 0,
+  bid_count INTEGER DEFAULT 0,
+  last_bid_at DATETIME,
+  error_msg TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 出价日志
+CREATE TABLE IF NOT EXISTS bid_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER REFERENCES tasks(id),
+  account_id INTEGER REFERENCES yahoo_accounts(id),
+  bid_price INTEGER,
+  result VARCHAR(32),
+  error_msg TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 落札订单
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER REFERENCES tasks(id),
+  account_id INTEGER REFERENCES yahoo_accounts(id),
+  product_title VARCHAR(512),
+  product_url TEXT,
+  final_price INTEGER,
+  jpy_to_cny_rate DECIMAL(10,4),
+  handling_fee DECIMAL(10,2),
+  total_amount_cny DECIMAL(10,2),
+  order_status VARCHAR(32) DEFAULT 'pending_payment',
+  tracking_number VARCHAR(128),
+  shipped_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 汇率配置
+CREATE TABLE IF NOT EXISTS exchange_config (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rate DECIMAL(10,4) NOT NULL,
+  handling_fee_percent DECIMAL(5,2) DEFAULT 3.0,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 全局配置
+CREATE TABLE IF NOT EXISTS config (
+  key VARCHAR(64) PRIMARY KEY,
+  value TEXT,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_end_time ON tasks(end_time);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
