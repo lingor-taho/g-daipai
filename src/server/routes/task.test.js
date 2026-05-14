@@ -15,6 +15,20 @@ function testSubmitUsesAuthenticatedUserId() {
   assert.equal(input.productId, 'x1234567890');
   assert.equal(input.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
   assert.equal(input.maxPrice, 1200);
+  assert.equal(input.bidMode, 'bid');
+}
+
+function testSubmitAcceptsBuyoutMode() {
+  const input = buildSubmitTaskInput(
+    { id: 7 },
+    {
+      product_url: 'https://auctions.yahoo.co.jp/jp/auction/x1234567890',
+      max_price: 1200,
+      bid_mode: 'buyout'
+    }
+  );
+
+  assert.equal(input.bidMode, 'buyout');
 }
 
 function testSubmitAcceptsThirdPartyAndNumericAuctionUrls() {
@@ -95,6 +109,7 @@ function testTaskListUsesAuthenticatedUserId() {
 }
 
 testSubmitUsesAuthenticatedUserId();
+testSubmitAcceptsBuyoutMode();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
 testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();

@@ -81,6 +81,7 @@ async function openTaskPage(task) {
     currentTask: {
       taskId: task.id,
       maxPrice: task.max_price,
+      bidMode: task.bid_mode || 'bid',
       auctionId,
       executeBid: false
     }
@@ -103,7 +104,8 @@ async function executeTaskInTab(tab, task) {
   const result = await chrome.tabs.sendMessage(tab.id, {
     type: 'EXECUTE_BID',
     auctionId,
-    maxPrice: task.max_price
+    maxPrice: task.max_price,
+    bidMode: task.bid_mode || 'bid'
   });
 
   if (!result?.success && shouldCloseTaskTab(result)) {
@@ -122,7 +124,8 @@ async function sendBidMessageV2(tabId, task) {
   return chrome.tabs.sendMessage(tabId, {
     type: 'EXECUTE_BID',
     auctionId,
-    maxPrice: task.max_price
+    maxPrice: task.max_price,
+    bidMode: task.bid_mode || 'bid'
   });
 }
 
@@ -182,6 +185,7 @@ async function updateTaskSnapshot(taskId, snapshot, status) {
       product_title: snapshot?.title || null,
       product_image_url: snapshot?.imageUrl || null,
       current_price: snapshot?.currentPrice || null,
+      buyout_price: snapshot?.buyoutPrice || null,
       end_time: snapshot?.endTime || null,
       status
     })

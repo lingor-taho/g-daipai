@@ -3,7 +3,11 @@ const {
   getStrategyLeadMs,
   isTaskReadyForDispatch,
   chooseNextPluginTask,
-  isTaskNeedingEndTimeRefresh
+  isTaskNeedingEndTimeRefresh,
+  expireOverduePendingTasks,
+  failPricedOutPendingTasks,
+  resetStaleProcessingTasks,
+  sweepPendingTasks
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -48,8 +52,79 @@ function testChooseRefreshTaskWhenNoExecutableTaskExists() {
   assert.equal(task.id, 2);
 }
 
+async function testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 2 };
+    }
+  };
+
+  const count = await expireOverduePendingTasks(fakeDb, now);
+
+  assert.equal(count, 2);
+  assert.match(calls[0].sql, /status = 'pending'/);
+  assert.match(calls[0].sql, /datetime\(end_time\) <= datetime\(\?\)/);
+  assert.equal(calls[0].params[0], 'Auction ended before plugin execution');
+  assert.equal(calls[0].params[1], new Date(now).toISOString());
+}
+
+async function testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const count = await failPricedOutPendingTasks(fakeDb);
+
+  assert.equal(count, 1);
+  assert.match(calls[0].sql, /status = 'pending'/);
+  assert.match(calls[0].sql, /current_price > max_price/);
+  assert.equal(calls[0].params[0], 'Current price is above max price before execution');
+}
+
+async function testResetStaleProcessingTasksReturnsOldProcessingToPending() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 3 };
+    }
+  };
+
+  const count = await resetStaleProcessingTasks(fakeDb, now);
+
+  assert.equal(count, 3);
+  assert.match(calls[0].sql, /status = 'pending'/);
+  assert.match(calls[0].sql, /WHERE status = 'processing'/);
+  assert.match(calls[0].sql, /datetime\(updated_at\) <= datetime\(\?\)/);
+  assert.equal(calls[0].params[0], new Date(now - 60 * 1000).toISOString());
+}
+
+async function testSweepPendingTasksIncludesProcessingResets() {
+  const fakeDb = {
+    calls: 0,
+    async query() {
+      this.calls += 1;
+      return { rowCount: this.calls };
+    }
+  };
+
+  const result = await sweepPendingTasks(fakeDb, now);
+
+  assert.deepEqual(result, { overdue: 1, pricedOut: 2, processingReset: 3, total: 6 });
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
 testChooseNextTaskSkipsFutureTimedTask();
 testChooseRefreshTaskWhenNoExecutableTaskExists();
+testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
+testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
+testResetStaleProcessingTasksReturnsOldProcessingToPending();
+testSweepPendingTasksIncludesProcessingResets();

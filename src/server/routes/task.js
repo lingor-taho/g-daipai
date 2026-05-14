@@ -18,7 +18,7 @@ function extractAuctionId(input) {
 
 function buildSubmitTaskInput(user, body) {
   if (!user?.id) throw new Error('not logged in');
-  const { product_url, max_price } = body;
+  const { product_url, max_price, bid_mode } = body;
   if (!product_url || !max_price) {
     const error = new Error('product_url, max_price are required');
     error.statusCode = 400;
@@ -30,7 +30,8 @@ function buildSubmitTaskInput(user, body) {
     userId: user.id,
     productId,
     standardUrl: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
-    maxPrice: parseInt(max_price, 10)
+    maxPrice: parseInt(max_price, 10),
+    bidMode: bid_mode === 'buyout' ? 'buyout' : 'bid'
   };
 }
 
@@ -41,7 +42,7 @@ function buildTaskListInput(user) {
 
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price } = req.body;
+  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
     let productInfo = null;
@@ -52,9 +53,19 @@ router.post('/submit', async (req, res) => {
       } catch (_) {}
     }
     const endTime = end_time || productInfo?.endTime || null;
+    const fetchedBuyoutPrice = Number(productInfo?.buyoutPrice || 0) || 0;
+    const submittedBuyoutPrice = Number(buyout_price || 0) || 0;
+    if (input.bidMode === 'buyout' && fetchedBuyoutPrice <= 0) {
+      const error = new Error('出价失败：该商品没有即決价格');
+      error.statusCode = 400;
+      throw error;
+    }
+    const buyoutPrice = input.bidMode === 'buyout'
+      ? fetchedBuyoutPrice
+      : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
     await db.query(
-      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, max_price, strategy, start_minutes_before, start_seconds_before, status, end_time)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, max_price, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       [
         input.userId,
         input.productId,
@@ -62,8 +73,10 @@ router.post('/submit', async (req, res) => {
         product_title || productInfo?.title || null,
         product_image_url || productInfo?.imageUrl || null,
         current_price || productInfo?.currentPrice || null,
+        buyoutPrice,
         input.maxPrice,
-        strategy || 'direct',
+        input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct'),
+        input.bidMode,
         start_minutes_before || null,
         start_seconds_before || null,
         endTime
@@ -82,7 +95,7 @@ router.get('/list', async (req, res) => {
     const input = buildTaskListInput(req.user);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
     const tasks = await db.getAll(
-      'SELECT id, product_id, product_url, product_title, current_price, max_price, strategy, status, end_time, is_highest_bidder FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, max_price, strategy, bid_mode, status, end_time, is_highest_bidder FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
       [input.userId, limit]
     );
     res.json({ success: true, data: tasks });

@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react';
-import { Input, Button, Toast, List, Picker } from 'antd-mobile';
+import { Input, Button, Toast, List, Picker, Checkbox } from 'antd-mobile';
 import { getProductInfo, submitTask } from '../utils/api';
 import ProductCard from '../components/ProductCard';
 import TaskList from './TaskList';
@@ -25,6 +25,7 @@ export default function Submit() {
   const [product, setProduct] = useState(null);
   const [maxPrice, setMaxPrice] = useState('');
   const [strategy, setStrategy] = useState('direct');
+  const [buyoutSelected, setBuyoutSelected] = useState(false);
   const [strategyPickerVisible, setStrategyPickerVisible] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [taskListVersion, setTaskListVersion] = useState(0);
@@ -46,6 +47,7 @@ export default function Submit() {
           auctionId: data.auctionId || auctionId,
           title: data.title || ('商品 ' + auctionId),
           currentPrice: data.currentPrice || 0,
+          buyoutPrice: data.buyoutPrice || 0,
           imageUrl: data.imageUrl || '',
           endTime: data.endTime || ''
         });
@@ -55,6 +57,7 @@ export default function Submit() {
           auctionId,
           title: '商品 ' + auctionId,
           currentPrice: 0,
+          buyoutPrice: 0,
           imageUrl: '',
           endTime: ''
         });
@@ -65,6 +68,7 @@ export default function Submit() {
         auctionId,
         title: '商品 ' + auctionId,
         currentPrice: 0,
+        buyoutPrice: 0,
         imageUrl: '',
         endTime: ''
       });
@@ -75,11 +79,17 @@ export default function Submit() {
   }
 
   async function handleSubmit() {
-    if (!maxPrice) {
+    const buyoutPrice = Number(product?.buyoutPrice || 0);
+    const effectiveMaxPrice = buyoutSelected ? buyoutPrice : Number(maxPrice || 0);
+    if (buyoutSelected && buyoutPrice <= 0) {
+      Toast.show({ content: '出价失败：该商品没有即決价格' });
+      return;
+    }
+    if (!effectiveMaxPrice) {
       Toast.show({ content: '请输入最高出价' });
       return;
     }
-    const selectedStrategy = strategy || 'direct';
+    const selectedStrategy = buyoutSelected ? 'direct' : (strategy || 'direct');
     try {
       const standardUrl = product?.auctionId
         ? `https://auctions.yahoo.co.jp/jp/auction/${product.auctionId}`
@@ -87,11 +97,13 @@ export default function Submit() {
       // Include product data so server can save title/image_url
       await submitTask({
         product_url: standardUrl,
-        max_price: parseInt(maxPrice),
+        max_price: effectiveMaxPrice,
         strategy: selectedStrategy,
+        bid_mode: buyoutSelected ? 'buyout' : 'bid',
         product_title: product?.title || null,
         product_image_url: product?.imageUrl || null,
         current_price: product?.currentPrice || null,
+        buyout_price: buyoutPrice || null,
         end_time: product?.endTime || null
       });
       Toast.show({ content: '任务已提交' });
@@ -99,6 +111,7 @@ export default function Submit() {
       setProduct(null);
       setMaxPrice('');
       setStrategy('direct');
+      setBuyoutSelected(false);
       setTaskListVersion(version => version + 1);
     } catch (e) {
       Toast.show({ content: e.response?.data?.error || '提交失败' });
@@ -127,14 +140,34 @@ export default function Submit() {
       {product && (
         <>
           <List style={{ marginTop: 12 }}>
+            {Number(product.buyoutPrice || 0) > 0 && (
+              <List.Item
+                prefix="即決"
+                extra={
+                  <Checkbox
+                    checked={buyoutSelected}
+                    onChange={(checked) => {
+                      setBuyoutSelected(checked);
+                      if (checked) {
+                        setMaxPrice(String(product.buyoutPrice || ''));
+                        setStrategy('direct');
+                      }
+                    }}
+                  />
+                }
+              >
+                <span style={{ color: '#999', fontSize: 12 }}>使用即決价格直接落札</span>
+              </List.Item>
+            )}
             <List.Item
               prefix="最高出价"
               extra={
                 <Input
                   type="number"
-                  value={maxPrice}
+                  value={buyoutSelected ? String(product.buyoutPrice || '') : maxPrice}
                   onChange={setMaxPrice}
                   placeholder="日元"
+                  disabled={buyoutSelected}
                   style={{ width: 100 }}
                 />
               }
@@ -146,9 +179,12 @@ export default function Submit() {
           <List style={{ marginTop: 12 }}>
             <List.Item
               prefix="出价策略"
-              clickable
+              clickable={!buyoutSelected}
               extra={STRATEGY_OPTIONS[0].find(item => item.value === strategy)?.label || '即时拍（立即）'}
-              onClick={() => setStrategyPickerVisible(true)}
+              onClick={() => {
+                if (!buyoutSelected) setStrategyPickerVisible(true);
+              }}
+              style={buyoutSelected ? { opacity: 0.45 } : undefined}
             />
           </List>
           <Picker

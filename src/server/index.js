@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth');
 const pluginRoutes = require('./routes/plugin');
 
 const app = express();
+const PENDING_TASK_SWEEP_INTERVAL_MS = 60 * 1000;
 
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
@@ -40,6 +41,22 @@ app.use('/api/plugin', pluginRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+async function sweepPendingTasks() {
+  try {
+    const result = await pluginRoutes.sweepPendingTasks();
+    if (result.total > 0) {
+      console.log(
+        `Swept ${result.total} task(s): overdue=${result.overdue}, pricedOut=${result.pricedOut}, processingReset=${result.processingReset}`
+      );
+    }
+  } catch (err) {
+    console.error('Failed to sweep pending tasks:', err);
+  }
+}
+
 app.listen(config.port, () => {
   console.log(`API Server running on port ${config.port}`);
+  sweepPendingTasks();
+  const sweepTimer = setInterval(sweepPendingTasks, PENDING_TASK_SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
 });

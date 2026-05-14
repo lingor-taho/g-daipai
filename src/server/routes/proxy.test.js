@@ -59,6 +59,22 @@ async function testParseProductHtml() {
   assert.equal(product.endTime, '2026-05-13T12:00:00+09:00');
 }
 
+async function testParseProductTitleWhenYahooPrefixComesFirst() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Yahoo!オークション - 最高級 イタリア製 OLIVER PEOPLES サングラス</title>
+        <meta property="og:title" content="最高級 イタリア製 OLIVER PEOPLES サングラス">
+      </head>
+      <body>
+        <h1>最高級 イタリア製 OLIVER PEOPLES サングラス</h1>
+      </body>
+    </html>
+  `, 'h1229411184', 'https://auctions.yahoo.co.jp/jp/auction/h1229411184');
+
+  assert.equal(product.title, '最高級 イタリア製 OLIVER PEOPLES サングラス');
+}
+
 async function testParseCurrentDisplayedPriceBeforeJsonLdOffer() {
   const product = parseProductHtml(`
     <html>
@@ -92,6 +108,23 @@ async function testParsePriceValidUntilAsEndTime() {
   `, 's1229683165', 'https://auctions.yahoo.co.jp/jp/auction/s1229683165');
 
   assert.equal(product.endTime, '2026-05-14T21:25:42+09:00');
+}
+
+async function testParseBuyoutPriceFromPageData() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Buyout Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"1200","winPrice":"5600"}};
+        </script>
+      </head>
+      <body></body>
+    </html>
+  `, 'b1222222222', 'https://auctions.yahoo.co.jp/jp/auction/b1222222222');
+
+  assert.equal(product.currentPrice, 1200);
+  assert.equal(product.buyoutPrice, 5600);
 }
 
 async function testFallsBackToPlaywrightWhenHttpFails() {
@@ -180,8 +213,10 @@ async function testUsesCacheAfterFetchersFail() {
 async function run() {
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
+  await testParseProductTitleWhenYahooPrefixComesFirst();
   await testParseCurrentDisplayedPriceBeforeJsonLdOffer();
   await testParsePriceValidUntilAsEndTime();
+  await testParseBuyoutPriceFromPageData();
   await testFallsBackToPlaywrightWhenHttpFails();
   await testFetchRefreshesBeforeUsingCache();
   await testUsesCacheAfterFetchersFail();

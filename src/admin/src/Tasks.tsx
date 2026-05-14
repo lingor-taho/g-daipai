@@ -18,7 +18,7 @@ const statusLabels: Record<string, string> = {
   processing: '执行中',
   bidding: '已出价',
   success: '成功',
-  failed: '失败'
+  failed: '出价失败'
 };
 
 const strategyLabels: Record<string, string> = {
@@ -84,14 +84,13 @@ export default function TasksPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {statsError && <Alert type="error" showIcon message="队列统计加载失败" description={statsError} />}
-
       <Row gutter={[12, 12]}>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="总任务" value={stats?.total || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="队列中" value={stats?.pending || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="执行中" value={stats?.processing || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="已出价" value={stats?.bidding || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="成功" value={stats?.success || 0} /></Card></Col>
-        <Col xs={12} md={8} xl={4}><Card><Statistic title="失败" value={stats?.failed || 0} /></Card></Col>
+        <Col xs={12} md={8} xl={4}><Card><Statistic title="出价失败" value={stats?.failed || 0} /></Card></Col>
       </Row>
 
       <Card>

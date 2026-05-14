@@ -54,6 +54,78 @@ function chooseNextPluginTask(tasks, nowMs = Date.now()) {
   return readyTasks[0] || null;
 }
 
+async function expireOverduePendingTasks(database = db, nowMs = Date.now()) {
+  const nowIso = new Date(nowMs).toISOString();
+  const result = await database.query(
+    `UPDATE tasks
+     SET status = 'failed',
+         is_highest_bidder = 0,
+         error_msg = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'pending'
+       AND end_time IS NOT NULL
+       AND datetime(end_time) <= datetime(?)`,
+    ['Auction ended before plugin execution', nowIso]
+  );
+  return result.rowCount || 0;
+}
+
+async function failPricedOutPendingTasks(database = db) {
+  const result = await database.query(
+    `UPDATE tasks
+     SET status = 'failed',
+         is_highest_bidder = 0,
+         error_msg = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'pending'
+       AND current_price IS NOT NULL
+       AND max_price IS NOT NULL
+       AND current_price > 0
+       AND max_price > 0
+       AND current_price > max_price`,
+    ['Current price is above max price before execution']
+  );
+  return result.rowCount || 0;
+}
+
+async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
+  const cutoffIso = new Date(nowMs - 60 * 1000).toISOString();
+  const result = await database.query(
+    `UPDATE tasks
+     SET status = 'pending',
+         error_msg = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'processing'
+       AND datetime(updated_at) <= datetime(?)`,
+    [cutoffIso]
+  );
+  return result.rowCount || 0;
+}
+
+async function sweepPendingTasks(database = db, nowMs = Date.now()) {
+  const overdue = await expireOverduePendingTasks(database, nowMs);
+  const pricedOut = await failPricedOutPendingTasks(database);
+  const processingReset = await resetStaleProcessingTasks(database, nowMs);
+  return { overdue, pricedOut, processingReset, total: overdue + pricedOut + processingReset };
+}
+
+async function setYahooLoginStatus(status, message = '') {
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES ('yahoo_login_status', ?, CURRENT_TIMESTAMP)`,
+    [status]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES ('yahoo_login_message', ?, CURRENT_TIMESTAMP)`,
+    [message || '']
+  );
+}
+
+function isYahooLoginError(message) {
+  return /需要登录\s*Yahoo|Yahoo.*登录|ログイン.*必要|ログインしてください/i.test(String(message || ''));
+}
+
 // GET /api/plugin/task
 router.get('/task', async (req, res) => {
   const tasks = await db.getAll(
@@ -66,6 +138,12 @@ router.get('/task', async (req, res) => {
 // PATCH /api/plugin/task/:id/status
 router.patch('/task/:id/status', async (req, res) => {
   const { status, error_msg, bid_price } = req.body;
+  if (isYahooLoginError(error_msg)) {
+    await setYahooLoginStatus('failed', error_msg);
+  } else if (status === 'bidding') {
+    await setYahooLoginStatus('ok');
+  }
+
   if (status === 'bidding') {
     await db.query(
       `UPDATE tasks
@@ -142,13 +220,11 @@ async function upsertOrderFromTask(taskId, options = {}) {
 
 router.post('/orders/sync', async (req, res) => {
   const orders = Array.isArray(req.body?.orders) ? req.body.orders : [];
-  const wonProductIds = new Set();
   let updated = 0;
   for (const order of orders) {
     const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
-    wonProductIds.add(productId);
     const task = await db.getOne(
       `SELECT id FROM tasks
        WHERE product_id = ? AND status IN ('bidding', 'success')
@@ -167,21 +243,8 @@ router.post('/orders/sync', async (req, res) => {
     }
     updated += 1;
   }
-
-  const endedBiddingTasks = await db.getAll(
-    "SELECT id, product_id, end_time FROM tasks WHERE status = 'bidding' AND end_time IS NOT NULL"
-  );
-  let failed = 0;
-  for (const task of endedBiddingTasks) {
-    const endMs = parseTimeMs(task.end_time);
-    if (!endMs || endMs > Date.now()) continue;
-    if (wonProductIds.has(String(task.product_id || '').toLowerCase())) continue;
-    await db.query(
-      "UPDATE tasks SET status = 'failed', is_highest_bidder = 0, error_msg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-      ['Auction ended and the item was not found on the won page', task.id]
-    );
-    failed += 1;
-  }
+  await setYahooLoginStatus('ok');
+  const failed = 0;
   res.json({ success: true, updated, failed });
 });
 
@@ -190,6 +253,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
     product_title,
     product_image_url,
     current_price,
+    buyout_price,
     end_time,
     status
   } = req.body || {};
@@ -198,6 +262,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
      SET product_title = COALESCE(?, product_title),
          product_image_url = COALESCE(?, product_image_url),
          current_price = COALESCE(?, current_price),
+         buyout_price = COALESCE(?, buyout_price),
          end_time = COALESCE(?, end_time),
          status = COALESCE(?, status),
          updated_at = CURRENT_TIMESTAMP
@@ -206,6 +271,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
       product_title || null,
       product_image_url || null,
       current_price || null,
+      buyout_price || null,
       end_time || null,
       status || null,
       req.params.id
@@ -229,4 +295,8 @@ module.exports.getStrategyLeadMs = getStrategyLeadMs;
 module.exports.isTaskNeedingEndTimeRefresh = isTaskNeedingEndTimeRefresh;
 module.exports.isTaskReadyForDispatch = isTaskReadyForDispatch;
 module.exports.chooseNextPluginTask = chooseNextPluginTask;
-
+module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
+module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
+module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
+module.exports.sweepPendingTasks = sweepPendingTasks;
+module.exports.isYahooLoginError = isYahooLoginError;

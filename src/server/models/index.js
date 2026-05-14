@@ -8,6 +8,16 @@ const db = new Database(path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd
 // 启用外键约束
 db.pragma('foreign_keys = ON');
 
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some(col => col.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
+}
+
+ensureColumn('tasks', 'buyout_price', 'INTEGER');
+ensureColumn('tasks', 'bid_mode', "VARCHAR(32) DEFAULT 'bid'");
+
 module.exports = {
   db,
   async query(text, params) {

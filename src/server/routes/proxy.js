@@ -16,9 +16,12 @@ function normalizeAuctionUrl(input) {
 }
 
 function cleanupTitle(title, auctionId) {
-  return (title || '')
-    .replace(/ - .*/, '')
-    .trim() || ('商品 ' + auctionId);
+  const cleaned = String(title || '')
+    .replace(/^Yahoo![^-\n]*オークション\s*-\s*/i, '')
+    .replace(/\s*-\s*Yahoo![^-\n]*オークション.*$/i, '')
+    .trim();
+  if (cleaned && !/^Yahoo![^-\n]*オークション$/i.test(cleaned)) return cleaned;
+  return '商品 ' + auctionId;
 }
 
 function extractMeta(html, pattern) {
@@ -54,6 +57,9 @@ function extractImage(html) {
 }
 
 function extractPrice(html) {
+  const pageDataPrice = extractPageDataItemPrice(html, 'price');
+  if (pageDataPrice > 0) return pageDataPrice;
+
   const currentPriceBlock = html.match(/<dt[^>]*>\s*(?:現在|current)\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i);
   if (currentPriceBlock?.[1]) {
     const currentPrice = parsePriceText(normalizeText(currentPriceBlock[1]));
@@ -75,6 +81,48 @@ function extractPrice(html) {
   return 0;
 }
 
+function extractPageDataItemPrice(html, key) {
+  const match = String(html || '').match(/var\s+pageData\s*=\s*(\{[\s\S]*?\});/);
+  if (!match?.[1]) return 0;
+  try {
+    const pageData = JSON.parse(match[1]);
+    return parsePriceText(pageData?.items?.[key]);
+  } catch (_) {
+    return 0;
+  }
+}
+
+function extractPageDataItems(html) {
+  const match = String(html || '').match(/var\s+pageData\s*=\s*(\{[\s\S]*?\});/);
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(match[1])?.items || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function extractBuyoutPrice(html) {
+  const pageDataItems = extractPageDataItems(html);
+  if (pageDataItems && Object.prototype.hasOwnProperty.call(pageDataItems, 'winPrice')) {
+    return parsePriceText(pageDataItems.winPrice);
+  }
+
+  const patterns = [
+    /<dt[^>]*>\s*(?:即決|buyout|即決価格)\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i,
+    /即決(?:価格)?[^\d]{0,20}([\d,]+)\s*(?:円|JPY)?/i,
+    /buyoutPrice["']?\s*:\s*"?([\d,]+)/i
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      const price = parsePriceText(normalizeText(match[1]));
+      if (price > 0) return price;
+    }
+  }
+  return 0;
+}
+
 function extractEndTime(html) {
   const patterns = [
     /itemprop=["']endDate["'][^>]*content=["']([^"']+)["']/i,
@@ -89,13 +137,29 @@ function extractEndTime(html) {
   return '';
 }
 
+function extractTitle(html, auctionId) {
+  const patterns = [
+    /<meta[^>]*(?:property|name)=["']og:title["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]*(?:property|name)=["']twitter:title["'][^>]*content=["']([^"']+)["']/i,
+    /<h1[^>]*>([\s\S]*?)<\/h1>/i,
+    /<title>([^<]+)<\/title>/i
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    const title = cleanupTitle(normalizeText(match?.[1] || ''), auctionId);
+    if (title !== '商品 ' + auctionId) return title;
+  }
+  return '商品 ' + auctionId;
+}
+
 function parseProductHtml(html, auctionId, standardUrl) {
-  const title = cleanupTitle(extractMeta(html, /<title>([^<]+)<\/title>/i), auctionId);
+  const title = extractTitle(html, auctionId);
   return {
     auctionId,
     standardUrl,
     title,
     currentPrice: extractPrice(html),
+    buyoutPrice: extractBuyoutPrice(html),
     endTime: extractEndTime(html),
     imageUrl: extractImage(html)
   };
@@ -181,6 +245,7 @@ function createProductService({
       standardUrl: rawProduct.standardUrl || rawProduct.url || parsed.standardUrl,
       title: rawProduct.title || ('商品 ' + parsed.auctionId),
       currentPrice: Number(rawProduct.currentPrice || 0),
+      buyoutPrice: Number(rawProduct.buyoutPrice || 0),
       endTime: rawProduct.endTime || '',
       imageUrl: rawProduct.imageUrl || '',
       cachedAt: new Date().toISOString()
@@ -228,6 +293,7 @@ function createProductService({
         standardUrl: parsed.standardUrl,
         title: '商品 ' + parsed.auctionId,
         currentPrice: 0,
+        buyoutPrice: 0,
         endTime: '',
         imageUrl: '',
         error: 'server could not fetch Yahoo product info'

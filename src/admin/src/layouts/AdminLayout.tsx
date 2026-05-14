@@ -1,5 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { Button, Layout, Menu, Space, Typography } from 'antd';
+import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
 
 const { Header, Content, Sider } = Layout;
 
@@ -15,6 +17,28 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const selectedKey = menuItems.find(item => location.pathname.startsWith(item.key))?.key || '/tasks';
   const username = localStorage.getItem('username') || 'admin';
+  const [yahooLogin, setYahooLogin] = useState<any>({ status: 'ok', message: '' });
+
+  useEffect(() => {
+    let active = true;
+
+    async function fetchYahooLoginStatus() {
+      if (!isAdminLoggedIn()) return;
+      try {
+        const stats = await fetchAdminJson('/api/admin/tasks/stats');
+        if (active) setYahooLogin(stats.yahooLogin || { status: 'ok', message: '' });
+      } catch {
+        if (active) setYahooLogin({ status: 'ok', message: '' });
+      }
+    }
+
+    fetchYahooLoginStatus();
+    const timer = window.setInterval(fetchYahooLoginStatus, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   function logout() {
     localStorage.removeItem('token');
@@ -34,6 +58,21 @@ export default function AdminLayout() {
       </Header>
       <Layout>
         <Sider width={210} theme="light">
+          <div style={{ padding: '14px 16px', borderBottom: '1px dashed #d9d9d9' }}>
+            <Typography.Text
+              strong
+              style={{ color: yahooLogin?.status === 'failed' ? '#cf1322' : '#389e0d' }}
+            >
+              {yahooLogin?.status === 'failed' ? 'yahoo登录失败！' : 'yahoo正常登陆中'}
+            </Typography.Text>
+            {yahooLogin?.status === 'failed' && yahooLogin?.message ? (
+              <div style={{ marginTop: 4 }}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {yahooLogin.message}
+                </Typography.Text>
+              </div>
+            ) : null}
+          </div>
           <Menu mode="inline" selectedKeys={[selectedKey]} items={menuItems} style={{ height: '100%', borderRight: 0 }} />
         </Sider>
         <Layout>

@@ -7,7 +7,7 @@ const STATUS_MAP = {
   processing: { label: '执行中', color: 'warning' },
   bidding: { label: '已出价', color: 'primary' },
   success: { label: '成功', color: 'success' },
-  failed: { label: '失败', color: 'danger' }
+  failed: { label: '出价失败', color: 'danger' }
 };
 
 const STRATEGY_LABELS = {
@@ -57,7 +57,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
             ['执行中', stats.processing],
             ['已出价', stats.bidding],
             ['成功', stats.success],
-            ['失败', stats.failed],
+            ['出价失败', stats.failed],
           ].map(([label, value]) => (
             <div key={label} style={{ background: '#fff', border: '1px solid #eee', borderRadius: 8, padding: 10 }}>
               <div style={{ fontSize: 12, color: '#666' }}>{label}</div>

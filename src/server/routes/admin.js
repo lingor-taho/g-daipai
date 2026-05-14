@@ -206,6 +206,13 @@ router.get('/tasks/stats', async (req, res) => {
     stats[row.status] = row.count;
     stats.total += row.count;
   }
+  const loginStatus = await db.getOne("SELECT value, updated_at FROM config WHERE key = 'yahoo_login_status'");
+  const loginMessage = await db.getOne("SELECT value FROM config WHERE key = 'yahoo_login_message'");
+  stats.yahooLogin = {
+    status: loginStatus?.value === 'failed' ? 'failed' : 'ok',
+    message: loginMessage?.value || '',
+    updatedAt: loginStatus?.updated_at || null
+  };
   res.json(stats);
 });
 
