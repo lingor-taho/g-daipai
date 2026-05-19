@@ -13,8 +13,8 @@ app.use((req, res, next) => {
   const origin = req.headers.origin || '';
   const allowedOrigin =
     origin.startsWith('chrome-extension://') ||
-    origin === 'http://localhost:3001' ||
-    origin === 'http://127.0.0.1:3001' ||
+    origin === 'http://localhost:3035' ||
+    origin === 'http://127.0.0.1:3035' ||
     origin === 'http://localhost:8000' ||
     origin === 'http://127.0.0.1:8000';
 
@@ -40,6 +40,14 @@ app.use('/api/auth', authRoutes);
 app.use('/api/plugin', pluginRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'invalid JSON request body' });
+  }
+  console.error('Unhandled API error:', err);
+  res.status(500).json({ error: 'server error' });
+});
 
 async function sweepPendingTasks() {
   try {

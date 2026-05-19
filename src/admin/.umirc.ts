@@ -2,7 +2,7 @@ export default {
   history: { type: 'hash' },
   proxy: {
     '/api': {
-      target: 'http://localhost:3000',
+      target: 'http://localhost:3034',
       changeOrigin: true,
     },
   },
@@ -16,6 +16,7 @@ export default {
         { path: '/tasks', component: '@/Tasks' },
         { path: '/users', component: '@/Users' },
         { path: '/server-accounts', component: '@/Accounts' },
+        { path: '/multi-bid-settings', component: '@/MultiBidSettings' },
         { path: '/orders', component: '@/Orders' },
       ],
     },

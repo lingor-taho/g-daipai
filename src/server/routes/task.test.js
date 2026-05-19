@@ -1,5 +1,15 @@
 const assert = require('assert/strict');
-const { buildSubmitTaskInput, buildTaskListInput } = require('./task');
+const {
+  buildSubmitTaskInput,
+  buildTaskListInput,
+  calculateBidMaxPrice,
+  getTaxIncludedPrice,
+  validateMultiBidUserMaxPrice,
+  getMinMultiBidIncrement,
+  getDefaultMultiBidIncrement,
+  validateMultiBidIncrement,
+  assertProductSubmissionOwner
+} = require('./task');
 
 function testSubmitUsesAuthenticatedUserId() {
   const input = buildSubmitTaskInput(
@@ -108,8 +118,56 @@ function testTaskListUsesAuthenticatedUserId() {
   assert.equal(input.userId, 9);
 }
 
+function testStoreUserMaxPriceConvertsToTaxExcludedBidMax() {
+  assert.equal(calculateBidMaxPrice(1000, 'tax_included'), 900);
+  assert.equal(calculateBidMaxPrice(1100, 'tax_included'), 1000);
+  assert.equal(calculateBidMaxPrice(9, 'tax_included'), 9);
+  assert.equal(calculateBidMaxPrice(1000, 'tax_zero'), 1000);
+}
+
+function testStoreCurrentPriceDisplaysAsTaxIncluded() {
+  assert.equal(getTaxIncludedPrice(1000, 'tax_included'), 1100);
+  assert.equal(getTaxIncludedPrice(9, 'tax_included'), 9);
+  assert.equal(getTaxIncludedPrice(1000, 'tax_zero'), 1000);
+}
+
+function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500() {
+  assert.doesNotThrow(() => validateMultiBidUserMaxPrice('multi_bid', 5500));
+  assert.throws(() => validateMultiBidUserMaxPrice('multi_bid', 5499), /多次出价最高价不能低于5500円/);
+  assert.doesNotThrow(() => validateMultiBidUserMaxPrice('direct', 1000));
+}
+
+function testMultiBidIncrementUsesOneTwentiethRule() {
+  assert.equal(getMinMultiBidIncrement(5500), 275);
+  assert.equal(getDefaultMultiBidIncrement(5500), 500);
+  assert.equal(getMinMultiBidIncrement(10000), 500);
+  assert.equal(getDefaultMultiBidIncrement(10000), 500);
+  assert.equal(getMinMultiBidIncrement(15000), 750);
+  assert.equal(getDefaultMultiBidIncrement(15000), 750);
+  assert.equal(validateMultiBidIncrement('multi_bid', 5500, 275), 275);
+  assert.throws(() => validateMultiBidIncrement('multi_bid', 10000, 499), /500/);
+}
+
+function testProductSubmissionOwnerAllowsOriginalUser() {
+  assert.doesNotThrow(() => assertProductSubmissionOwner({ user_id: 7 }, 7));
+  assert.doesNotThrow(() => assertProductSubmissionOwner(null, 7));
+}
+
+function testProductSubmissionOwnerRejectsOtherUser() {
+  assert.throws(
+    () => assertProductSubmissionOwner({ user_id: 7 }, 8),
+    /该商品已由其他用户提交，请联系管理员！/
+  );
+}
+
 testSubmitUsesAuthenticatedUserId();
 testSubmitAcceptsBuyoutMode();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
 testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
+testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
+testStoreCurrentPriceDisplaysAsTaxIncluded();
+testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500();
+testMultiBidIncrementUsesOneTwentiethRule();
+testProductSubmissionOwnerAllowsOriginalUser();
+testProductSubmissionOwnerRejectsOtherUser();

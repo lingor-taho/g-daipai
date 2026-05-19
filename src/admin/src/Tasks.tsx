@@ -23,6 +23,7 @@ const statusLabels: Record<string, string> = {
 
 const strategyLabels: Record<string, string> = {
   direct: '即时拍',
+  multi_bid: '多次出价',
   '1min': '结束前 1 分钟',
   '2min': '结束前 2 分钟',
   '5min': '结束前 5 分钟',
@@ -33,6 +34,23 @@ function formatJPY(value: number | string | null | undefined) {
   return `${Number(value || 0).toLocaleString('ja-JP')}円`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second}`;
+}
+
 export default function TasksPage() {
   const [stats, setStats] = useState<any>(null);
   const [statsError, setStatsError] = useState('');
@@ -40,7 +58,7 @@ export default function TasksPage() {
   async function fetchStats() {
     try {
       if (!isAdminLoggedIn()) {
-        setStatsError('请先登录后台：#/login');
+        setStatsError('请先登录后台：/login');
         redirectToLogin();
         return;
       }
@@ -58,6 +76,7 @@ export default function TasksPage() {
   }, []);
 
   const columns = [
+    { title: '提交用户', dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
     {
       title: '商品ID',
       dataIndex: 'product_id',
@@ -78,7 +97,8 @@ export default function TasksPage() {
       )
     },
     { title: '提交时间', dataIndex: 'created_at', valueType: 'dateTime' },
-    { title: '截止时间', dataIndex: 'end_time', valueType: 'dateTime' }
+    { title: '下次执行时间', dataIndex: 'next_execute_at', render: (_: any, row: any) => formatDateTime(row.next_execute_at) },
+    { title: '商品结束时间', dataIndex: 'end_time', valueType: 'dateTime' }
   ];
 
   return (

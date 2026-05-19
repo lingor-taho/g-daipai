@@ -127,6 +127,50 @@ async function testParseBuyoutPriceFromPageData() {
   assert.equal(product.buyoutPrice, 5600);
 }
 
+async function testParseStoreTaxTypeFromTaxIncludedLabel() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Store Product - Yahoo!</title></head>
+      <body>
+        <dt>現在</dt>
+        <dd><span>1,000円</span><span>（税込）</span></dd>
+      </body>
+    </html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+
+  assert.equal(product.currentPrice, 1000);
+  assert.equal(product.taxType, 'tax_included');
+}
+
+async function testParsePersonalTaxTypeFromTaxZeroLabel() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Personal Product - Yahoo!</title></head>
+      <body>
+        <dt>現在</dt>
+        <dd><span>1,000円</span><span>（税0円）</span></dd>
+      </body>
+    </html>
+  `, 'p1222222222', 'https://auctions.yahoo.co.jp/jp/auction/p1222222222');
+
+  assert.equal(product.taxType, 'tax_zero');
+}
+
+async function testParseTaxZeroWinsWhenBothTaxLabelsExist() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Personal Product - Yahoo!</title></head>
+      <body>
+        <dt>現在</dt>
+        <dd><span>110円</span><span>（税0円）</span></dd>
+        <p>配送説明 （税込）</p>
+      </body>
+    </html>
+  `, '1230198307', 'https://auctions.yahoo.co.jp/jp/auction/1230198307');
+
+  assert.equal(product.taxType, 'tax_zero');
+}
+
 async function testFallsBackToPlaywrightWhenHttpFails() {
   const calls = [];
   const service = createProductService({
@@ -217,6 +261,9 @@ async function run() {
   await testParseCurrentDisplayedPriceBeforeJsonLdOffer();
   await testParsePriceValidUntilAsEndTime();
   await testParseBuyoutPriceFromPageData();
+  await testParseStoreTaxTypeFromTaxIncludedLabel();
+  await testParsePersonalTaxTypeFromTaxZeroLabel();
+  await testParseTaxZeroWinsWhenBothTaxLabelsExist();
   await testFallsBackToPlaywrightWhenHttpFails();
   await testFetchRefreshesBeforeUsingCache();
   await testUsesCacheAfterFetchersFail();

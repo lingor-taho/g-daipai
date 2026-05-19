@@ -12,11 +12,16 @@ const STATUS_MAP = {
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
+  multi_bid: '多次出价',
   '1min': '结束前 1 分钟',
   '2min': '结束前 2 分钟',
   '5min': '结束前 5 分钟',
   '10min': '结束前 10 分钟'
 };
+
+function formatJPY(value) {
+  return `${Number(value || 0).toLocaleString('ja-JP')}円`;
+}
 
 export default function TaskList({ limit = 10, embedded = false }) {
   const [tasks, setTasks] = useState([]);
@@ -73,12 +78,13 @@ export default function TaskList({ limit = 10, embedded = false }) {
           const s = STATUS_MAP[task.status] || { label: task.status, color: 'default' };
           const auctionId = task.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || task.product_id;
           const strategyLabel = STRATEGY_LABELS[task.strategy] || task.strategy || '即时拍';
+          const maxPrice = task.user_max_price || task.max_price;
           return (
             <List.Item key={task.id}
               extra={<Tag color={s.color}>{s.label}</Tag>}
               description={
                 <div style={{ fontSize: 12, color: '#666' }}>
-                  ID: {auctionId}，策略: {strategyLabel}
+                  ID: {auctionId}，策略: {strategyLabel}，最高出价：{formatJPY(maxPrice)}
                 </div>
               }
             >

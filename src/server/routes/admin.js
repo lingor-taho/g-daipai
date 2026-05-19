@@ -4,10 +4,47 @@ const db = require('../models');
 const bcrypt = require('bcryptjs');
 const authMiddleware = require('../middleware/auth');
 const adminAuthMiddleware = require('../middleware/adminAuth');
-const { chooseNextPluginTask } = require('./plugin');
+const {
+  chooseNextPluginTask,
+  getMultiBidConfig: getPluginMultiBidConfig,
+  getMultiBidIntervalMs,
+  getStrategyLeadMs,
+  isMultiBidTask
+} = require('./plugin');
 
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
+
+function parseTaskTimeMs(value) {
+  let input = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(input)) {
+    input = input.replace(' ', 'T') + 'Z';
+  }
+  const time = Date.parse(input);
+  return Number.isFinite(time) ? time : null;
+}
+
+function toIsoOrNull(ms) {
+  return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null;
+}
+
+function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
+  if (!task || ['success', 'failed'].includes(task.status)) return null;
+  const endMs = parseTaskTimeMs(task.end_time);
+  if (endMs && endMs <= nowMs) return null;
+
+  if (isMultiBidTask(task)) {
+    const startMs = endMs ? endMs - getStrategyLeadMs({ ...task, ...multiBidConfig }) : nowMs;
+    const referenceMs = parseTaskTimeMs(task.last_bid_at || (task.status === 'bidding' ? task.updated_at || task.created_at : null));
+    const intervalReadyMs = referenceMs ? referenceMs + getMultiBidIntervalMs(multiBidConfig) : nowMs;
+    return toIsoOrNull(Math.max(startMs, intervalReadyMs, nowMs));
+  }
+
+  if (task.status === 'bidding') return null;
+  if (!task.strategy || task.strategy === 'direct') return toIsoOrNull(nowMs);
+  if (!endMs) return toIsoOrNull(nowMs);
+  return toIsoOrNull(Math.max(endMs - getStrategyLeadMs(task), nowMs));
+}
 
 router.get('/users', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
@@ -163,9 +200,18 @@ router.get('/tasks', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
   const items = await db.getAll(
-    `SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT t.*, u.username
+     FROM tasks t
+     LEFT JOIN users u ON u.id = t.user_id
+     ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
     [pageSize, offset]
   );
+  const multiBidConfig = await getPluginMultiBidConfig();
+  const nowMs = Date.now();
+  const mappedItems = items.map(item => ({
+    ...item,
+    next_execute_at: getNextExecuteAt(item, multiBidConfig, nowMs)
+  }));
   const countResult = await db.getOne('SELECT COUNT(*) as total FROM tasks');
   const statusRows = await db.getAll(
     'SELECT status, COUNT(*) as count FROM tasks GROUP BY status'
@@ -181,7 +227,7 @@ router.get('/tasks', async (req, res) => {
   for (const row of statusRows) {
     queue[row.status] = row.count;
   }
-  res.json({ items, total: queue.total, queue });
+  res.json({ items: mappedItems, total: queue.total, queue });
 });
 
 // 队列统计
@@ -190,9 +236,9 @@ router.get('/tasks/stats', async (req, res) => {
     'SELECT status, COUNT(*) as count FROM tasks GROUP BY status'
   );
   const pendingTasks = await db.getAll(
-    "SELECT id, product_id, product_title, max_price, strategy, start_minutes_before, start_seconds_before, end_time, created_at FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 100"
+    "SELECT id, product_id, product_title, max_price, strategy, start_minutes_before, start_seconds_before, status, last_bid_at, end_time, created_at FROM tasks WHERE status = 'pending' OR (status = 'bidding' AND strategy = 'multi_bid') ORDER BY created_at ASC LIMIT 100"
   );
-  const nextTask = chooseNextPluginTask(pendingTasks);
+  const nextTask = chooseNextPluginTask(pendingTasks, Date.now(), await getPluginMultiBidConfig());
   const stats = {
     total: 0,
     pending: 0,
@@ -304,6 +350,41 @@ router.put('/finance-config', async (req, res) => {
     [String(handlingFeeJpy)]
   );
   res.json({ success: true, rate, handlingFeeJpy });
+});
+
+async function getMultiBidConfig() {
+  const rows = await db.getAll(
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes')"
+  );
+  const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  return {
+    startHours: Number(values.multi_bid_start_hours || 0.5),
+    intervalMinutes: Number(values.multi_bid_interval_minutes || 5)
+  };
+}
+
+router.get('/multi-bid-config', async (req, res) => {
+  res.json(await getMultiBidConfig());
+});
+
+router.put('/multi-bid-config', async (req, res) => {
+  const startHours = Number(req.body.startHours);
+  const intervalMinutes = Number(req.body.intervalMinutes);
+  if (!Number.isFinite(startHours) || startHours <= 0) {
+    return res.status(400).json({ error: 'valid startHours is required' });
+  }
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+    return res.status(400).json({ error: 'valid intervalMinutes is required' });
+  }
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_start_hours', ?, CURRENT_TIMESTAMP)`,
+    [String(startHours)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_interval_minutes', ?, CURRENT_TIMESTAMP)`,
+    [String(intervalMinutes)]
+  );
+  res.json({ success: true, startHours, intervalMinutes });
 });
 
 // 操作日志

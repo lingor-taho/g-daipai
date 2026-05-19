@@ -24,6 +24,7 @@ export const submitTask = (data) => api.post('/task/submit', data);
 export const getTaskList = (params) => api.get('/task/list', { params });
 export const getTaskDetail = (id) => api.get(`/task/${id}`);
 export const getTaskStats = () => api.get('/admin/tasks/stats');
+export const getPluginConfig = () => api.get('/plugin/config');
 
 export function createGetProductInfo({ apiClient = api } = {}) {
   return async function getProductInfo(url) {

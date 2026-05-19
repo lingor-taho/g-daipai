@@ -45,6 +45,11 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
   return sandbox.window.__G_DAIPAI_TEST__;
 }
 
+async function loadAndExecuteBidForTest(bodyText, execOptions = {}, pathname = '/jp/auction/x123456789/bid/done') {
+  const api = loadContentForTest(bodyText, pathname);
+  return api.executeBidV3(execOptions.maxPrice || 1000, execOptions);
+}
+
 function testOutbidTextIsNotHighestBidder() {
   const api = loadContentForTest('最高額入札者ではありません。値段を上げて入札してください。');
 
@@ -52,11 +57,51 @@ function testOutbidTextIsNotHighestBidder() {
   assert.equal(api.isHighestBidderText(), false);
 }
 
+function testRaiseBidButtonTextAloneIsNotOutbidFailure() {
+  const api = loadContentForTest('値段を上げて入札');
+
+  assert.equal(api.isOutbidText(), false);
+}
+
+function testRebidRequiredIsSeparateFromOutbidFailure() {
+  const api = loadContentForTest('再入札が必要です 入札する');
+
+  assert.equal(api.isRebidRequiredText(), true);
+  assert.equal(api.isOutbidText(), false);
+}
+
+function testRebidRequiredWinsOverBidCompletedText() {
+  const api = loadContentForTest('入札が完了しました。再入札が必要です 入札する');
+
+  assert.equal(api.isRebidRequiredText(), true);
+  assert.equal(api.isHighestBidderText(), false);
+}
+
+async function testRebidRequiredFailsAfterOutcomeWait() {
+  const result = await loadAndExecuteBidForTest(
+    '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d\u3059\u308b',
+    { maxPrice: 1000, strategy: 'direct' }
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.closeTab, true);
+}
+
 function testAcceptedBidTextIsHighestBidder() {
   const api = loadContentForTest('あなたが最高額入札者です。入札を受け付けました。');
 
   assert.equal(api.isOutbidText(), false);
   assert.equal(api.isHighestBidderText(), true);
+}
+
+function testProductPageHighestBidderNoticeDoesNotSkipNewBid() {
+  const api = loadContentForTest(
+    'あなたが最高額入札者です!',
+    '/jp/auction/x123456789'
+  );
+
+  assert.equal(api.hasCurrentHighestBidderNotice(), true);
+  assert.equal(api.isHighestBidderText(), false);
 }
 
 function testAcceptedBuyoutTextIsSuccess() {
@@ -71,6 +116,13 @@ function testSuccessTextWinsOverGenericOutbidWords() {
 
   assert.equal(api.isOutbidText(), false);
   assert.equal(api.isHighestBidderText(), true);
+}
+
+function testExplicitOutbidWinsOverBidCompletedText() {
+  const api = loadContentForTest('\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093\u3002\u9ad8\u5024\u66f4\u65b0');
+
+  assert.equal(api.isOutbidText(), true);
+  assert.equal(api.isHighestBidderText(), false);
 }
 
 function testProductTitleDoesNotUseYahooPrefix() {
@@ -98,6 +150,15 @@ function testInstantBuyButtonTextIsRecognized() {
   assert.equal(api.isConfirmButtonText('確認する'), true);
 }
 
+function testBidEntryButtonTextAvoidsHelpLinks() {
+  const api = loadContentForTest('');
+
+  assert.equal(api.isBidEntryButtonText('入札について'), false);
+  assert.equal(api.isBidEntryButtonText('入札する'), true);
+  assert.equal(api.isBidEntryButtonText('値段を上げて入札'), true);
+  assert.equal(api.isBidEntryButtonText('今すぐ落札', 'buyout'), true);
+}
+
 function testProductDataExtractsBuyoutPriceFromPageData() {
   const api = loadContentForTest('', '/jp/auction/b1222222222', {
     scripts: [
@@ -110,6 +171,53 @@ function testProductDataExtractsBuyoutPriceFromPageData() {
   assert.equal(product.buyoutPrice, 5600);
 }
 
+function testProductDataExtractsTaxType() {
+  const api = loadContentForTest('現在 1,000円 （税込）');
+  const product = api.extractProductData();
+
+  assert.equal(product.taxType, 'tax_included');
+}
+
+function testProductDataPrefersTaxZeroWhenBothTaxLabelsExist() {
+  const api = loadContentForTest('現在 110円 （税0円） 送料説明 （税込）');
+  const product = api.extractProductData();
+
+  assert.equal(product.taxType, 'tax_zero');
+}
+
+function testTaxIncludedBidPriceForMultiBidIncrement() {
+  const api = loadContentForTest('');
+
+  assert.equal(api.getTaxIncludedBidPrice(5000, 'tax_included'), 5500);
+  assert.equal(api.getTaxIncludedBidPrice(9, 'tax_included'), 9);
+  assert.equal(api.getTaxIncludedBidPrice(5500, 'tax_zero'), 5500);
+}
+
+function testBidLimitRejectsTaxTotalAboveUserMax() {
+  const api = loadContentForTest('');
+  const result = api.validateUserMaxBidLimit(5600, 5000, 5500, 'tax_included');
+
+  assert.equal(result.success, false);
+  assert.equal(result.currentPrice, 5600);
+  assert.equal(result.maxPrice, 5500);
+}
+
+function testBidLimitRejectsPlannedStoreBidAboveUserMax() {
+  const api = loadContentForTest('');
+  const result = api.validateUserMaxBidLimit(5400, 5100, 5500, 'tax_included');
+
+  assert.equal(result.success, false);
+  assert.equal(result.currentPrice, 5610);
+  assert.equal(result.maxPrice, 5500);
+}
+
+function testBidLimitAllowsPlannedPersonalBidAtUserMax() {
+  const api = loadContentForTest('');
+  const result = api.validateUserMaxBidLimit(0, 5500, 5500, 'tax_zero');
+
+  assert.equal(result, null);
+}
+
 function testPlainBidEntryIsNotFinalAgree() {
   const api = loadContentForTest('');
 
@@ -117,12 +225,75 @@ function testPlainBidEntryIsNotFinalAgree() {
   assert.equal(api.isFinalAgreeButtonText('\u4e0a\u8a18\u306e\u30ac\u30a4\u30c9\u30e9\u30a4\u30f3\u7b49\u3001\u60c5\u5831\u63d0\u4f9b\u306b\u540c\u610f\u3057\u3066 \u5165\u672d\u3059\u308b'), true);
 }
 
-testOutbidTextIsNotHighestBidder();
-testAcceptedBidTextIsHighestBidder();
-testAcceptedBuyoutTextIsSuccess();
-testSuccessTextWinsOverGenericOutbidWords();
-testProductTitleDoesNotUseYahooPrefix();
-testCurrentPriceUsesProductPageDataBeforeRecommendationText();
-testInstantBuyButtonTextIsRecognized();
-testProductDataExtractsBuyoutPriceFromPageData();
-testPlainBidEntryIsNotFinalAgree();
+function testExtractTaxIncludedTotal() {
+  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,250\u5186');
+
+  assert.equal(api.extractTaxIncludedTotal(), 1250);
+}
+
+function testMultiBidInputPageDetection() {
+  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,250\u5186 \u78ba\u8a8d\u3059\u308b');
+
+  assert.equal(api.isBidInputPage(), true);
+}
+
+function testProductHighestBidderNoticeDetection() {
+  const api = loadContentForTest('\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!');
+
+  assert.equal(api.hasCurrentHighestBidderNotice(), true);
+}
+
+function testExtractAutoBidLimit() {
+  const api = loadContentForTest('\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059! \u81ea\u52d5\u5165\u672d\u4e0a\u9650 1,000\u5186');
+
+  assert.equal(api.extractAutoBidLimit(), 1000);
+}
+
+async function testSkipWhenBidIsWithinAutoBidLimit() {
+  const result = await loadAndExecuteBidForTest(
+    '\u73fe\u5728 510\u5186 \u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059! \u81ea\u52d5\u5165\u672d\u4e0a\u9650 1,000\u5186',
+    { maxPrice: 900, userMaxPrice: 900, strategy: 'direct' },
+    '/jp/auction/x123456789'
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.noBid, true);
+  assert.equal(result.noStatus, true);
+  assert.equal(result.closeTab, true);
+  assert.equal(result.autoBidLimit, 1000);
+}
+
+async function run() {
+  testOutbidTextIsNotHighestBidder();
+  testRaiseBidButtonTextAloneIsNotOutbidFailure();
+  testRebidRequiredIsSeparateFromOutbidFailure();
+  testRebidRequiredWinsOverBidCompletedText();
+  await testRebidRequiredFailsAfterOutcomeWait();
+  testAcceptedBidTextIsHighestBidder();
+  testProductPageHighestBidderNoticeDoesNotSkipNewBid();
+  testAcceptedBuyoutTextIsSuccess();
+  testSuccessTextWinsOverGenericOutbidWords();
+  testExplicitOutbidWinsOverBidCompletedText();
+  testProductTitleDoesNotUseYahooPrefix();
+  testCurrentPriceUsesProductPageDataBeforeRecommendationText();
+  testInstantBuyButtonTextIsRecognized();
+  testBidEntryButtonTextAvoidsHelpLinks();
+  testProductDataExtractsBuyoutPriceFromPageData();
+  testProductDataExtractsTaxType();
+  testProductDataPrefersTaxZeroWhenBothTaxLabelsExist();
+  testTaxIncludedBidPriceForMultiBidIncrement();
+  testBidLimitRejectsTaxTotalAboveUserMax();
+  testBidLimitRejectsPlannedStoreBidAboveUserMax();
+  testBidLimitAllowsPlannedPersonalBidAtUserMax();
+  testPlainBidEntryIsNotFinalAgree();
+  testExtractTaxIncludedTotal();
+  testMultiBidInputPageDetection();
+  testProductHighestBidderNoticeDetection();
+  testExtractAutoBidLimit();
+  await testSkipWhenBidIsWithinAutoBidLimit();
+}
+
+run().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

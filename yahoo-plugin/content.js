@@ -1,4 +1,4 @@
-﻿// content.js 鈥?Injected into Yahoo Auction pages
+// content.js - Injected into Yahoo Auction pages
 
 (() => {
 if (window.__G_DAIPAI_CONTENT_LOADED__) {
@@ -6,15 +6,15 @@ if (window.__G_DAIPAI_CONTENT_LOADED__) {
 }
 window.__G_DAIPAI_CONTENT_LOADED__ = true;
 
-const API_BASE = 'http://localhost:3000';
-const CLIENT_ORIGINS = new Set(['http://localhost:3001', 'http://127.0.0.1:3001']);
+const API_BASE = 'http://localhost:3034';
+const CLIENT_ORIGINS = new Set(['http://localhost:3035', 'http://127.0.0.1:3035']);
 
 function cleanupProductTitle(title, auctionId = '') {
   const cleaned = String(title || '')
-    .replace(/^Yahoo![^-\n]*オークション\s*-\s*/i, '')
-    .replace(/\s*-\s*Yahoo![^-\n]*オークション.*$/i, '')
+    .replace(/^Yahoo![^-\n]*\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\s*-\s*/i, '')
+    .replace(/\s*-\s*Yahoo![^-\n]*\u30aa\u30fc\u30af\u30b7\u30e7\u30f3.*$/i, '')
     .trim();
-  if (cleaned && !/^Yahoo![^-\n]*オークション$/i.test(cleaned)) return cleaned;
+  if (cleaned && !/^Yahoo![^-\n]*\u30aa\u30fc\u30af\u30b7\u30e7\u30f3$/i.test(cleaned)) return cleaned;
   return auctionId ? ('商品 ' + auctionId) : '';
 }
 
@@ -70,7 +70,7 @@ function extractProductData() {
     }
     // Fallback: search whole page
     const bodyText = document.body.textContent;
-    const m = bodyText.match(/(?:現在|current)[^\d]{0,20}([\d,]+)/i);
+    const m = bodyText.match(/(?:\u73fe\u5728|current)[^\d]{0,20}([\d,]+)/i);
     if (m) return parseInt(m[1].replace(/,/g, ''));
     return 0;
   }
@@ -82,8 +82,15 @@ function extractProductData() {
     }
 
     const bodyText = document.body.textContent || '';
-    const match = bodyText.match(/即決(?:価格)?[^\d]{0,20}([\d,]+)\s*(?:円|JPY)?/i);
+    const match = bodyText.match(/\u5373\u6c7a(?:\u4fa1\u683c)?[^\d]{0,20}([\d,]+)\s*(?:\u5186|JPY)?/i);
     return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
+  }
+
+  function getTaxType() {
+    const text = document.body.textContent || '';
+    if (/\uff08\s*\u7a0e\s*0\s*\u5186\s*\uff09|\(\s*\u7a0e\s*0\s*\u5186\s*\)/.test(text)) return 'tax_zero';
+    if (/\uff08\s*\u7a0e\u8fbc\s*\uff09|\(\s*\u7a0e\u8fbc\s*\)/.test(text)) return 'tax_included';
+    return 'tax_zero';
   }
 
   function getEndTime() {
@@ -152,13 +159,14 @@ function extractProductData() {
     title: getTitle(),
     currentPrice: getPrice(),
     buyoutPrice: getBuyoutPrice(),
+    taxType: getTaxType(),
     endTime: getEndTime(),
     imageUrl: getImage()
   };
 }
 
 function parseYen(text) {
-  const match = String(text || '').match(/([\d,]+)\s*(?:円|JPY)?/);
+  const match = String(text || '').match(/([\d,]+)\s*(?:\u5186|JPY)?/);
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
 
@@ -220,19 +228,28 @@ function getBodyText() {
   return document.body.textContent || '';
 }
 
+function hasExplicitOutbidText(text = getBodyText()) {
+  return /\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(text);
+}
+
 function isOutbidText(text = getBodyText()) {
-  if (hasBidSuccessText(text)) return false;
-  return /再入札|値段を上げて入札|最高額入札者ではありません|高値更新/.test(text);
+  return hasExplicitOutbidText(text);
+}
+
+function isRebidRequiredText(text = getBodyText()) {
+  return /\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059/.test(text);
 }
 
 function hasBidSuccessText(text = getBodyText()) {
-  return /あなたが最高額入札者です|入札が完了しました|入札を受け付けました|入札しました|落札が完了しました|落札しました|落札を受け付けました/.test(text);
+  return /\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u5165\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f|\u5165\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u843d\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f/.test(text);
 }
 
 function isHighestBidderText(text = getBodyText(), pathname = window.location.pathname) {
   const isBidDonePage = /\/jp\/auction\/[a-zA-Z]?\d{8,10}\/bid\/done/.test(pathname);
+  if (hasExplicitOutbidText(text)) return false;
+  if (isRebidRequiredText(text)) return false;
   return hasBidSuccessText(text) ||
-    (isBidDonePage && /最高額入札者/.test(text) && !/最高額入札者ではありません/.test(text));
+    (isBidDonePage && /\u6700\u9ad8\u984d\u5165\u672d\u8005/.test(text) && !/\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(text));
 }
 
 function isOutbidPage() {
@@ -243,21 +260,54 @@ function isHighestBidderPage() {
   return isHighestBidderText();
 }
 
+function hasCurrentHighestBidderNotice(text = getBodyText()) {
+  return /\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(text);
+}
+
+function extractAutoBidLimit(text = getBodyText()) {
+  const match = String(text || '').match(/\u81ea\u52d5\u5165\u672d\u4e0a\u9650[^\d]{0,30}([\d,]+)\s*\u5186?/);
+  return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
+}
+
 function hasRaiseBidPrompt() {
   const text = document.body.textContent || '';
-  return /値段を上げて入札/.test(text);
+  return /\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d/.test(text);
+}
+
+function extractTaxIncludedTotal(text = getBodyText()) {
+  const match = String(text || '').match(/\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d[^\d]{0,30}([\d,]+)\s*\u5186?/);
+  return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
+}
+
+function isBidInputPage(text = getBodyText()) {
+  return /\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d/.test(text) && /\u78ba\u8a8d\u3059\u308b|\u78ba\u8a8d/.test(text);
+}
+
+function getTaxIncludedBidPrice(bidPrice, taxType) {
+  const value = Number(bidPrice || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
+  return Math.floor(value * 1.1);
 }
 
 function isFinalAgreeButtonText(text) {
-  return /同意.*(?:入札|落札)|上記.*(?:入札|落札)/.test(text);
+  return /\u540c\u610f.*(?:\u5165\u672d|\u843d\u672d)|\u4e0a\u8a18.*(?:\u5165\u672d|\u843d\u672d)/.test(text);
 }
 
 function isConfirmButtonText(text) {
-  return /確認|確認画面|入札内容|次へ/.test(text);
+  return /\u78ba\u8a8d|\u78ba\u8a8d\u753b\u9762|\u5165\u672d\u5185\u5bb9|\u6b21\u3078/.test(text);
 }
 
 function isInstantBuyButtonText(text) {
-  return /今すぐ落札/.test(text);
+  return /\u4eca\u3059\u3050\u843d\u672d/.test(text);
+}
+
+function isBidEntryButtonText(text, bidMode = 'bid') {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (bidMode === 'buyout') {
+    return /\u4eca\u3059\u3050\u843d\u672d/.test(normalized);
+  }
+  return /(?:^| )\u5165\u672d\u3059\u308b(?: |$)|\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d/.test(normalized);
 }
 
 function buildPriceTooHighResult(currentPrice, maxPrice) {
@@ -270,8 +320,37 @@ function buildPriceTooHighResult(currentPrice, maxPrice) {
   };
 }
 
+function validateUserMaxBidLimit(taxTotal, bidPrice, userMaxPrice, taxType) {
+  const numericTaxTotal = Number(taxTotal || 0);
+  const numericUserMaxPrice = Number(userMaxPrice || 0);
+  const plannedTaxIncludedPrice = getTaxIncludedBidPrice(bidPrice, taxType);
+
+  if (numericTaxTotal > 0 && numericTaxTotal > numericUserMaxPrice) {
+    return {
+      success: false,
+      error: `税込合計金額 ${numericTaxTotal}円 已高于最高价 ${numericUserMaxPrice}円，停止出价`,
+      currentPrice: numericTaxTotal,
+      maxPrice: numericUserMaxPrice,
+      closeTab: true
+    };
+  }
+
+  if (plannedTaxIncludedPrice > numericUserMaxPrice) {
+    return {
+      success: false,
+      error: `出价金额 ${plannedTaxIncludedPrice}円 已高于最高价 ${numericUserMaxPrice}円，停止出价`,
+      currentPrice: plannedTaxIncludedPrice,
+      maxPrice: numericUserMaxPrice,
+      closeTab: true
+    };
+  }
+
+  return null;
+}
+
 async function waitForBidOutcome(timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
+  let sawRebidRequired = false;
   while (Date.now() < deadline) {
     if (isHighestBidderPage()) {
       return { success: true };
@@ -279,7 +358,18 @@ async function waitForBidOutcome(timeoutMs = 8000) {
     if (isOutbidPage()) {
       return { success: false, error: 'outbid after bid', outbid: true, closeTab: true };
     }
+    if (isRebidRequiredText()) {
+      sawRebidRequired = true;
+    }
     await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  if (sawRebidRequired) {
+    return {
+      success: false,
+      rebidRequired: true,
+      error: '再入札が必要です：最高价未超过当前最高出价',
+      closeTab: true
+    };
   }
   return { success: false, error: '入札結果を確認できません', closeTab: true };
 }
@@ -291,10 +381,15 @@ async function getTaskData() {
 
 async function executeBidV3(maxPrice, options = {}) {
   const numericMaxPrice = Number(maxPrice);
+  const numericUserMaxPrice = Number(options.userMaxPrice || maxPrice);
+  const numericCurrentPrice = Number(options.currentPrice || 0);
+  const numericMultiBidIncrement = Number(options.multiBidIncrement || 0);
+  const taxType = options.taxType === 'tax_included' ? 'tax_included' : 'tax_zero';
   const bidMode = options.bidMode === 'buyout' ? 'buyout' : 'bid';
+  const strategy = options.strategy || 'direct';
   const bodyText = document.body.textContent || '';
 
-  if (/ログイン.*必要|ログインしてください/.test(bodyText)) {
+  if (/\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044/.test(bodyText)) {
     return { success: false, error: '需要登录 Yahoo' };
   }
 
@@ -302,8 +397,17 @@ async function executeBidV3(maxPrice, options = {}) {
     return { success: false, error: '出价失败：该商品没有即決价格', closeTab: true };
   }
 
-  if (isOutbidPage()) {
+  if (strategy !== 'multi_bid' && isOutbidPage()) {
     return { success: false, error: 'outbid after bid', outbid: true, closeTab: true };
+  }
+
+  if (strategy !== 'multi_bid' && isRebidRequiredText()) {
+    return {
+      success: false,
+      error: '再入札が必要です：最高价未超过当前最高出价',
+      outbid: true,
+      closeTab: true
+    };
   }
 
   function textOf(el) {
@@ -324,11 +428,17 @@ async function executeBidV3(maxPrice, options = {}) {
     ].join(',');
   }
 
+  function isUnsafeClickableTarget(el) {
+    const href = el?.href || el?.getAttribute?.('href') || '';
+    return /support\.yahoo-net\.jp|\/PccAuctions\//i.test(href);
+  }
+
   function findClickable(patterns) {
     const selector = clickableSelector();
     const direct = [...document.querySelectorAll(selector)].find(el => {
       const style = window.getComputedStyle(el);
       return !el.disabled &&
+        !isUnsafeClickableTarget(el) &&
         style.display !== 'none' &&
         style.visibility !== 'hidden' &&
         patterns.some(pattern => pattern.test(textOf(el)));
@@ -337,7 +447,20 @@ async function executeBidV3(maxPrice, options = {}) {
 
     const textNodeOwner = [...document.querySelectorAll('body *')]
       .find(el => patterns.some(pattern => pattern.test(textOf(el))));
-    return textNodeOwner?.closest(selector) || null;
+    const closest = textNodeOwner?.closest(selector) || null;
+    return closest && !isUnsafeClickableTarget(closest) ? closest : null;
+  }
+
+  function findBidEntryButton(mode = 'bid') {
+    const selector = clickableSelector();
+    return [...document.querySelectorAll(selector)].find(el => {
+      const style = window.getComputedStyle(el);
+      return !el.disabled &&
+        !isUnsafeClickableTarget(el) &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        isBidEntryButtonText(textOf(el), mode);
+    }) || null;
   }
 
   function clickElement(el) {
@@ -346,6 +469,101 @@ async function executeBidV3(maxPrice, options = {}) {
     el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
     el.click();
+  }
+
+  async function executeMultiBidLoop(attempt = 0) {
+    if (attempt > 20) {
+      return { success: false, error: 'multi bid retry limit exceeded', closeTab: true };
+    }
+
+    if (isHighestBidderPage()) {
+      return { success: true, noBid: true, stage: 'already-highest' };
+    }
+
+    const autoBidLimit = extractAutoBidLimit();
+    if (hasCurrentHighestBidderNotice() && autoBidLimit) {
+      const currentTaxExcludedPrice = extractCurrentAuctionPrice() || numericCurrentPrice;
+      const plannedBidPrice = currentTaxExcludedPrice && numericMultiBidIncrement
+        ? currentTaxExcludedPrice + numericMultiBidIncrement
+        : numericMaxPrice;
+      const skipResult = buildSkipWhenWithinAutoBidLimit(plannedBidPrice);
+      if (skipResult) return skipResult;
+    }
+
+    if (isRebidRequiredText()) {
+      const rebidBtn = findBidEntryButton('bid');
+      if (rebidBtn) {
+        clickElement(rebidBtn);
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        return executeMultiBidLoop(attempt + 1);
+      }
+    }
+
+    const finalAgreeBtn = findClickable([/\u540c\u610f.*\u5165\u672d/, /\u4e0a\u8a18.*\u5165\u672d/]);
+    if (finalAgreeBtn) {
+      clickElement(finalAgreeBtn);
+      const outcome = await waitForBidOutcome();
+      if (!outcome.success && outcome.rebidRequired) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        return executeMultiBidLoop(attempt + 1);
+      }
+      if (!outcome.success && outcome.outbid) {
+        return { success: true, noBid: true, notHighest: true, closeTab: true, stage: 'multi-not-highest-stop' };
+      }
+      if (!outcome.success) return outcome;
+      return { success: true, bidPrice: numericMaxPrice, stage: 'multi-final-submitted' };
+    }
+
+    if (isBidInputPage()) {
+      const taxTotal = extractTaxIncludedTotal();
+      if (taxTotal > 0 && taxTotal > numericUserMaxPrice) {
+        return {
+          success: false,
+          error: `税込合計金額 ${taxTotal}円 已高于最高价 ${numericUserMaxPrice}円，停止出价`,
+          currentPrice: taxTotal,
+          maxPrice: numericUserMaxPrice,
+          closeTab: true
+        };
+      }
+      const currentTaxExcludedPrice = extractCurrentAuctionPrice() || numericCurrentPrice;
+      const nextBidPrice = currentTaxExcludedPrice + numericMultiBidIncrement;
+      const nextBidTaxIncludedPrice = getTaxIncludedBidPrice(nextBidPrice, taxType);
+      if (!currentTaxExcludedPrice || !numericMultiBidIncrement) {
+        return { success: false, error: 'multi bid price data missing', closeTab: true };
+      }
+      if (nextBidTaxIncludedPrice > numericUserMaxPrice) {
+        return {
+          success: false,
+          error: `加价后金额 ${nextBidTaxIncludedPrice}円 已高于最高价 ${numericUserMaxPrice}円，停止出价`,
+          currentPrice: nextBidTaxIncludedPrice,
+          maxPrice: numericUserMaxPrice,
+          closeTab: true
+        };
+      }
+      const priceInput = findPriceInput();
+      if (!priceInput) {
+        return { success: false, error: 'price input not found' };
+      }
+      priceInput.focus();
+      priceInput.value = String(nextBidPrice);
+      priceInput.dispatchEvent(new Event('input', { bubbles: true }));
+      priceInput.dispatchEvent(new Event('change', { bubbles: true }));
+      const confirmBtn = findClickable([/\u78ba\u8a8d\u3059\u308b/, /\u78ba\u8a8d/]);
+      if (!confirmBtn) {
+        return { success: false, error: 'confirm button not found' };
+      }
+      clickElement(confirmBtn);
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      return executeMultiBidLoop(attempt + 1);
+    }
+
+    const bidEntryBtn = findBidEntryButton('bid');
+    if (!bidEntryBtn) {
+      return { success: false, error: 'bid button not found' };
+    }
+    clickElement(bidEntryBtn);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    return executeMultiBidLoop(attempt + 1);
   }
 
   function findPriceInput() {
@@ -359,7 +577,7 @@ async function executeBidV3(maxPrice, options = {}) {
     return [...document.querySelectorAll('input[type="text"], input:not([type])')]
       .find(el => {
         const text = `${el.name || ''} ${el.id || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${el.closest('label')?.textContent || ''}`;
-        return !el.disabled && !el.readOnly && /bid|price|入札|金額|最高|円/i.test(text);
+        return !el.disabled && !el.readOnly && /bid|price|\u5165\u672d|\u91d1\u984d|\u6700\u9ad8|\u5186/i.test(text);
       });
   }
 
@@ -371,17 +589,45 @@ async function executeBidV3(maxPrice, options = {}) {
     return null;
   }
 
+  function validateUserMaxBeforeSubmit(bidPrice = numericMaxPrice) {
+    const taxTotal = extractTaxIncludedTotal();
+    return validateUserMaxBidLimit(taxTotal, bidPrice, numericUserMaxPrice, taxType);
+  }
+
+  function buildSkipWhenWithinAutoBidLimit(plannedBidPrice) {
+    const autoBidLimit = extractAutoBidLimit();
+    if (!hasCurrentHighestBidderNotice() || !autoBidLimit) return null;
+    if (Number(plannedBidPrice || 0) <= autoBidLimit) {
+      return {
+        success: true,
+        noBid: true,
+        noStatus: true,
+        closeTab: true,
+        autoBidLimit,
+        bidPrice: plannedBidPrice,
+        stage: 'skip-within-auto-bid-limit'
+      };
+    }
+    return null;
+  }
+
+  if (strategy === 'multi_bid') {
+    return executeMultiBidLoop();
+  }
+
   if (isHighestBidderPage()) {
     return { success: true, bidPrice: numericMaxPrice, stage: 'highest-bidder' };
   }
 
   const finalAgreePatterns = bidMode === 'buyout'
-    ? [/同意.*落札/, /上記.*落札/]
-    : [/同意.*入札/, /上記.*入札/];
+    ? [/\u540c\u610f.*\u843d\u672d/, /\u4e0a\u8a18.*\u843d\u672d/]
+    : [/\u540c\u610f.*\u5165\u672d/, /\u4e0a\u8a18.*\u5165\u672d/];
   const finalAgreeBtn = findClickable(finalAgreePatterns);
   if (finalAgreeBtn) {
     const priceError = validateCurrentPrice();
     if (priceError) return priceError;
+    const userMaxError = validateUserMaxBeforeSubmit();
+    if (userMaxError) return userMaxError;
     clickElement(finalAgreeBtn);
     const outcome = await waitForBidOutcome();
     if (!outcome.success) return outcome;
@@ -392,6 +638,8 @@ async function executeBidV3(maxPrice, options = {}) {
   if (priceInput) {
     const priceError = validateCurrentPrice();
     if (priceError) return priceError;
+    const userMaxError = validateUserMaxBeforeSubmit();
+    if (userMaxError) return userMaxError;
 
     priceInput.focus();
     priceInput.value = String(numericMaxPrice);
@@ -399,10 +647,10 @@ async function executeBidV3(maxPrice, options = {}) {
     priceInput.dispatchEvent(new Event('change', { bubbles: true }));
 
     const confirmBtn = findClickable([
-      /確認/,
-      /確認画面/,
-      /入札内容/,
-      /次へ/
+      /\u78ba\u8a8d/,
+      /\u78ba\u8a8d\u753b\u9762/,
+      /\u5165\u672d\u5185\u5bb9/,
+      /\u6b21\u3078/
     ]);
     if (!confirmBtn) {
       return { success: false, error: 'confirm button not found' };
@@ -412,10 +660,10 @@ async function executeBidV3(maxPrice, options = {}) {
   }
 
   const standaloneConfirmBtn = bidMode === 'buyout' ? findClickable([
-    /確認/,
-    /確認画面/,
-    /入札内容/,
-    /次へ/
+    /\u78ba\u8a8d/,
+    /\u78ba\u8a8d\u753b\u9762/,
+    /\u5165\u672d\u5185\u5bb9/,
+    /\u6b21\u3078/
   ]) : null;
   if (standaloneConfirmBtn) {
     clickElement(standaloneConfirmBtn);
@@ -423,13 +671,17 @@ async function executeBidV3(maxPrice, options = {}) {
     return executeBidV3(numericMaxPrice, options);
   }
 
-  const bidEntryBtn = findClickable(bidMode === 'buyout' ? [/今すぐ落札/] : [/入札/]);
+  const priceError = validateCurrentPrice();
+  if (priceError) return priceError;
+  const userMaxError = validateUserMaxBeforeSubmit();
+  if (userMaxError) return userMaxError;
+  const autoBidSkip = buildSkipWhenWithinAutoBidLimit(numericMaxPrice);
+  if (autoBidSkip) return autoBidSkip;
+
+  const bidEntryBtn = findBidEntryButton(bidMode);
   if (!bidEntryBtn) {
     return { success: false, error: bidMode === 'buyout' ? 'buyout button not found' : 'bid button not found' };
   }
-
-  const priceError = validateCurrentPrice();
-  if (priceError) return priceError;
 
   clickElement(bidEntryBtn);
   await new Promise(resolve => setTimeout(resolve, 1200));
@@ -450,11 +702,11 @@ function extractOrderHistory() {
     if (seen.has(productId)) continue;
     seen.add(productId);
     const text = item.textContent || '';
-    const trackingMatch = text.match(/(?:お問い合わせ番号|追跡番号|伝票番号|配送番号|tracking)[^\dA-Z]{0,20}([A-Z0-9-]{8,})/i);
+    const trackingMatch = text.match(/(?:\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u53d7\u4ed8\u756a\u53f7|\u4f1d\u7968\u756a\u53f7|tracking)[^\dA-Z]{0,20}([A-Z0-9-]{8,})/i);
     orders.push({
       productId,
       title: link.textContent?.trim() || '',
-      price: text.match(/([\d,]+)\s*(?:円|JPY)?/)?.[1] || '',
+      price: text.match(/([\d,]+)\s*(?:\u5186|JPY)?/)?.[1] || '',
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       trackingNumber: trackingMatch?.[1] || ''
     });
@@ -471,7 +723,7 @@ getTaskData().then(taskData => {
     (!pageProductData.auctionId || pageProductData.auctionId === taskData.auctionId);
 
   if (shouldExecuteBid) {
-    executeBidV3(taskData.maxPrice, { bidMode: taskData.bidMode })
+    executeBidV3(taskData.maxPrice, { bidMode: taskData.bidMode, strategy: taskData.strategy, userMaxPrice: taskData.userMaxPrice, currentPrice: taskData.currentPrice, taxType: taskData.taxType, multiBidIncrement: taskData.multiBidIncrement })
       .then(result => {
         chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, result });
       })
@@ -479,7 +731,7 @@ getTaskData().then(taskData => {
         chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, result: { success: false, error: err.message } });
       });
   } else {
-    // No task 鈥?if on auction page, extract and save product data
+// No task - if on auction page, extract and save product data
     if (pageProductData.auctionId) {
       chrome.storage.session.set({ cachedProduct: pageProductData });
       // Notify background that product data is available
@@ -512,7 +764,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  executeBidV3(msg.maxPrice, { bidMode: msg.bidMode })
+  executeBidV3(msg.maxPrice, { bidMode: msg.bidMode, strategy: msg.strategy, userMaxPrice: msg.userMaxPrice, currentPrice: msg.currentPrice, taxType: msg.taxType, multiBidIncrement: msg.multiBidIncrement })
     .then(result => sendResponse(result))
     .catch(err => sendResponse({ success: false, error: err.message }));
   return true;
@@ -520,10 +772,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 window.__G_DAIPAI_TEST__ = {
   isOutbidText: () => isOutbidText(),
+  isRebidRequiredText: () => isRebidRequiredText(),
   isHighestBidderText: () => isHighestBidderText(),
+  hasCurrentHighestBidderNotice: () => hasCurrentHighestBidderNotice(),
+  extractAutoBidLimit: () => extractAutoBidLimit(),
   extractProductData: () => extractProductData(),
   extractCurrentAuctionPrice: () => extractCurrentAuctionPrice(),
+  extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
+  getTaxIncludedBidPrice,
+  validateUserMaxBidLimit,
+  executeBidV3,
+  isBidInputPage: () => isBidInputPage(),
   isInstantBuyButtonText,
+  isBidEntryButtonText,
   isFinalAgreeButtonText,
   isConfirmButtonText
 };

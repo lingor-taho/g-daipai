@@ -7,13 +7,20 @@ const {
   expireOverduePendingTasks,
   failPricedOutPendingTasks,
   resetStaleProcessingTasks,
-  sweepPendingTasks
+  sweepPendingTasks,
+  getMultiBidStartMs,
+  getMultiBidIntervalMs,
+  isMultiBidTask
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
 
 function minutesFromNow(minutes) {
   return new Date(now + minutes * 60 * 1000).toISOString();
+}
+
+function sqliteTimeFromNow(minutes) {
+  return new Date(now + minutes * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function testDirectTaskIsReadyImmediately() {
@@ -34,6 +41,70 @@ function testTimedTaskUsesExplicitMinuteColumns() {
     getStrategyLeadMs({ strategy: 'custom', start_minutes_before: 2, start_seconds_before: 30 }),
     150000
   );
+}
+
+function testMultiBidUsesGlobalConfigStartWindow() {
+  assert.equal(isMultiBidTask({ strategy: 'multi_bid' }), true);
+  assert.equal(getMultiBidStartMs({ multiBidStartHours: 0.5 }), 30 * 60 * 1000);
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'pending',
+    end_time: minutesFromNow(31)
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'pending',
+    end_time: minutesFromNow(30)
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), true);
+}
+
+function testMultiBidBiddingTaskRepeatsOnlyAfterInterval() {
+  assert.equal(getMultiBidIntervalMs({ multiBidIntervalMinutes: 5 }), 5 * 60 * 1000);
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    end_time: minutesFromNow(20),
+    last_bid_at: new Date(now - 4 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    end_time: minutesFromNow(20),
+    last_bid_at: new Date(now - 5 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), true);
+}
+
+function testMultiBidBiddingTaskWithoutEndTimeStillWaitsForInterval() {
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    end_time: null,
+    last_bid_at: new Date(now - 4 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    end_time: null,
+    last_bid_at: new Date(now - 5 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), true);
+}
+
+function testMultiBidPendingTaskWithRecentTouchStillWaitsForInterval() {
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'pending',
+    end_time: minutesFromNow(20),
+    last_bid_at: new Date(now - 4 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
+}
+
+function testMultiBidIntervalParsesSqliteUtcTimestamp() {
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    end_time: minutesFromNow(20),
+    last_bid_at: sqliteTimeFromNow(-4)
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
 }
 
 function testChooseNextTaskSkipsFutureTimedTask() {
@@ -122,6 +193,11 @@ async function testSweepPendingTasksIncludesProcessingResets() {
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
+testMultiBidUsesGlobalConfigStartWindow();
+testMultiBidBiddingTaskRepeatsOnlyAfterInterval();
+testMultiBidBiddingTaskWithoutEndTimeStillWaitsForInterval();
+testMultiBidPendingTaskWithRecentTouchStillWaitsForInterval();
+testMultiBidIntervalParsesSqliteUtcTimestamp();
 testChooseNextTaskSkipsFutureTimedTask();
 testChooseRefreshTaskWhenNoExecutableTaskExists();
 testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();

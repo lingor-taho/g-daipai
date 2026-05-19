@@ -1,4 +1,4 @@
-﻿const API_BASES = ['http://127.0.0.1:3000', 'http://localhost:3000'];
+const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
@@ -6,6 +6,7 @@ const AUTO_BID_ENABLED = true;
 let isRunning = false;
 let fetchFailureCount = 0;
 const managedTaskTabs = new Set();
+const managedTaskTabsByTaskId = new Map();
 
 async function apiFetch(path, options) {
   let lastError;
@@ -46,11 +47,23 @@ async function markTaskStatus(taskId, status, errorMsg = null, extra = {}) {
   }
 }
 
+async function touchTaskSchedule(taskId, status) {
+  try {
+    await apiFetch(`/api/plugin/task/${taskId}/touch`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to touch task schedule:', e);
+  }
+}
+
 function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const tid = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new Error('商品页面加载超时'));
+      reject(new Error('��Ʒҳ����س�ʱ'));
     }, timeoutMs);
 
     function onUpdated(updatedTabId, info) {
@@ -74,21 +87,41 @@ function isMessageChannelClosed(error) {
 
 async function openTaskPage(task) {
   const auctionId = normalizeAuctionId(task.product_url);
-  if (!auctionId) throw new Error('任务商品 ID 无效');
+  if (!auctionId) throw new Error('������Ʒ ID ��Ч');
 
   const targetUrl = `https://auctions.yahoo.co.jp/jp/auction/${auctionId}`;
   await chrome.storage.session.set({
     currentTask: {
       taskId: task.id,
       maxPrice: task.max_price,
+      userMaxPrice: task.user_max_price || task.max_price,
+      currentPrice: task.current_price || 0,
+      taxType: task.tax_type || 'tax_zero',
+      multiBidIncrement: task.multi_bid_increment || 0,
       bidMode: task.bid_mode || 'bid',
+      strategy: task.strategy || 'direct',
       auctionId,
       executeBid: false
     }
   });
 
+  const existingTabId = managedTaskTabsByTaskId.get(task.id);
+  if (task.strategy === 'multi_bid' && existingTabId) {
+    try {
+      const existingTab = await chrome.tabs.get(existingTabId);
+      if (existingTab?.id) {
+        await chrome.tabs.update(existingTab.id, { active: true });
+        return existingTab;
+      }
+    } catch (_) {
+      managedTaskTabsByTaskId.delete(task.id);
+      managedTaskTabs.delete(existingTabId);
+    }
+  }
+
   const tab = await chrome.tabs.create({ url: targetUrl, active: true });
   managedTaskTabs.add(tab.id);
+  managedTaskTabsByTaskId.set(task.id, tab.id);
 
   await waitForTabComplete(tab.id);
   return tab;
@@ -105,7 +138,12 @@ async function executeTaskInTab(tab, task) {
     type: 'EXECUTE_BID',
     auctionId,
     maxPrice: task.max_price,
-    bidMode: task.bid_mode || 'bid'
+    userMaxPrice: task.user_max_price || task.max_price,
+      currentPrice: task.current_price || 0,
+      taxType: task.tax_type || 'tax_zero',
+      multiBidIncrement: task.multi_bid_increment || 0,
+      bidMode: task.bid_mode || 'bid',
+    strategy: task.strategy || 'direct'
   });
 
   if (!result?.success && shouldCloseTaskTab(result)) {
@@ -113,7 +151,7 @@ async function executeTaskInTab(tab, task) {
   }
 
   if (!result?.success) {
-    throw new Error(result?.error || '出价执行失败');
+    throw new Error(result?.error || '����ִ��ʧ��');
   }
 
   return result;
@@ -125,7 +163,12 @@ async function sendBidMessageV2(tabId, task) {
     type: 'EXECUTE_BID',
     auctionId,
     maxPrice: task.max_price,
-    bidMode: task.bid_mode || 'bid'
+    userMaxPrice: task.user_max_price || task.max_price,
+      currentPrice: task.current_price || 0,
+      taxType: task.tax_type || 'tax_zero',
+      multiBidIncrement: task.multi_bid_increment || 0,
+      bidMode: task.bid_mode || 'bid',
+    strategy: task.strategy || 'direct'
   });
 }
 
@@ -144,6 +187,9 @@ async function closeTaskTab(tabId) {
   try {
     await chrome.tabs.remove(tabId);
     managedTaskTabs.delete(tabId);
+    for (const [taskId, mappedTabId] of managedTaskTabsByTaskId.entries()) {
+      if (mappedTabId === tabId) managedTaskTabsByTaskId.delete(taskId);
+    }
   } catch (e) {
     console.warn('[Yahoo Bid] Failed to close task tab:', e);
   }
@@ -186,6 +232,7 @@ async function updateTaskSnapshot(taskId, snapshot, status) {
       product_image_url: snapshot?.imageUrl || null,
       current_price: snapshot?.currentPrice || null,
       buyout_price: snapshot?.buyoutPrice || null,
+      tax_type: snapshot?.taxType || null,
       end_time: snapshot?.endTime || null,
       status
     })
@@ -203,7 +250,7 @@ async function getPageProductSnapshot(tabId, task) {
 async function ensureTaskReadyByCurrentEndTime(tab, task) {
   const snapshot = await getPageProductSnapshot(tab.id, task);
   if (!snapshot?.auctionId) {
-    throw new Error('无法获取商品当前截止时间');
+    throw new Error('�޷���ȡ��Ʒ��ǰ��ֹʱ��');
   }
 
   const actualEndTime = snapshot.endTime || task.end_time;
@@ -212,7 +259,7 @@ async function ensureTaskReadyByCurrentEndTime(tab, task) {
   if (actualEndMs && actualEndMs <= Date.now()) {
     await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'failed');
     await closeTaskTab(tab.id);
-    throw new Error('商品已经结束');
+    throw new Error('��Ʒ�Ѿ�����');
   }
 
   if (isDirectTask(task)) {
@@ -237,6 +284,10 @@ async function ensureTaskReadyByCurrentEndTime(tab, task) {
 
 function shouldCloseTaskTab(result) {
   return Boolean(result?.closeTab || result?.outbid || result?.currentPrice);
+}
+
+function shouldKeepTaskTabOpen(task, result) {
+  return task?.strategy === 'multi_bid' && result?.success && !result?.noBid && !result?.closeTab;
 }
 
 function buildBidError(result, fallbackMessage) {
@@ -265,7 +316,7 @@ async function executeTaskInTabV2(tab, task) {
   }
 
   if (!result?.success) {
-    throw new Error(result?.error || '出价执行失败');
+    throw new Error(result?.error || '����ִ��ʧ��');
   }
 
   if (result.pendingFinal) {
@@ -312,14 +363,14 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
   const imageUrl = extractMeta(html, /<meta[^>]*(?:property|name)="(?:og:image|twitter:image)"[^>]*content="([^"]+)"/);
   const priceText = extractMeta(html, /itemprop="price"[^>]*content="([^"]+)"/) ||
     extractMeta(html, /["']price["']\s*:\s*"?([\d,]+)/) ||
-    extractMeta(html, /class="[^"]*price[^"]*"[^>]*>[\s\S]*?([\d,]+)\s*(?:円|JPY)?/);
+    extractMeta(html, /class="[^"]*price[^"]*"[^>]*>[\s\S]*?([\d,]+)\s*(?:��|JPY)?/);
   const endTime = extractMeta(html, /itemprop="endDate"[^>]*content="([^"]+)"/) ||
     extractMeta(html, /endDate["\s][^"]{0,5}["']([^"']+)["']/);
 
   return {
     auctionId,
     url: standardUrl,
-    title: title || ('商品 ' + auctionId),
+    title: title || ('��Ʒ ' + auctionId),
     imageUrl: imageUrl || '',
     currentPrice: priceText ? parseInt(priceText.replace(/,/g, ''), 10) || 0 : 0,
     endTime: endTime || ''
@@ -388,7 +439,7 @@ async function pollAndExecute() {
   try {
     const task = await fetchPendingTask();
     if (task) {
-      console.log('[Yahoo Bid] 执行任务:', task.product_url);
+      console.log('[Yahoo Bid] ִ������:', task.product_url);
       let taskTab = null;
       try {
         await markTaskStatus(task.id, 'processing');
@@ -402,9 +453,15 @@ async function pollAndExecute() {
         }
         const result = await executeTaskInTabV2(tab, task);
         await chrome.storage.session.remove(['currentTask']);
-        await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice });
-        await closeTaskTab(tab.id);
-        console.log('[Yahoo Bid] 出价已执行:', task.id, result);
+        if (result?.noStatus) {
+          await touchTaskSchedule(task.id, task.status);
+        } else {
+          await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
+        }
+        if (!shouldKeepTaskTabOpen(task, result)) {
+          await closeTaskTab(tab.id);
+        }
+        console.log('[Yahoo Bid] ������ִ��:', task.id, result);
       } catch (e) {
         await chrome.storage.session.remove(['currentTask']);
         if (taskTab?.id) {
@@ -434,8 +491,15 @@ chrome.runtime.onStartup.addListener(startPolling);
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === POLL_ALARM_NAME) pollAndExecute();
 });
+
+globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
+  shouldKeepTaskTabOpen
+};
 chrome.tabs.onRemoved.addListener(tabId => {
   managedTaskTabs.delete(tabId);
+  for (const [taskId, mappedTabId] of managedTaskTabsByTaskId.entries()) {
+    if (mappedTabId === tabId) managedTaskTabsByTaskId.delete(taskId);
+  }
 });
 startPolling();
 
@@ -455,9 +519,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (sender.tab?.id) {
         closeTaskTab(sender.tab.id);
       }
-      markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice });
+      if (result.noStatus) {
+        touchTaskSchedule(taskId);
+      } else {
+        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest });
+      }
     } else {
-      markTaskStatus(taskId, 'failed', result.error || '出价失败');
+      markTaskStatus(taskId, 'failed', result.error || '����ʧ��');
     }
     pollAndExecute();
   } else if (msg.type === 'PRODUCT_DATA') {
@@ -469,7 +537,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       }).catch(e => console.error('[Yahoo Bid] Failed to cache product:', e));
-      console.log('[Yahoo Bid] Product data cached:', data.title, '¥' + data.currentPrice);
+      console.log('[Yahoo Bid] Product data cached:', data.title, '��' + data.currentPrice);
     }
   } else if (msg.type === 'ORDER_HISTORY') {
     syncOrderHistory(msg.orders);

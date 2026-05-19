@@ -123,6 +123,13 @@ function extractBuyoutPrice(html) {
   return 0;
 }
 
+function extractTaxType(html) {
+  const text = normalizeText(html || '');
+  if (/（\s*税\s*0\s*円\s*）|\(\s*税\s*0\s*円\s*\)/.test(text)) return 'tax_zero';
+  if (/（\s*税込\s*）|\(\s*税込\s*\)/.test(text)) return 'tax_included';
+  return 'tax_zero';
+}
+
 function extractEndTime(html) {
   const patterns = [
     /itemprop=["']endDate["'][^>]*content=["']([^"']+)["']/i,
@@ -160,6 +167,7 @@ function parseProductHtml(html, auctionId, standardUrl) {
     title,
     currentPrice: extractPrice(html),
     buyoutPrice: extractBuyoutPrice(html),
+    taxType: extractTaxType(html),
     endTime: extractEndTime(html),
     imageUrl: extractImage(html)
   };
@@ -246,6 +254,7 @@ function createProductService({
       title: rawProduct.title || ('商品 ' + parsed.auctionId),
       currentPrice: Number(rawProduct.currentPrice || 0),
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
+      taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
       endTime: rawProduct.endTime || '',
       imageUrl: rawProduct.imageUrl || '',
       cachedAt: new Date().toISOString()
@@ -294,6 +303,7 @@ function createProductService({
         title: '商品 ' + parsed.auctionId,
         currentPrice: 0,
         buyoutPrice: 0,
+        taxType: 'tax_zero',
         endTime: '',
         imageUrl: '',
         error: 'server could not fetch Yahoo product info'
