@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
-import { Input, Button, Toast, List, Picker, Checkbox } from 'antd-mobile';
-import { getPluginConfig, getProductInfo, submitTask } from '../utils/api';
+import { Input, Button, Toast, List, Picker, Checkbox, Dialog } from 'antd-mobile';
+import { getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
 import ProductCard from '../components/ProductCard';
 import TaskList from './TaskList';
 
@@ -34,6 +34,16 @@ function getMinMultiBidIncrement(maxPrice) {
 
 function getDefaultMultiBidIncrement(maxPrice) {
   return Math.max(500, getMinMultiBidIncrement(maxPrice));
+}
+
+function hasDirectBiddingRecord(tasks, auctionId) {
+  const normalizedAuctionId = String(auctionId || '').toLowerCase();
+  return tasks.some(task => {
+    const taskAuctionId = String(task.product_id || task.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '').toLowerCase();
+    return taskAuctionId === normalizedAuctionId &&
+      task.strategy === 'direct' &&
+      task.status === 'bidding';
+  });
 }
 
 export default function Submit() {
@@ -141,6 +151,20 @@ export default function Submit() {
       const standardUrl = product?.auctionId
         ? `https://auctions.yahoo.co.jp/jp/auction/${product.auctionId}`
         : url;
+      const auctionId = product?.auctionId || extractAuctionId(standardUrl);
+      if (selectedStrategy !== 'direct' && auctionId) {
+        const taskRes = await getTaskList({ limit: 100 });
+        const tasks = taskRes.data?.data || [];
+        if (hasDirectBiddingRecord(tasks, auctionId)) {
+          const confirmed = await Dialog.confirm({
+            title: '已有即时拍出价',
+            content: '该商品已有“即时拍”出价，是否继续提交新的策略？',
+            confirmText: '继续提交',
+            cancelText: '取消'
+          });
+          if (!confirmed) return;
+        }
+      }
       // Include product data so server can save title/image_url
       await submitTask({
         product_url: standardUrl,

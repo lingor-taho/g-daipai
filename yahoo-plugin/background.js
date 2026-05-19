@@ -37,13 +37,15 @@ async function fetchPendingTask() {
 
 async function markTaskStatus(taskId, status, errorMsg = null, extra = {}) {
   try {
-    await apiFetch(`/api/plugin/task/${taskId}/status`, {
+    const res = await apiFetch(`/api/plugin/task/${taskId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, error_msg: errorMsg, ...extra })
     });
+    return await res.json().catch(() => ({ success: res.ok }));
   } catch (e) {
     console.error('[Yahoo Bid] Failed to update task status:', e);
+    return null;
   }
 }
 
@@ -442,7 +444,11 @@ async function pollAndExecute() {
       console.log('[Yahoo Bid] ִ������:', task.product_url);
       let taskTab = null;
       try {
-        await markTaskStatus(task.id, 'processing');
+        const markedProcessing = await markTaskStatus(task.id, 'processing');
+        if (!markedProcessing?.success) {
+          console.log('[Yahoo Bid] Task skipped because it is no longer active:', task.id);
+          return;
+        }
         taskTab = await openTaskPage(task);
         const tab = taskTab;
         await injectContentScript(tab.id);

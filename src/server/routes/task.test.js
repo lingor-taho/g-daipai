@@ -8,7 +8,11 @@ const {
   getMinMultiBidIncrement,
   getDefaultMultiBidIncrement,
   validateMultiBidIncrement,
-  assertProductSubmissionOwner
+  assertProductSubmissionOwner,
+  isAutomaticStrategy,
+  isActiveAutomaticStrategy,
+  canCancelTask,
+  assertNoActiveAutomaticStrategy
 } = require('./task');
 
 function testSubmitUsesAuthenticatedUserId() {
@@ -160,6 +164,43 @@ function testProductSubmissionOwnerRejectsOtherUser() {
   );
 }
 
+function testAutomaticStrategyDetection() {
+  assert.equal(isAutomaticStrategy('direct'), false);
+  assert.equal(isAutomaticStrategy('buyout'), false);
+  assert.equal(isAutomaticStrategy('2min'), true);
+  assert.equal(isAutomaticStrategy('multi_bid'), true);
+}
+
+function testActiveAutomaticStrategyDetection() {
+  assert.equal(isActiveAutomaticStrategy({ strategy: '2min', status: 'pending' }), true);
+  assert.equal(isActiveAutomaticStrategy({ strategy: '2min', status: 'processing' }), true);
+  assert.equal(isActiveAutomaticStrategy({ strategy: '2min', status: 'bidding' }), false);
+  assert.equal(isActiveAutomaticStrategy({ strategy: 'multi_bid', status: 'bidding' }), true);
+  assert.equal(isActiveAutomaticStrategy({ strategy: 'multi_bid', status: 'cancelled' }), false);
+  assert.equal(isActiveAutomaticStrategy({ strategy: 'direct', status: 'pending' }), false);
+}
+
+function testCancelOnlyActiveAutomaticTasks() {
+  assert.equal(canCancelTask({ strategy: '2min', status: 'pending' }), true);
+  assert.equal(canCancelTask({ strategy: 'multi_bid', status: 'bidding' }), true);
+  assert.equal(canCancelTask({ strategy: 'direct', status: 'pending' }), false);
+  assert.equal(canCancelTask({ strategy: '2min', status: 'bidding' }), false);
+  assert.equal(canCancelTask({ strategy: 'multi_bid', status: 'success' }), false);
+}
+
+function testActiveAutomaticStrategyBlocksNewSubmission() {
+  assert.throws(
+    () => assertNoActiveAutomaticStrategy({ strategy: '2min', status: 'pending' }),
+    /该商品已有生效策略，请先终止后再提交新任务/
+  );
+  assert.throws(
+    () => assertNoActiveAutomaticStrategy({ strategy: 'multi_bid', status: 'bidding' }),
+    /该商品已有生效策略，请先终止后再提交新任务/
+  );
+  assert.doesNotThrow(() => assertNoActiveAutomaticStrategy({ strategy: 'direct', status: 'bidding' }));
+  assert.doesNotThrow(() => assertNoActiveAutomaticStrategy({ strategy: '2min', status: 'cancelled' }));
+}
+
 testSubmitUsesAuthenticatedUserId();
 testSubmitAcceptsBuyoutMode();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
@@ -171,3 +212,7 @@ testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500();
 testMultiBidIncrementUsesOneTwentiethRule();
 testProductSubmissionOwnerAllowsOriginalUser();
 testProductSubmissionOwnerRejectsOtherUser();
+testAutomaticStrategyDetection();
+testActiveAutomaticStrategyDetection();
+testCancelOnlyActiveAutomaticTasks();
+testActiveAutomaticStrategyBlocksNewSubmission();

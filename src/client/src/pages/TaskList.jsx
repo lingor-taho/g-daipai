@@ -1,13 +1,14 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
-import { List, Tag, SpinLoading } from 'antd-mobile';
-import { getTaskList, getTaskStats } from '../utils/api';
+import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
+import { cancelTask, getTaskList, getTaskStats } from '../utils/api';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
   processing: { label: '执行中', color: 'warning' },
   bidding: { label: '已出价', color: 'primary' },
   success: { label: '成功', color: 'success' },
-  failed: { label: '出价失败', color: 'danger' }
+  failed: { label: '出价失败', color: 'danger' },
+  cancelled: { label: '已终止', color: 'default' }
 };
 
 const STRATEGY_LABELS = {
@@ -23,10 +24,17 @@ function formatJPY(value) {
   return `${Number(value || 0).toLocaleString('ja-JP')}円`;
 }
 
+function canCancelTask(task) {
+  if (!task || task.strategy === 'direct') return false;
+  if (task.status === 'pending') return true;
+  return task.status === 'bidding' && task.strategy === 'multi_bid';
+}
+
 export default function TaskList({ limit = 10, embedded = false }) {
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [cancellingId, setCancellingId] = useState(null);
 
   const fetchTasks = useCallback(() => {
     Promise.all([
@@ -50,6 +58,26 @@ export default function TaskList({ limit = 10, embedded = false }) {
     return () => clearInterval(interval);
   }, [fetchTasks]);
 
+  async function handleCancel(task) {
+    const confirmed = await Dialog.confirm({
+      title: '终止任务',
+      content: '终止后该策略不会再进行后续自动操作，是否确认？',
+      confirmText: '终止',
+      cancelText: '取消'
+    });
+    if (!confirmed) return;
+    setCancellingId(task.id);
+    try {
+      await cancelTask(task.id);
+      Toast.show({ content: '任务已终止' });
+      fetchTasks();
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '终止失败' });
+    } finally {
+      setCancellingId(null);
+    }
+  }
+
   if (loading) return <div style={{ padding: 32, textAlign: 'center' }}><SpinLoading /></div>;
 
   return (
@@ -63,6 +91,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
             ['已出价', stats.bidding],
             ['成功', stats.success],
             ['出价失败', stats.failed],
+            ['已终止', stats.cancelled],
           ].map(([label, value]) => (
             <div key={label} style={{ background: '#fff', border: '1px solid #eee', borderRadius: 8, padding: 10 }}>
               <div style={{ fontSize: 12, color: '#666' }}>{label}</div>
@@ -79,9 +108,25 @@ export default function TaskList({ limit = 10, embedded = false }) {
           const auctionId = task.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || task.product_id;
           const strategyLabel = STRATEGY_LABELS[task.strategy] || task.strategy || '即时拍';
           const maxPrice = task.user_max_price || task.max_price;
+          const cancelable = canCancelTask(task);
           return (
             <List.Item key={task.id}
-              extra={<Tag color={s.color}>{s.label}</Tag>}
+              extra={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Tag color={s.color}>{s.label}</Tag>
+                  {cancelable && (
+                    <Button
+                      size="mini"
+                      color="danger"
+                      fill="outline"
+                      loading={cancellingId === task.id}
+                      onClick={() => handleCancel(task)}
+                    >
+                      终止
+                    </Button>
+                  )}
+                </div>
+              }
               description={
                 <div style={{ fontSize: 12, color: '#666' }}>
                   ID: {auctionId}，策略: {strategyLabel}，最高出价：{formatJPY(maxPrice)}

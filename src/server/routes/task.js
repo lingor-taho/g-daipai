@@ -84,6 +84,29 @@ function validateMultiBidIncrement(strategy, userMaxPrice, increment) {
   return Math.floor(value);
 }
 
+function isAutomaticStrategy(strategy) {
+  return Boolean(strategy && strategy !== 'direct' && strategy !== 'buyout');
+}
+
+function isActiveAutomaticStrategy(task) {
+  if (!task || !isAutomaticStrategy(task.strategy)) return false;
+  if (task.status === 'pending' || task.status === 'processing') return true;
+  return task.status === 'bidding' && task.strategy === 'multi_bid';
+}
+
+function canCancelTask(task) {
+  if (!task || !isAutomaticStrategy(task.strategy)) return false;
+  if (task.status === 'pending') return true;
+  return task.status === 'bidding' && task.strategy === 'multi_bid';
+}
+
+function assertNoActiveAutomaticStrategy(existingTask) {
+  if (!isActiveAutomaticStrategy(existingTask)) return;
+  const error = new Error('该商品已有生效策略，请先终止后再提交新任务');
+  error.statusCode = 409;
+  throw error;
+}
+
 function assertProductSubmissionOwner(existingTask, userId) {
   if (!existingTask) return;
   if (Number(existingTask.user_id) === Number(userId)) return;
@@ -107,6 +130,20 @@ router.post('/submit', async (req, res) => {
       [input.productId]
     );
     assertProductSubmissionOwner(existingTask, input.userId);
+    const activeAutomaticTask = await db.getOne(
+      `SELECT id, strategy, status
+       FROM tasks
+       WHERE product_id = ?
+         AND user_id = ?
+         AND (
+           (strategy != 'direct' AND status IN ('pending', 'processing'))
+           OR (strategy = 'multi_bid' AND status = 'bidding')
+         )
+       ORDER BY id DESC
+       LIMIT 1`,
+      [input.productId, input.userId]
+    );
+    assertNoActiveAutomaticStrategy(activeAutomaticTask);
 
     let productInfo = null;
     if (!end_time || !product_title || !product_image_url || !current_price || !tax_type) {
@@ -204,6 +241,36 @@ router.patch('/:id/max_price', async (req, res) => {
   }
 });
 
+// PATCH /api/task/:id/cancel - 终止还未完成的自动策略
+router.patch('/:id/cancel', async (req, res) => {
+  try {
+    const task = await db.getOne(
+      'SELECT id, strategy, status FROM tasks WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
+    if (!task) return res.status(404).json({ error: 'task not found' });
+    if (!canCancelTask(task)) {
+      return res.status(400).json({ error: '该任务当前状态不能终止' });
+    }
+    await db.query(
+      `UPDATE tasks
+       SET status = 'cancelled',
+           error_msg = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND user_id = ?
+         AND (
+           (strategy != 'direct' AND status = 'pending')
+           OR (strategy = 'multi_bid' AND status = 'bidding')
+         )`,
+      [req.params.id, req.user.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 module.exports.buildSubmitTaskInput = buildSubmitTaskInput;
 module.exports.buildTaskListInput = buildTaskListInput;
@@ -214,4 +281,7 @@ module.exports.getMinMultiBidIncrement = getMinMultiBidIncrement;
 module.exports.getDefaultMultiBidIncrement = getDefaultMultiBidIncrement;
 module.exports.validateMultiBidIncrement = validateMultiBidIncrement;
 module.exports.assertProductSubmissionOwner = assertProductSubmissionOwner;
-
+module.exports.isAutomaticStrategy = isAutomaticStrategy;
+module.exports.isActiveAutomaticStrategy = isActiveAutomaticStrategy;
+module.exports.canCancelTask = canCancelTask;
+module.exports.assertNoActiveAutomaticStrategy = assertNoActiveAutomaticStrategy;

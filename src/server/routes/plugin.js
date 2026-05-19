@@ -199,7 +199,7 @@ router.patch('/task/:id/status', async (req, res) => {
   }
 
   if (status === 'bidding') {
-    await db.query(
+    const result = await db.query(
       `UPDATE tasks
        SET status = ?,
            error_msg = ?,
@@ -207,27 +207,30 @@ router.patch('/task/:id/status', async (req, res) => {
            last_bid_at = CURRENT_TIMESTAMP,
            is_highest_bidder = CASE WHEN ? THEN 0 ELSE 1 END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       WHERE id = ?
+         AND status != 'cancelled'`,
       [status, error_msg || null, no_bid ? 1 : 0, not_highest ? 1 : 0, req.params.id]
     );
-    if (bid_price) {
+    if (result.rowCount > 0 && bid_price) {
       await db.query(
         'INSERT INTO bid_logs (task_id, bid_price, result) VALUES (?, ?, ?)',
         [req.params.id, normalizeYenAmount(bid_price), 'bidding']
       );
     }
+    return res.json({ success: result.rowCount > 0 });
   } else {
-    await db.query(
+    const result = await db.query(
       `UPDATE tasks
        SET status = ?,
            error_msg = ?,
            is_highest_bidder = CASE WHEN ? = 'failed' THEN 0 ELSE is_highest_bidder END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       WHERE id = ?
+         AND status != 'cancelled'`,
       [status, error_msg || null, status, req.params.id]
     );
+    return res.json({ success: result.rowCount > 0 });
   }
-  res.json({ success: true });
 });
 
 router.patch('/task/:id/touch', async (req, res) => {
@@ -237,7 +240,8 @@ router.patch('/task/:id/touch', async (req, res) => {
      SET status = COALESCE(?, status),
          last_bid_at = CURRENT_TIMESTAMP,
          updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
+     WHERE id = ?
+       AND status != 'cancelled'`,
     [allowedStatus, req.params.id]
   );
   res.json({ success: true });
@@ -335,7 +339,8 @@ router.patch('/task/:id/snapshot', async (req, res) => {
          end_time = COALESCE(?, end_time),
          status = COALESCE(?, status),
          updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
+     WHERE id = ?
+       AND status != 'cancelled'`,
     [
       product_title || null,
       product_image_url || null,
