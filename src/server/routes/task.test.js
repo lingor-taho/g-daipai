@@ -2,6 +2,8 @@ const assert = require('assert/strict');
 const {
   buildSubmitTaskInput,
   buildTaskListInput,
+  buildActiveBiddingTaskListInput,
+  buildWonTaskListInput,
   calculateBidMaxPrice,
   getTaxIncludedPrice,
   validateMultiBidUserMaxPrice,
@@ -122,6 +124,20 @@ function testTaskListUsesAuthenticatedUserId() {
   assert.equal(input.userId, 9);
 }
 
+function testWonTaskListUsesAuthenticatedUserIdAndCapsLimit() {
+  const input = buildWonTaskListInput({ id: 9 }, { limit: '999' });
+  assert.equal(input.userId, 9);
+  assert.equal(input.limit, 100);
+  assert.throws(() => buildWonTaskListInput(null, {}), /not logged in/);
+}
+
+function testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit() {
+  const input = buildActiveBiddingTaskListInput({ id: 9 }, { limit: '999' });
+  assert.equal(input.userId, 9);
+  assert.equal(input.limit, 100);
+  assert.throws(() => buildActiveBiddingTaskListInput(null, {}), /not logged in/);
+}
+
 function testStoreUserMaxPriceConvertsToTaxExcludedBidMax() {
   assert.equal(calculateBidMaxPrice(1000, 'tax_included'), 900);
   assert.equal(calculateBidMaxPrice(1100, 'tax_included'), 1000);
@@ -206,6 +222,8 @@ testSubmitAcceptsBuyoutMode();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
 testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
+testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
+testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
 testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500();

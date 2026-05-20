@@ -10,7 +10,8 @@ const {
   sweepPendingTasks,
   getMultiBidStartMs,
   getMultiBidIntervalMs,
-  isMultiBidTask
+  isMultiBidTask,
+  syncBiddingItems
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -190,6 +191,32 @@ async function testSweepPendingTasksIncludesProcessingResets() {
   assert.deepEqual(result, { overdue: 1, pricedOut: 2, processingReset: 3, total: 6 });
 }
 
+async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncBiddingItems([
+    { productId: 'a123456789', title: 'A', price: '1,200', url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789', status: 'highest' },
+    { productId: 'b123456789', title: 'B', price: '1,500', url: 'https://auctions.yahoo.co.jp/jp/auction/b123456789', status: 'outbid' }
+  ], fakeDb);
+
+  assert.deepEqual(result, { highest: 1, outbid: 1, total: 2 });
+  assert.match(calls[0].sql, /UPDATE bidding_items/);
+  assert.match(calls[1].sql, /INSERT INTO bidding_items/);
+  assert.equal(calls[1].params[0], 'a123456789');
+  assert.equal(calls[1].params[5], 'highest');
+  assert.match(calls[2].sql, /is_highest_bidder = 1/);
+  assert.match(calls[2].sql, /status = 'bidding'/);
+  assert.equal(calls[2].params.at(-1), 'a123456789');
+  assert.match(calls[4].sql, /is_highest_bidder = 0/);
+  assert.equal(calls[4].params.at(-1), 'b123456789');
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -204,3 +231,4 @@ testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
 testSweepPendingTasksIncludesProcessingResets();
+testSyncBiddingItemsMarksHighestAndOutbidTasks();

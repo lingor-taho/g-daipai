@@ -142,12 +142,13 @@ async function sweepPendingTasks(database = db, nowMs = Date.now()) {
 
 async function getMultiBidConfig(database = db) {
   const rows = await database.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
     multiBidStartHours: Number(values.multi_bid_start_hours || 0.5),
-    multiBidIntervalMinutes: Number(values.multi_bid_interval_minutes || 5)
+    multiBidIntervalMinutes: Number(values.multi_bid_interval_minutes || 5),
+    idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5)
   };
 }
 
@@ -289,6 +290,108 @@ async function upsertOrderFromTask(taskId, options = {}) {
   }
 }
 
+function normalizeBiddingStatus(value) {
+  return value === 'highest' || value === 'outbid' ? value : null;
+}
+
+async function syncBiddingItems(items, database = db) {
+  const biddingItems = Array.isArray(items) ? items : [];
+  let highest = 0;
+  let outbid = 0;
+
+  await database.query(
+    `UPDATE bidding_items
+     SET status = 'stale',
+         updated_at = CURRENT_TIMESTAMP`
+  );
+
+  for (const item of biddingItems) {
+    const match = String(item.url || item.productId || '').match(/[a-zA-Z]?\d{8,10}/);
+    if (!match) continue;
+    const productId = match[0].toLowerCase();
+    const itemStatus = normalizeBiddingStatus(item.status);
+    if (!itemStatus) continue;
+    const currentPrice = normalizeYenAmount(item.price);
+
+    await database.query(
+      `INSERT INTO bidding_items (
+         product_id,
+         product_url,
+         product_title,
+         product_image_url,
+         current_price,
+         status,
+         synced_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(product_id) DO UPDATE SET
+         product_url = excluded.product_url,
+         product_title = excluded.product_title,
+         product_image_url = excluded.product_image_url,
+         current_price = excluded.current_price,
+         status = excluded.status,
+         synced_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        productId,
+        item.url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+        item.title || null,
+        item.imageUrl || null,
+        currentPrice,
+        itemStatus
+      ]
+    );
+
+    if (itemStatus === 'highest') {
+      const result = await database.query(
+        `UPDATE tasks
+         SET status = 'bidding',
+             is_highest_bidder = 1,
+             product_title = COALESCE(?, product_title),
+             product_image_url = COALESCE(?, product_image_url),
+             current_price = COALESCE(?, current_price),
+             error_msg = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE product_id = ?
+           AND status IN ('bidding', 'success')`,
+        [
+          item.title || null,
+          item.imageUrl || null,
+          currentPrice,
+          productId
+        ]
+      );
+      highest += 1;
+    } else {
+      await database.query(
+        `UPDATE tasks
+         SET is_highest_bidder = 0,
+             current_price = COALESCE(?, current_price),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE product_id = ?
+           AND status = 'bidding'`,
+        [currentPrice, productId]
+      );
+      outbid += 1;
+    }
+  }
+
+  return { highest, outbid, total: highest + outbid };
+}
+
+router.post('/bidding/sync', async (req, res) => {
+  const incomingItems = req.body?.items || req.body?.bidding || [];
+  const result = await syncBiddingItems(incomingItems);
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES ('last_bidding_sync_count', ?, CURRENT_TIMESTAMP)`,
+    [String(Array.isArray(incomingItems) ? incomingItems.length : 0)]
+  );
+  await setYahooLoginStatus('ok');
+  res.json({ success: true, ...result });
+});
+
 router.post('/orders/sync', async (req, res) => {
   const orders = Array.isArray(req.body?.orders) ? req.body.orders : [];
   let updated = 0;
@@ -364,7 +467,8 @@ router.get('/config', async (req, res) => {
     workerIntervalMs: parseInt(intervalMs?.value || '10000'),
     jpyToCnyRate: parseFloat(rate?.rate || '0.049'),
     multiBidStartHours: multiBidConfig.multiBidStartHours,
-    multiBidIntervalMinutes: multiBidConfig.multiBidIntervalMinutes
+    multiBidIntervalMinutes: multiBidConfig.multiBidIntervalMinutes,
+    idleSyncIntervalMinutes: multiBidConfig.idleSyncIntervalMinutes
   });
 });
 
@@ -382,3 +486,4 @@ module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
 module.exports.sweepPendingTasks = sweepPendingTasks;
 module.exports.isYahooLoginError = isYahooLoginError;
+module.exports.syncBiddingItems = syncBiddingItems;

@@ -354,12 +354,13 @@ router.put('/finance-config', async (req, res) => {
 
 async function getMultiBidConfig() {
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
     startHours: Number(values.multi_bid_start_hours || 0.5),
-    intervalMinutes: Number(values.multi_bid_interval_minutes || 5)
+    intervalMinutes: Number(values.multi_bid_interval_minutes || 5),
+    idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5)
   };
 }
 
@@ -370,11 +371,15 @@ router.get('/multi-bid-config', async (req, res) => {
 router.put('/multi-bid-config', async (req, res) => {
   const startHours = Number(req.body.startHours);
   const intervalMinutes = Number(req.body.intervalMinutes);
+  const idleSyncIntervalMinutes = Number(req.body.idleSyncIntervalMinutes ?? 5);
   if (!Number.isFinite(startHours) || startHours <= 0) {
     return res.status(400).json({ error: 'valid startHours is required' });
   }
   if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
     return res.status(400).json({ error: 'valid intervalMinutes is required' });
+  }
+  if (!Number.isFinite(idleSyncIntervalMinutes) || idleSyncIntervalMinutes <= 0) {
+    return res.status(400).json({ error: 'valid idleSyncIntervalMinutes is required' });
   }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_start_hours', ?, CURRENT_TIMESTAMP)`,
@@ -384,7 +389,11 @@ router.put('/multi-bid-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_interval_minutes', ?, CURRENT_TIMESTAMP)`,
     [String(intervalMinutes)]
   );
-  res.json({ success: true, startHours, intervalMinutes });
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('idle_sync_interval_minutes', ?, CURRENT_TIMESTAMP)`,
+    [String(idleSyncIntervalMinutes)]
+  );
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes });
 });
 
 // 操作日志

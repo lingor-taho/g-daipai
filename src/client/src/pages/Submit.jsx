@@ -2,6 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog } from 'antd-mobile';
 import { getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
 import ProductCard from '../components/ProductCard';
+import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
 
 function extractAuctionId(input) {
@@ -194,6 +195,7 @@ export default function Submit() {
 
   return (
     <div style={{ padding: 16 }}>
+      <UserNav />
       <List header="提交竞拍任务">
         <List.Item>
           <Input

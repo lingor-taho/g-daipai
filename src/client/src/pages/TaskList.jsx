@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
 import { cancelTask, getTaskList, getTaskStats } from '../utils/api';
+import UserNav from '../components/UserNav';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -28,6 +29,12 @@ function canCancelTask(task) {
   if (!task || task.strategy === 'direct') return false;
   if (task.status === 'pending') return true;
   return task.status === 'bidding' && task.strategy === 'multi_bid';
+}
+
+function getStrategyTextStyle(strategy) {
+  if (strategy === 'multi_bid') return { color: '#2563eb', fontWeight: 600 };
+  if (/^\d+min$/.test(strategy || '')) return { color: '#7c3aed', fontWeight: 600 };
+  return { color: '#4b5563', fontWeight: 600 };
 }
 
 export default function TaskList({ limit = 10, embedded = false }) {
@@ -82,6 +89,11 @@ export default function TaskList({ limit = 10, embedded = false }) {
 
   return (
     <>
+      {!embedded && (
+        <div style={{ padding: 16, paddingBottom: 0 }}>
+          <UserNav />
+        </div>
+      )}
       {stats && (
         <div style={{ margin: '12px 0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
           {[
@@ -129,7 +141,8 @@ export default function TaskList({ limit = 10, embedded = false }) {
               }
               description={
                 <div style={{ fontSize: 12, color: '#666' }}>
-                  ID: {auctionId}，策略: {strategyLabel}，最高出价：{formatJPY(maxPrice)}
+                  ID: {auctionId}，策略: <span style={getStrategyTextStyle(task.strategy)}>{strategyLabel}</span>，最高出价：
+                  <span style={{ color: '#dc2626', fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
                 </div>
               }
             >

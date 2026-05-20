@@ -26,6 +26,7 @@ function loadBackgroundForTest() {
         async create() { return { id: 1 }; },
         async get(id) { return { id }; },
         async update(id) { return { id }; },
+        async sendMessage() { return { success: true, items: [], orders: [] }; },
         async remove() {},
         onRemoved: { addListener() {} }
       },

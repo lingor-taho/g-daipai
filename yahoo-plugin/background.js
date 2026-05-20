@@ -5,6 +5,8 @@ const AUTO_BID_ENABLED = true;
 
 let isRunning = false;
 let fetchFailureCount = 0;
+let idleSyncIntervalMs = 5 * 60 * 1000;
+let lastIdleSyncAt = 0;
 const managedTaskTabs = new Set();
 const managedTaskTabsByTaskId = new Map();
 
@@ -421,13 +423,73 @@ async function syncOrderHistory(orders) {
   }
 }
 
+async function syncBiddingItems(items) {
+  if (!Array.isArray(items)) return;
+  try {
+    await apiFetch('/api/plugin/bidding/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    });
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to sync bidding items:', e);
+  }
+}
+
+async function refreshPluginConfig() {
+  try {
+    const res = await apiFetch('/api/plugin/config');
+    const config = await res.json();
+    const intervalMinutes = Number(config?.idleSyncIntervalMinutes || 5);
+    idleSyncIntervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
+  } catch (e) {
+    console.warn('[Yahoo Bid] Failed to refresh plugin config:', e.message || e);
+  }
+}
+
 async function openWonPageForSync() {
   const [existingTab] = await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/won*' });
   const tab = existingTab
-    ? await chrome.tabs.update(existingTab.id, { active: false })
+    ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/won', active: false })
     : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/won', active: false });
+  if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
   await sleep(3000);
   await injectContentScript(tab.id);
+  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ORDER_HISTORY' }).catch(error => {
+    console.error('[Yahoo Bid] Failed to extract order history:', error);
+    return null;
+  });
+  if (response?.success) {
+    await syncOrderHistory(response.orders || []);
+  }
+}
+
+async function openBiddingPageForSync() {
+  const [existingTab] = await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/bidding*' });
+  const tab = existingTab
+    ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/bidding', active: false })
+    : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/bidding', active: false });
+  if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+  await sleep(3000);
+  await injectContentScript(tab.id);
+  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
+    console.error('[Yahoo Bid] Failed to extract bidding items:', error);
+    return null;
+  });
+  if (response?.success) {
+    await syncBiddingItems(response.items || []);
+  }
+}
+
+async function syncIdleYahooPages() {
+  await refreshPluginConfig();
+  const now = Date.now();
+  if (now - lastIdleSyncAt < idleSyncIntervalMs) {
+    return;
+  }
+  lastIdleSyncAt = now;
+  await openBiddingPageForSync();
+  await openWonPageForSync();
 }
 
 async function pollAndExecute() {
@@ -477,7 +539,7 @@ async function pollAndExecute() {
       }
     } else {
       await chrome.storage.session.remove(['currentTask']);
-      await openWonPageForSync();
+      await syncIdleYahooPages();
       console.log('[Yahoo Bid] No pending tasks, polling again in', POLL_INTERVAL_MS / 1000, 's');
     }
   } finally {
@@ -547,6 +609,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   } else if (msg.type === 'ORDER_HISTORY') {
     syncOrderHistory(msg.orders);
+  } else if (msg.type === 'BIDDING_ITEMS') {
+    syncBiddingItems(msg.items);
   } else if (msg.type === 'GET_PRODUCT') {
     // Client page asking for cached product data
     const { auctionId } = msg;

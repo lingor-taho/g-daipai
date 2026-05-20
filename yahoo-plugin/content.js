@@ -1,7 +1,8 @@
 // content.js - Injected into Yahoo Auction pages
 
 (() => {
-if (window.__G_DAIPAI_CONTENT_LOADED__) {
+const isYahooSyncPage = /\/my\/(?:bidding|won)/.test(window.location.pathname);
+if (window.__G_DAIPAI_CONTENT_LOADED__ && !isYahooSyncPage) {
   return;
 }
 window.__G_DAIPAI_CONTENT_LOADED__ = true;
@@ -714,6 +715,90 @@ function extractOrderHistory() {
   return orders;
 }
 
+function extractBiddingItems() {
+  function isBiddingStatusText(value) {
+    return /\u6700\u9ad8\u984d\u3067\u5165\u672d\u4e2d|\u9ad8\u5024\u66f4\u65b0|\u518d\u5165\u672d\u3059\u308b/.test(String(value || ''));
+  }
+
+  function cleanupBiddingTitle(value, productId = '') {
+    const lines = String(value || '')
+      .replace(/\u6700\u9ad8\u984d\u3067\u5165\u672d\u4e2d|\u9ad8\u5024\u66f4\u65b0|\u518d\u5165\u672d\u3059\u308b/g, '\n')
+      .replace(/[\d,]+\s*(?:\u5186|JPY)/gi, '\n')
+      .split(/\s*\n+\s*|\s{2,}/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .filter(line => !isBiddingStatusText(line))
+      .filter(line => !/^[\d,]+\s*(?:\u5186|JPY)$/i.test(line))
+      .filter(line => !/^\d+\s*$/.test(line))
+      .filter(line => line.toLowerCase() !== String(productId || '').toLowerCase());
+
+    return lines.find(line => line.length >= 4) || lines[0] || '';
+  }
+
+  function extractBiddingPrice(text) {
+    const value = String(text || '');
+    const currentMatch = value.match(/\u73fe\u5728[\s\S]{0,120}?([\d,]+)\s*(?:\u5186|JPY)/i);
+    if (currentMatch) {
+      return currentMatch[1].replace(/,/g, '');
+    }
+
+    const matches = [...value.matchAll(/([\d,]+)\s*(?:\u5186|JPY)/gi)]
+      .map(match => parseInt(match[1].replace(/,/g, ''), 10))
+      .filter(amount => Number.isFinite(amount) && amount > 0);
+    return matches.length ? String(matches[0]) : '';
+  }
+
+  const seen = new Set();
+  const items = [];
+  const links = [...document.querySelectorAll('a[href*="/jp/auction/"]')]
+    .filter(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
+
+  for (const link of links) {
+    const match = link.href.match(/[a-zA-Z]?\d{8,10}/);
+    if (!match) continue;
+    const productId = match[0].toLowerCase();
+    if (seen.has(productId)) continue;
+
+    let item = link;
+    let matchedItem = null;
+    let depth = 0;
+    while (item && item !== document.body && depth < 10) {
+      const candidateText = item.textContent || '';
+      if (/\u6700\u9ad8\u984d\u3067\u5165\u672d\u4e2d|\u9ad8\u5024\u66f4\u65b0|\u518d\u5165\u672d\u3059\u308b/.test(candidateText)) {
+        matchedItem = item;
+        if (/\u73fe\u5728[\s\S]{0,120}?[\d,]+(?:\s|\u00a0)*(?:\u5186|JPY)/i.test(candidateText)) {
+          break;
+        }
+      }
+      item = item.parentElement;
+      depth += 1;
+    }
+    item = matchedItem;
+    if (!item || item === document.body) continue;
+
+    const text = item.textContent || '';
+    const hasHighestMark = /\u6700\u9ad8\u984d\u3067\u5165\u672d\u4e2d/.test(text);
+    const hasOutbidMark = /\u9ad8\u5024\u66f4\u65b0/.test(text);
+    const hasRebidButton = /\u518d\u5165\u672d\u3059\u308b/.test(text);
+    if (!hasHighestMark && !hasOutbidMark) continue;
+
+    seen.add(productId);
+    const image = item.querySelector('img');
+    const title = cleanupBiddingTitle(image?.alt, productId) ||
+      cleanupBiddingTitle(link.textContent, productId) ||
+      cleanupBiddingTitle(text, productId);
+    items.push({
+      productId,
+      title,
+      price: extractBiddingPrice(text),
+      url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+      imageUrl: image?.src || '',
+      status: hasHighestMark && !hasRebidButton ? 'highest' : 'outbid'
+    });
+  }
+  return items;
+}
+
 // Main: read task from storage and execute
 if (!CLIENT_ORIGINS.has(window.location.origin)) {
 getTaskData().then(taskData => {
@@ -741,6 +826,10 @@ getTaskData().then(taskData => {
       const orders = extractOrderHistory();
       chrome.runtime.sendMessage({ type: 'ORDER_HISTORY', orders });
       console.log('[Yahoo Bid] Order history:', orders);
+    } else if (window.location.href.includes('/my/bidding')) {
+      const items = extractBiddingItems();
+      chrome.runtime.sendMessage({ type: 'BIDDING_ITEMS', items });
+      console.log('[Yahoo Bid] Bidding items:', items);
     }
   }
 });
@@ -754,6 +843,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     } else {
       sendResponse({ error: 'current page is not the task product page' });
     }
+    return true;
+  }
+
+  if (msg.type === 'EXTRACT_BIDDING_ITEMS') {
+    sendResponse({ success: true, items: extractBiddingItems() });
+    return true;
+  }
+
+  if (msg.type === 'EXTRACT_ORDER_HISTORY') {
+    sendResponse({ success: true, orders: extractOrderHistory() });
     return true;
   }
 
@@ -778,6 +877,7 @@ window.__G_DAIPAI_TEST__ = {
   extractAutoBidLimit: () => extractAutoBidLimit(),
   extractProductData: () => extractProductData(),
   extractCurrentAuctionPrice: () => extractCurrentAuctionPrice(),
+  extractBiddingItems,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,
   validateUserMaxBidLimit,

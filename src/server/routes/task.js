@@ -120,6 +120,18 @@ function buildTaskListInput(user) {
   return { userId: user.id };
 }
 
+function buildWonTaskListInput(user, query = {}) {
+  if (!user?.id) throw new Error('not logged in');
+  const limit = Math.min(Math.max(parseInt(query.limit || '50', 10) || 50, 1), 100);
+  return { userId: user.id, limit };
+}
+
+function buildActiveBiddingTaskListInput(user, query = {}) {
+  if (!user?.id) throw new Error('not logged in');
+  const limit = Math.min(Math.max(parseInt(query.limit || '50', 10) || 50, 1), 100);
+  return { userId: user.id, limit };
+}
+
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
   const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, multi_bid_increment } = req.body;
@@ -216,6 +228,88 @@ router.get('/list', async (req, res) => {
   }
 });
 
+// GET /api/task/won - 用户落札商品列表
+router.get('/won', async (req, res) => {
+  try {
+    const input = buildWonTaskListInput(req.user, req.query);
+    const tasks = await db.getAll(
+      `SELECT
+         t.id,
+         t.product_id,
+         t.product_url,
+         t.product_title,
+         t.product_image_url,
+         t.current_price,
+         t.buyout_price,
+         t.tax_type,
+         t.max_price,
+         t.user_max_price,
+         t.strategy,
+         t.bid_mode,
+         t.status,
+         t.end_time,
+         t.updated_at,
+         o.final_price,
+         o.total_amount_cny,
+         o.handling_fee,
+         o.jpy_to_cny_rate,
+         o.order_status,
+         o.tracking_number
+       FROM tasks t
+       LEFT JOIN orders o ON o.task_id = t.id
+       WHERE t.user_id = ?
+         AND t.status = 'success'
+       ORDER BY datetime(t.updated_at) DESC, t.id DESC
+       LIMIT ?`,
+      [input.userId, input.limit]
+    );
+    res.json({ success: true, data: tasks });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/task/bidding - 用户入札中且当前最高价商品列表
+router.get('/bidding', async (req, res) => {
+  try {
+    const input = buildActiveBiddingTaskListInput(req.user, req.query);
+    const tasks = await db.getAll(
+      `SELECT
+         MAX(t.id) AS id,
+         bi.product_id,
+         bi.product_url,
+         bi.product_title,
+         bi.product_image_url,
+         bi.current_price,
+         MAX(t.buyout_price) AS buyout_price,
+         COALESCE(MAX(t.tax_type), 'tax_zero') AS tax_type,
+         MAX(t.max_price) AS max_price,
+         MAX(t.user_max_price) AS user_max_price,
+         COALESCE(
+           MAX(CASE WHEN t.strategy = 'multi_bid' THEN t.strategy END),
+           MAX(t.strategy)
+         ) AS strategy,
+         MAX(t.bid_mode) AS bid_mode,
+         'bidding' AS status,
+         MAX(t.end_time) AS end_time,
+         1 AS is_highest_bidder,
+         MAX(t.last_bid_at) AS last_bid_at,
+         bi.synced_at AS updated_at
+       FROM bidding_items bi
+       INNER JOIN tasks t ON t.product_id = bi.product_id
+       WHERE t.user_id = ?
+         AND bi.status = 'highest'
+       GROUP BY bi.product_id
+       ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
+       LIMIT ?`,
+      [input.userId, input.limit]
+    );
+    res.json({ success: true, data: tasks });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/task/:id - 任务详情
 router.get('/:id', async (req, res) => {
   try {
@@ -274,6 +368,8 @@ router.patch('/:id/cancel', async (req, res) => {
 module.exports = router;
 module.exports.buildSubmitTaskInput = buildSubmitTaskInput;
 module.exports.buildTaskListInput = buildTaskListInput;
+module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
+module.exports.buildWonTaskListInput = buildWonTaskListInput;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
 module.exports.getTaxIncludedPrice = getTaxIncludedPrice;
 module.exports.validateMultiBidUserMaxPrice = validateMultiBidUserMaxPrice;

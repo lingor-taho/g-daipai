@@ -9,7 +9,7 @@ const menuItems = [
   { key: '/tasks', label: <Link to="/tasks">任务报表</Link> },
   { key: '/users', label: <Link to="/users">用户账号管理</Link> },
   { key: '/server-accounts', label: <Link to="/server-accounts">服务器账号</Link> },
-  { key: '/multi-bid-settings', label: <Link to="/multi-bid-settings">多次加价设置</Link> },
+  { key: '/multi-bid-settings', label: <Link to="/multi-bid-settings">系统配置</Link> },
   { key: '/orders', label: <Link to="/orders">订单管理</Link> }
 ];
 

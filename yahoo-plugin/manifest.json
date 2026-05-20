@@ -7,6 +7,7 @@
     "http://127.0.0.1:3034/*",
     "http://localhost:3034/*",
     "https://*.yahoo.co.jp/*",
+    "https://auctions.yahoo.co.jp/*",
     "https://*.auctions.yahoo.co.jp/*"
   ],
   "background": {
@@ -16,6 +17,7 @@
   "content_scripts": [
     {
       "matches": [
+        "https://auctions.yahoo.co.jp/*",
         "https://*.auctions.yahoo.co.jp/*",
         "http://localhost:3001/*",
         "http://127.0.0.1:3001/*"

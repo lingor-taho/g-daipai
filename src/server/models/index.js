@@ -21,6 +21,20 @@ ensureColumn('tasks', 'tax_type', "VARCHAR(32) DEFAULT 'tax_zero'");
 ensureColumn('tasks', 'user_max_price', 'INTEGER');
 ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
 
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS bidding_items (
+    product_id VARCHAR(32) PRIMARY KEY,
+    product_url TEXT,
+    product_title VARCHAR(512),
+    product_image_url TEXT,
+    current_price INTEGER,
+    status VARCHAR(32) NOT NULL,
+    synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+
 module.exports = {
   db,
   async query(text, params) {

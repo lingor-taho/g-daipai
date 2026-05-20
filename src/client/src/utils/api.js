@@ -22,6 +22,8 @@ api.interceptors.response.use(
 export const login = (username, password) => api.post('/auth/login', { username, password });
 export const submitTask = (data) => api.post('/task/submit', data);
 export const getTaskList = (params) => api.get('/task/list', { params });
+export const getActiveBiddingTaskList = (params) => api.get('/task/bidding', { params });
+export const getWonTaskList = (params) => api.get('/task/won', { params });
 export const getTaskDetail = (id) => api.get(`/task/${id}`);
 export const cancelTask = (id) => api.patch(`/task/${id}/cancel`);
 export const getTaskStats = () => api.get('/admin/tasks/stats');

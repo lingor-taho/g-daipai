@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS bidding_items (
+  product_id VARCHAR(32) PRIMARY KEY,
+  product_url TEXT,
+  product_title VARCHAR(512),
+  product_image_url TEXT,
+  current_price INTEGER,
+  status VARCHAR(32) NOT NULL,
+  synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 汇率配置
 CREATE TABLE IF NOT EXISTS exchange_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
