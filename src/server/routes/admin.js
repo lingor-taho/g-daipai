@@ -50,41 +50,116 @@ router.get('/users', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
   const items = await db.getAll(
-    `SELECT id, username, role, created_at FROM users WHERE role = 'user' ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT u.id,
+            u.username,
+            u.role,
+            COALESCE(u.user_level, 1) AS user_level,
+            u.parent_user_id,
+            p.username AS parent_username,
+            COALESCE(p.user_level, 1) AS parent_user_level,
+            u.created_at
+     FROM users u
+     LEFT JOIN users p ON p.id = u.parent_user_id
+     WHERE u.role = 'user'
+     ORDER BY u.created_at DESC
+     LIMIT ? OFFSET ?`,
     [pageSize, offset]
   );
   const countResult = await db.getOne("SELECT COUNT(*) as total FROM users WHERE role = 'user'");
   res.json({ items, total: countResult?.total || 0 });
 });
 
+router.get('/users/options', async (req, res) => {
+  const items = await db.getAll(
+    `SELECT id, username, COALESCE(user_level, 1) AS user_level, parent_user_id
+     FROM users
+     WHERE role = 'user'
+     ORDER BY user_level DESC, username ASC`
+  );
+  res.json({ items });
+});
+
+async function normalizeClientUserHierarchy(userLevel, parentUserId, selfId = null) {
+  const level = Number(userLevel || 1);
+  const parentId = parentUserId === null || parentUserId === undefined || parentUserId === '' ? null : Number(parentUserId);
+  if (![1, 2, 3].includes(level)) {
+    const err = new Error('valid user_level is required');
+    err.status = 400;
+    throw err;
+  }
+  if (!parentId) return { userLevel: level, parentUserId: null };
+  if (String(parentId) === String(selfId)) {
+    const err = new Error('parent user cannot be self');
+    err.status = 400;
+    throw err;
+  }
+  const parent = await db.getOne(
+    "SELECT id, COALESCE(user_level, 1) AS user_level FROM users WHERE id = ? AND role = 'user'",
+    [parentId]
+  );
+  if (!parent) {
+    const err = new Error('parent user not found');
+    err.status = 400;
+    throw err;
+  }
+  if (Number(parent.user_level || 1) <= level) {
+    const err = new Error('parent user level must be higher than child level');
+    err.status = 400;
+    throw err;
+  }
+  return { userLevel: level, parentUserId: parentId };
+}
+
 router.post('/users', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, user_level, parent_user_id } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'username and password are required' });
   }
   const existing = await db.getOne('SELECT id FROM users WHERE username = ?', [username]);
   if (existing) return res.status(409).json({ error: 'username already exists' });
+  let hierarchy;
+  try {
+    hierarchy = await normalizeClientUserHierarchy(user_level, parent_user_id);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
   const hash = await bcrypt.hash(password, 10);
-  await db.query('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)', [username, hash, 'user']);
+  await db.query(
+    'INSERT INTO users (username, password_hash, role, user_level, parent_user_id) VALUES (?, ?, ?, ?, ?)',
+    [username, hash, 'user', hierarchy.userLevel, hierarchy.parentUserId]
+  );
   const inserted = await db.getOne('SELECT last_insert_rowid() as id');
   res.json({ success: true, id: inserted.id });
 });
 
 router.put('/users/:id', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, user_level, parent_user_id } = req.body;
   if (!username) return res.status(400).json({ error: 'username is required' });
   const existing = await db.getOne('SELECT id FROM users WHERE username = ? AND id != ?', [username, req.params.id]);
   if (existing) return res.status(409).json({ error: 'username already exists' });
+  let hierarchy;
+  try {
+    hierarchy = await normalizeClientUserHierarchy(user_level, parent_user_id, req.params.id);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
   if (password) {
     const hash = await bcrypt.hash(password, 10);
-    await db.query("UPDATE users SET username = ?, password_hash = ?, role = 'user' WHERE id = ? AND role = 'user'", [username, hash, req.params.id]);
+    await db.query(
+      "UPDATE users SET username = ?, password_hash = ?, role = 'user', user_level = ?, parent_user_id = ? WHERE id = ? AND role = 'user'",
+      [username, hash, hierarchy.userLevel, hierarchy.parentUserId, req.params.id]
+    );
   } else {
-    await db.query("UPDATE users SET username = ?, role = 'user' WHERE id = ? AND role = 'user'", [username, req.params.id]);
+    await db.query(
+      "UPDATE users SET username = ?, role = 'user', user_level = ?, parent_user_id = ? WHERE id = ? AND role = 'user'",
+      [username, hierarchy.userLevel, hierarchy.parentUserId, req.params.id]
+    );
   }
   res.json({ success: true });
 });
 
 router.delete('/users/:id', async (req, res) => {
+  await db.query("UPDATE users SET parent_user_id = NULL WHERE parent_user_id = ? AND role = 'user'", [req.params.id]);
   await db.query("DELETE FROM users WHERE id = ? AND role = 'user'", [req.params.id]);
   res.json({ success: true });
 });

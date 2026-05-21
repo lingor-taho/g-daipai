@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS users (
   username VARCHAR(64) UNIQUE NOT NULL,
   password_hash VARCHAR(256) NOT NULL,
   role VARCHAR(32) DEFAULT 'user',
+  user_level INTEGER DEFAULT 1,
+  parent_user_id INTEGER REFERENCES users(id),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
