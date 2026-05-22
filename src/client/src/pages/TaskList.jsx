@@ -61,8 +61,12 @@ export default function TaskList({ limit = 10, embedded = false }) {
 
   useEffect(() => {
     fetchTasks();
+    window.addEventListener('acting-user-change', fetchTasks);
     const interval = setInterval(fetchTasks, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      window.removeEventListener('acting-user-change', fetchTasks);
+      clearInterval(interval);
+    };
   }, [fetchTasks]);
 
   async function handleCancel(task) {

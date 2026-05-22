@@ -14,6 +14,9 @@ export default function Login() {
       const res = await login(username, password);
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('username', res.data.username);
+      localStorage.setItem('userLevel', String(res.data.userLevel || 1));
+      localStorage.removeItem('actingUserId');
+      localStorage.removeItem('actingUsername');
       navigate('/submit');
     } catch (e) {
       Toast.show({ content: e.response?.data?.error || '登录失败' });

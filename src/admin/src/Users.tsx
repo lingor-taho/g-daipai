@@ -58,8 +58,9 @@ export default function UsersPage() {
   }, []);
 
   const parentOptions = useMemo(() => {
+    if (Number(selectedLevel || 1) >= 3) return [];
     return userOptions
-      .filter(user => Number(user.user_level || 1) > Number(selectedLevel || 1))
+      .filter(user => Number(user.user_level || 1) === 2)
       .filter(user => !editing || String(user.id) !== String(editing.id))
       .map(user => {
         const level = getLevelMeta(user.user_level);

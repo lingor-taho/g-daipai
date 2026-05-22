@@ -88,6 +88,11 @@ async function normalizeClientUserHierarchy(userLevel, parentUserId, selfId = nu
     throw err;
   }
   if (!parentId) return { userLevel: level, parentUserId: null };
+  if (level >= 3) {
+    const err = new Error('client admin user cannot have parent user');
+    err.status = 400;
+    throw err;
+  }
   if (String(parentId) === String(selfId)) {
     const err = new Error('parent user cannot be self');
     err.status = 400;
@@ -102,8 +107,18 @@ async function normalizeClientUserHierarchy(userLevel, parentUserId, selfId = nu
     err.status = 400;
     throw err;
   }
-  if (Number(parent.user_level || 1) <= level) {
-    const err = new Error('parent user level must be higher than child level');
+  if (Number(parent.user_level || 1) !== 2) {
+    const err = new Error('parent user must be agent user');
+    err.status = 400;
+    throw err;
+  }
+  if (level === 1 && Number(parent.user_level || 1) !== 2) {
+    const err = new Error('normal user parent must be agent user');
+    err.status = 400;
+    throw err;
+  }
+  if (level === 2 && Number(parent.user_level || 1) !== 2) {
+    const err = new Error('agent user parent must be agent user');
     err.status = 400;
     throw err;
   }

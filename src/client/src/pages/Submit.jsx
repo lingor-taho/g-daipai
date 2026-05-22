@@ -73,6 +73,20 @@ export default function Submit() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    function handleActingUserChange() {
+      setUrl('');
+      setProduct(null);
+      setMaxPrice('');
+      setStrategy('direct');
+      setMultiBidIncrement('');
+      setBuyoutSelected(false);
+      setTaskListVersion(version => version + 1);
+    }
+    window.addEventListener('acting-user-change', handleActingUserChange);
+    return () => window.removeEventListener('acting-user-change', handleActingUserChange);
+  }, []);
+
   async function handleFetch() {
     if (!url) return;
     const auctionId = extractAuctionId(url);

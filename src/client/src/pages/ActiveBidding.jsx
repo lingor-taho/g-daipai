@@ -57,6 +57,8 @@ export default function ActiveBidding() {
 
   useEffect(() => {
     fetchItems();
+    window.addEventListener('acting-user-change', fetchItems);
+    return () => window.removeEventListener('acting-user-change', fetchItems);
   }, []);
 
   return (

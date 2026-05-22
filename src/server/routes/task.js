@@ -3,7 +3,9 @@ const router = express.Router();
 const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
+const { actingUserMiddleware } = require('../services/actingUser');
 router.use(authMiddleware);
+router.use(actingUserMiddleware);
 
 /**
  * 从任意 URL 中提取 Yahoo Auction ID
@@ -137,6 +139,7 @@ router.post('/submit', async (req, res) => {
   const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, multi_bid_increment } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
+    input.userId = req.actingUser.id;
     const existingTask = await db.getOne(
       'SELECT id, user_id FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1',
       [input.productId]
@@ -217,6 +220,7 @@ router.post('/submit', async (req, res) => {
 router.get('/list', async (req, res) => {
   try {
     const input = buildTaskListInput(req.user);
+    input.userId = req.actingUser.id;
     const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
     const tasks = await db.getAll(
       'SELECT id, product_id, product_url, product_title, current_price, buyout_price, tax_type, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, end_time, is_highest_bidder FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
@@ -228,10 +232,36 @@ router.get('/list', async (req, res) => {
   }
 });
 
+router.get('/stats', async (req, res) => {
+  try {
+    const rows = await db.getAll(
+      'SELECT status, COUNT(*) AS count FROM tasks WHERE user_id = ? GROUP BY status',
+      [req.actingUser.id]
+    );
+    const stats = {
+      total: 0,
+      pending: 0,
+      processing: 0,
+      bidding: 0,
+      success: 0,
+      failed: 0,
+      cancelled: 0
+    };
+    for (const row of rows) {
+      stats[row.status] = row.count;
+      stats.total += row.count;
+    }
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/task/won - 用户落札商品列表
 router.get('/won', async (req, res) => {
   try {
     const input = buildWonTaskListInput(req.user, req.query);
+    input.userId = req.actingUser.id;
     const tasks = await db.getAll(
       `SELECT
          t.id,
@@ -273,6 +303,7 @@ router.get('/won', async (req, res) => {
 router.get('/bidding', async (req, res) => {
   try {
     const input = buildActiveBiddingTaskListInput(req.user, req.query);
+    input.userId = req.actingUser.id;
     const tasks = await db.getAll(
       `SELECT
          MAX(t.id) AS id,
@@ -313,7 +344,7 @@ router.get('/bidding', async (req, res) => {
 // GET /api/task/:id - 任务详情
 router.get('/:id', async (req, res) => {
   try {
-    const task = await db.getOne('SELECT * FROM tasks WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    const task = await db.getOne('SELECT * FROM tasks WHERE id = ? AND user_id = ?', [req.params.id, req.actingUser.id]);
     if (!task) return res.status(404).json({ error: 'task not found' });
     res.json({ success: true, data: task });
   } catch (err) {
@@ -327,7 +358,7 @@ router.patch('/:id/max_price', async (req, res) => {
   try {
     await db.query(
       'UPDATE tasks SET max_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-      [max_price, req.params.id, req.user.id]
+      [max_price, req.params.id, req.actingUser.id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -340,7 +371,7 @@ router.patch('/:id/cancel', async (req, res) => {
   try {
     const task = await db.getOne(
       'SELECT id, strategy, status FROM tasks WHERE id = ? AND user_id = ?',
-      [req.params.id, req.user.id]
+      [req.params.id, req.actingUser.id]
     );
     if (!task) return res.status(404).json({ error: 'task not found' });
     if (!canCancelTask(task)) {
@@ -357,7 +388,7 @@ router.patch('/:id/cancel', async (req, res) => {
            (strategy != 'direct' AND status = 'pending')
            OR (strategy = 'multi_bid' AND status = 'bidding')
          )`,
-      [req.params.id, req.user.id]
+      [req.params.id, req.actingUser.id]
     );
     res.json({ success: true });
   } catch (err) {

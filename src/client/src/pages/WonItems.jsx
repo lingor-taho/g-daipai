@@ -45,6 +45,8 @@ export default function WonItems() {
 
   useEffect(() => {
     fetchWonItems();
+    window.addEventListener('acting-user-change', fetchWonItems);
+    return () => window.removeEventListener('acting-user-change', fetchWonItems);
   }, []);
 
   return (

@@ -5,6 +5,8 @@ const api = axios.create({ baseURL: '/api' });
 api.interceptors.request.use(cfg => {
   const token = localStorage.getItem('token');
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  const actingUserId = localStorage.getItem('actingUserId');
+  if (actingUserId) cfg.headers['X-Acting-User-Id'] = actingUserId;
   return cfg;
 });
 
@@ -20,13 +22,14 @@ api.interceptors.response.use(
 );
 
 export const login = (username, password) => api.post('/auth/login', { username, password });
+export const getActingUsers = () => api.get('/auth/acting-users');
 export const submitTask = (data) => api.post('/task/submit', data);
 export const getTaskList = (params) => api.get('/task/list', { params });
 export const getActiveBiddingTaskList = (params) => api.get('/task/bidding', { params });
 export const getWonTaskList = (params) => api.get('/task/won', { params });
 export const getTaskDetail = (id) => api.get(`/task/${id}`);
 export const cancelTask = (id) => api.patch(`/task/${id}/cancel`);
-export const getTaskStats = () => api.get('/admin/tasks/stats');
+export const getTaskStats = () => api.get('/task/stats');
 export const getPluginConfig = () => api.get('/plugin/config');
 
 export function createGetProductInfo({ apiClient = api } = {}) {
