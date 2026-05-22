@@ -8,15 +8,30 @@ const pluginRoutes = require('./routes/plugin');
 
 const app = express();
 const PENDING_TASK_SWEEP_INTERVAL_MS = 60 * 1000;
+const allowedHttpOrigins = new Set([
+  'http://localhost:3035',
+  'http://127.0.0.1:3035',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000'
+]);
+
+for (const host of String(process.env.PUBLIC_HOSTS || '')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean)) {
+  allowedHttpOrigins.add(`http://${host}`);
+  allowedHttpOrigins.add(`http://${host}:3035`);
+  allowedHttpOrigins.add(`http://${host}:8000`);
+  allowedHttpOrigins.add(`https://${host}`);
+}
 
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
   const allowedOrigin =
     origin.startsWith('chrome-extension://') ||
-    origin === 'http://localhost:3035' ||
-    origin === 'http://127.0.0.1:3035' ||
-    origin === 'http://localhost:8000' ||
-    origin === 'http://127.0.0.1:8000';
+    allowedHttpOrigins.has(origin);
 
   if (allowedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', origin);

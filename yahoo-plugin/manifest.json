@@ -19,8 +19,12 @@
       "matches": [
         "https://auctions.yahoo.co.jp/*",
         "https://*.auctions.yahoo.co.jp/*",
+        "http://localhost:3035/*",
+        "http://127.0.0.1:3035/*",
         "http://localhost:3001/*",
-        "http://127.0.0.1:3001/*"
+        "http://127.0.0.1:3001/*",
+        "http://43.165.177.49/*",
+        "http://43.165.177.49:3035/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
 const db = require('../models');
+const { isYahooLoginError } = require('../services/yahooLoginStatus');
 
 function parseTimeMs(value) {
   let input = String(value || '').trim();
@@ -174,10 +175,6 @@ async function setYahooLoginStatus(status, message = '') {
      VALUES ('yahoo_login_message', ?, CURRENT_TIMESTAMP)`,
     [message || '']
   );
-}
-
-function isYahooLoginError(message) {
-  return /需要登录\s*Yahoo|Yahoo.*登录|ログイン.*必要|ログインしてください/i.test(String(message || ''));
 }
 
 // GET /api/plugin/task
@@ -420,6 +417,13 @@ router.post('/orders/sync', async (req, res) => {
   await setYahooLoginStatus('ok');
   const failed = 0;
   res.json({ success: true, updated, failed });
+});
+
+router.post('/yahoo-login/status', async (req, res) => {
+  const status = req.body?.status === 'ok' ? 'ok' : 'failed';
+  const message = req.body?.message || (status === 'ok' ? '' : '需要登录 Yahoo');
+  await setYahooLoginStatus(status, message);
+  res.json({ success: true });
 });
 
 router.patch('/task/:id/snapshot', async (req, res) => {

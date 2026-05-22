@@ -436,6 +436,22 @@ async function syncBiddingItems(items) {
   }
 }
 
+async function reportYahooLoginStatus(loginStatus) {
+  if (!loginStatus?.status) return;
+  try {
+    await apiFetch('/api/plugin/yahoo-login/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: loginStatus.status,
+        message: loginStatus.message || ''
+      })
+    });
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to report Yahoo login status:', e);
+  }
+}
+
 async function refreshPluginConfig() {
   try {
     const res = await apiFetch('/api/plugin/config');
@@ -459,6 +475,7 @@ async function openWonPageForSync() {
     console.error('[Yahoo Bid] Failed to extract order history:', error);
     return null;
   });
+  await reportYahooLoginStatus(response?.loginStatus);
   if (response?.success) {
     await syncOrderHistory(response.orders || []);
   }
@@ -476,6 +493,7 @@ async function openBiddingPageForSync() {
     console.error('[Yahoo Bid] Failed to extract bidding items:', error);
     return null;
   });
+  await reportYahooLoginStatus(response?.loginStatus);
   if (response?.success) {
     await syncBiddingItems(response.items || []);
   }
@@ -608,8 +626,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.log('[Yahoo Bid] Product data cached:', data.title, '��' + data.currentPrice);
     }
   } else if (msg.type === 'ORDER_HISTORY') {
+    reportYahooLoginStatus(msg.loginStatus);
     syncOrderHistory(msg.orders);
   } else if (msg.type === 'BIDDING_ITEMS') {
+    reportYahooLoginStatus(msg.loginStatus);
     syncBiddingItems(msg.items);
   } else if (msg.type === 'GET_PRODUCT') {
     // Client page asking for cached product data

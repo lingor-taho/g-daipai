@@ -8,7 +8,14 @@ if (window.__G_DAIPAI_CONTENT_LOADED__ && !isYahooSyncPage) {
 window.__G_DAIPAI_CONTENT_LOADED__ = true;
 
 const API_BASE = 'http://localhost:3034';
-const CLIENT_ORIGINS = new Set(['http://localhost:3035', 'http://127.0.0.1:3035']);
+const CLIENT_ORIGINS = new Set([
+  'http://localhost:3035',
+  'http://127.0.0.1:3035',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
+  'http://43.165.177.49',
+  'http://43.165.177.49:3035'
+]);
 
 function cleanupProductTitle(title, auctionId = '') {
   const cleaned = String(title || '')
@@ -227,6 +234,17 @@ function extractCurrentAuctionPrice() {
 
 function getBodyText() {
   return document.body.textContent || '';
+}
+
+function detectYahooLoginStatus() {
+  const text = getBodyText();
+  const href = window.location.href;
+  const isLoginUrl = /login\.yahoo\.co\.jp|account\.edit\.yahoo\.co\.jp/i.test(href);
+  const hasLoginPrompt = /\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044|ログイン.*必要|ログインしてください|Yahoo! JAPAN ID/i.test(text);
+  if (isLoginUrl || hasLoginPrompt) {
+    return { status: 'failed', message: '需要登录 Yahoo' };
+  }
+  return { status: 'ok', message: '' };
 }
 
 function hasExplicitOutbidText(text = getBodyText()) {
@@ -824,11 +842,11 @@ getTaskData().then(taskData => {
       console.log('[Yahoo Bid] Product extracted:', pageProductData);
     } else if (window.location.href.includes('/my/won')) {
       const orders = extractOrderHistory();
-      chrome.runtime.sendMessage({ type: 'ORDER_HISTORY', orders });
+      chrome.runtime.sendMessage({ type: 'ORDER_HISTORY', orders, loginStatus: detectYahooLoginStatus() });
       console.log('[Yahoo Bid] Order history:', orders);
     } else if (window.location.href.includes('/my/bidding')) {
       const items = extractBiddingItems();
-      chrome.runtime.sendMessage({ type: 'BIDDING_ITEMS', items });
+      chrome.runtime.sendMessage({ type: 'BIDDING_ITEMS', items, loginStatus: detectYahooLoginStatus() });
       console.log('[Yahoo Bid] Bidding items:', items);
     }
   }
@@ -847,12 +865,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'EXTRACT_BIDDING_ITEMS') {
-    sendResponse({ success: true, items: extractBiddingItems() });
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({ success: loginStatus.status === 'ok', items: loginStatus.status === 'ok' ? extractBiddingItems() : [], loginStatus });
     return true;
   }
 
   if (msg.type === 'EXTRACT_ORDER_HISTORY') {
-    sendResponse({ success: true, orders: extractOrderHistory() });
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({ success: loginStatus.status === 'ok', orders: loginStatus.status === 'ok' ? extractOrderHistory() : [], loginStatus });
     return true;
   }
 
@@ -878,6 +898,7 @@ window.__G_DAIPAI_TEST__ = {
   extractProductData: () => extractProductData(),
   extractCurrentAuctionPrice: () => extractCurrentAuctionPrice(),
   extractBiddingItems,
+  detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,
   validateUserMaxBidLimit,

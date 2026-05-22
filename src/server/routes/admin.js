@@ -11,6 +11,7 @@ const {
   getStrategyLeadMs,
   isMultiBidTask
 } = require('./plugin');
+const { buildYahooLoginStatus } = require('../services/yahooLoginStatus');
 
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
@@ -344,11 +345,7 @@ router.get('/tasks/stats', async (req, res) => {
   }
   const loginStatus = await db.getOne("SELECT value, updated_at FROM config WHERE key = 'yahoo_login_status'");
   const loginMessage = await db.getOne("SELECT value FROM config WHERE key = 'yahoo_login_message'");
-  stats.yahooLogin = {
-    status: loginStatus?.value === 'failed' ? 'failed' : 'ok',
-    message: loginMessage?.value || '',
-    updatedAt: loginStatus?.updated_at || null
-  };
+  stats.yahooLogin = buildYahooLoginStatus(loginStatus, loginMessage);
   res.json(stats);
 });
 

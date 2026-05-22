@@ -18,7 +18,7 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const selectedKey = menuItems.find(item => location.pathname.startsWith(item.key))?.key || '/tasks';
   const username = localStorage.getItem('username') || 'admin';
-  const [yahooLogin, setYahooLogin] = useState<any>({ status: 'ok', message: '' });
+  const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
 
   useEffect(() => {
     let active = true;
@@ -27,9 +27,9 @@ export default function AdminLayout() {
       if (!isAdminLoggedIn()) return;
       try {
         const stats = await fetchAdminJson('/api/admin/tasks/stats');
-        if (active) setYahooLogin(stats.yahooLogin || { status: 'ok', message: '' });
+        if (active) setYahooLogin(stats.yahooLogin || { status: 'unknown', message: '' });
       } catch {
-        if (active) setYahooLogin({ status: 'ok', message: '' });
+        if (active) setYahooLogin({ status: 'unknown', message: '' });
       }
     }
 
@@ -62,11 +62,11 @@ export default function AdminLayout() {
           <div style={{ padding: '14px 16px', borderBottom: '1px dashed #d9d9d9' }}>
             <Typography.Text
               strong
-              style={{ color: yahooLogin?.status === 'failed' ? '#cf1322' : '#389e0d' }}
+              style={{ color: yahooLogin?.status === 'ok' ? '#389e0d' : '#cf1322' }}
             >
-              {yahooLogin?.status === 'failed' ? 'yahoo登录失败！' : 'yahoo正常登陆中'}
+              {yahooLogin?.status === 'ok' ? 'yahoo正常登录中' : 'yahoo未登录/未确认'}
             </Typography.Text>
-            {yahooLogin?.status === 'failed' && yahooLogin?.message ? (
+            {yahooLogin?.status !== 'ok' && yahooLogin?.message ? (
               <div style={{ marginTop: 4 }}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {yahooLogin.message}
