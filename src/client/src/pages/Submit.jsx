@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getSubmitTaxType, isStoreProduct } from '../utils/bidPrice';
+import { getActualBidPrice, getSubmitMaxPrice, getSubmitTaxType, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -151,7 +151,7 @@ export default function Submit() {
     const buyoutPrice = Number(product?.buyoutPrice || 0);
     const effectiveMaxPrice = buyoutSelected
       ? getDisplayPrice(buyoutPrice, submitTaxType)
-      : Number(maxPrice || 0);
+      : getSubmitMaxPrice(maxPrice, product, storeBidPriceMode);
     if (buyoutSelected && buyoutPrice <= 0) {
       Toast.show({ content: '出价失败：该商品没有即決价格' });
       return;
@@ -288,7 +288,13 @@ export default function Submit() {
               <List.Item prefix="价格类型">
                 <Radio.Group
                   value={storeBidPriceMode}
-                  onChange={setStoreBidPriceMode}
+                  onChange={(value) => {
+                    setStoreBidPriceMode(value);
+                    if (strategy === 'multi_bid') {
+                      const nextEffectiveMaxPrice = getSubmitMaxPrice(maxPrice, product, value);
+                      setMultiBidIncrement(String(getDefaultMultiBidIncrement(nextEffectiveMaxPrice) || ''));
+                    }
+                  }}
                   style={{ display: 'flex', justifyContent: 'flex-end', gap: 18 }}
                 >
                   <Radio value="tax_before">税前价</Radio>
@@ -305,7 +311,8 @@ export default function Submit() {
                   onChange={(value) => {
                     setMaxPrice(value);
                     if (strategy === 'multi_bid') {
-                      const nextDefault = getDefaultMultiBidIncrement(Number(value || 0));
+                      const nextEffectiveMaxPrice = getSubmitMaxPrice(value, product, storeBidPriceMode);
+                      const nextDefault = getDefaultMultiBidIncrement(nextEffectiveMaxPrice);
                       setMultiBidIncrement(String(nextDefault || ''));
                     }
                   }}
@@ -346,7 +353,8 @@ export default function Submit() {
               const nextStrategy = val[0] || 'direct';
               setStrategy(nextStrategy);
               if (nextStrategy === 'multi_bid') {
-                setMultiBidIncrement(String(getDefaultMultiBidIncrement(Number(maxPrice || 0)) || ''));
+                const effectiveMaxPriceForIncrement = getSubmitMaxPrice(maxPrice, product, storeBidPriceMode);
+                setMultiBidIncrement(String(getDefaultMultiBidIncrement(effectiveMaxPriceForIncrement) || ''));
               }
             }}
           />
@@ -371,7 +379,7 @@ export default function Submit() {
               <div style={{ padding: '8px 16px 0', color: '#d4380d', fontSize: 13, lineHeight: 1.5 }}>
                 多次出价标准：最高价不低于5500日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
                 <br />
-                提示：输入金额应&gt;= {getMinMultiBidIncrement(Number(maxPrice || 0))}日元
+                提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(maxPrice, product, storeBidPriceMode))}日元
               </div>
             </>
           )}

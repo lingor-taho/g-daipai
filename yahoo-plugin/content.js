@@ -610,8 +610,8 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function validateCurrentPrice() {
     const currentPrice = extractCurrentAuctionPrice();
-    if (currentPrice > 0 && currentPrice > numericMaxPrice) {
-      return buildPriceTooHighResult(currentPrice, numericMaxPrice);
+    if (currentPrice > 0 && currentPrice > numericUserMaxPrice) {
+      return buildPriceTooHighResult(currentPrice, numericUserMaxPrice);
     }
     return null;
   }

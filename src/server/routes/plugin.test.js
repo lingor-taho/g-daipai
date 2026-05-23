@@ -156,7 +156,7 @@ async function testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed() {
 
   assert.equal(count, 1);
   assert.match(calls[0].sql, /status = 'pending'/);
-  assert.match(calls[0].sql, /current_price > max_price/);
+  assert.match(calls[0].sql, /current_price > COALESCE\(user_max_price, max_price\)/);
   assert.equal(calls[0].params[0], 'Current price is above max price before execution');
 }
 

@@ -114,7 +114,7 @@ async function failPricedOutPendingTasks(database = db) {
        AND max_price IS NOT NULL
        AND current_price > 0
        AND max_price > 0
-       AND current_price > max_price`,
+       AND current_price > COALESCE(user_max_price, max_price)`,
     ['Current price is above max price before execution']
   );
   return result.rowCount || 0;

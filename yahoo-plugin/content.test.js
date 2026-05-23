@@ -31,7 +31,11 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
     },
     document: {
       title: 'Yahoo!オークション - 最高級 イタリア製 OLIVER PEOPLES サングラス',
-      body: { textContent: bodyText },
+      body: {
+        get textContent() {
+          return options.getBodyText ? options.getBodyText() : bodyText;
+        }
+      },
       querySelector(selector) {
         return options.querySelector ? options.querySelector(selector) : null;
       },
@@ -387,6 +391,78 @@ async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
   assert.equal(confirmButton.clicked, true);
 }
 
+async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() {
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  const currentPrice = createTestElement('2,530\u5186');
+
+  const api = loadContentForTest('\u73fe\u5728 2,530\u5186 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 2,695\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('button')) return [confirmButton];
+      if (selector === 'body *') return [confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(2450, {
+    maxPrice: 2450,
+    userMaxPrice: 2700,
+    strategy: '5min',
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.pendingFinal, true);
+  assert.equal(priceInput.value, '2450');
+  assert.equal(confirmButton.clicked, true);
+}
+
+async function testMultiBidClicksConfirmAfterInput() {
+  let bodyText = '\u73fe\u5728 5,000\u5186 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 5,500\u5186 \u78ba\u8a8d\u3059\u308b';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  confirmButton.click = () => {
+    confirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+  const currentPrice = createTestElement('5,000\u5186');
+
+  const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('button')) return [confirmButton];
+      if (selector === 'body *') return [confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(5500, {
+    maxPrice: 5500,
+    userMaxPrice: 6600,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 500
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.noBid, true);
+  assert.equal(result.stage, 'already-highest');
+  assert.equal(priceInput.value, '5500');
+  assert.equal(confirmButton.clicked, true);
+}
+
 function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   const orderContainer = createOrderContainer(
     '送料 10円 落札価格 2,530円 MD ゴールデンアックス',
@@ -438,6 +514,8 @@ async function run() {
   await testSkipWhenBidIsWithinAutoBidLimit();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
+  await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
+  await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
 }
 

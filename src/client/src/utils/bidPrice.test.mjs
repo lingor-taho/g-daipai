@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   getActualBidPrice,
+  getSubmitMaxPrice,
   getSubmitTaxType,
   isStoreProduct
 } from './bidPrice.js';
@@ -14,8 +15,9 @@ function testStoreProductDetection() {
 function testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual() {
   const product = { taxType: 'tax_included' };
 
-  assert.equal(getSubmitTaxType(product, 'tax_before'), 'tax_zero');
+  assert.equal(getSubmitTaxType(product, 'tax_before'), 'tax_included');
   assert.equal(getActualBidPrice(1000, product, 'tax_before'), 1100);
+  assert.equal(getSubmitMaxPrice(1000, product, 'tax_before'), 1100);
 }
 
 function testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual() {
@@ -23,6 +25,7 @@ function testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual() {
 
   assert.equal(getSubmitTaxType(product, 'tax_after'), 'tax_included');
   assert.equal(getActualBidPrice(1100, product, 'tax_after'), 1100);
+  assert.equal(getSubmitMaxPrice(1100, product, 'tax_after'), 1100);
 }
 
 function testNormalProductDoesNotApplyStoreMode() {
@@ -30,6 +33,7 @@ function testNormalProductDoesNotApplyStoreMode() {
 
   assert.equal(getSubmitTaxType(product, 'tax_before'), 'tax_zero');
   assert.equal(getActualBidPrice(1000, product, 'tax_before'), 1000);
+  assert.equal(getSubmitMaxPrice(1000, product, 'tax_before'), 1000);
 }
 
 testStoreProductDetection();
