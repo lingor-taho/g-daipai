@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getActiveBiddingTaskList } from '../utils/api';
@@ -42,7 +42,11 @@ export default function ActiveBidding() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  function fetchItems() {
+  const fetchItems = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     getActiveBiddingTaskList({ limit: 100 })
       .then(res => {
@@ -53,13 +57,19 @@ export default function ActiveBidding() {
         setItems([]);
       })
       .finally(() => setLoading(false));
-  }
+  }, []);
 
   useEffect(() => {
     fetchItems();
     window.addEventListener('acting-user-change', fetchItems);
-    return () => window.removeEventListener('acting-user-change', fetchItems);
-  }, []);
+    document.addEventListener('visibilitychange', fetchItems);
+    window.addEventListener('focus', fetchItems);
+    return () => {
+      window.removeEventListener('acting-user-change', fetchItems);
+      document.removeEventListener('visibilitychange', fetchItems);
+      window.removeEventListener('focus', fetchItems);
+    };
+  }, [fetchItems]);
 
   return (
     <div style={{ padding: 16 }}>

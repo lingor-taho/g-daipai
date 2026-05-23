@@ -14,7 +14,8 @@ const {
   isAutomaticStrategy,
   isActiveAutomaticStrategy,
   canCancelTask,
-  assertNoActiveAutomaticStrategy
+  assertNoActiveAutomaticStrategy,
+  findTaskByClientRequestId
 } = require('./task');
 
 function testSubmitUsesAuthenticatedUserId() {
@@ -217,6 +218,36 @@ function testActiveAutomaticStrategyBlocksNewSubmission() {
   assert.doesNotThrow(() => assertNoActiveAutomaticStrategy({ strategy: '2min', status: 'cancelled' }));
 }
 
+async function testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ sql, params });
+      return { id: 11, product_id: 'a123456789' };
+    }
+  };
+
+  const task = await findTaskByClientRequestId(fakeDb, 7, ' request-1 ');
+
+  assert.equal(task.id, 11);
+  assert.match(calls[0].sql, /client_request_id = \?/);
+  assert.deepEqual(calls[0].params, [7, 'request-1']);
+}
+
+async function testFindTaskByClientRequestIdSkipsEmptyId() {
+  let called = false;
+  const fakeDb = {
+    async getOne() {
+      called = true;
+    }
+  };
+
+  const task = await findTaskByClientRequestId(fakeDb, 7, ' ');
+
+  assert.equal(task, null);
+  assert.equal(called, false);
+}
+
 testSubmitUsesAuthenticatedUserId();
 testSubmitAcceptsBuyoutMode();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
@@ -234,3 +265,10 @@ testAutomaticStrategyDetection();
 testActiveAutomaticStrategyDetection();
 testCancelOnlyActiveAutomaticTasks();
 testActiveAutomaticStrategyBlocksNewSubmission();
+Promise.all([
+  testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope(),
+  testFindTaskByClientRequestIdSkipsEmptyId()
+]).catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});

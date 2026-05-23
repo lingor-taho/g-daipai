@@ -117,6 +117,15 @@ function assertProductSubmissionOwner(existingTask, userId) {
   throw error;
 }
 
+async function findTaskByClientRequestId(database, userId, clientRequestId) {
+  const value = String(clientRequestId || '').trim();
+  if (!value) return null;
+  return database.getOne(
+    'SELECT id, product_id FROM tasks WHERE user_id = ? AND client_request_id = ? ORDER BY id DESC LIMIT 1',
+    [userId, value]
+  );
+}
+
 function buildTaskListInput(user) {
   if (!user?.id) throw new Error('not logged in');
   return { userId: user.id };
@@ -136,10 +145,15 @@ function buildActiveBiddingTaskListInput(user, query = {}) {
 
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, multi_bid_increment } = req.body;
+  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, multi_bid_increment, client_request_id } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
     input.userId = req.actingUser.id;
+    const clientRequestId = String(client_request_id || '').trim() || null;
+    const existingRequest = await findTaskByClientRequestId(db, input.userId, clientRequestId);
+    if (existingRequest) {
+      return res.json({ success: true, task_id: existingRequest.id, product_id: existingRequest.product_id, duplicate: true });
+    }
     const existingTask = await db.getOne(
       'SELECT id, user_id FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1',
       [input.productId]
@@ -188,8 +202,8 @@ router.post('/submit', async (req, res) => {
       ? fetchedBuyoutPrice
       : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
     await db.query(
-      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         input.userId,
         input.productId,
@@ -206,7 +220,8 @@ router.post('/submit', async (req, res) => {
         input.bidMode,
         start_minutes_before || null,
         start_seconds_before || null,
-        endTime
+        endTime,
+        clientRequestId
       ]
     );
     const inserted = await db.getOne('SELECT id, product_id FROM tasks WHERE id = last_insert_rowid()');
@@ -412,3 +427,4 @@ module.exports.isAutomaticStrategy = isAutomaticStrategy;
 module.exports.isActiveAutomaticStrategy = isActiveAutomaticStrategy;
 module.exports.canCancelTask = canCancelTask;
 module.exports.assertNoActiveAutomaticStrategy = assertNoActiveAutomaticStrategy;
+module.exports.findTaskByClientRequestId = findTaskByClientRequestId;

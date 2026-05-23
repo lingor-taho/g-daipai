@@ -9,12 +9,32 @@ export const api = axios.create({
 
 export function getApiErrorMessage(error, fallback = '操作失败') {
   if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) {
-    return '网络请求超时，请刷新页面后重试';
+    return '网络请求超时，请稍后重试';
   }
   if (!error?.response && error?.request) {
-    return '网络连接异常，请刷新页面后重试';
+    return '网络连接异常，请稍后重试';
   }
   return error?.response?.data?.error || fallback;
+}
+
+export function isRecoverableNetworkError(error) {
+  if (error?.response) return false;
+  return error?.code === 'ECONNABORTED' ||
+    error?.code === 'ERR_NETWORK' ||
+    /timeout|network/i.test(error?.message || '') ||
+    Boolean(error?.request);
+}
+
+export function shouldRetryRequest(config = {}, error) {
+  if (!isRecoverableNetworkError(error)) return false;
+  if (config.__retryCount >= 1) return false;
+  const method = String(config.method || 'get').toLowerCase();
+  return ['get', 'head', 'options'].includes(method) || config.__allowRetry === true;
+}
+
+function createClientRequestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 api.interceptors.request.use(cfg => {
@@ -27,10 +47,19 @@ api.interceptors.request.use(cfg => {
 
 api.interceptors.response.use(
   res => res,
-  err => {
+  async err => {
     if (err.response?.status === 401) {
       localStorage.removeItem('token');
       window.location.href = '/login';
+    }
+    if (shouldRetryRequest(err.config, err)) {
+      const nextConfig = {
+        ...err.config,
+        __retryCount: (err.config.__retryCount || 0) + 1,
+        headers: { ...(err.config.headers || {}) }
+      };
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return api(nextConfig);
     }
     return Promise.reject(err);
   }
@@ -38,7 +67,10 @@ api.interceptors.response.use(
 
 export const login = (username, password) => api.post('/auth/login', { username, password });
 export const getActingUsers = () => api.get('/auth/acting-users');
-export const submitTask = (data) => api.post('/task/submit', data);
+export const submitTask = (data) => api.post('/task/submit', {
+  ...data,
+  client_request_id: data?.client_request_id || createClientRequestId()
+}, { __allowRetry: true });
 export const getTaskList = (params) => api.get('/task/list', { params });
 export const getActiveBiddingTaskList = (params) => api.get('/task/bidding', { params });
 export const getWonTaskList = (params) => api.get('/task/won', { params });

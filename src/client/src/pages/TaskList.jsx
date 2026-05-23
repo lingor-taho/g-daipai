@@ -44,6 +44,10 @@ export default function TaskList({ limit = 10, embedded = false }) {
   const [cancellingId, setCancellingId] = useState(null);
 
   const fetchTasks = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      setLoading(false);
+      return;
+    }
     Promise.all([
       getTaskList({ limit }),
       getTaskStats().catch(() => ({ data: null }))
@@ -62,9 +66,13 @@ export default function TaskList({ limit = 10, embedded = false }) {
   useEffect(() => {
     fetchTasks();
     window.addEventListener('acting-user-change', fetchTasks);
-    const interval = setInterval(fetchTasks, 3000);
+    document.addEventListener('visibilitychange', fetchTasks);
+    window.addEventListener('focus', fetchTasks);
+    const interval = setInterval(fetchTasks, 10000);
     return () => {
       window.removeEventListener('acting-user-change', fetchTasks);
+      document.removeEventListener('visibilitychange', fetchTasks);
+      window.removeEventListener('focus', fetchTasks);
       clearInterval(interval);
     };
   }, [fetchTasks]);

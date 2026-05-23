@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { api, createGetProductInfo, getApiErrorMessage, REQUEST_TIMEOUT_MS } from './api.js';
+import {
+  api,
+  createGetProductInfo,
+  getApiErrorMessage,
+  isRecoverableNetworkError,
+  REQUEST_TIMEOUT_MS,
+  shouldRetryRequest
+} from './api.js';
 
 async function testAlwaysUsesServerProxy() {
   const calls = [];
@@ -78,8 +85,21 @@ function testApiHasTimeoutForIdleConnections() {
 function testTimeoutErrorHasReadableMessage() {
   assert.equal(
     getApiErrorMessage({ code: 'ECONNABORTED', message: 'timeout of 15000ms exceeded' }, '提交失败'),
-    '网络请求超时，请刷新页面后重试'
+    '网络请求超时，请稍后重试'
   );
+}
+
+function testIdleNetworkErrorsAreRetryable() {
+  assert.equal(isRecoverableNetworkError({ code: 'ECONNABORTED', message: 'timeout of 15000ms exceeded' }), true);
+  assert.equal(isRecoverableNetworkError({ code: 'ERR_NETWORK', request: {} }), true);
+  assert.equal(isRecoverableNetworkError({ response: { status: 500 } }), false);
+}
+
+function testRetriesSafeRequestsAndExplicitSubmitRetryOnlyOnce() {
+  assert.equal(shouldRetryRequest({ method: 'get' }, { code: 'ERR_NETWORK', request: {} }), true);
+  assert.equal(shouldRetryRequest({ method: 'post' }, { code: 'ERR_NETWORK', request: {} }), false);
+  assert.equal(shouldRetryRequest({ method: 'post', __allowRetry: true }, { code: 'ERR_NETWORK', request: {} }), true);
+  assert.equal(shouldRetryRequest({ method: 'get', __retryCount: 1 }, { code: 'ERR_NETWORK', request: {} }), false);
 }
 
 await testAlwaysUsesServerProxy();
@@ -87,3 +107,5 @@ await testAcceptsThirdPartyAndNumericAuctionUrls();
 await testRejectsInvalidUrlBeforeServerCall();
 testApiHasTimeoutForIdleConnections();
 testTimeoutErrorHasReadableMessage();
+testIdleNetworkErrorsAreRetryable();
+testRetriesSafeRequestsAndExplicitSubmitRetryOnlyOnce();

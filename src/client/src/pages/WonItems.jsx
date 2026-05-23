@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getWonTaskList } from '../utils/api';
@@ -30,7 +30,11 @@ export default function WonItems() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  function fetchWonItems() {
+  const fetchWonItems = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     getWonTaskList({ limit: 100 })
       .then(res => {
@@ -41,13 +45,19 @@ export default function WonItems() {
         setItems([]);
       })
       .finally(() => setLoading(false));
-  }
+  }, []);
 
   useEffect(() => {
     fetchWonItems();
     window.addEventListener('acting-user-change', fetchWonItems);
-    return () => window.removeEventListener('acting-user-change', fetchWonItems);
-  }, []);
+    document.addEventListener('visibilitychange', fetchWonItems);
+    window.addEventListener('focus', fetchWonItems);
+    return () => {
+      window.removeEventListener('acting-user-change', fetchWonItems);
+      document.removeEventListener('visibilitychange', fetchWonItems);
+      window.removeEventListener('focus', fetchWonItems);
+    };
+  }, [fetchWonItems]);
 
   return (
     <div style={{ padding: 16 }}>

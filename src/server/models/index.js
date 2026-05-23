@@ -20,6 +20,7 @@ ensureColumn('tasks', 'bid_mode', "VARCHAR(32) DEFAULT 'bid'");
 ensureColumn('tasks', 'tax_type', "VARCHAR(32) DEFAULT 'tax_zero'");
 ensureColumn('tasks', 'user_max_price', 'INTEGER');
 ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
+ensureColumn('tasks', 'client_request_id', 'VARCHAR(128)');
 ensureColumn('users', 'user_level', 'INTEGER DEFAULT 1');
 ensureColumn('users', 'parent_user_id', 'INTEGER');
 
