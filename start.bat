@@ -2,7 +2,8 @@
 chcp 65001 > nul
 setlocal
 
-set ROOT=D:\www\g-daipai
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set CLIENT_DIR=%ROOT%\src\client
 set ADMIN_DIR=%ROOT%\src\admin
 
