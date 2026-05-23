@@ -449,17 +449,13 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function isUnsafeClickableTarget(el) {
     const href = el?.href || el?.getAttribute?.('href') || '';
-    return /support\.yahoo-net\.jp|\/PccAuctions\//i.test(href);
+    return /support\.yahoo-net\.jp|\/PccAuctions\/|\/jp\/auction\/[a-zA-Z]?\d{8,10}/i.test(href);
   }
 
   function findClickable(patterns) {
     const selector = clickableSelector();
     const direct = [...document.querySelectorAll(selector)].find(el => {
-      const style = window.getComputedStyle(el);
-      return !el.disabled &&
-        !isUnsafeClickableTarget(el) &&
-        style.display !== 'none' &&
-        style.visibility !== 'hidden' &&
+      return isClickableElement(el) &&
         patterns.some(pattern => pattern.test(textOf(el)));
     });
     if (direct) return direct;
@@ -467,19 +463,31 @@ async function executeBidV3(maxPrice, options = {}) {
     const textNodeOwner = [...document.querySelectorAll('body *')]
       .find(el => patterns.some(pattern => pattern.test(textOf(el))));
     const closest = textNodeOwner?.closest(selector) || null;
-    return closest && !isUnsafeClickableTarget(closest) ? closest : null;
+    return closest && isClickableElement(closest) ? closest : null;
   }
 
   function findBidEntryButton(mode = 'bid') {
     const selector = clickableSelector();
     return [...document.querySelectorAll(selector)].find(el => {
-      const style = window.getComputedStyle(el);
-      return !el.disabled &&
-        !isUnsafeClickableTarget(el) &&
-        style.display !== 'none' &&
-        style.visibility !== 'hidden' &&
+      return isClickableElement(el) &&
         isBidEntryButtonText(textOf(el), mode);
     }) || null;
+  }
+
+  function isClickableElement(el) {
+    if (!el || el.disabled || isUnsafeClickableTarget(el)) return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
+  async function waitForClickable(patterns, timeoutMs = 1500) {
+    const deadline = Date.now() + timeoutMs;
+    let found = findClickable(patterns);
+    while (!found && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      found = findClickable(patterns);
+    }
+    return found;
   }
 
   function clickElement(el) {
@@ -567,7 +575,7 @@ async function executeBidV3(maxPrice, options = {}) {
       priceInput.value = String(nextBidPrice);
       priceInput.dispatchEvent(new Event('input', { bubbles: true }));
       priceInput.dispatchEvent(new Event('change', { bubbles: true }));
-      const confirmBtn = findClickable([/\u78ba\u8a8d\u3059\u308b/, /\u78ba\u8a8d/]);
+      const confirmBtn = await waitForClickable([/\u78ba\u8a8d\u3059\u308b/, /\u78ba\u8a8d/]);
       if (!confirmBtn) {
         return { success: false, error: 'confirm button not found' };
       }
@@ -665,7 +673,7 @@ async function executeBidV3(maxPrice, options = {}) {
     priceInput.dispatchEvent(new Event('input', { bubbles: true }));
     priceInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-    const confirmBtn = findClickable([
+    const confirmBtn = await waitForClickable([
       /\u78ba\u8a8d/,
       /\u78ba\u8a8d\u753b\u9762/,
       /\u5165\u672d\u5185\u5bb9/,

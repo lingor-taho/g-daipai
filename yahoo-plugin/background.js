@@ -155,7 +155,7 @@ async function executeTaskInTab(tab, task) {
   }
 
   if (!result?.success) {
-    throw new Error(result?.error || '����ִ��ʧ��');
+    throw buildBidError(result, 'bid execution failed');
   }
 
   return result;
@@ -320,7 +320,7 @@ async function executeTaskInTabV2(tab, task) {
   }
 
   if (!result?.success) {
-    throw new Error(result?.error || '����ִ��ʧ��');
+    throw buildBidError(result, 'bid execution failed');
   }
 
   if (result.pendingFinal) {
@@ -550,7 +550,7 @@ async function pollAndExecute() {
         console.log('[Yahoo Bid] ������ִ��:', task.id, result);
       } catch (e) {
         await chrome.storage.session.remove(['currentTask']);
-        if (taskTab?.id) {
+        if (taskTab?.id && e.closeTab) {
           await closeTaskTab(taskTab.id);
         }
         await markTaskStatus(task.id, 'failed', e.message);

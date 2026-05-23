@@ -8,19 +8,35 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
   const sandbox = {
     console,
     setTimeout,
+    Event: class Event {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+    MouseEvent: class MouseEvent {
+      constructor(type) {
+        this.type = type;
+      }
+    },
     window: {
       location: {
         origin: 'http://localhost:3001',
         href: `https://auctions.yahoo.co.jp${pathname}`,
         pathname
       },
-      addEventListener() {}
+      addEventListener() {},
+      getComputedStyle() {
+        return { display: 'block', visibility: 'visible' };
+      }
     },
     document: {
       title: 'Yahoo!オークション - 最高級 イタリア製 OLIVER PEOPLES サングラス',
       body: { textContent: bodyText },
-      querySelector() { return null; },
+      querySelector(selector) {
+        return options.querySelector ? options.querySelector(selector) : null;
+      },
       querySelectorAll(selector) {
+        if (options.querySelectorAll) return options.querySelectorAll(selector);
         if (selector === 'script') {
           return (options.scripts || []).map(textContent => ({ textContent }));
         }
@@ -48,6 +64,45 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
 async function loadAndExecuteBidForTest(bodyText, execOptions = {}, pathname = '/jp/auction/x123456789/bid/done') {
   const api = loadContentForTest(bodyText, pathname);
   return api.executeBidV3(execOptions.maxPrice || 1000, execOptions);
+}
+
+function createTestElement(text = '') {
+  return {
+    textContent: text,
+    value: '',
+    disabled: false,
+    readOnly: false,
+    name: '',
+    id: '',
+    placeholder: '',
+    title: '',
+    href: '',
+    clicked: false,
+    focus() {},
+    scrollIntoView() {},
+    click() { this.clicked = true; },
+    closest() { return null; },
+    getAttribute(name) {
+      if (name === 'aria-label') return '';
+      if (name === 'href') return this.href;
+      return '';
+    },
+    dispatchEvent(event) {
+      if (this.onDispatch) this.onDispatch(event);
+    }
+  };
+}
+
+function createTestAnchor(text, href) {
+  return {
+    ...createTestElement(text),
+    href,
+    getAttribute(name) {
+      if (name === 'href') return href;
+      if (name === 'aria-label') return '';
+      return '';
+    }
+  };
 }
 
 function testOutbidTextIsNotHighestBidder() {
@@ -263,6 +318,65 @@ async function testSkipWhenBidIsWithinAutoBidLimit() {
   assert.equal(result.autoBidLimit, 1000);
 }
 
+async function testDirectBidWaitsForConfirmButtonEnabledAfterInput() {
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  confirmButton.disabled = true;
+  priceInput.onDispatch = event => {
+    if (event.type === 'input') {
+      setTimeout(() => {
+        confirmButton.disabled = false;
+      }, 20);
+    }
+  };
+
+  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,000\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x123456789/bid', {
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('button')) return [confirmButton];
+      if (selector === 'body *') return [confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(1000, { maxPrice: 1000, strategy: 'direct' });
+
+  assert.equal(result.success, true);
+  assert.equal(result.pendingFinal, true);
+  assert.equal(result.stage, 'confirm-clicked');
+  assert.equal(confirmButton.clicked, true);
+}
+
+async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const otherAuctionLink = createTestAnchor('\u78ba\u8a8d', 'https://auctions.yahoo.co.jp/jp/auction/v1230349098');
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+
+  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,000\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('button')) return [otherAuctionLink, confirmButton];
+      if (selector === 'body *') return [otherAuctionLink, confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(2450, { maxPrice: 2450, strategy: 'direct' });
+
+  assert.equal(result.success, true);
+  assert.equal(result.pendingFinal, true);
+  assert.equal(otherAuctionLink.clicked, false);
+  assert.equal(confirmButton.clicked, true);
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -291,6 +405,8 @@ async function run() {
   testProductHighestBidderNoticeDetection();
   testExtractAutoBidLimit();
   await testSkipWhenBidIsWithinAutoBidLimit();
+  await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
+  await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
 }
 
 run().catch(err => {
