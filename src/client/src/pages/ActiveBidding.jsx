@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getActiveBiddingTaskList } from '../utils/api';
+import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -43,7 +44,7 @@ export default function ActiveBidding() {
   const [loading, setLoading] = useState(true);
 
   const fetchItems = useCallback(() => {
-    if (document.visibilityState === 'hidden') {
+    if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
@@ -62,10 +63,12 @@ export default function ActiveBidding() {
   useEffect(() => {
     fetchItems();
     window.addEventListener('acting-user-change', fetchItems);
+    window.addEventListener(USER_ACTIVE_EVENT, fetchItems);
     document.addEventListener('visibilitychange', fetchItems);
     window.addEventListener('focus', fetchItems);
     return () => {
       window.removeEventListener('acting-user-change', fetchItems);
+      window.removeEventListener(USER_ACTIVE_EVENT, fetchItems);
       document.removeEventListener('visibilitychange', fetchItems);
       window.removeEventListener('focus', fetchItems);
     };

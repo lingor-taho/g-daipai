@@ -2,6 +2,7 @@
 import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
 import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
 import UserNav from '../components/UserNav';
+import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -44,7 +45,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
   const [cancellingId, setCancellingId] = useState(null);
 
   const fetchTasks = useCallback(() => {
-    if (document.visibilityState === 'hidden') {
+    if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
@@ -66,11 +67,13 @@ export default function TaskList({ limit = 10, embedded = false }) {
   useEffect(() => {
     fetchTasks();
     window.addEventListener('acting-user-change', fetchTasks);
+    window.addEventListener(USER_ACTIVE_EVENT, fetchTasks);
     document.addEventListener('visibilitychange', fetchTasks);
     window.addEventListener('focus', fetchTasks);
     const interval = setInterval(fetchTasks, 10000);
     return () => {
       window.removeEventListener('acting-user-change', fetchTasks);
+      window.removeEventListener(USER_ACTIVE_EVENT, fetchTasks);
       document.removeEventListener('visibilitychange', fetchTasks);
       window.removeEventListener('focus', fetchTasks);
       clearInterval(interval);

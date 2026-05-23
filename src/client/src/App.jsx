@@ -4,6 +4,9 @@ import ActiveBidding from './pages/ActiveBidding';
 import Submit from './pages/Submit';
 import TaskList from './pages/TaskList';
 import WonItems from './pages/WonItems';
+import { installUserActivityListeners } from './utils/activity';
+
+installUserActivityListeners();
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');

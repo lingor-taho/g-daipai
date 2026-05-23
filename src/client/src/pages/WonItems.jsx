@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getWonTaskList } from '../utils/api';
+import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -31,7 +32,7 @@ export default function WonItems() {
   const [loading, setLoading] = useState(true);
 
   const fetchWonItems = useCallback(() => {
-    if (document.visibilityState === 'hidden') {
+    if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
@@ -50,10 +51,12 @@ export default function WonItems() {
   useEffect(() => {
     fetchWonItems();
     window.addEventListener('acting-user-change', fetchWonItems);
+    window.addEventListener(USER_ACTIVE_EVENT, fetchWonItems);
     document.addEventListener('visibilitychange', fetchWonItems);
     window.addEventListener('focus', fetchWonItems);
     return () => {
       window.removeEventListener('acting-user-change', fetchWonItems);
+      window.removeEventListener(USER_ACTIVE_EVENT, fetchWonItems);
       document.removeEventListener('visibilitychange', fetchWonItems);
       window.removeEventListener('focus', fetchWonItems);
     };
