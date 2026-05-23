@@ -295,21 +295,9 @@ function createProductService({
       return { success: true, data: cached, source: 'cache-fallback' };
     }
 
-    return {
-      success: true,
-      data: {
-        auctionId: parsed.auctionId,
-        standardUrl: parsed.standardUrl,
-        title: '商品 ' + parsed.auctionId,
-        currentPrice: 0,
-        buyoutPrice: 0,
-        taxType: 'tax_zero',
-        endTime: '',
-        imageUrl: '',
-        error: 'server could not fetch Yahoo product info'
-      },
-      source: 'fallback'
-    };
+    const error = new Error('服务器网络问题，请稍后重试！');
+    error.statusCode = 502;
+    throw error;
   }
 
   return { cacheProduct, fetchProduct };

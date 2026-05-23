@@ -254,6 +254,26 @@ async function testUsesCacheAfterFetchersFail() {
   assert.equal(result.data.title, 'Cached Product');
 }
 
+async function testFailsWhenServerCannotFetchProductAndNoCacheExists() {
+  const service = createProductService({
+    httpFetcher: async () => {
+      throw new Error('http failed');
+    },
+    playwrightFetcher: async () => {
+      throw new Error('playwright failed');
+    }
+  });
+
+  await assert.rejects(
+    () => service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/x1234567890'),
+    error => {
+      assert.equal(error.statusCode, 502);
+      assert.equal(error.message, '服务器网络问题，请稍后重试！');
+      return true;
+    }
+  );
+}
+
 async function run() {
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
@@ -267,6 +287,7 @@ async function run() {
   await testFallsBackToPlaywrightWhenHttpFails();
   await testFetchRefreshesBeforeUsingCache();
   await testUsesCacheAfterFetchersFail();
+  await testFailsWhenServerCannotFetchProductAndNoCacheExists();
 }
 
 run().catch(err => {

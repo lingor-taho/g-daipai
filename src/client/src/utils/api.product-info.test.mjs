@@ -77,6 +77,23 @@ async function testRejectsInvalidUrlBeforeServerCall() {
   assert.equal(called, false);
 }
 
+async function testServerProductFetchFailureRejectsToCaller() {
+  const getProductInfo = createGetProductInfo({
+    apiClient: {
+      get: async () => {
+        const error = new Error('服务器网络问题，请稍后重试！');
+        error.response = { status: 502, data: { error: '服务器网络问题，请稍后重试！' } };
+        throw error;
+      }
+    }
+  });
+
+  await assert.rejects(
+    () => getProductInfo('https://auctions.yahoo.co.jp/jp/auction/x1234567890'),
+    /服务器网络问题/
+  );
+}
+
 function testApiHasTimeoutForIdleConnections() {
   assert.equal(api.defaults.timeout, REQUEST_TIMEOUT_MS);
   assert.ok(api.defaults.timeout >= 10000);
@@ -105,6 +122,7 @@ function testRetriesSafeRequestsAndExplicitSubmitRetryOnlyOnce() {
 await testAlwaysUsesServerProxy();
 await testAcceptsThirdPartyAndNumericAuctionUrls();
 await testRejectsInvalidUrlBeforeServerCall();
+await testServerProductFetchFailureRejectsToCaller();
 testApiHasTimeoutForIdleConnections();
 testTimeoutErrorHasReadableMessage();
 testIdleNetworkErrorsAreRetryable();

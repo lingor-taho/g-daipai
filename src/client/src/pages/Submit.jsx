@@ -112,28 +112,12 @@ export default function Submit() {
         });
         Toast.show({ content: data.imageUrl ? '已获取商品信息' : '已获取标题（价格需在页面提取）' });
       } else {
-        setProduct({
-          auctionId,
-          title: '商品 ' + auctionId,
-          currentPrice: 0,
-          buyoutPrice: 0,
-          taxType: 'tax_zero',
-          imageUrl: '',
-          endTime: ''
-        });
-        Toast.show({ content: '请先在 Chrome 打开商品页面，插件将自动提取完整数据' });
+        setProduct(null);
+        Toast.show({ content: '服务器网络问题，请稍后重试！' });
       }
     } catch (e) {
-      setProduct({
-        auctionId,
-        title: '商品 ' + auctionId,
-        currentPrice: 0,
-        buyoutPrice: 0,
-        taxType: 'tax_zero',
-        imageUrl: '',
-        endTime: ''
-      });
-      Toast.show({ content: '无法获取商品详情，已解析链接' });
+      setProduct(null);
+      Toast.show({ content: e.response?.data?.error || '服务器网络问题，请稍后重试！' });
     } finally {
       setFetching(false);
     }
