@@ -2,7 +2,9 @@ const assert = require('assert/strict');
 const {
   createProductService,
   parseProductHtml,
-  normalizeAuctionUrl
+  normalizeAuctionUrl,
+  extractAuctionIdsFromSearchHtml,
+  buildYahooSearchUrl
 } = require('./proxy');
 
 async function testNormalizeAuctionUrl() {
@@ -254,6 +256,94 @@ async function testUsesCacheAfterFetchersFail() {
   assert.equal(result.data.title, 'Cached Product');
 }
 
+function testExtractsUniqueAuctionIdFromProductsListOnly() {
+  const ids = extractAuctionIdsFromSearchHtml(`
+    <a href="https://auctions.yahoo.co.jp/jp/auction/z999999999">outside</a>
+    <div class="Products__list">
+      <a href="https://auctions.yahoo.co.jp/jp/auction/x1230699905">one</a>
+      <a href="/jp/auction/x1230699905">duplicate</a>
+    </div>
+  `);
+
+  assert.deepEqual(ids, ['x1230699905']);
+}
+
+function testExtractsMultipleAuctionIdsFromProductsList() {
+  const ids = extractAuctionIdsFromSearchHtml(`
+    <div class="Products__list">
+      <a href="/jp/auction/x1230699905">one</a>
+      <a href="/jp/auction/v1230349098">two</a>
+    </div>
+  `);
+
+  assert.deepEqual(ids, ['x1230699905', 'v1230349098']);
+}
+
+function testBuildsYahooSearchUrlWithKeyword() {
+  assert.equal(
+    buildYahooSearchUrl('テスト 商品'),
+    'https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=%E3%83%86%E3%82%B9%E3%83%88%20%E5%95%86%E5%93%81'
+  );
+}
+
+async function testFetchProductByKeywordUsesOnlySingleSearchResult() {
+  const calls = [];
+  const service = createProductService({
+    httpFetcher: async url => {
+      calls.push(url);
+      if (url.includes('/search/search?')) {
+        return `
+          <a href="/jp/auction/z999999999">outside</a>
+          <div class="Products__list">
+            <a href="/jp/auction/x1230699905">target</a>
+            <a href="/jp/auction/x1230699905">duplicate</a>
+          </div>
+        `;
+      }
+      return `
+        <html>
+          <head><title>Keyword Product - Yahoo!オークション</title></head>
+          <body><span itemprop="price" content="2450"></span></body>
+        </html>
+      `;
+    },
+    playwrightFetcher: async () => {
+      throw new Error('should not call playwright');
+    }
+  });
+
+  const result = await service.fetchProductByKeyword('test keyword');
+
+  assert.equal(result.data.auctionId, 'x1230699905');
+  assert.equal(result.data.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/x1230699905');
+  assert.equal(result.data.title, 'Keyword Product');
+  assert.equal(result.data.currentPrice, 2450);
+  assert.equal(calls[0], 'https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=test%20keyword');
+}
+
+async function testFetchProductByKeywordFailsWhenResultCountIsNotOne() {
+  const service = createProductService({
+    httpFetcher: async () => `
+      <div class="Products__list">
+        <a href="/jp/auction/x1230699905">one</a>
+        <a href="/jp/auction/v1230349098">two</a>
+      </div>
+    `,
+    playwrightFetcher: async () => {
+      throw new Error('should not call playwright');
+    }
+  });
+
+  await assert.rejects(
+    () => service.fetchProductByKeyword('test keyword'),
+    error => {
+      assert.equal(error.statusCode, 400);
+      assert.equal(error.message, '存在多个商品结果，无法显示！');
+      return true;
+    }
+  );
+}
+
 async function testFailsWhenServerCannotFetchProductAndNoCacheExists() {
   const service = createProductService({
     httpFetcher: async () => {
@@ -287,6 +377,11 @@ async function run() {
   await testFallsBackToPlaywrightWhenHttpFails();
   await testFetchRefreshesBeforeUsingCache();
   await testUsesCacheAfterFetchersFail();
+  testExtractsUniqueAuctionIdFromProductsListOnly();
+  testExtractsMultipleAuctionIdsFromProductsList();
+  testBuildsYahooSearchUrlWithKeyword();
+  await testFetchProductByKeywordUsesOnlySingleSearchResult();
+  await testFetchProductByKeywordFailsWhenResultCountIsNotOne();
   await testFailsWhenServerCannotFetchProductAndNoCacheExists();
 }
 

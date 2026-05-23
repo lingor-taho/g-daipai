@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react';
-import { Input, Button, Toast, List, Picker, Checkbox, Dialog } from 'antd-mobile';
+import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
+import { getActualBidPrice, getSubmitTaxType, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -57,6 +58,7 @@ export default function Submit() {
   const [strategyPickerVisible, setStrategyPickerVisible] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [storeBidPriceMode, setStoreBidPriceMode] = useState('tax_before');
   const [lastFetchedUrl, setLastFetchedUrl] = useState('');
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [multiBidConfig, setMultiBidConfig] = useState({
@@ -83,6 +85,7 @@ export default function Submit() {
       setStrategy('direct');
       setMultiBidIncrement('');
       setBuyoutSelected(false);
+      setStoreBidPriceMode('tax_before');
       setLastFetchedUrl('');
       setTaskListVersion(version => version + 1);
     }
@@ -91,22 +94,24 @@ export default function Submit() {
   }, []);
 
   async function handleFetch(targetUrl = url, options = {}) {
-    const normalizedUrl = String(targetUrl || '').trim();
-    if (!normalizedUrl || fetching) return;
-    if (options.skipIfFetched && normalizedUrl === lastFetchedUrl) return;
-    const auctionId = extractAuctionId(normalizedUrl);
-    if (!auctionId) {
-      if (!options.silentInvalid) Toast.show({ content: '无效的商品链接' });
-      return;
-    }
+    const normalizedInput = String(targetUrl || '').trim();
+    if (!normalizedInput || fetching) return;
+    if (options.skipIfFetched && normalizedInput === lastFetchedUrl) return;
+    const inputAuctionId = extractAuctionId(normalizedInput);
 
     setFetching(true);
     try {
-      const res = await getProductInfo(normalizedUrl);
+      const res = await getProductInfo(normalizedInput);
       const data = res.data?.data;
+      const auctionId = data?.auctionId || inputAuctionId;
+      if (!auctionId) {
+        setProduct(null);
+        Toast.show({ content: '服务器网络问题，请稍后重试！' });
+        return;
+      }
       if (data?.title && data.title !== '商品 ' + auctionId) {
         setProduct({
-          auctionId: data.auctionId || auctionId,
+          auctionId,
           title: data.title || ('商品 ' + auctionId),
           currentPrice: data.currentPrice || 0,
           buyoutPrice: data.buyoutPrice || 0,
@@ -114,7 +119,8 @@ export default function Submit() {
           imageUrl: data.imageUrl || '',
           endTime: data.endTime || ''
         });
-        setLastFetchedUrl(normalizedUrl);
+        setStoreBidPriceMode('tax_before');
+        setLastFetchedUrl(normalizedInput);
         Toast.show({ content: data.imageUrl ? '已获取商品信息' : '已获取标题（价格需在页面提取）' });
       } else {
         setProduct(null);
@@ -141,9 +147,10 @@ export default function Submit() {
 
   async function handleSubmit() {
     if (submitting) return;
+    const submitTaxType = getSubmitTaxType(product, storeBidPriceMode);
     const buyoutPrice = Number(product?.buyoutPrice || 0);
     const effectiveMaxPrice = buyoutSelected
-      ? getDisplayPrice(buyoutPrice, product?.taxType)
+      ? getDisplayPrice(buyoutPrice, submitTaxType)
       : Number(maxPrice || 0);
     if (buyoutSelected && buyoutPrice <= 0) {
       Toast.show({ content: '出价失败：该商品没有即決价格' });
@@ -193,7 +200,7 @@ export default function Submit() {
         product_image_url: product?.imageUrl || null,
         current_price: product?.currentPrice || null,
         buyout_price: buyoutPrice || null,
-        tax_type: product?.taxType || 'tax_zero',
+        tax_type: submitTaxType,
         multi_bid_increment: selectedStrategy === 'multi_bid' ? effectiveMultiBidIncrement : null,
         end_time: product?.endTime || null
       });
@@ -204,6 +211,7 @@ export default function Submit() {
       setStrategy('direct');
       setMultiBidIncrement('');
       setBuyoutSelected(false);
+      setStoreBidPriceMode('tax_before');
       setLastFetchedUrl('');
       setTaskListVersion(version => version + 1);
     } catch (e) {
@@ -223,7 +231,7 @@ export default function Submit() {
         padding: 14,
         boxShadow: '0 2px 8px rgba(22, 119, 255, 0.08)'
       }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: '#1f2937', marginBottom: 10 }}>商品链接</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#1f2937', marginBottom: 10 }}>商品链接 / 商品名称</div>
         <div style={{
           border: '1px solid #1677ff',
           borderRadius: 8,
@@ -231,7 +239,7 @@ export default function Submit() {
           background: '#f8fbff'
         }}>
           <Input
-            placeholder="粘贴 Yahoo 拍卖商品链接"
+            placeholder="粘贴 Yahoo 拍卖商品链接或输入商品名称"
             value={url}
             onChange={handleUrlChange}
             onBlur={handleUrlBlur}
@@ -276,12 +284,24 @@ export default function Submit() {
                 <span style={{ color: '#999', fontSize: 12 }}>使用即決价格直接落札</span>
               </List.Item>
             )}
+            {isStoreProduct(product) && !buyoutSelected && (
+              <List.Item prefix="价格类型">
+                <Radio.Group
+                  value={storeBidPriceMode}
+                  onChange={setStoreBidPriceMode}
+                  style={{ display: 'flex', justifyContent: 'flex-end', gap: 18 }}
+                >
+                  <Radio value="tax_before">税前价</Radio>
+                  <Radio value="tax_after">税后价</Radio>
+                </Radio.Group>
+              </List.Item>
+            )}
             <List.Item
               prefix="最高出价"
               extra={
                 <Input
                   type="number"
-                  value={buyoutSelected ? String(getDisplayPrice(product.buyoutPrice, product.taxType) || '') : maxPrice}
+                  value={buyoutSelected ? String(getDisplayPrice(product.buyoutPrice, getSubmitTaxType(product, storeBidPriceMode)) || '') : maxPrice}
                   onChange={(value) => {
                     setMaxPrice(value);
                     if (strategy === 'multi_bid') {
@@ -297,6 +317,13 @@ export default function Submit() {
             >
               <span style={{ color: '#999', fontSize: 12 }}>日元</span>
             </List.Item>
+            {isStoreProduct(product) && !buyoutSelected && (
+              <List.Item>
+                <div style={{ textAlign: 'right', color: '#d4380d', fontSize: 13, fontWeight: 600 }}>
+                  实际出价：{getActualBidPrice(maxPrice, product, storeBidPriceMode).toLocaleString('ja-JP')}日元
+                </div>
+              </List.Item>
+            )}
           </List>
 
           <List style={{ marginTop: 12 }}>

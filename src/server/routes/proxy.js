@@ -173,6 +173,49 @@ function parseProductHtml(html, auctionId, standardUrl) {
   };
 }
 
+function buildYahooSearchUrl(keyword) {
+  return `https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=${encodeURIComponent(String(keyword || '').trim())}`;
+}
+
+function extractProductsListHtml(html) {
+  const source = String(html || '');
+  const openMatch = /<div\b[^>]*class=["'][^"']*\bProducts__list\b[^"']*["'][^>]*>/i.exec(source);
+  if (!openMatch) return '';
+
+  let depth = 1;
+  let cursor = openMatch.index + openMatch[0].length;
+  const tagPattern = /<\/?div\b[^>]*>/ig;
+  tagPattern.lastIndex = cursor;
+
+  while (depth > 0) {
+    const tagMatch = tagPattern.exec(source);
+    if (!tagMatch) return source.slice(openMatch.index);
+    if (/^<div\b/i.test(tagMatch[0])) {
+      depth += 1;
+    } else {
+      depth -= 1;
+    }
+    cursor = tagPattern.lastIndex;
+  }
+
+  return source.slice(openMatch.index, cursor);
+}
+
+function extractAuctionIdsFromSearchHtml(html) {
+  const productsHtml = extractProductsListHtml(html);
+  if (!productsHtml) return [];
+
+  const ids = [];
+  const seen = new Set();
+  for (const match of productsHtml.matchAll(/\/jp\/auction\/([a-zA-Z]?\d{8,10})/g)) {
+    const auctionId = match[1].toLowerCase();
+    if (seen.has(auctionId)) continue;
+    seen.add(auctionId);
+    ids.push(auctionId);
+  }
+  return ids;
+}
+
 function isUsefulProduct(product, auctionId) {
   return Boolean(
     product &&
@@ -300,7 +343,35 @@ function createProductService({
     throw error;
   }
 
-  return { cacheProduct, fetchProduct };
+  async function fetchSearchHtml(keyword) {
+    const searchUrl = buildYahooSearchUrl(keyword);
+    try {
+      return await httpFetcher(searchUrl);
+    } catch (_) {
+      return playwrightFetcher(searchUrl);
+    }
+  }
+
+  async function fetchProductByKeyword(keyword) {
+    const normalizedKeyword = String(keyword || '').trim();
+    if (!normalizedKeyword) {
+      const error = new Error('keyword is required');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const searchHtml = await fetchSearchHtml(normalizedKeyword);
+    const auctionIds = extractAuctionIdsFromSearchHtml(searchHtml);
+    if (auctionIds.length !== 1) {
+      const error = new Error('存在多个商品结果，无法显示！');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${auctionIds[0]}`);
+  }
+
+  return { cacheProduct, fetchProduct, fetchProductByKeyword };
 }
 
 const productService = createProductService();
@@ -312,11 +383,13 @@ router.post('/cache', (req, res) => {
 });
 
 router.get('/fetch', async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: 'url is required' });
+  const { url, keyword } = req.query;
+  if (!url && !keyword) return res.status(400).json({ error: 'url or keyword is required' });
 
   try {
-    const result = await productService.fetchProduct(url);
+    const result = keyword
+      ? await productService.fetchProductByKeyword(keyword)
+      : await productService.fetchProduct(url);
     res.json(result);
   } catch (e) {
     res.status(e.statusCode || 500).json({ error: e.message || '商品信息获取失败' });
@@ -327,5 +400,7 @@ module.exports = router;
 module.exports.createProductService = createProductService;
 module.exports.normalizeAuctionUrl = normalizeAuctionUrl;
 module.exports.parseProductHtml = parseProductHtml;
+module.exports.extractAuctionIdsFromSearchHtml = extractAuctionIdsFromSearchHtml;
+module.exports.buildYahooSearchUrl = buildYahooSearchUrl;
 module.exports.productService = productService;
 

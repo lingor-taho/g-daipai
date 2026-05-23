@@ -63,18 +63,23 @@ async function testAcceptsThirdPartyAndNumericAuctionUrls() {
   assert.equal(calls.length, 7);
 }
 
-async function testRejectsInvalidUrlBeforeServerCall() {
-  let called = false;
+async function testUsesKeywordWhenInputDoesNotContainAuctionId() {
+  const calls = [];
   const getProductInfo = createGetProductInfo({
     apiClient: {
-      get: async () => {
-        called = true;
+      get: async (path, config) => {
+        calls.push({ path, config });
+        return { data: { success: true, data: { auctionId: 'x1230699905', title: 'keyword product' } } };
       }
     }
   });
 
-  await assert.rejects(() => getProductInfo('https://example.com/no-auction'), /invalid product url/);
-  assert.equal(called, false);
+  const result = await getProductInfo('商品名称');
+
+  assert.equal(result.data.data.auctionId, 'x1230699905');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, '/proxy/fetch');
+  assert.deepEqual(calls[0].config.params, { keyword: '商品名称' });
 }
 
 async function testServerProductFetchFailureRejectsToCaller() {
@@ -121,7 +126,7 @@ function testRetriesSafeRequestsAndExplicitSubmitRetryOnlyOnce() {
 
 await testAlwaysUsesServerProxy();
 await testAcceptsThirdPartyAndNumericAuctionUrls();
-await testRejectsInvalidUrlBeforeServerCall();
+await testUsesKeywordWhenInputDoesNotContainAuctionId();
 await testServerProductFetchFailureRejectsToCaller();
 testApiHasTimeoutForIdleConnections();
 testTimeoutErrorHasReadableMessage();

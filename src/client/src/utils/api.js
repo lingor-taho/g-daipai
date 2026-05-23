@@ -80,10 +80,11 @@ export const getTaskStats = () => api.get('/task/stats');
 export const getPluginConfig = () => api.get('/plugin/config');
 
 export function createGetProductInfo({ apiClient = api } = {}) {
-  return async function getProductInfo(url) {
-    const match = url.match(/[a-zA-Z]?\d{8,10}/);
-    if (!match) throw new Error('invalid product url');
-    return apiClient.get('/proxy/fetch', { params: { url } });
+  return async function getProductInfo(input) {
+    const value = String(input || '').trim();
+    const match = value.match(/[a-zA-Z]?\d{8,10}/);
+    if (match) return apiClient.get('/proxy/fetch', { params: { url: value } });
+    return apiClient.get('/proxy/fetch', { params: { keyword: value } });
   };
 }
 
