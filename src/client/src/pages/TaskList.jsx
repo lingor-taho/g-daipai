@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
-import { cancelTask, getTaskList, getTaskStats } from '../utils/api';
+import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
 import UserNav from '../components/UserNav';
 
 const STATUS_MAP = {
@@ -83,7 +83,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
       Toast.show({ content: '任务已终止' });
       fetchTasks();
     } catch (e) {
-      Toast.show({ content: e.response?.data?.error || '终止失败' });
+      Toast.show({ content: getApiErrorMessage(e, '终止失败') });
     } finally {
       setCancellingId(null);
     }

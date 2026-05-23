@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog } from 'antd-mobile';
-import { getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
+import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -56,6 +56,7 @@ export default function Submit() {
   const [buyoutSelected, setBuyoutSelected] = useState(false);
   const [strategyPickerVisible, setStrategyPickerVisible] = useState(false);
   const [fetching, setFetching] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [multiBidConfig, setMultiBidConfig] = useState({
     startHours: 0.5,
@@ -139,6 +140,7 @@ export default function Submit() {
   }
 
   async function handleSubmit() {
+    if (submitting) return;
     const buyoutPrice = Number(product?.buyoutPrice || 0);
     const effectiveMaxPrice = buyoutSelected
       ? getDisplayPrice(buyoutPrice, product?.taxType)
@@ -162,6 +164,7 @@ export default function Submit() {
       Toast.show({ content: `每次加价额度不能低于${minMultiBidIncrement}日元` });
       return;
     }
+    setSubmitting(true);
     try {
       const standardUrl = product?.auctionId
         ? `https://auctions.yahoo.co.jp/jp/auction/${product.auctionId}`
@@ -203,7 +206,9 @@ export default function Submit() {
       setBuyoutSelected(false);
       setTaskListVersion(version => version + 1);
     } catch (e) {
-      Toast.show({ content: e.response?.data?.error || '提交失败' });
+      Toast.show({ content: getApiErrorMessage(e, '提交失败') });
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -323,8 +328,8 @@ export default function Submit() {
           )}
 
           <div style={{ padding: '0 16px 16px' }}>
-            <Button block color="primary" onClick={handleSubmit}>
-              提交任务
+            <Button block color="primary" loading={submitting} disabled={submitting} onClick={handleSubmit}>
+              {submitting ? '提交中...' : '提交任务'}
             </Button>
           </div>
         </>

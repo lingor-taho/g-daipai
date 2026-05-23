@@ -1,6 +1,21 @@
 ﻿import axios from 'axios';
 
-const api = axios.create({ baseURL: '/api' });
+export const REQUEST_TIMEOUT_MS = 15000;
+
+export const api = axios.create({
+  baseURL: '/api',
+  timeout: REQUEST_TIMEOUT_MS
+});
+
+export function getApiErrorMessage(error, fallback = '操作失败') {
+  if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) {
+    return '网络请求超时，请刷新页面后重试';
+  }
+  if (!error?.response && error?.request) {
+    return '网络连接异常，请刷新页面后重试';
+  }
+  return error?.response?.data?.error || fallback;
+}
 
 api.interceptors.request.use(cfg => {
   const token = localStorage.getItem('token');

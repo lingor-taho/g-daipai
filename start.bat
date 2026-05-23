@@ -29,9 +29,9 @@ echo [3/4] Start Client: http://localhost:3035
 start "g-daipai-client" /b cmd /c "cd /d %CLIENT_DIR% && npm run dev -- --host 0.0.0.0 <NUL > %ROOT%\client-start.log 2>&1"
 
 echo [4/4] Start Admin Report: http://localhost:8000/#/login
-start "g-daipai-admin" /b cmd /c "cd /d %ADMIN_DIR% && npm start -- --host 0.0.0.0 <NUL > %ROOT%\admin-start.log 2>&1"
+start "g-daipai-admin" /b cmd /c "cd /d %ADMIN_DIR% && npm start <NUL > %ROOT%\admin-start.log 2>&1"
 
-timeout /t 5 > nul
+timeout /t 20 > nul
 
 set API_OK=0
 set CLIENT_OK=0

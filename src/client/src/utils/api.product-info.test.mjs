@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createGetProductInfo } from './api.js';
+import { api, createGetProductInfo, getApiErrorMessage, REQUEST_TIMEOUT_MS } from './api.js';
 
 async function testAlwaysUsesServerProxy() {
   const calls = [];
@@ -70,6 +70,20 @@ async function testRejectsInvalidUrlBeforeServerCall() {
   assert.equal(called, false);
 }
 
+function testApiHasTimeoutForIdleConnections() {
+  assert.equal(api.defaults.timeout, REQUEST_TIMEOUT_MS);
+  assert.ok(api.defaults.timeout >= 10000);
+}
+
+function testTimeoutErrorHasReadableMessage() {
+  assert.equal(
+    getApiErrorMessage({ code: 'ECONNABORTED', message: 'timeout of 15000ms exceeded' }, '提交失败'),
+    '网络请求超时，请刷新页面后重试'
+  );
+}
+
 await testAlwaysUsesServerProxy();
 await testAcceptsThirdPartyAndNumericAuctionUrls();
 await testRejectsInvalidUrlBeforeServerCall();
+testApiHasTimeoutForIdleConnections();
+testTimeoutErrorHasReadableMessage();
