@@ -716,6 +716,20 @@ async function executeBidV3(maxPrice, options = {}) {
 }
 
 function extractOrderHistory() {
+  function extractOrderPrice(text) {
+    const value = String(text || '');
+    const labeledPatterns = [
+      /(?:\u843d\u672d\u4fa1\u683c|\u843d\u672d\u984d|\u843d\u672d\u91d1\u984d|\u652f\u6255\u91d1\u984d|\u5408\u8a08\u91d1\u984d)[^\d]{0,40}([\d,]+)\s*(?:\u5186|JPY)/i,
+      /(?:winning\s*bid|winning\s*price|final\s*price|total)[^\d]{0,40}([\d,]+)\s*(?:\u5186|JPY)/i
+    ];
+    for (const pattern of labeledPatterns) {
+      const match = value.match(pattern);
+      if (match?.[1]) return match[1];
+    }
+
+    return '';
+  }
+
   const containers = [...document.querySelectorAll('li, article, tr, div')];
   const seen = new Set();
   const orders = [];
@@ -733,7 +747,7 @@ function extractOrderHistory() {
     orders.push({
       productId,
       title: link.textContent?.trim() || '',
-      price: text.match(/([\d,]+)\s*(?:\u5186|JPY)?/)?.[1] || '',
+      price: extractOrderPrice(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       trackingNumber: trackingMatch?.[1] || ''
     });
@@ -915,7 +929,8 @@ window.__G_DAIPAI_TEST__ = {
   isInstantBuyButtonText,
   isBidEntryButtonText,
   isFinalAgreeButtonText,
-  isConfirmButtonText
+  isConfirmButtonText,
+  extractOrderHistory
 };
 })();
 

@@ -264,12 +264,25 @@ function normalizeYenAmount(value) {
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
+function resolveOrderFinalPrice(task, parsedFinalPrice) {
+  const parsed = normalizeYenAmount(parsedFinalPrice) || 0;
+  const known = Math.max(
+    Number(task?.current_price || 0),
+    Number(task?.max_price || 0)
+  );
+  const userMaxPrice = Number(task?.user_max_price || 0);
+  if (parsed > 0 && userMaxPrice > 0 && parsed > userMaxPrice && known > 0) {
+    return known;
+  }
+  return Math.max(parsed, known);
+}
+
 async function upsertOrderFromTask(taskId, options = {}) {
   const task = await db.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task) return;
   const existing = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
   const finance = await getFinanceConfig();
-  const finalPrice = normalizeYenAmount(options.finalPrice) || Number(task.current_price || task.max_price || 0);
+  const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const totalAmountCny = Number(((finalPrice + finance.handlingFeeJpy) * finance.rate).toFixed(2));
   if (existing) {
     await db.query(
@@ -491,3 +504,4 @@ module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
 module.exports.sweepPendingTasks = sweepPendingTasks;
 module.exports.isYahooLoginError = isYahooLoginError;
 module.exports.syncBiddingItems = syncBiddingItems;
+module.exports.resolveOrderFinalPrice = resolveOrderFinalPrice;

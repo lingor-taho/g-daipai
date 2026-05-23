@@ -105,6 +105,16 @@ function createTestAnchor(text, href) {
   };
 }
 
+function createOrderContainer(text, linkText, href) {
+  const link = createTestAnchor(linkText, href);
+  return {
+    textContent: text,
+    querySelectorAll(selector) {
+      return selector === 'a[href*="/jp/auction/"]' ? [link] : [];
+    }
+  };
+}
+
 function testOutbidTextIsNotHighestBidder() {
   const api = loadContentForTest('最高額入札者ではありません。値段を上げて入札してください。');
 
@@ -377,6 +387,27 @@ async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
   assert.equal(confirmButton.clicked, true);
 }
 
+function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
+  const orderContainer = createOrderContainer(
+    '送料 10円 落札価格 2,530円 MD ゴールデンアックス',
+    'MD ゴールデンアックス',
+    'https://auctions.yahoo.co.jp/jp/auction/x1230699905'
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'x1230699905');
+  assert.equal(orders[0].price, '2,530');
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -407,6 +438,7 @@ async function run() {
   await testSkipWhenBidIsWithinAutoBidLimit();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
+  testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
 }
 
 run().catch(err => {
