@@ -57,6 +57,7 @@ export default function Submit() {
   const [strategyPickerVisible, setStrategyPickerVisible] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [lastFetchedUrl, setLastFetchedUrl] = useState('');
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [multiBidConfig, setMultiBidConfig] = useState({
     startHours: 0.5,
@@ -82,23 +83,26 @@ export default function Submit() {
       setStrategy('direct');
       setMultiBidIncrement('');
       setBuyoutSelected(false);
+      setLastFetchedUrl('');
       setTaskListVersion(version => version + 1);
     }
     window.addEventListener('acting-user-change', handleActingUserChange);
     return () => window.removeEventListener('acting-user-change', handleActingUserChange);
   }, []);
 
-  async function handleFetch() {
-    if (!url) return;
-    const auctionId = extractAuctionId(url);
+  async function handleFetch(targetUrl = url, options = {}) {
+    const normalizedUrl = String(targetUrl || '').trim();
+    if (!normalizedUrl || fetching) return;
+    if (options.skipIfFetched && normalizedUrl === lastFetchedUrl) return;
+    const auctionId = extractAuctionId(normalizedUrl);
     if (!auctionId) {
-      Toast.show({ content: '无效的商品链接' });
+      if (!options.silentInvalid) Toast.show({ content: '无效的商品链接' });
       return;
     }
 
     setFetching(true);
     try {
-      const res = await getProductInfo(url);
+      const res = await getProductInfo(normalizedUrl);
       const data = res.data?.data;
       if (data?.title && data.title !== '商品 ' + auctionId) {
         setProduct({
@@ -110,6 +114,7 @@ export default function Submit() {
           imageUrl: data.imageUrl || '',
           endTime: data.endTime || ''
         });
+        setLastFetchedUrl(normalizedUrl);
         Toast.show({ content: data.imageUrl ? '已获取商品信息' : '已获取标题（价格需在页面提取）' });
       } else {
         setProduct(null);
@@ -121,6 +126,17 @@ export default function Submit() {
     } finally {
       setFetching(false);
     }
+  }
+
+  function handleUrlChange(value) {
+    setUrl(value);
+    if (String(value || '').trim() !== lastFetchedUrl) {
+      setProduct(null);
+    }
+  }
+
+  function handleUrlBlur() {
+    handleFetch(url, { skipIfFetched: true, silentInvalid: true });
   }
 
   async function handleSubmit() {
@@ -188,6 +204,7 @@ export default function Submit() {
       setStrategy('direct');
       setMultiBidIncrement('');
       setBuyoutSelected(false);
+      setLastFetchedUrl('');
       setTaskListVersion(version => version + 1);
     } catch (e) {
       Toast.show({ content: getApiErrorMessage(e, '提交失败') });
@@ -199,20 +216,41 @@ export default function Submit() {
   return (
     <div style={{ padding: 16 }}>
       <UserNav />
-      <List header="提交竞拍任务">
-        <List.Item>
+      <div style={{
+        background: '#fff',
+        border: '1px solid #d6e4ff',
+        borderRadius: 8,
+        padding: 14,
+        boxShadow: '0 2px 8px rgba(22, 119, 255, 0.08)'
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#1f2937', marginBottom: 10 }}>商品链接</div>
+        <div style={{
+          border: '1px solid #1677ff',
+          borderRadius: 8,
+          padding: '10px 12px',
+          background: '#f8fbff'
+        }}>
           <Input
-            placeholder="粘贴商品链接"
+            placeholder="粘贴 Yahoo 拍卖商品链接"
             value={url}
-            onChange={setUrl}
-            onEnterPress={handleFetch}
+            onChange={handleUrlChange}
+            onBlur={handleUrlBlur}
+            onEnterPress={() => handleFetch(url)}
+            clearable
           />
-          <div style={{ height: 10 }} />
-          <Button onClick={handleFetch} disabled={fetching} block>
-            {fetching ? '获取中...' : '获取商品信息'}
-          </Button>
-        </List.Item>
-      </List>
+        </div>
+        <Button
+          onClick={() => handleFetch(url)}
+          disabled={fetching}
+          loading={fetching}
+          color="primary"
+          fill="outline"
+          block
+          style={{ marginTop: 12 }}
+        >
+          {fetching ? '获取中...' : '获取商品信息'}
+        </Button>
+      </div>
 
       {product && <ProductCard product={product} />}
 
