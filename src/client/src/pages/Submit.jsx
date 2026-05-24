@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
+import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
 import { getActualBidPrice, getSubmitMaxPrice, getSubmitTaxType, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
@@ -50,6 +51,7 @@ function hasDirectBiddingRecord(tasks, auctionId) {
 }
 
 export default function Submit() {
+  const [searchParams] = useSearchParams();
   const [url, setUrl] = useState('');
   const [product, setProduct] = useState(null);
   const [maxPrice, setMaxPrice] = useState('');
@@ -76,6 +78,13 @@ export default function Submit() {
         });
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const prefillUrl = String(searchParams.get('url') || '').trim();
+    if (!prefillUrl) return;
+    setUrl(prefillUrl);
+    handleFetch(prefillUrl, { skipIfFetched: true });
   }, []);
 
   useEffect(() => {

@@ -4,6 +4,7 @@ const {
   buildTaskListInput,
   buildActiveBiddingTaskListInput,
   buildWonTaskListInput,
+  buildActiveBiddingTaskListQuery,
   calculateBidMaxPrice,
   getTaxIncludedPrice,
   validateMultiBidUserMaxPrice,
@@ -142,6 +143,15 @@ function testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit() {
   assert.throws(() => buildActiveBiddingTaskListInput(null, {}), /not logged in/);
 }
 
+function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
+  const query = buildActiveBiddingTaskListQuery({ userId: 9, limit: 100 });
+
+  assert.match(query.sql, /bi\.status IN \('highest', 'outbid'\)/);
+  assert.match(query.sql, /bi\.status AS bidding_status/);
+  assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
+  assert.deepEqual(query.params, [9, 100]);
+}
+
 function testStoreUserMaxPriceConvertsToTaxExcludedBidMax() {
   assert.equal(calculateBidMaxPrice(1000, 'tax_included'), 900);
   assert.equal(calculateBidMaxPrice(1100, 'tax_included'), 1000);
@@ -258,6 +268,7 @@ testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
 testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
+testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
 testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500();

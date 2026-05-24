@@ -119,6 +119,26 @@ function createOrderContainer(text, linkText, href) {
   };
 }
 
+function createBiddingContainer(text, linkText, href, imageSrc = '') {
+  const link = createTestAnchor(linkText, href);
+  const image = imageSrc ? { src: imageSrc, alt: linkText } : null;
+  let parent = null;
+  const container = {
+    textContent: text,
+    parentElement: null,
+    querySelector(selector) {
+      return selector === 'img' ? image : null;
+    },
+    querySelectorAll(selector) {
+      return selector === 'a[href*="/jp/auction/"]' ? [link] : [];
+    }
+  };
+  parent = container;
+  link.parentElement = parent;
+  link.closest = () => null;
+  return { container, link };
+}
+
 function testOutbidTextIsNotHighestBidder() {
   const api = loadContentForTest('最高額入札者ではありません。値段を上げて入札してください。');
 
@@ -497,6 +517,30 @@ function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   assert.equal(orders[0].price, '2,530');
 }
 
+function testBiddingItemsExtractsOutbidRebidRows() {
+  const { container, link } = createBiddingContainer(
+    '高値更新 再入札する 現在 1,500円 MD ゴールデンアックス',
+    'MD ゴールデンアックス',
+    'https://auctions.yahoo.co.jp/jp/auction/x1230699905',
+    'https://example.com/item.jpg'
+  );
+  const api = loadContentForTest('', '/my/bidding', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href*="/jp/auction/"]') return [link];
+      return [];
+    }
+  });
+
+  const items = api.extractBiddingItems();
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].productId, 'x1230699905');
+  assert.equal(items[0].status, 'outbid');
+  assert.equal(items[0].price, '1500');
+  assert.equal(items[0].imageUrl, 'https://example.com/item.jpg');
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -531,6 +575,7 @@ async function run() {
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
+  testBiddingItemsExtractsOutbidRebidRows();
 }
 
 run().catch(err => {

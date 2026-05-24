@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
+import { useNavigate } from 'react-router-dom';
 import UserNav from '../components/UserNav';
 import { getActiveBiddingTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
@@ -23,6 +24,14 @@ function getDisplayPrice(item) {
   return item.current_price;
 }
 
+function isOutbidItem(item) {
+  return item?.bidding_status === 'outbid' || Number(item?.is_highest_bidder) === 0;
+}
+
+function getProductUrl(item) {
+  return item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${item.product_id}`;
+}
+
 function formatBeijingTime(value) {
   if (!value) return '';
   const raw = String(value).trim();
@@ -41,6 +50,7 @@ function formatBeijingTime(value) {
 }
 
 export default function ActiveBidding() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -99,9 +109,11 @@ export default function ActiveBidding() {
         {!loading && items.map(item => {
           const title = item.product_title || `商品 ${item.product_id}`;
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
+          const outbid = isOutbidItem(item);
+          const canRebid = outbid && item.strategy === 'direct';
           return (
             <List.Item key={item.id}>
-              <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 {item.product_image_url ? (
                   <img
                     src={item.product_image_url}
@@ -113,7 +125,14 @@ export default function ActiveBidding() {
                 )}
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                    <Tag color="primary">最高价入札中</Tag>
+                    {outbid ? (
+                      <>
+                        <Tag color="danger">高値更新</Tag>
+                        <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 600 }}>再入札する</span>
+                      </>
+                    ) : (
+                      <Tag color="primary">最高价入札中</Tag>
+                    )}
                     <span style={{ fontSize: 12, color: '#666' }}>{strategy}</span>
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}>
@@ -130,6 +149,17 @@ export default function ActiveBidding() {
                     ) : null}
                   </div>
                 </div>
+                {canRebid ? (
+                  <Button
+                    size="mini"
+                    color="danger"
+                    fill="outline"
+                    onClick={() => navigate(`/submit?url=${encodeURIComponent(getProductUrl(item))}`)}
+                    style={{ flex: '0 0 auto', marginTop: 26 }}
+                  >
+                    再入札
+                  </Button>
+                ) : null}
               </div>
             </List.Item>
           );

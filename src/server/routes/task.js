@@ -149,6 +149,41 @@ function buildActiveBiddingTaskListInput(user, query = {}) {
   return { userId: user.id, limit };
 }
 
+function buildActiveBiddingTaskListQuery(input) {
+  return {
+    sql: `SELECT
+         MAX(t.id) AS id,
+         bi.product_id,
+         bi.product_url,
+         bi.product_title,
+         bi.product_image_url,
+         bi.current_price,
+         MAX(t.buyout_price) AS buyout_price,
+         COALESCE(MAX(t.tax_type), 'tax_zero') AS tax_type,
+         MAX(t.max_price) AS max_price,
+         MAX(t.user_max_price) AS user_max_price,
+         COALESCE(
+           MAX(CASE WHEN t.strategy = 'multi_bid' THEN t.strategy END),
+           MAX(t.strategy)
+         ) AS strategy,
+         MAX(t.bid_mode) AS bid_mode,
+         'bidding' AS status,
+         bi.status AS bidding_status,
+         MAX(t.end_time) AS end_time,
+         CASE WHEN bi.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder,
+         MAX(t.last_bid_at) AS last_bid_at,
+         bi.synced_at AS updated_at
+       FROM bidding_items bi
+       INNER JOIN tasks t ON t.product_id = bi.product_id
+       WHERE t.user_id = ?
+         AND bi.status IN ('highest', 'outbid')
+       GROUP BY bi.product_id
+       ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
+       LIMIT ?`,
+    params: [input.userId, input.limit]
+  };
+}
+
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
   const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, multi_bid_increment, client_request_id } = req.body;
@@ -323,42 +358,13 @@ router.get('/won', async (req, res) => {
   }
 });
 
-// GET /api/task/bidding - 用户入札中且当前最高价商品列表
+// GET /api/task/bidding - 用户入札中商品列表
 router.get('/bidding', async (req, res) => {
   try {
     const input = buildActiveBiddingTaskListInput(req.user, req.query);
     input.userId = req.actingUser.id;
-    const tasks = await db.getAll(
-      `SELECT
-         MAX(t.id) AS id,
-         bi.product_id,
-         bi.product_url,
-         bi.product_title,
-         bi.product_image_url,
-         bi.current_price,
-         MAX(t.buyout_price) AS buyout_price,
-         COALESCE(MAX(t.tax_type), 'tax_zero') AS tax_type,
-         MAX(t.max_price) AS max_price,
-         MAX(t.user_max_price) AS user_max_price,
-         COALESCE(
-           MAX(CASE WHEN t.strategy = 'multi_bid' THEN t.strategy END),
-           MAX(t.strategy)
-         ) AS strategy,
-         MAX(t.bid_mode) AS bid_mode,
-         'bidding' AS status,
-         MAX(t.end_time) AS end_time,
-         1 AS is_highest_bidder,
-         MAX(t.last_bid_at) AS last_bid_at,
-         bi.synced_at AS updated_at
-       FROM bidding_items bi
-       INNER JOIN tasks t ON t.product_id = bi.product_id
-       WHERE t.user_id = ?
-         AND bi.status = 'highest'
-       GROUP BY bi.product_id
-       ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
-       LIMIT ?`,
-      [input.userId, input.limit]
-    );
+    const query = buildActiveBiddingTaskListQuery(input);
+    const tasks = await db.getAll(query.sql, query.params);
     res.json({ success: true, data: tasks });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -424,6 +430,7 @@ module.exports = router;
 module.exports.buildSubmitTaskInput = buildSubmitTaskInput;
 module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
+module.exports.buildActiveBiddingTaskListQuery = buildActiveBiddingTaskListQuery;
 module.exports.buildWonTaskListInput = buildWonTaskListInput;
 module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
