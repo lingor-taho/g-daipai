@@ -3,6 +3,7 @@ import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
 import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
 import UserNav from '../components/UserNav';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
+import { runDeduped } from '../utils/requestDedupe';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -50,8 +51,8 @@ export default function TaskList({ limit = 10, embedded = false }) {
       return;
     }
     Promise.all([
-      getTaskList({ limit }),
-      getTaskStats().catch(() => ({ data: null }))
+      runDeduped(`TaskList:getTaskList:${limit}`, () => getTaskList({ limit })),
+      runDeduped('TaskList:getTaskStats', () => getTaskStats()).catch(() => ({ data: null }))
     ])
       .then(([taskRes, statsRes]) => {
         setTasks(taskRes.data.data || []);

@@ -3,6 +3,7 @@ import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getActiveBiddingTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
+import { runDeduped } from '../utils/requestDedupe';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -49,7 +50,7 @@ export default function ActiveBidding() {
       return;
     }
     setLoading(true);
-    getActiveBiddingTaskList({ limit: 100 })
+    runDeduped('ActiveBidding:getActiveBiddingTaskList', () => getActiveBiddingTaskList({ limit: 100 }))
       .then(res => {
         setItems(res.data?.data || []);
       })

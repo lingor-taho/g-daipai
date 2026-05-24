@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, Picker, Toast } from 'antd-mobile';
 import { getActingUsers } from '../utils/api';
+import { runDeduped } from '../utils/requestDedupe';
 
 const items = [
   { to: '/submit', label: '提交任务' },
@@ -28,7 +29,7 @@ export default function UserNav() {
 
   async function loadActingUsers() {
     try {
-      const res = await getActingUsers();
+      const res = await runDeduped('UserNav:getActingUsers', getActingUsers);
       const list = res.data?.data || [];
       setUsers(list);
       if (!list.length) return;

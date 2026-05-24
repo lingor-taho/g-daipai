@@ -5,6 +5,7 @@ import { getActualBidPrice, getSubmitMaxPrice, getSubmitTaxType, isStoreProduct 
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
+import { runDeduped } from '../utils/requestDedupe';
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -67,7 +68,7 @@ export default function Submit() {
   });
 
   useEffect(() => {
-    getPluginConfig()
+    runDeduped('Submit:getPluginConfig', getPluginConfig)
       .then(res => {
         setMultiBidConfig({
           startHours: Number(res.data?.multiBidStartHours || 0.5),

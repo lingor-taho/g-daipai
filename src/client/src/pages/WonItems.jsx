@@ -3,6 +3,7 @@ import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getWonTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
+import { runDeduped } from '../utils/requestDedupe';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -37,7 +38,7 @@ export default function WonItems() {
       return;
     }
     setLoading(true);
-    getWonTaskList({ limit: 100 })
+    runDeduped('WonItems:getWonTaskList', () => getWonTaskList({ limit: 100 }))
       .then(res => {
         setItems(res.data?.data || []);
       })
