@@ -4,6 +4,8 @@ import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../ut
 import UserNav from '../components/UserNav';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
+import { formatBeijingDateTime } from '../utils/datetime';
+import { getTaskFailureLabel } from '../utils/taskFailureReason';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -44,6 +46,8 @@ export default function TaskList({ limit = 10, embedded = false }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const fetchTasks = useCallback(() => {
     if (document.visibilityState === 'hidden' || isUserIdle()) {
@@ -51,11 +55,12 @@ export default function TaskList({ limit = 10, embedded = false }) {
       return;
     }
     Promise.all([
-      runDeduped(`TaskList:getTaskList:${limit}`, () => getTaskList({ limit })),
+      runDeduped(`TaskList:getTaskList:${limit}:${page}`, () => getTaskList({ limit, page })),
       runDeduped('TaskList:getTaskStats', () => getTaskStats()).catch(() => ({ data: null }))
     ])
       .then(([taskRes, statsRes]) => {
         setTasks(taskRes.data.data || []);
+        setTotal(Number(taskRes.data.total || 0));
         setStats(statsRes.data || null);
       })
       .catch(() => {
@@ -63,7 +68,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
         setStats(null);
       })
       .finally(() => setLoading(false));
-  }, [limit]);
+  }, [limit, page]);
 
   useEffect(() => {
     fetchTasks();
@@ -133,6 +138,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
         {tasks.length === 0 && <List.Item>暂无任务</List.Item>}
         {tasks.map(task => {
           const s = STATUS_MAP[task.status] || { label: task.status, color: 'default' };
+          const statusLabel = task.status === 'failed' ? getTaskFailureLabel(task.error_msg) : s.label;
           const auctionId = task.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || task.product_id;
           const strategyLabel = STRATEGY_LABELS[task.strategy] || task.strategy || '即时拍';
           const maxPrice = task.user_max_price || task.max_price;
@@ -141,7 +147,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
             <List.Item key={task.id}
               extra={
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Tag color={s.color}>{s.label}</Tag>
+                  <Tag color={s.color}>{statusLabel}</Tag>
                   {cancelable && (
                     <Button
                       size="mini"
@@ -159,6 +165,9 @@ export default function TaskList({ limit = 10, embedded = false }) {
                 <div style={{ fontSize: 12, color: '#666' }}>
                   ID: {auctionId}，策略: <span style={getStrategyTextStyle(task.strategy)}>{strategyLabel}</span>，最高出价：
                   <span style={{ color: '#dc2626', fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
+                  {task.created_at ? (
+                    <>，提交时间：{formatBeijingDateTime(task.created_at)}</>
+                  ) : null}
                 </div>
               }
             >
@@ -167,6 +176,13 @@ export default function TaskList({ limit = 10, embedded = false }) {
           );
         })}
       </List>
+      {total > limit && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '12px 0' }}>
+          <Button size="mini" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</Button>
+          <span style={{ fontSize: 12, color: '#666' }}>{page} / {Math.ceil(total / limit)}</span>
+          <Button size="mini" disabled={page >= Math.ceil(total / limit)} onClick={() => setPage(value => value + 1)}>下一页</Button>
+        </div>
+      )}
     </>
   );
 }

@@ -2,6 +2,7 @@ import { ProTable } from '@ant-design/pro-components';
 import { useEffect, useState } from 'react';
 import { Alert, Card, Col, Row, Space, Statistic, Tag, Typography } from 'antd';
 import { fetchAdminJson, isAdminLoggedIn, redirectToLogin } from './utils/auth';
+import { getTaskFailureLabel as getSharedTaskFailureLabel } from '../../shared/taskFailureReason';
 
 const statusColors: Record<string, string> = {
   pending: 'default',
@@ -21,6 +22,23 @@ const statusLabels: Record<string, string> = {
   failed: '出价失败'
 };
 
+function getTaskFailureLabel(errorMsg: string | null | undefined) {
+  const text = String(errorMsg || '');
+  if (
+    /Current price is above max price before execution/i.test(text) ||
+    /当前价格|税込合計金額|出价金额|加价后金额|高于最高价|above max price/i.test(text) ||
+    /褰撳墠浠锋牸|绋庤炯鍚堣▓閲戦|鍑轰环閲戦|鍔犱环鍚庨噾棰|楂樹簬鏈€楂樹环|楂樹簬鏈€楂/i.test(text)
+  ) return '失败：低于当前价';
+  if (
+    /Auction ended before plugin execution|商品.*结束|商品.*已经结束|商品.*已结束|ended before/i.test(text) ||
+    /鍟嗗搧.*缁撴潫|鍟嗗搧.*宸茬粡缁撴潫|鍟嗗搧.*宸茬粨鏉/i.test(text)
+  ) return '失败：商品已结束';
+  if (/outbid after bid|再入札|最高价未超过当前最高出价|鍐嶅叆鏈|鏈€楂樹环鏈秴杩囧綋鍓嶆渶楂樺嚭浠/i.test(text)) return '失败：出价后被超过';
+  if (/timeout|timed out|超时|加载超时|响应超时|networkidle|瓒呮椂/i.test(text)) return '失败：响应超时';
+  if (/需要登录 Yahoo|Yahoo.*登录|login.*Yahoo|Yahoo.*login|闇€瑕佺櫥褰.*Yahoo/i.test(text)) return '失败：yahoo登录失败';
+  return '失败：系统原因';
+}
+
 const strategyLabels: Record<string, string> = {
   direct: '即时拍',
   multi_bid: '多次出价',
@@ -36,9 +54,11 @@ function formatJPY(value: number | string | null | undefined) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-';
-  const date = new Date(value);
+  const raw = String(value).trim();
+  const date = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') + 'Z' : raw);
   if (Number.isNaN(date.getTime())) return value;
   const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -93,12 +113,12 @@ export default function TasksPage() {
       title: '状态',
       dataIndex: 'status',
       render: (_: any, row: any) => (
-        <Tag color={statusColors[row.status] || 'default'}>{statusLabels[row.status] || row.status}</Tag>
+        <Tag color={statusColors[row.status] || 'default'}>{row.status === 'failed' ? getSharedTaskFailureLabel(row.error_msg) : (statusLabels[row.status] || row.status)}</Tag>
       )
     },
-    { title: '提交时间', dataIndex: 'created_at', valueType: 'dateTime' },
+    { title: '提交时间', dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) },
     { title: '下次执行时间', dataIndex: 'next_execute_at', render: (_: any, row: any) => formatDateTime(row.next_execute_at) },
-    { title: '商品结束时间', dataIndex: 'end_time', valueType: 'dateTime' }
+    { title: '商品结束时间', dataIndex: 'end_time', render: (_: any, row: any) => formatDateTime(row.end_time) }
   ];
 
   return (

@@ -144,6 +144,30 @@ async function testParseStoreTaxTypeFromTaxIncludedLabel() {
   assert.equal(product.taxType, 'tax_included');
 }
 
+async function testParseShippingFeeFromItemPostage() {
+  const bidderPays = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body><div id="itemPostage"><span>送料</span><span>落札者負担</span></div></body></html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+  const cashOnDelivery = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body><div id="itemPostage"><span>送料</span><span>着払い</span></div></body></html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+  const free = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body><div id="itemPostage"><span>送料</span><span>無料</span></div></body></html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+  const fixed = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body><div id="itemPostage"><span>送料</span><span>290円</span></div></body></html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+
+  assert.equal(bidderPays.shippingFeeText, '落札者負担');
+  assert.equal(cashOnDelivery.shippingFeeText, '着払い');
+  assert.equal(free.shippingFeeText, '無料');
+  assert.equal(fixed.shippingFeeText, '290円');
+}
+
 async function testParsePersonalTaxTypeFromTaxZeroLabel() {
   const product = parseProductHtml(`
     <html>
@@ -372,6 +396,7 @@ async function run() {
   await testParsePriceValidUntilAsEndTime();
   await testParseBuyoutPriceFromPageData();
   await testParseStoreTaxTypeFromTaxIncludedLabel();
+  await testParseShippingFeeFromItemPostage();
   await testParsePersonalTaxTypeFromTaxZeroLabel();
   await testParseTaxZeroWinsWhenBothTaxLabelsExist();
   await testFallsBackToPlaywrightWhenHttpFails();

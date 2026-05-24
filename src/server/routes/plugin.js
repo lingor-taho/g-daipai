@@ -446,6 +446,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
     current_price,
     buyout_price,
     tax_type,
+    shipping_fee_text,
     end_time,
     status
   } = req.body || {};
@@ -456,6 +457,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
          current_price = COALESCE(?, current_price),
          buyout_price = COALESCE(?, buyout_price),
          tax_type = COALESCE(?, tax_type),
+         shipping_fee_text = COALESCE(?, shipping_fee_text),
          end_time = COALESCE(?, end_time),
          status = COALESCE(?, status),
          updated_at = CURRENT_TIMESTAMP
@@ -467,6 +469,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
       current_price || null,
       buyout_price || null,
       tax_type || null,
+      shipping_fee_text || null,
       end_time || null,
       status || null,
       req.params.id

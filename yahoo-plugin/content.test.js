@@ -247,6 +247,19 @@ function testProductDataExtractsTaxType() {
   assert.equal(product.taxType, 'tax_included');
 }
 
+function testProductDataExtractsShippingFeeText() {
+  const postage = createTestElement('送料 290円');
+  const api = loadContentForTest('送料 290円', '/jp/auction/x1234567890', {
+    querySelector(selector) {
+      if (selector === '#itemPostage') return postage;
+      return null;
+    }
+  });
+
+  const product = api.extractProductData();
+  assert.equal(product.shippingFeeText, '290円');
+}
+
 function testProductDataPrefersTaxZeroWhenBothTaxLabelsExist() {
   const api = loadContentForTest('現在 110円 （税0円） 送料説明 （税込）');
   const product = api.extractProductData();
@@ -501,6 +514,7 @@ async function run() {
   testBidEntryButtonTextAvoidsHelpLinks();
   testProductDataExtractsBuyoutPriceFromPageData();
   testProductDataExtractsTaxType();
+  testProductDataExtractsShippingFeeText();
   testProductDataPrefersTaxZeroWhenBothTaxLabelsExist();
   testTaxIncludedBidPriceForMultiBidIncrement();
   testBidLimitRejectsTaxTotalAboveUserMax();

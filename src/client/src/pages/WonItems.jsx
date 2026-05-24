@@ -4,6 +4,7 @@ import UserNav from '../components/UserNav';
 import { getWonTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
+import { formatBeijingDateTime } from '../utils/datetime';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -111,6 +112,15 @@ export default function WonItems() {
                   <div style={{ fontSize: 12, color: '#666', lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
                     落札价：<span style={{ color: '#dc2626', fontWeight: 700 }}>{formatJPY(finalPrice)}</span>
+                    {item.shipping_fee_text ? (
+                      <span>　运费：{item.shipping_fee_text}</span>
+                    ) : null}
+                    {item.updated_at ? (
+                      <>
+                        <br />
+                        更新时间：{formatBeijingDateTime(item.updated_at)}
+                      </>
+                    ) : null}
                     {item.total_amount_cny ? (
                       <>
                         <br />

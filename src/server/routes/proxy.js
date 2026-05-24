@@ -37,6 +37,25 @@ function normalizeText(html) {
     .trim();
 }
 
+function extractElementHtmlById(html, id) {
+  const source = String(html || '');
+  const openPattern = new RegExp(`<([a-z0-9]+)\\b[^>]*id=["']${id}["'][^>]*>`, 'i');
+  const openMatch = openPattern.exec(source);
+  if (!openMatch) return '';
+  const tagName = openMatch[1];
+  let depth = 1;
+  let cursor = openMatch.index + openMatch[0].length;
+  const tagPattern = new RegExp(`</?${tagName}\\b[^>]*>`, 'ig');
+  tagPattern.lastIndex = cursor;
+  while (depth > 0) {
+    const tagMatch = tagPattern.exec(source);
+    if (!tagMatch) return source.slice(openMatch.index);
+    depth += /^<\//.test(tagMatch[0]) ? -1 : 1;
+    cursor = tagPattern.lastIndex;
+  }
+  return source.slice(openMatch.index, cursor);
+}
+
 function parsePriceText(text) {
   const match = String(text || '').match(/([\d,]+)\s*(?:円|JPY)?/);
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
@@ -130,6 +149,17 @@ function extractTaxType(html) {
   return 'tax_zero';
 }
 
+function extractShippingFeeText(html) {
+  const postageHtml = extractElementHtmlById(html, 'itemPostage');
+  if (!postageHtml) return '';
+  const text = normalizeText(postageHtml);
+  if (/落札者負担/.test(text)) return '落札者負担';
+  if (/着払い/.test(text)) return '着払い';
+  if (/無料/.test(text)) return '無料';
+  const priceMatch = text.match(/([\d,]+)\s*円/);
+  return priceMatch ? `${priceMatch[1].replace(/,/g, '')}円` : '';
+}
+
 function extractEndTime(html) {
   const patterns = [
     /itemprop=["']endDate["'][^>]*content=["']([^"']+)["']/i,
@@ -168,6 +198,7 @@ function parseProductHtml(html, auctionId, standardUrl) {
     currentPrice: extractPrice(html),
     buyoutPrice: extractBuyoutPrice(html),
     taxType: extractTaxType(html),
+    shippingFeeText: extractShippingFeeText(html),
     endTime: extractEndTime(html),
     imageUrl: extractImage(html)
   };
@@ -298,6 +329,7 @@ function createProductService({
       currentPrice: Number(rawProduct.currentPrice || 0),
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
+      shippingFeeText: rawProduct.shippingFeeText || rawProduct.shipping_fee_text || '',
       endTime: rawProduct.endTime || '',
       imageUrl: rawProduct.imageUrl || '',
       cachedAt: new Date().toISOString()

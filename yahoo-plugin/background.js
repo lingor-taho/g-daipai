@@ -237,6 +237,7 @@ async function updateTaskSnapshot(taskId, snapshot, status) {
       current_price: snapshot?.currentPrice || null,
       buyout_price: snapshot?.buyoutPrice || null,
       tax_type: snapshot?.taxType || null,
+      shipping_fee_text: snapshot?.shippingFeeText || null,
       end_time: snapshot?.endTime || null,
       status
     })
@@ -370,6 +371,15 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
     extractMeta(html, /class="[^"]*price[^"]*"[^>]*>[\s\S]*?([\d,]+)\s*(?:��|JPY)?/);
   const endTime = extractMeta(html, /itemprop="endDate"[^>]*content="([^"]+)"/) ||
     extractMeta(html, /endDate["\s][^"]{0,5}["']([^"']+)["']/);
+  const postageText = extractMeta(html, /<div\b[^>]*id=["']itemPostage["'][^>]*>([\s\S]*?)<\/div>/i)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const shippingPrice = postageText.match(/([\d,]+)\s*円/);
+  const shippingFeeText = /落札者負担/.test(postageText) ? '落札者負担'
+    : /着払い/.test(postageText) ? '着払い'
+      : /無料/.test(postageText) ? '無料'
+        : shippingPrice ? `${shippingPrice[1].replace(/,/g, '')}円` : '';
 
   return {
     auctionId,
@@ -377,6 +387,7 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
     title: title || ('��Ʒ ' + auctionId),
     imageUrl: imageUrl || '',
     currentPrice: priceText ? parseInt(priceText.replace(/,/g, ''), 10) || 0 : 0,
+    shippingFeeText,
     endTime: endTime || ''
   };
 }

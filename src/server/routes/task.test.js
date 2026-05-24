@@ -121,8 +121,11 @@ function testSubmitRejectsMissingAuthenticatedUser() {
 }
 
 function testTaskListUsesAuthenticatedUserId() {
-  const input = buildTaskListInput({ id: 9 });
+  const input = buildTaskListInput({ id: 9 }, { page: '3', limit: '10' });
   assert.equal(input.userId, 9);
+  assert.equal(input.limit, 10);
+  assert.equal(input.offset, 20);
+  assert.equal(input.page, 3);
 }
 
 function testWonTaskListUsesAuthenticatedUserIdAndCapsLimit() {

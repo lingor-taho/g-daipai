@@ -126,9 +126,15 @@ async function findTaskByClientRequestId(database, userId, clientRequestId) {
   );
 }
 
-function buildTaskListInput(user) {
+function normalizePagination(query = {}, defaultLimit = 10) {
+  const limit = Math.min(Math.max(parseInt(query.limit || String(defaultLimit), 10) || defaultLimit, 1), 100);
+  const page = Math.max(parseInt(query.page || '1', 10) || 1, 1);
+  return { limit, page, offset: (page - 1) * limit };
+}
+
+function buildTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
-  return { userId: user.id };
+  return { userId: user.id, ...normalizePagination(query, 10) };
 }
 
 function buildWonTaskListInput(user, query = {}) {
@@ -145,7 +151,7 @@ function buildActiveBiddingTaskListInput(user, query = {}) {
 
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, multi_bid_increment, client_request_id } = req.body;
+  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, multi_bid_increment, client_request_id } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
     input.userId = req.actingUser.id;
@@ -175,7 +181,7 @@ router.post('/submit', async (req, res) => {
     assertNoActiveAutomaticStrategy(activeAutomaticTask);
 
     let productInfo = null;
-    if (!end_time || !product_title || !product_image_url || !current_price || !tax_type) {
+    if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !shipping_fee_text) {
       try {
         const result = await productService.fetchProduct(input.standardUrl);
         productInfo = result.data || null;
@@ -201,9 +207,10 @@ router.post('/submit', async (req, res) => {
     const buyoutPrice = input.bidMode === 'buyout'
       ? fetchedBuyoutPrice
       : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
+    const shippingFeeText = shipping_fee_text || productInfo?.shippingFeeText || null;
     await db.query(
-      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         input.userId,
         input.productId,
@@ -213,6 +220,7 @@ router.post('/submit', async (req, res) => {
         current_price || productInfo?.currentPrice || null,
         buyoutPrice,
         resolvedTaxType,
+        shippingFeeText,
         bidMaxPrice,
         userMaxPrice,
         multiBidIncrement,
@@ -234,14 +242,14 @@ router.post('/submit', async (req, res) => {
 // GET /api/task/list - 用户任务列表
 router.get('/list', async (req, res) => {
   try {
-    const input = buildTaskListInput(req.user);
+    const input = buildTaskListInput(req.user, req.query);
     input.userId = req.actingUser.id;
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
+    const totalRow = await db.getOne('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [input.userId]);
     const tasks = await db.getAll(
-      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, tax_type, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, end_time, is_highest_bidder FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
-      [input.userId, limit]
+      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, tax_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, error_msg, end_time, is_highest_bidder, created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [input.userId, input.limit, input.offset]
     );
-    res.json({ success: true, data: tasks });
+    res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -287,6 +295,7 @@ router.get('/won', async (req, res) => {
          t.current_price,
          t.buyout_price,
          t.tax_type,
+         t.shipping_fee_text,
          t.max_price,
          t.user_max_price,
          t.strategy,
@@ -416,6 +425,7 @@ module.exports.buildSubmitTaskInput = buildSubmitTaskInput;
 module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
 module.exports.buildWonTaskListInput = buildWonTaskListInput;
+module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
 module.exports.getTaxIncludedPrice = getTaxIncludedPrice;
 module.exports.validateMultiBidUserMaxPrice = validateMultiBidUserMaxPrice;

@@ -101,6 +101,15 @@ function extractProductData() {
     return 'tax_zero';
   }
 
+  function getShippingFeeText() {
+    const text = document.querySelector('#itemPostage')?.textContent || '';
+    if (/落札者負担/.test(text)) return '落札者負担';
+    if (/着払い/.test(text)) return '着払い';
+    if (/無料/.test(text)) return '無料';
+    const match = text.match(/([\d,]+)\s*円/);
+    return match ? `${match[1].replace(/,/g, '')}円` : '';
+  }
+
   function getEndTime() {
     const metaEnd = document.querySelector('[itemprop="endDate"][content], meta[property="product:expiration_time"][content]');
     if (metaEnd?.content) return metaEnd.content.trim();
@@ -168,6 +177,7 @@ function extractProductData() {
     currentPrice: getPrice(),
     buyoutPrice: getBuyoutPrice(),
     taxType: getTaxType(),
+    shippingFeeText: getShippingFeeText(),
     endTime: getEndTime(),
     imageUrl: getImage()
   };
