@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
+  getComparableCurrentPrice,
   getActualBidPrice,
   getSubmitMaxPrice,
   getSubmitTaxType,
+  isSubmitMaxPriceAboveCurrentPrice,
   isStoreProduct
 } from './bidPrice.js';
 
@@ -36,7 +38,21 @@ function testNormalProductDoesNotApplyStoreMode() {
   assert.equal(getSubmitMaxPrice(1000, product, 'tax_before'), 1000);
 }
 
+function testComparableCurrentPriceUsesTaxIncludedPriceForStoreProducts() {
+  assert.equal(getComparableCurrentPrice({ taxType: 'tax_included', currentPrice: 1000 }), 1100);
+  assert.equal(getComparableCurrentPrice({ taxType: 'tax_zero', currentPrice: 1000 }), 1000);
+}
+
+function testSubmitMaxPriceMustBeAboveCurrentPrice() {
+  assert.equal(isSubmitMaxPriceAboveCurrentPrice(1200, { taxType: 'tax_included', currentPrice: 1000 }), true);
+  assert.equal(isSubmitMaxPriceAboveCurrentPrice(1100, { taxType: 'tax_included', currentPrice: 1000 }), false);
+  assert.equal(isSubmitMaxPriceAboveCurrentPrice(999, { taxType: 'tax_zero', currentPrice: 1000 }), false);
+  assert.equal(isSubmitMaxPriceAboveCurrentPrice(1000, { taxType: 'tax_zero', currentPrice: 0 }), true);
+}
+
 testStoreProductDetection();
 testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual();
 testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual();
 testNormalProductDoesNotApplyStoreMode();
+testComparableCurrentPriceUsesTaxIncludedPriceForStoreProducts();
+testSubmitMaxPriceMustBeAboveCurrentPrice();

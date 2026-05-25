@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getSubmitMaxPrice, getSubmitTaxType, isStoreProduct } from '../utils/bidPrice';
+import { getActualBidPrice, getComparableCurrentPrice, getSubmitMaxPrice, getSubmitTaxType, isStoreProduct, isSubmitMaxPriceAboveCurrentPrice } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -169,6 +169,10 @@ export default function Submit() {
     }
     if (!effectiveMaxPrice) {
       Toast.show({ content: '请输入最高出价' });
+      return;
+    }
+    if (!buyoutSelected && !isSubmitMaxPriceAboveCurrentPrice(effectiveMaxPrice, product)) {
+      Toast.show({ content: `最高出价必须高于当前价格（当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円）` });
       return;
     }
     const selectedStrategy = buyoutSelected ? 'direct' : (strategy || 'direct');
