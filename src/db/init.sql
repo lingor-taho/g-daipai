@@ -89,6 +89,19 @@ CREATE TABLE IF NOT EXISTS bidding_items (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS data_cleanup_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_type VARCHAR(32) NOT NULL,
+  local_date VARCHAR(10),
+  retention_days INTEGER NOT NULL,
+  cutoff_at DATETIME,
+  task_count INTEGER DEFAULT 0,
+  bid_log_count INTEGER DEFAULT 0,
+  order_count INTEGER DEFAULT 0,
+  bidding_item_count INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 汇率配置
 CREATE TABLE IF NOT EXISTS exchange_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

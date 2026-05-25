@@ -12,6 +12,11 @@ const {
   isMultiBidTask
 } = require('./plugin');
 const { buildYahooLoginStatus } = require('../services/yahooLoginStatus');
+const {
+  deleteStaleTaskData,
+  getDataCleanupConfig,
+  saveDataCleanupConfig
+} = require('../services/dataCleanup');
 
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
@@ -481,6 +486,55 @@ router.put('/multi-bid-config', async (req, res) => {
     [String(idleSyncIntervalMinutes)]
   );
   res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes });
+});
+
+router.get('/data-cleanup/config', async (req, res) => {
+  res.json(await getDataCleanupConfig(db));
+});
+
+router.put('/data-cleanup/config', async (req, res) => {
+  const cleanupHour = Number(req.body.cleanupHour);
+  const retentionDays = Number(req.body.retentionDays);
+  if (!Number.isFinite(cleanupHour) || cleanupHour < 0 || cleanupHour > 23 || Math.floor(cleanupHour) !== cleanupHour) {
+    return res.status(400).json({ error: 'valid cleanupHour is required' });
+  }
+  if (!Number.isFinite(retentionDays) || retentionDays < 1 || Math.floor(retentionDays) !== retentionDays) {
+    return res.status(400).json({ error: 'valid retentionDays is required' });
+  }
+  const saved = await saveDataCleanupConfig(db, {
+    enabled: Boolean(req.body.enabled),
+    cleanupHour,
+    retentionDays
+  });
+  res.json({ success: true, ...saved });
+});
+
+router.post('/data-cleanup/run', async (req, res) => {
+  const config = await getDataCleanupConfig(db);
+  const retentionDays = Number(req.body?.retentionDays || config.retentionDays);
+  if (!Number.isFinite(retentionDays) || retentionDays < 1 || Math.floor(retentionDays) !== retentionDays) {
+    return res.status(400).json({ error: 'valid retentionDays is required' });
+  }
+  const result = await deleteStaleTaskData(db, {
+    retentionDays,
+    runType: 'manual'
+  });
+  res.json({ success: true, ...result });
+});
+
+router.get('/data-cleanup/logs', async (req, res) => {
+  const current = Math.max(parseInt(req.query.current || '1', 10) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || '10', 10) || 10, 1), 100);
+  const offset = (current - 1) * pageSize;
+  const items = await db.getAll(
+    `SELECT *
+     FROM data_cleanup_logs
+     ORDER BY datetime(created_at) DESC, id DESC
+     LIMIT ? OFFSET ?`,
+    [pageSize, offset]
+  );
+  const countResult = await db.getOne('SELECT COUNT(*) AS total FROM data_cleanup_logs');
+  res.json({ items, total: countResult?.total || 0 });
 });
 
 // 操作日志

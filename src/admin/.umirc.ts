@@ -17,6 +17,7 @@ export default {
         { path: '/users', component: '@/Users' },
         { path: '/server-accounts', component: '@/Accounts' },
         { path: '/multi-bid-settings', component: '@/MultiBidSettings' },
+        { path: '/data-cleanup', component: '@/DataCleanup' },
         { path: '/orders', component: '@/Orders' },
       ],
     },

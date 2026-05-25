@@ -5,9 +5,16 @@ const adminRoutes = require('./routes/admin');
 const proxyRoutes = require('./routes/proxy');
 const authRoutes = require('./routes/auth');
 const pluginRoutes = require('./routes/plugin');
+const db = require('./models');
+const {
+  deleteStaleTaskData,
+  getDataCleanupConfig,
+  shouldRunAutoCleanup
+} = require('./services/dataCleanup');
 
 const app = express();
 const PENDING_TASK_SWEEP_INTERVAL_MS = 60 * 1000;
+const DATA_CLEANUP_CHECK_INTERVAL_MS = 60 * 1000;
 const allowedHttpOrigins = new Set([
   'http://localhost:3035',
   'http://127.0.0.1:3035',
@@ -77,9 +84,30 @@ async function sweepPendingTasks() {
   }
 }
 
+async function runScheduledDataCleanup() {
+  try {
+    const cleanupConfig = await getDataCleanupConfig(db);
+    const nowMs = Date.now();
+    if (!(await shouldRunAutoCleanup(db, cleanupConfig, nowMs))) return;
+    const result = await deleteStaleTaskData(db, {
+      retentionDays: cleanupConfig.retentionDays,
+      runType: 'auto',
+      nowMs
+    });
+    console.log(
+      `Data cleanup completed: tasks=${result.taskCount}, bidLogs=${result.bidLogCount}, orders=${result.orderCount}, biddingItems=${result.biddingItemCount}`
+    );
+  } catch (err) {
+    console.error('Failed to run scheduled data cleanup:', err);
+  }
+}
+
 app.listen(config.port, () => {
   console.log(`API Server running on port ${config.port}`);
   sweepPendingTasks();
   const sweepTimer = setInterval(sweepPendingTasks, PENDING_TASK_SWEEP_INTERVAL_MS);
   sweepTimer.unref?.();
+  runScheduledDataCleanup();
+  const cleanupTimer = setInterval(runScheduledDataCleanup, DATA_CLEANUP_CHECK_INTERVAL_MS);
+  cleanupTimer.unref?.();
 });
