@@ -737,6 +737,18 @@ function extractOrderHistory() {
       if (match?.[1]) return match[1];
     }
 
+    const lines = value
+      .split(/\n+|\r+|\s{2,}/)
+      .map(line => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      const match = line.match(/^([\d,]+)\s*(?:\u5186|JPY)$/i);
+      if (match?.[1]) return match[1];
+    }
+
+    const firstYenAmount = value.match(/([\d,]+)\s*(?:\u5186|JPY)/i);
+    if (firstYenAmount?.[1]) return firstYenAmount[1];
+
     return '';
   }
 

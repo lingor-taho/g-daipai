@@ -16,6 +16,13 @@ export function redirectToLogin() {
   }
 }
 
+export function getAdminHttpErrorMessage(status: number, data: any, fallback = '请求失败') {
+  if (data?.error) return data.error;
+  if (status === 404) return '接口不存在，请确认服务器已拉取最新代码并重启 API';
+  if (status === 500) return '服务器内部错误，请查看 API 日志';
+  return `${fallback}（HTTP ${status}）`;
+}
+
 export async function fetchAdminJson(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = {
     ...authHeaders(),
@@ -27,7 +34,8 @@ export async function fetchAdminJson(input: RequestInfo | URL, init: RequestInit
     throw new Error('请先登录后台');
   }
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    throw new Error(getAdminHttpErrorMessage(res.status, data));
   }
   return res.json();
 }

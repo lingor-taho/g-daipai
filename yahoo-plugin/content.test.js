@@ -517,6 +517,48 @@ function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   assert.equal(orders[0].price, '2,530');
 }
 
+function testOrderHistoryExtractsUnlabeledWonPriceLine() {
+  const orderContainer = createOrderContainer(
+    '支払いを完了してください\nMD ゴールデンアックス\n2,530円\nストア\n5/23 22:26\n商品ID：x1230699905',
+    'MD ゴールデンアックス',
+    'https://auctions.yahoo.co.jp/jp/auction/x1230699905'
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'x1230699905');
+  assert.equal(orders[0].price, '2,530');
+}
+
+function testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened() {
+  const orderContainer = createOrderContainer(
+    '支払いを完了してください MD ゴールデンアックス 2,530円 ストア 5/23 22:26 商品ID：x1230699905',
+    'MD ゴールデンアックス',
+    'https://auctions.yahoo.co.jp/jp/auction/x1230699905'
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'x1230699905');
+  assert.equal(orders[0].price, '2,530');
+}
+
 function testBiddingItemsExtractsOutbidRebidRows() {
   const { container, link } = createBiddingContainer(
     '高値更新 再入札する 現在 1,500円 MD ゴールデンアックス',
@@ -575,6 +617,8 @@ async function run() {
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
+  testOrderHistoryExtractsUnlabeledWonPriceLine();
+  testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened();
   testBiddingItemsExtractsOutbidRebidRows();
 }
 

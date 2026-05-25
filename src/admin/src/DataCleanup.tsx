@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, Form, InputNumber, Space, Switch, Table, Typography, message } from 'antd';
-import { authHeaders, fetchAdminJson } from './utils/auth';
+import { authHeaders, fetchAdminJson, getAdminHttpErrorMessage } from './utils/auth';
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-';
@@ -28,7 +28,7 @@ async function saveCleanupConfig(values: any) {
     body: JSON.stringify(values)
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '保存失败');
+  if (!res.ok) throw new Error(getAdminHttpErrorMessage(res.status, data, '保存失败'));
   return data;
 }
 
@@ -39,7 +39,7 @@ async function runCleanup(retentionDays: number) {
     body: JSON.stringify({ retentionDays })
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '执行失败');
+  if (!res.ok) throw new Error(getAdminHttpErrorMessage(res.status, data, '执行失败'));
   return data;
 }
 
@@ -75,7 +75,9 @@ export default function DataCleanupPage() {
           retentionDays: data.retentionDays ?? 30
         });
       })
-      .catch(() => {});
+      .catch((e: any) => {
+        message.error(e.message || '清理配置加载失败');
+      });
     fetchLogs(1);
   }, []);
 
@@ -97,7 +99,12 @@ export default function DataCleanupPage() {
     setRunning(true);
     try {
       const result = await runCleanup(values.retentionDays);
-      message.success(`清理完成，共清理 ${result.totalCount || 0} 条关联数据`);
+      const totalCount = Number(result.totalCount || 0);
+      if (totalCount > 0) {
+        message.success(`清理完成，共清理 ${totalCount} 条关联数据`);
+      } else {
+        message.info('清理完成：没有符合条件的数据');
+      }
       await fetchLogs(1);
     } catch (e: any) {
       message.error(e.message || '执行失败');

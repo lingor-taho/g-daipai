@@ -110,7 +110,7 @@ export default function ActiveBidding() {
           const title = item.product_title || `商品 ${item.product_id}`;
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
           const outbid = isOutbidItem(item);
-          const canRebid = outbid && item.strategy === 'direct';
+          const canRebid = item.strategy === 'direct';
           return (
             <List.Item key={item.id}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -126,10 +126,7 @@ export default function ActiveBidding() {
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
                     {outbid ? (
-                      <>
-                        <Tag color="danger">高値更新</Tag>
-                        <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 600 }}>再入札する</span>
-                      </>
+                      <Tag color="danger">高値更新</Tag>
                     ) : (
                       <Tag color="primary">最高价入札中</Tag>
                     )}
