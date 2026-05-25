@@ -218,16 +218,16 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
   assert.equal(calls[4].params.at(-1), 'b123456789');
 }
 
-function testResolveOrderFinalPriceIgnoresLowerParsedNoise() {
-  assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 2450 }, '10'), 2530);
+function testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice() {
+  assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 5000 }, '3,200'), 3200);
 }
 
-function testResolveOrderFinalPriceUsesParsedWhenHigherThanKnownTaskPrice() {
+function testResolveOrderFinalPriceUsesYahooParsedPriceWhenHigherThanTaskPrice() {
   assert.equal(resolveOrderFinalPrice({ current_price: 2300, max_price: 2450, user_max_price: 2700 }, '2,530'), 2530);
 }
 
-function testResolveOrderFinalPriceRejectsParsedPriceAboveUserMaxAsNoise() {
-  assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 2450, user_max_price: 2700 }, '21,780'), 2530);
+function testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing() {
+  assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 2450, user_max_price: 2700 }, ''), null);
 }
 
 testDirectTaskIsReadyImmediately();
@@ -245,6 +245,6 @@ testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
 testSweepPendingTasksIncludesProcessingResets();
 testSyncBiddingItemsMarksHighestAndOutbidTasks();
-testResolveOrderFinalPriceIgnoresLowerParsedNoise();
-testResolveOrderFinalPriceUsesParsedWhenHigherThanKnownTaskPrice();
-testResolveOrderFinalPriceRejectsParsedPriceAboveUserMaxAsNoise();
+testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice();
+testResolveOrderFinalPriceUsesYahooParsedPriceWhenHigherThanTaskPrice();
+testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing();

@@ -26,7 +26,7 @@ function formatCNY(value) {
 }
 
 function getFinalPrice(item) {
-  return item.final_price || item.current_price || item.user_max_price || item.max_price;
+  return item.final_price;
 }
 
 export default function WonItems() {

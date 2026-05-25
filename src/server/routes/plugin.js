@@ -265,16 +265,7 @@ function normalizeYenAmount(value) {
 }
 
 function resolveOrderFinalPrice(task, parsedFinalPrice) {
-  const parsed = normalizeYenAmount(parsedFinalPrice) || 0;
-  const known = Math.max(
-    Number(task?.current_price || 0),
-    Number(task?.max_price || 0)
-  );
-  const userMaxPrice = Number(task?.user_max_price || 0);
-  if (parsed > 0 && userMaxPrice > 0 && parsed > userMaxPrice && known > 0) {
-    return known;
-  }
-  return Math.max(parsed, known);
+  return normalizeYenAmount(parsedFinalPrice);
 }
 
 async function upsertOrderFromTask(taskId, options = {}) {
@@ -283,7 +274,9 @@ async function upsertOrderFromTask(taskId, options = {}) {
   const existing = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
   const finance = await getFinanceConfig();
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
-  const totalAmountCny = Number(((finalPrice + finance.handlingFeeJpy) * finance.rate).toFixed(2));
+  const totalAmountCny = finalPrice
+    ? Number(((finalPrice + finance.handlingFeeJpy) * finance.rate).toFixed(2))
+    : null;
   if (existing) {
     await db.query(
       `UPDATE orders
