@@ -138,6 +138,7 @@ export default function ActiveBidding() {
                   <div style={{ fontSize: 12, color: '#666', lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
                     当前价格：<span style={{ color: '#dc2626', fontWeight: 700 }}>{formatJPY(getDisplayPrice(item))}</span>
+                    {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
                     {item.updated_at ? (
                       <>
                         <br />

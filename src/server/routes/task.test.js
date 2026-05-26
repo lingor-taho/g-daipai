@@ -148,6 +148,7 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
 
   assert.match(query.sql, /bi\.status IN \('highest', 'outbid'\)/);
   assert.match(query.sql, /bi\.status AS bidding_status/);
+  assert.match(query.sql, /MAX\(t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.deepEqual(query.params, [9, 100]);
 }
@@ -165,9 +166,9 @@ function testStoreCurrentPriceDisplaysAsTaxIncluded() {
   assert.equal(getTaxIncludedPrice(1000, 'tax_zero'), 1000);
 }
 
-function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500() {
-  assert.doesNotThrow(() => validateMultiBidUserMaxPrice('multi_bid', 5500));
-  assert.throws(() => validateMultiBidUserMaxPrice('multi_bid', 5499), /多次出价最高价不能低于5500円/);
+function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000() {
+  assert.doesNotThrow(() => validateMultiBidUserMaxPrice('multi_bid', 5000));
+  assert.throws(() => validateMultiBidUserMaxPrice('multi_bid', 4999), /多次出价最高价不能低于5000円/);
   assert.doesNotThrow(() => validateMultiBidUserMaxPrice('direct', 1000));
 }
 
@@ -271,7 +272,7 @@ testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
-testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5500();
+testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000();
 testMultiBidIncrementUsesOneTwentiethRule();
 testProductSubmissionOwnerAllowsOriginalUser();
 testProductSubmissionOwnerRejectsOtherUser();

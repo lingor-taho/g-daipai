@@ -22,6 +22,8 @@ ensureColumn('tasks', 'user_max_price', 'INTEGER');
 ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
 ensureColumn('tasks', 'client_request_id', 'VARCHAR(128)');
 ensureColumn('tasks', 'shipping_fee_text', 'VARCHAR(64)');
+ensureColumn('orders', 'won_at', 'DATETIME');
+ensureColumn('orders', 'won_time_text', 'VARCHAR(64)');
 ensureColumn('users', 'user_level', 'INTEGER DEFAULT 1');
 ensureColumn('users', 'parent_user_id', 'INTEGER');
 

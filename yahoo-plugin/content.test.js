@@ -280,6 +280,108 @@ function testProductDataExtractsShippingFeeText() {
   assert.equal(product.shippingFeeText, '290円');
 }
 
+function testProductDataPrefersRenderedShippingAmount() {
+  const api = loadContentForTest('現在 6,800円 送料 大阪府は1,350円（税込） 配送方法：ヤマト運輸', '/jp/auction/1230841006');
+
+  const product = api.extractProductData();
+
+  assert.equal(product.shippingFeeText, '1350円');
+}
+
+function testProductDataPrefersCashOnDeliveryOverBidderPays() {
+  const api = loadContentForTest('送料 着払い 落札者負担', '/jp/auction/b1227905707');
+
+  const product = api.extractProductData();
+
+  assert.equal(product.shippingFeeText, '着払い');
+}
+
+function testProductDataExtractsFreeShippingFromNextData() {
+  const nextData = createTestElement(JSON.stringify({
+    props: {
+      pageProps: {
+        initialState: {
+          item: {
+            detail: {
+              item: {
+                chargeForShipping: 'seller'
+              }
+            }
+          }
+        }
+      }
+    }
+  }));
+  const api = loadContentForTest('現在 6,000円 送料 おすすめ 送料無料', '/jp/auction/j1231001710', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  const product = api.extractProductData();
+
+  assert.equal(product.shippingFeeText, '無料');
+}
+
+function testProductDataDoesNotUseRecommendationFreeShippingForBidderPays() {
+  const nextData = createTestElement(JSON.stringify({
+    props: {
+      pageProps: {
+        initialState: {
+          item: {
+            detail: {
+              item: {
+                chargeForShipping: 'winner',
+                shippingInput: '取引ナビ開始時に入力'
+              }
+            }
+          }
+        }
+      }
+    }
+  }));
+  const api = loadContentForTest('現在 3,300円 送料 おすすめ 送料無料', '/jp/auction/j1230730561', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  const product = api.extractProductData();
+
+  assert.equal(product.shippingFeeText, '落札者負担');
+}
+
+function testProductDataDoesNotUseUnavailableCashOnDeliveryDescription() {
+  const nextData = createTestElement(JSON.stringify({
+    props: {
+      pageProps: {
+        initialState: {
+          item: {
+            detail: {
+              item: {
+                chargeForShipping: 'winner',
+                descriptionHtml: '※着払い、代引きは不可でございます。ご了承下さいませ。'
+              }
+            }
+          }
+        }
+      }
+    }
+  }));
+  const api = loadContentForTest('現在 1円 送料 送料情報の取得に失敗しました', '/jp/auction/x1231101693', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  const product = api.extractProductData();
+
+  assert.equal(product.shippingFeeText, '落札者負担');
+}
+
 function testProductDataPrefersTaxZeroWhenBothTaxLabelsExist() {
   const api = loadContentForTest('現在 110円 （税0円） 送料説明 （税込）');
   const product = api.extractProductData();
@@ -515,6 +617,7 @@ function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   assert.equal(orders.length, 1);
   assert.equal(orders[0].productId, 'x1230699905');
   assert.equal(orders[0].price, '2,530');
+  assert.equal(orders[0].shippingFeeText, '10円');
 }
 
 function testOrderHistoryExtractsUnlabeledWonPriceLine() {
@@ -536,6 +639,7 @@ function testOrderHistoryExtractsUnlabeledWonPriceLine() {
   assert.equal(orders.length, 1);
   assert.equal(orders[0].productId, 'x1230699905');
   assert.equal(orders[0].price, '2,530');
+  assert.equal(orders[0].wonTimeText, '5/23 22:26');
 }
 
 function testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened() {
@@ -557,6 +661,7 @@ function testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened() {
   assert.equal(orders.length, 1);
   assert.equal(orders[0].productId, 'x1230699905');
   assert.equal(orders[0].price, '2,530');
+  assert.equal(orders[0].wonTimeText, '5/23 22:26');
 }
 
 function testBiddingItemsExtractsOutbidRebidRows() {
@@ -601,6 +706,11 @@ async function run() {
   testProductDataExtractsBuyoutPriceFromPageData();
   testProductDataExtractsTaxType();
   testProductDataExtractsShippingFeeText();
+  testProductDataPrefersRenderedShippingAmount();
+  testProductDataPrefersCashOnDeliveryOverBidderPays();
+  testProductDataExtractsFreeShippingFromNextData();
+  testProductDataDoesNotUseRecommendationFreeShippingForBidderPays();
+  testProductDataDoesNotUseUnavailableCashOnDeliveryDescription();
   testProductDataPrefersTaxZeroWhenBothTaxLabelsExist();
   testTaxIncludedBidPriceForMultiBidIncrement();
   testBidLimitRejectsTaxTotalAboveUserMax();

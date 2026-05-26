@@ -57,8 +57,8 @@ function getTaxIncludedPrice(price, taxType) {
 
 function validateMultiBidUserMaxPrice(strategy, userMaxPrice) {
   if (strategy !== 'multi_bid') return;
-  if (Number(userMaxPrice || 0) < 5500) {
-    const error = new Error('多次出价最高价不能低于5500円');
+  if (Number(userMaxPrice || 0) < 5000) {
+    const error = new Error('多次出价最高价不能低于5000円');
     error.statusCode = 400;
     throw error;
   }
@@ -160,6 +160,7 @@ function buildActiveBiddingTaskListQuery(input) {
          bi.current_price,
          MAX(t.buyout_price) AS buyout_price,
          COALESCE(MAX(t.tax_type), 'tax_zero') AS tax_type,
+         MAX(t.shipping_fee_text) AS shipping_fee_text,
          MAX(t.max_price) AS max_price,
          MAX(t.user_max_price) AS user_max_price,
          COALESCE(
@@ -339,6 +340,8 @@ router.get('/won', async (req, res) => {
          t.end_time,
          t.updated_at,
          o.final_price,
+         o.won_at,
+         o.won_time_text,
          o.total_amount_cny,
          o.handling_fee,
          o.jpy_to_cny_rate,
@@ -348,7 +351,7 @@ router.get('/won', async (req, res) => {
        LEFT JOIN orders o ON o.task_id = t.id
        WHERE t.user_id = ?
          AND t.status = 'success'
-       ORDER BY datetime(t.updated_at) DESC, t.id DESC
+       ORDER BY datetime(COALESCE(o.won_at, t.updated_at)) DESC, t.id DESC
        LIMIT ?`,
       [input.userId, input.limit]
     );

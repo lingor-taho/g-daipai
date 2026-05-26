@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const https = require('https');
+const fs = require('fs');
 const { chromium } = require('playwright');
 
 const router = express.Router();
@@ -121,6 +122,20 @@ function extractPageDataItems(html) {
   }
 }
 
+function extractNextDataItem(html) {
+  const match = String(html || '').match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!match?.[1]) return null;
+  try {
+    const data = JSON.parse(match[1]);
+    return data?.props?.pageProps?.initialState?.item?.detail?.item ||
+      data?.props?.initialState?.item?.detail?.item ||
+      data?.props?.pageProps?.initialState?.detail?.item ||
+      null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function extractBuyoutPrice(html) {
   const pageDataItems = extractPageDataItems(html);
   if (pageDataItems && Object.prototype.hasOwnProperty.call(pageDataItems, 'winPrice')) {
@@ -151,13 +166,68 @@ function extractTaxType(html) {
 
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
-  if (!postageHtml) return '';
-  const text = normalizeText(postageHtml);
-  if (/落札者負担/.test(text)) return '落札者負担';
-  if (/着払い/.test(text)) return '着払い';
-  if (/無料/.test(text)) return '無料';
-  const priceMatch = text.match(/([\d,]+)\s*円/);
-  return priceMatch ? `${priceMatch[1].replace(/,/g, '')}円` : '';
+  const nextDataItem = extractNextDataItem(html);
+  const nextDataShippingText = [
+    nextDataItem?.descriptionHtml,
+    ...(Array.isArray(nextDataItem?.description) ? nextDataItem.description : [])
+  ].filter(Boolean).join(' ');
+  const pageText = normalizeText(html);
+  const postageIndex = pageText.search(/送料|送料負担|配送方法/);
+  const fallbackText = postageIndex >= 0 ? pageText.slice(postageIndex, postageIndex + 240) : '';
+  const text = normalizeText([postageHtml, nextDataShippingText, fallbackText].filter(Boolean).join(' '));
+  const shippingCharge = String(nextDataItem?.chargeForShipping || '');
+  const shippingInput = String(nextDataItem?.shippingInput || '');
+  const labelText = normalizeText([postageHtml, fallbackText, shippingInput, shippingCharge].filter(Boolean).join(' '));
+  if (!text && !shippingCharge && !shippingInput) return '';
+  const priceMatch = text.match(/送料[^\d]{0,20}([\d,]+)\s*円/);
+  if (priceMatch) return `${priceMatch[1].replace(/,/g, '')}円`;
+  if (/着払い/.test(labelText)) return '着払い';
+  if (/seller/i.test(shippingCharge)) return '無料';
+  if (/無料/.test(labelText)) return '無料';
+  if (/落札者負担|winner/i.test(labelText)) return '落札者負担';
+  return '';
+}
+
+function isGenericShippingFeeText(value) {
+  return value === '落札者負担';
+}
+
+function buildYahooShipmentUrls(html, auctionId) {
+  const item = extractNextDataItem(html);
+  const urls = [];
+  const shoppingInfo = item?.aucShoppingItemInfo;
+  const sellerId = shoppingInfo?.shoppingSellerId;
+  const postageSet = shoppingInfo?.postageSetId || shoppingInfo?.shoppingItemInfo?.postageSet;
+  const prefCode = String(process.env.YAHOO_SHIPPING_PREF_CODE || '27');
+  if (sellerId && postageSet) {
+    const params = new URLSearchParams({
+      sellerId,
+      prefCode,
+      itemCode: auctionId,
+      postageSet: String(postageSet),
+      price: String(item?.taxinPrice || item?.price || 0)
+    });
+    if (shoppingInfo.weight) params.set('weight', String(shoppingInfo.weight));
+    urls.push(`https://auctions.yahoo.co.jp/web/api/itempage/v1/shipments/shopping?${params.toString()}`);
+  }
+  if (Array.isArray(item?.shipping?.methods) && item.shipping.methods.length > 0) {
+    const params = new URLSearchParams({ aid: auctionId, prefCode });
+    urls.push(`https://auctions.yahoo.co.jp/web/api/itempage/v1/shipments/auction/items/${auctionId}?${params.toString()}`);
+  }
+  return urls;
+}
+
+function extractShippingFeeTextFromShipmentJson(value) {
+  try {
+    const data = typeof value === 'string' ? JSON.parse(value) : value;
+    const methodPrices = (Array.isArray(data?.methods) ? data.methods : [])
+      .map(method => Number(method?.shippingPrice || 0))
+      .filter(amount => amount > 0);
+    const price = methodPrices.length ? Math.min(...methodPrices) : Number(data?.lowestPrice || 0);
+    return Number.isFinite(price) && price > 0 ? `${price}円` : '';
+  } catch (_) {
+    return '';
+  }
 }
 
 function extractEndTime(html) {
@@ -292,6 +362,16 @@ function httpFetchHtml(url, timeoutMs = 10000) {
 
 async function playwrightFetchHtml(url) {
   const launchOptions = { headless: true };
+  const chromePaths = [
+    process.env.CHROME_EXECUTABLE_PATH,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  ].filter(Boolean);
+  const executablePath = chromePaths.find(candidate => fs.existsSync(candidate));
+  if (executablePath) launchOptions.executablePath = executablePath;
   if (process.env.YAHOO_PROXY_SERVER) {
     launchOptions.proxy = {
       server: process.env.YAHOO_PROXY_SERVER,
@@ -347,13 +427,38 @@ function createProductService({
     }
 
     const cached = cache.get(parsed.auctionId);
+    let httpProduct = null;
 
     try {
       const html = await httpFetcher(parsed.standardUrl);
       const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
+      let attemptedShipmentLookup = false;
+      if (isGenericShippingFeeText(data.shippingFeeText)) {
+        const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId);
+        if (shipmentUrls.length) {
+          attemptedShipmentLookup = true;
+          for (const shipmentUrl of shipmentUrls) {
+            try {
+              const shipmentJson = await httpFetcher(shipmentUrl);
+              const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
+              if (resolvedShipping) {
+                data.shippingFeeText = resolvedShipping;
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      }
       if (isUsefulProduct(data, parsed.auctionId)) {
-        cacheProduct(data);
-        return { success: true, data, source: 'http' };
+        httpProduct = data;
+        if (!isGenericShippingFeeText(data.shippingFeeText)) {
+          cacheProduct(data);
+          return { success: true, data, source: 'http' };
+        }
+        if (!attemptedShipmentLookup) {
+          cacheProduct(data);
+          return { success: true, data, source: 'http' };
+        }
       }
     } catch (_) {}
 
@@ -361,10 +466,22 @@ function createProductService({
       const html = await playwrightFetcher(parsed.standardUrl);
       const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
       if (isUsefulProduct(data, parsed.auctionId)) {
-        cacheProduct(data);
-        return { success: true, data, source: 'playwright' };
+        const base = httpProduct || data;
+        const resolved = {
+          ...base,
+          shippingFeeText: !isGenericShippingFeeText(data.shippingFeeText)
+            ? data.shippingFeeText
+            : (base.shippingFeeText || data.shippingFeeText)
+        };
+        cacheProduct(resolved);
+        return { success: true, data: resolved, source: 'playwright' };
       }
     } catch (_) {}
+
+    if (httpProduct) {
+      cacheProduct(httpProduct);
+      return { success: true, data: httpProduct, source: 'http' };
+    }
 
     if (cached) {
       return { success: true, data: cached, source: 'cache-fallback' };

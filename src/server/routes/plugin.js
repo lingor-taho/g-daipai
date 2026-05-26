@@ -268,27 +268,41 @@ function resolveOrderFinalPrice(task, parsedFinalPrice) {
   return normalizeYenAmount(parsedFinalPrice);
 }
 
+function normalizeYahooWonTimeText(value, nowMs = Date.now()) {
+  const match = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const now = new Date(nowMs);
+  let year = now.getFullYear();
+  let date = new Date(year, Number(match[1]) - 1, Number(match[2]), Number(match[3]), Number(match[4]), 0);
+  if (date.getTime() - nowMs > 24 * 60 * 60 * 1000) {
+    date = new Date(year - 1, Number(match[1]) - 1, Number(match[2]), Number(match[3]), Number(match[4]), 0);
+  }
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 async function upsertOrderFromTask(taskId, options = {}) {
   const task = await db.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task) return;
   const existing = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
   const finance = await getFinanceConfig();
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
+  const wonTimeText = String(options.wonTimeText || '').trim() || null;
+  const wonAt = normalizeYahooWonTimeText(wonTimeText);
   const totalAmountCny = finalPrice
     ? Number(((finalPrice + finance.handlingFeeJpy) * finance.rate).toFixed(2))
     : null;
   if (existing) {
     await db.query(
       `UPDATE orders
-       SET product_title = ?, product_url = ?, final_price = ?, jpy_to_cny_rate = ?, handling_fee = ?, total_amount_cny = ?
+       SET product_title = ?, product_url = ?, final_price = ?, won_at = COALESCE(?, won_at), won_time_text = COALESCE(?, won_time_text), jpy_to_cny_rate = ?, handling_fee = ?, total_amount_cny = ?
        WHERE task_id = ?`,
-      [task.product_title || task.product_id, task.product_url, finalPrice, finance.rate, finance.handlingFeeJpy, totalAmountCny, taskId]
+      [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, finance.rate, finance.handlingFeeJpy, totalAmountCny, taskId]
     );
   } else {
     await db.query(
-      `INSERT INTO orders (task_id, product_title, product_url, final_price, jpy_to_cny_rate, handling_fee, total_amount_cny, order_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_payment')`,
-      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, finance.rate, finance.handlingFeeJpy, totalAmountCny]
+      `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text, jpy_to_cny_rate, handling_fee, total_amount_cny, order_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment')`,
+      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, finance.rate, finance.handlingFeeJpy, totalAmountCny]
     );
   }
 }
@@ -410,11 +424,17 @@ router.post('/orders/sync', async (req, res) => {
       [productId]
     );
     if (!task) continue;
+    const shippingFeeText = String(order.shippingFeeText || '').trim() || null;
     await db.query(
-      "UPDATE tasks SET status = 'success', error_msg = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-      [task.id]
+      `UPDATE tasks
+       SET status = 'success',
+           error_msg = NULL,
+           shipping_fee_text = COALESCE(?, shipping_fee_text),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [shippingFeeText, task.id]
     );
-    await upsertOrderFromTask(task.id, { finalPrice: order.price });
+    await upsertOrderFromTask(task.id, { finalPrice: order.price, wonTimeText: order.wonTimeText });
     if (order.trackingNumber) {
       await db.query('UPDATE orders SET tracking_number = ? WHERE task_id = ?', [order.trackingNumber, task.id]);
     }
@@ -439,7 +459,6 @@ router.patch('/task/:id/snapshot', async (req, res) => {
     current_price,
     buyout_price,
     tax_type,
-    shipping_fee_text,
     end_time,
     status
   } = req.body || {};
@@ -450,7 +469,6 @@ router.patch('/task/:id/snapshot', async (req, res) => {
          current_price = COALESCE(?, current_price),
          buyout_price = COALESCE(?, buyout_price),
          tax_type = COALESCE(?, tax_type),
-         shipping_fee_text = COALESCE(?, shipping_fee_text),
          end_time = COALESCE(?, end_time),
          status = COALESCE(?, status),
          updated_at = CURRENT_TIMESTAMP
@@ -462,7 +480,6 @@ router.patch('/task/:id/snapshot', async (req, res) => {
       current_price || null,
       buyout_price || null,
       tax_type || null,
-      shipping_fee_text || null,
       end_time || null,
       status || null,
       req.params.id
@@ -501,3 +518,4 @@ module.exports.sweepPendingTasks = sweepPendingTasks;
 module.exports.isYahooLoginError = isYahooLoginError;
 module.exports.syncBiddingItems = syncBiddingItems;
 module.exports.resolveOrderFinalPrice = resolveOrderFinalPrice;
+module.exports.normalizeYahooWonTimeText = normalizeYahooWonTimeText;

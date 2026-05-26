@@ -12,7 +12,8 @@ const {
   getMultiBidIntervalMs,
   isMultiBidTask,
   syncBiddingItems,
-  resolveOrderFinalPrice
+  resolveOrderFinalPrice,
+  normalizeYahooWonTimeText
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -230,6 +231,16 @@ function testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing() {
   assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 2450, user_max_price: 2700 }, ''), null);
 }
 
+function testNormalizeYahooWonTimeTextInfersCurrentYear() {
+  const normalized = normalizeYahooWonTimeText('5/23 22:26', Date.parse('2026-05-26T12:00:00.000Z'));
+  assert.match(normalized, /^2026-05-23T/);
+}
+
+function testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay() {
+  const normalized = normalizeYahooWonTimeText('12/31 22:26', Date.parse('2026-01-02T12:00:00.000Z'));
+  assert.match(normalized, /^2025-12-31T/);
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -248,3 +259,5 @@ testSyncBiddingItemsMarksHighestAndOutbidTasks();
 testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice();
 testResolveOrderFinalPriceUsesYahooParsedPriceWhenHigherThanTaskPrice();
 testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing();
+testNormalizeYahooWonTimeTextInfersCurrentYear();
+testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();

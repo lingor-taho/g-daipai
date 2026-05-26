@@ -61,6 +61,20 @@ function extractProductData() {
     return null;
   }
 
+  function getNextDataItem() {
+    const script = document.querySelector('script#__NEXT_DATA__');
+    if (!script?.textContent) return null;
+    try {
+      const data = JSON.parse(script.textContent);
+      return data?.props?.pageProps?.initialState?.item?.detail?.item ||
+        data?.props?.initialState?.item?.detail?.item ||
+        data?.props?.pageProps?.initialState?.detail?.item ||
+        null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Try multiple selectors for price (Yahoo auction pages have various structures)
   function getPrice() {
     const pageDataPrice = parseYen(getPageDataItems()?.price);
@@ -102,12 +116,28 @@ function extractProductData() {
   }
 
   function getShippingFeeText() {
-    const text = document.querySelector('#itemPostage')?.textContent || '';
-    if (/落札者負担/.test(text)) return '落札者負担';
-    if (/着払い/.test(text)) return '着払い';
-    if (/無料/.test(text)) return '無料';
-    const match = text.match(/([\d,]+)\s*円/);
-    return match ? `${match[1].replace(/,/g, '')}円` : '';
+    const nextDataItem = getNextDataItem();
+    const postageText = document.querySelector('#itemPostage')?.textContent || '';
+    const nextDataShippingText = [
+      nextDataItem?.descriptionHtml,
+      ...(Array.isArray(nextDataItem?.description) ? nextDataItem.description : [])
+    ].filter(Boolean).join(' ');
+    const shippingInput = String(nextDataItem?.shippingInput || '');
+    const shippingCharge = String(nextDataItem?.chargeForShipping || '');
+    const bodyText = document.body?.textContent || '';
+    const postageIndex = bodyText.search(/送料|送料負担|配送方法/);
+    const fallbackText = !shippingInput && !shippingCharge && postageIndex >= 0
+      ? bodyText.slice(postageIndex, postageIndex + 300)
+      : '';
+    const sourceText = `${postageText} ${nextDataShippingText} ${fallbackText}`;
+    const priceMatch = sourceText.match(/送料[^\d]{0,40}([\d,]+)\s*円/);
+    if (priceMatch?.[1]) return `${priceMatch[1].replace(/,/g, '')}円`;
+    const labelText = `${postageText} ${fallbackText} ${shippingInput} ${shippingCharge}`;
+    if (/着払い/.test(labelText)) return '着払い';
+    if (/seller/i.test(shippingCharge)) return '無料';
+    if (/無料/.test(labelText)) return '無料';
+    if (/落札者負担|winner/i.test(labelText)) return '落札者負担';
+    return '';
   }
 
   function getEndTime() {
@@ -752,6 +782,20 @@ function extractOrderHistory() {
     return '';
   }
 
+  function extractWonTimeText(text) {
+    const match = String(text || '').match(/(\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2})/);
+    return match?.[1] || '';
+  }
+
+  function extractOrderShippingFeeText(text) {
+    const value = String(text || '');
+    if (/送料[^\n\r]{0,40}着払い/.test(value)) return '着払い';
+    if (/送料[^\n\r]{0,40}無料/.test(value)) return '無料';
+    if (/送料[^\n\r]{0,40}落札者負担/.test(value)) return '落札者負担';
+    const match = value.match(/送料[^\d]{0,20}([\d,]+)\s*(?:\u5186|JPY)/i);
+    return match?.[1] ? `${match[1].replace(/,/g, '')}\u5186` : '';
+  }
+
   const containers = [...document.querySelectorAll('li, article, tr, div')];
   const seen = new Set();
   const orders = [];
@@ -770,6 +814,8 @@ function extractOrderHistory() {
       productId,
       title: link.textContent?.trim() || '',
       price: extractOrderPrice(text),
+      wonTimeText: extractWonTimeText(text),
+      shippingFeeText: extractOrderShippingFeeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       trackingNumber: trackingMatch?.[1] || ''
     });

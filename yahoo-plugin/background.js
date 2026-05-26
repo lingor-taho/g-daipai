@@ -237,7 +237,6 @@ async function updateTaskSnapshot(taskId, snapshot, status) {
       current_price: snapshot?.currentPrice || null,
       buyout_price: snapshot?.buyoutPrice || null,
       tax_type: snapshot?.taxType || null,
-      shipping_fee_text: snapshot?.shippingFeeText || null,
       end_time: snapshot?.endTime || null,
       status
     })
@@ -376,8 +375,8 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
     .replace(/\s+/g, ' ')
     .trim();
   const shippingPrice = postageText.match(/([\d,]+)\s*円/);
-  const shippingFeeText = /落札者負担/.test(postageText) ? '落札者負担'
-    : /着払い/.test(postageText) ? '着払い'
+  const shippingFeeText = /着払い/.test(postageText) ? '着払い'
+    : /落札者負担/.test(postageText) ? '落札者負担'
       : /無料/.test(postageText) ? '無料'
         : shippingPrice ? `${shippingPrice[1].replace(/,/g, '')}円` : '';
 

@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS orders (
   product_title VARCHAR(512),
   product_url TEXT,
   final_price INTEGER,
+  won_at DATETIME,
+  won_time_text VARCHAR(64),
   jpy_to_cny_rate DECIMAL(10,4),
   handling_fee DECIMAL(10,2),
   total_amount_cny DECIMAL(10,2),

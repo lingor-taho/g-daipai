@@ -161,11 +161,52 @@ async function testParseShippingFeeFromItemPostage() {
     <html><head><title>Shipping Test - Yahoo!</title></head>
     <body><div id="itemPostage"><span>送料</span><span>290円</span></div></body></html>
   `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+  const fallbackWithoutItemPostage = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body><section><span>送料負担</span><span>落札者負担</span></section></body></html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+  const nextDataDescription = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"initialState":{"detail":{"item":{"chargeForShipping":"winner","descriptionHtml":"※発送詳細<br>送料1380円 (北海道1880円 沖縄2380円）"}}}}}}
+      </script>
+    </body></html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+  const cashOnDeliveryFromNextData = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"chargeForShipping":"winner","shippingInput":"着払い"}}}}}}}
+      </script>
+    </body></html>
+  `, 'b1227905707', 'https://auctions.yahoo.co.jp/jp/auction/b1227905707');
+  const freeShippingFromNextData = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"chargeForShipping":"seller"}}}}}}}
+      </script>
+    </body></html>
+  `, 'j1231001710', 'https://auctions.yahoo.co.jp/jp/auction/j1231001710');
+  const cashOnDeliveryUnavailableDescription = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"chargeForShipping":"winner","descriptionHtml":"※着払い、代引きは不可でございます。ご了承下さいませ。"}}}}}}}
+      </script>
+    </body></html>
+  `, 'x1231101693', 'https://auctions.yahoo.co.jp/jp/auction/x1231101693');
 
   assert.equal(bidderPays.shippingFeeText, '落札者負担');
   assert.equal(cashOnDelivery.shippingFeeText, '着払い');
   assert.equal(free.shippingFeeText, '無料');
   assert.equal(fixed.shippingFeeText, '290円');
+  assert.equal(fallbackWithoutItemPostage.shippingFeeText, '落札者負担');
+  assert.equal(nextDataDescription.shippingFeeText, '1380円');
+  assert.equal(cashOnDeliveryFromNextData.shippingFeeText, '着払い');
+  assert.equal(freeShippingFromNextData.shippingFeeText, '無料');
+  assert.equal(cashOnDeliveryUnavailableDescription.shippingFeeText, '落札者負担');
 }
 
 async function testParsePersonalTaxTypeFromTaxZeroLabel() {
@@ -255,6 +296,77 @@ async function testFetchRefreshesBeforeUsingCache() {
 
   assert.equal(result.source, 'http');
   assert.equal(result.data.currentPrice, 121);
+}
+
+async function testFetchUsesYahooShipmentApiWhenHttpShippingIsGeneric() {
+  const calls = [];
+  const service = createProductService({
+    httpFetcher: async (url) => {
+      calls.push(url.includes('/shipments/shopping') ? 'shipment' : 'http');
+      if (url.includes('/shipments/shopping')) {
+        assert.match(url, /prefCode=27/);
+        return JSON.stringify({
+          lowestPrice: 2000,
+          methods: [
+            { name: 'ヤマト運輸', shippingPrice: 1350 },
+            { name: '佐川急便', shippingPrice: 1800 }
+          ]
+        });
+      }
+      return `
+        <html>
+          <head><title>Generic Shipping Product - Yahoo!オークション</title></head>
+          <body>
+            <span itemprop="price" content="6800"></span>
+            <script id="__NEXT_DATA__" type="application/json">
+              {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"price":6800,"taxinPrice":7480,"aucShoppingItemInfo":{"postageSetId":1,"weight":2,"shoppingSellerId":"sumariku"}}}}}}}}
+            </script>
+            <section><span>送料</span><span>落札者負担</span></section>
+          </body>
+        </html>
+      `;
+    },
+    playwrightFetcher: async () => {
+      throw new Error('should not call playwright');
+    }
+  });
+
+  const result = await service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/1230841006');
+
+  assert.equal(result.source, 'http');
+  assert.equal(result.data.shippingFeeText, '1350円');
+  assert.equal(result.data.currentPrice, 6800);
+  assert.deepEqual(calls, ['http', 'shipment']);
+}
+
+async function testFetchDoesNotRenderGenericShippingWithoutShipmentApi() {
+  const calls = [];
+  const service = createProductService({
+    httpFetcher: async () => {
+      calls.push('http');
+      return `
+        <html>
+          <head><title>Generic Shipping Product - Yahoo!オークション</title></head>
+          <body>
+            <span itemprop="price" content="3300"></span>
+            <script id="__NEXT_DATA__" type="application/json">
+              {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"chargeForShipping":"winner","shippingInput":"取引ナビ開始時に入力"}}}}}}}
+            </script>
+            <section><span>送料</span></section>
+          </body>
+        </html>
+      `;
+    },
+    playwrightFetcher: async () => {
+      throw new Error('should not call playwright');
+    }
+  });
+
+  const result = await service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/j1230730561');
+
+  assert.equal(result.source, 'http');
+  assert.equal(result.data.shippingFeeText, '落札者負担');
+  assert.deepEqual(calls, ['http']);
 }
 
 async function testUsesCacheAfterFetchersFail() {
@@ -401,6 +513,8 @@ async function run() {
   await testParseTaxZeroWinsWhenBothTaxLabelsExist();
   await testFallsBackToPlaywrightWhenHttpFails();
   await testFetchRefreshesBeforeUsingCache();
+  await testFetchUsesYahooShipmentApiWhenHttpShippingIsGeneric();
+  await testFetchDoesNotRenderGenericShippingWithoutShipmentApi();
   await testUsesCacheAfterFetchersFail();
   testExtractsUniqueAuctionIdFromProductsListOnly();
   testExtractsMultipleAuctionIdsFromProductsList();

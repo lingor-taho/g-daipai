@@ -11,6 +11,7 @@ export default function ProductCard({ product }) {
   const displayBuyoutPrice = getDisplayPrice(product.buyoutPrice, taxType);
   const price = Number(displayPrice || 0).toLocaleString('ja-JP');
   const buyoutPrice = Number(displayBuyoutPrice || 0);
+  const shippingFeeText = product.shippingFeeText || product.shipping_fee_text || '';
   const taxLabel = taxType === 'tax_included' ? '税込' : '税0円';
 
   return (
@@ -24,7 +25,10 @@ export default function ProductCard({ product }) {
           <div style={{ color: '#d4380d', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>商城商品</div>
         )}
         <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 8 }}>{product.title}</div>
-        <div style={{ color: '#ff6600', fontSize: 16, fontWeight: 600 }}>当前价格: {price}円（{taxLabel}）</div>
+        <div style={{ color: '#ff6600', fontSize: 16, fontWeight: 600 }}>
+          当前价格: {price}円（{taxLabel}）
+          {shippingFeeText ? <span>　运费：{shippingFeeText}</span> : null}
+        </div>
         {buyoutPrice > 0 && (
           <div style={{ color: '#d4380d', fontSize: 14, fontWeight: 600, marginTop: 4 }}>
             即決价格: {buyoutPrice.toLocaleString('ja-JP')}円（{taxLabel}）

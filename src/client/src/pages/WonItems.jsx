@@ -20,13 +20,12 @@ function formatJPY(value) {
   return amount > 0 ? `${amount.toLocaleString('ja-JP')}円` : '-';
 }
 
-function formatCNY(value) {
-  const amount = Number(value || 0);
-  return amount > 0 ? `¥${amount.toFixed(2)}` : '-';
-}
-
 function getFinalPrice(item) {
   return item.final_price;
+}
+
+function getWonTimeDisplay(item) {
+  return item.won_time_text || (item.won_at ? formatBeijingDateTime(item.won_at) : '');
 }
 
 export default function WonItems() {
@@ -89,6 +88,7 @@ export default function WonItems() {
           const title = item.product_title || `商品 ${item.product_id}`;
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
           const finalPrice = getFinalPrice(item);
+          const wonTime = getWonTimeDisplay(item);
           return (
             <List.Item key={item.id}>
               <div style={{ display: 'flex', gap: 12 }}>
@@ -115,16 +115,10 @@ export default function WonItems() {
                     {item.shipping_fee_text ? (
                       <span>　运费：{item.shipping_fee_text}</span>
                     ) : null}
-                    {item.updated_at ? (
+                    {wonTime ? (
                       <>
                         <br />
-                        更新时间：{formatBeijingDateTime(item.updated_at)}
-                      </>
-                    ) : null}
-                    {item.total_amount_cny ? (
-                      <>
-                        <br />
-                        应付金额：<span style={{ color: '#d46b08', fontWeight: 700 }}>{formatCNY(item.total_amount_cny)}</span>
+                        落札时间：{wonTime}
                       </>
                     ) : null}
                     {item.tracking_number ? (

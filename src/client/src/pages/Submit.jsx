@@ -126,7 +126,7 @@ export default function Submit() {
           currentPrice: data.currentPrice || 0,
           buyoutPrice: data.buyoutPrice || 0,
           taxType: data.taxType || 'tax_zero',
-          shippingFeeText: data.shippingFeeText || '',
+          shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
           imageUrl: data.imageUrl || '',
           endTime: data.endTime || ''
         });
@@ -176,8 +176,8 @@ export default function Submit() {
       return;
     }
     const selectedStrategy = buyoutSelected ? 'direct' : (strategy || 'direct');
-    if (selectedStrategy === 'multi_bid' && effectiveMaxPrice < 5500) {
-      Toast.show({ content: '多次出价最高价不能低于5500円' });
+    if (selectedStrategy === 'multi_bid' && effectiveMaxPrice < 5000) {
+      Toast.show({ content: '多次出价最高价不能低于5000円' });
       return;
     }
     const minMultiBidIncrement = getMinMultiBidIncrement(effectiveMaxPrice);
@@ -393,7 +393,7 @@ export default function Submit() {
                 </List.Item>
               </List>
               <div style={{ padding: '8px 16px 0', color: '#d4380d', fontSize: 13, lineHeight: 1.5 }}>
-                多次出价标准：最高价不低于5500日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
+                多次出价标准：最高价不低于5000日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
                 <br />
                 提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(maxPrice, product, storeBidPriceMode))}日元
               </div>
