@@ -4,6 +4,7 @@ const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
 const { actingUserMiddleware } = require('../services/actingUser');
+const { DEFAULT_MULTI_BID_MIN_PRICE } = require('./plugin');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
@@ -55,10 +56,17 @@ function getTaxIncludedPrice(price, taxType) {
   return Math.floor(value * 1.1);
 }
 
-function validateMultiBidUserMaxPrice(strategy, userMaxPrice) {
+async function getMultiBidMinPrice(database = db) {
+  const row = await database.getOne("SELECT value FROM config WHERE key = 'multi_bid_min_price'");
+  const value = Number(row?.value || DEFAULT_MULTI_BID_MIN_PRICE);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_MULTI_BID_MIN_PRICE;
+}
+
+function validateMultiBidUserMaxPrice(strategy, userMaxPrice, minPrice = DEFAULT_MULTI_BID_MIN_PRICE) {
   if (strategy !== 'multi_bid') return;
-  if (Number(userMaxPrice || 0) < 5000) {
-    const error = new Error('多次出价最高价不能低于5000円');
+  const minimum = Number(minPrice || DEFAULT_MULTI_BID_MIN_PRICE);
+  if (Number(userMaxPrice || 0) < minimum) {
+    const error = new Error(`多次出价最高价不能低于${minimum}円`);
     error.statusCode = 400;
     throw error;
   }
@@ -233,7 +241,8 @@ router.post('/submit', async (req, res) => {
     const bidMaxPrice = input.bidMode === 'buyout'
       ? (fetchedBuyoutPrice || submittedBuyoutPrice || input.maxPrice)
       : calculateBidMaxPrice(userMaxPrice, resolvedTaxType);
-    validateMultiBidUserMaxPrice(strategy || 'direct', userMaxPrice);
+    const multiBidMinPrice = await getMultiBidMinPrice();
+    validateMultiBidUserMaxPrice(strategy || 'direct', userMaxPrice, multiBidMinPrice);
     const multiBidIncrement = validateMultiBidIncrement(strategy || 'direct', userMaxPrice, multi_bid_increment);
     if (input.bidMode === 'buyout' && fetchedBuyoutPrice <= 0) {
       const error = new Error('出价失败：该商品没有即決价格');
@@ -438,6 +447,7 @@ module.exports.buildWonTaskListInput = buildWonTaskListInput;
 module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
 module.exports.getTaxIncludedPrice = getTaxIncludedPrice;
+module.exports.getMultiBidMinPrice = getMultiBidMinPrice;
 module.exports.validateMultiBidUserMaxPrice = validateMultiBidUserMaxPrice;
 module.exports.getMinMultiBidIncrement = getMinMultiBidIncrement;
 module.exports.getDefaultMultiBidIncrement = getDefaultMultiBidIncrement;

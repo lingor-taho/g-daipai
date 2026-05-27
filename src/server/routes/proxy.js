@@ -525,12 +525,6 @@ function createProductService({
 
 const productService = createProductService();
 
-router.post('/cache', (req, res) => {
-  const product = productService.cacheProduct(req.body);
-  if (!product) return res.status(400).json({ error: 'auctionId is required' });
-  res.json({ success: true });
-});
-
 router.get('/fetch', async (req, res) => {
   const { url, keyword } = req.query;
   if (!url && !keyword) return res.status(400).json({ error: 'url or keyword is required' });

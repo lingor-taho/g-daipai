@@ -10,6 +10,9 @@ const {
   sweepPendingTasks,
   getMultiBidStartMs,
   getMultiBidIntervalMs,
+  getIdleBidGuardMs,
+  getNextTaskDispatchMs,
+  hasTaskWithinIdleGuard,
   isMultiBidTask,
   syncBiddingItems,
   resolveOrderFinalPrice,
@@ -124,6 +127,29 @@ function testChooseRefreshTaskWhenNoExecutableTaskExists() {
     { id: 2, strategy: '5min', end_time: null, created_at: '2026-05-13T10:01:00Z' }
   ], now);
   assert.equal(task.id, 2);
+}
+
+function testIdleGuardBlocksNearFutureBidTasks() {
+  const config = { idleBidGuardMinutes: 10 };
+  assert.equal(getIdleBidGuardMs(config), 10 * 60 * 1000);
+  assert.equal(getNextTaskDispatchMs({
+    id: 1,
+    strategy: '10min',
+    end_time: minutesFromNow(19),
+    created_at: minutesFromNow(-10)
+  }, now, config), now + 9 * 60 * 1000);
+  assert.equal(hasTaskWithinIdleGuard([{
+    id: 1,
+    strategy: '10min',
+    end_time: minutesFromNow(19),
+    created_at: minutesFromNow(-10)
+  }], now, config), true);
+  assert.equal(hasTaskWithinIdleGuard([{
+    id: 2,
+    strategy: '10min',
+    end_time: minutesFromNow(21),
+    created_at: minutesFromNow(-10)
+  }], now, config), false);
 }
 
 async function testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed() {
@@ -251,6 +277,7 @@ testMultiBidPendingTaskWithRecentTouchStillWaitsForInterval();
 testMultiBidIntervalParsesSqliteUtcTimestamp();
 testChooseNextTaskSkipsFutureTimedTask();
 testChooseRefreshTaskWhenNoExecutableTaskExists();
+testIdleGuardBlocksNearFutureBidTasks();
 testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();

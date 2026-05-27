@@ -23,11 +23,13 @@ export default function MultiBidSettingsPage() {
         form.setFieldsValue({
           startHours: data.startHours ?? 0.5,
           intervalMinutes: data.intervalMinutes ?? 5,
-          idleSyncIntervalMinutes: data.idleSyncIntervalMinutes ?? 5
+          multiBidMinPrice: data.multiBidMinPrice ?? 5000,
+          idleSyncIntervalMinutes: data.idleSyncIntervalMinutes ?? 5,
+          idleBidGuardMinutes: data.idleBidGuardMinutes ?? 10
         });
       })
       .catch(() => {});
-  }, []);
+  }, [form]);
 
   async function handleSave() {
     const values = await form.validateFields();
@@ -48,10 +50,23 @@ export default function MultiBidSettingsPage() {
         form={form}
         layout="vertical"
         onFinish={handleSave}
-        initialValues={{ startHours: 0.5, intervalMinutes: 5, idleSyncIntervalMinutes: 5 }}
-        style={{ maxWidth: 560 }}
+        initialValues={{
+          startHours: 0.5,
+          intervalMinutes: 5,
+          multiBidMinPrice: 5000,
+          idleSyncIntervalMinutes: 5,
+          idleBidGuardMinutes: 10
+        }}
+        style={{ maxWidth: 640 }}
       >
         <Card title="多次出价配置">
+          <Form.Item
+            name="multiBidMinPrice"
+            label="多次出价最低最高价"
+            rules={[{ required: true, message: '请输入最低最高价' }]}
+          >
+            <InputNumber min={1} step={100} precision={0} addonAfter="日元" style={{ width: '100%' }} />
+          </Form.Item>
           <Form.Item
             name="startHours"
             label="结束前 X 小时开始拍"
@@ -79,8 +94,15 @@ export default function MultiBidSettingsPage() {
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item
+            name="idleBidGuardMinutes"
+            label="出价保护窗口"
+            rules={[{ required: true, message: '请输入出价保护窗口' }]}
+          >
+            <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
+          </Form.Item>
           <Typography.Text type="secondary">
-            插件没有待执行任务时，会按这个间隔依次抓取入札中、落札，避免空闲时不停刷新 Yahoo 页面。
+            插件没有可执行任务，并且保护窗口内没有即将出价的任务时，才会抓取入札中和落札商品。
           </Typography.Text>
         </Card>
 

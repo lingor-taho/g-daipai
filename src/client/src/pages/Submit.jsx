@@ -66,7 +66,8 @@ export default function Submit() {
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [multiBidConfig, setMultiBidConfig] = useState({
     startHours: 0.5,
-    intervalMinutes: 5
+    intervalMinutes: 5,
+    minPrice: 5000
   });
 
   useEffect(() => {
@@ -74,7 +75,8 @@ export default function Submit() {
       .then(res => {
         setMultiBidConfig({
           startHours: Number(res.data?.multiBidStartHours || 0.5),
-          intervalMinutes: Number(res.data?.multiBidIntervalMinutes || 5)
+          intervalMinutes: Number(res.data?.multiBidIntervalMinutes || 5),
+          minPrice: Number(res.data?.multiBidMinPrice || 5000)
         });
       })
       .catch(() => {});
@@ -176,8 +178,8 @@ export default function Submit() {
       return;
     }
     const selectedStrategy = buyoutSelected ? 'direct' : (strategy || 'direct');
-    if (selectedStrategy === 'multi_bid' && effectiveMaxPrice < 5000) {
-      Toast.show({ content: '多次出价最高价不能低于5000円' });
+    if (selectedStrategy === 'multi_bid' && effectiveMaxPrice < multiBidConfig.minPrice) {
+      Toast.show({ content: `多次出价最高价不能低于${multiBidConfig.minPrice}円` });
       return;
     }
     const minMultiBidIncrement = getMinMultiBidIncrement(effectiveMaxPrice);
@@ -393,7 +395,7 @@ export default function Submit() {
                 </List.Item>
               </List>
               <div style={{ padding: '8px 16px 0', color: '#d4380d', fontSize: 13, lineHeight: 1.5 }}>
-                多次出价标准：最高价不低于5000日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
+                多次出价标准：最高价不低于{multiBidConfig.minPrice}日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
                 <br />
                 提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(maxPrice, product, storeBidPriceMode))}日元
               </div>

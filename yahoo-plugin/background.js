@@ -28,12 +28,16 @@ async function fetchPendingTask() {
   try {
     const res = await apiFetch('/api/plugin/task');
     const data = await res.json();
-    return data.task || null;
+    return {
+      task: data.task || null,
+      canIdleSync: data.canIdleSync === true,
+      idleBidGuardMinutes: Number(data.idleBidGuardMinutes || 10)
+    };
   } catch (e) {
     fetchFailureCount += 1;
     const log = fetchFailureCount === 1 || fetchFailureCount % 6 === 0 ? console.warn : console.debug;
     log('[Yahoo Bid] API unavailable, polling will retry:', e.message || e);
-    return null;
+    return { task: null, canIdleSync: false, idleBidGuardMinutes: 10 };
   }
 }
 
@@ -407,19 +411,6 @@ async function fetchProductInfo(url) {
   return extractProductFromHtml(html, auctionId, standardUrl);
 }
 
-async function cacheProductOnServer(product) {
-  if (!product?.auctionId) return;
-  try {
-    await apiFetch('/api/proxy/cache', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(product)
-    });
-  } catch (e) {
-    console.error('[Yahoo Bid] Failed to cache product:', e);
-  }
-}
-
 async function syncOrderHistory(orders) {
   if (!Array.isArray(orders)) return;
   try {
@@ -529,7 +520,8 @@ async function pollAndExecute() {
   if (isRunning) return;
   isRunning = true;
   try {
-    const task = await fetchPendingTask();
+    const taskResponse = await fetchPendingTask();
+    const task = taskResponse.task;
     if (task) {
       console.log('[Yahoo Bid] ִ������:', task.product_url);
       let taskTab = null;
@@ -565,10 +557,13 @@ async function pollAndExecute() {
         }
         await markTaskStatus(task.id, 'failed', e.message);
       }
-    } else {
+    } else if (taskResponse.canIdleSync) {
       await chrome.storage.session.remove(['currentTask']);
       await syncIdleYahooPages();
       console.log('[Yahoo Bid] No pending tasks, polling again in', POLL_INTERVAL_MS / 1000, 's');
+    } else {
+      await chrome.storage.session.remove(['currentTask']);
+      console.log('[Yahoo Bid] Idle sync skipped because a bid task is within guard window:', taskResponse.idleBidGuardMinutes, 'minutes');
     }
   } finally {
     isRunning = false;
@@ -624,15 +619,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       markTaskStatus(taskId, 'failed', result.error || '����ʧ��');
     }
     pollAndExecute();
-  } else if (msg.type === 'PRODUCT_DATA') {
+  } else if (msg.type === 'PRODUCT_DATA_REMOVED') {
     // Forward product data to server to cache it
     const { data } = msg;
     if (data && data.auctionId) {
-      apiFetch('/api/proxy/cache', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      }).catch(e => console.error('[Yahoo Bid] Failed to cache product:', e));
       console.log('[Yahoo Bid] Product data cached:', data.title, '��' + data.currentPrice);
     }
   } else if (msg.type === 'ORDER_HISTORY') {
@@ -653,11 +643,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     });
     return true; // Keep channel open for async sendResponse
-  } else if (msg.type === 'FETCH_PRODUCT') {
+  } else if (msg.type === 'FETCH_PRODUCT_REMOVED') {
     fetchProductInfo(msg.url || msg.auctionId)
       .then(async data => {
         await chrome.storage.session.set({ cachedProduct: data });
-        await cacheProductOnServer(data);
         sendResponse({ success: true, data });
       })
       .catch(error => {

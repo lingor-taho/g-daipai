@@ -11,6 +11,7 @@ const menuItems = [
   { key: '/server-accounts', label: <Link to="/server-accounts">服务器账号</Link> },
   { key: '/multi-bid-settings', label: <Link to="/multi-bid-settings">系统配置</Link> },
   { key: '/data-cleanup', label: <Link to="/data-cleanup">清理数据</Link> },
+  { key: '/shipping-refresh', label: <Link to="/shipping-refresh">运费更新</Link> },
   { key: '/orders', label: <Link to="/orders">订单管理</Link> }
 ];
 

@@ -617,7 +617,7 @@ function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   assert.equal(orders.length, 1);
   assert.equal(orders[0].productId, 'x1230699905');
   assert.equal(orders[0].price, '2,530');
-  assert.equal(orders[0].shippingFeeText, '10円');
+  assert.equal(Object.prototype.hasOwnProperty.call(orders[0], 'shippingFeeText'), false);
 }
 
 function testOrderHistoryExtractsUnlabeledWonPriceLine() {

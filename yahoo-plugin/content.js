@@ -26,14 +26,14 @@ function cleanupProductTitle(title, auctionId = '') {
   return auctionId ? ('商品 ' + auctionId) : '';
 }
 
-if (CLIENT_ORIGINS.has(window.location.origin)) {
+if (false && CLIENT_ORIGINS.has(window.location.origin)) {
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     const msg = event.data;
     if (!msg || msg.source !== 'g-daipai-client' || msg.type !== 'GET_PRODUCT_INFO') return;
 
     chrome.runtime.sendMessage(
-      { type: 'FETCH_PRODUCT', auctionId: msg.auctionId, url: msg.url },
+      { type: 'FETCH_PRODUCT_REMOVED', auctionId: msg.auctionId, url: msg.url },
       (response) => {
         window.postMessage({
           source: 'g-daipai-extension',
@@ -815,7 +815,6 @@ function extractOrderHistory() {
       title: link.textContent?.trim() || '',
       price: extractOrderPrice(text),
       wonTimeText: extractWonTimeText(text),
-      shippingFeeText: extractOrderShippingFeeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       trackingNumber: trackingMatch?.[1] || ''
     });
@@ -927,8 +926,6 @@ getTaskData().then(taskData => {
 // No task - if on auction page, extract and save product data
     if (pageProductData.auctionId) {
       chrome.storage.session.set({ cachedProduct: pageProductData });
-      // Notify background that product data is available
-      chrome.runtime.sendMessage({ type: 'PRODUCT_DATA', data: pageProductData });
       console.log('[Yahoo Bid] Product extracted:', pageProductData);
     } else if (window.location.href.includes('/my/won')) {
       const orders = extractOrderHistory();

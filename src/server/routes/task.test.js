@@ -169,6 +169,8 @@ function testStoreCurrentPriceDisplaysAsTaxIncluded() {
 function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000() {
   assert.doesNotThrow(() => validateMultiBidUserMaxPrice('multi_bid', 5000));
   assert.throws(() => validateMultiBidUserMaxPrice('multi_bid', 4999), /多次出价最高价不能低于5000円/);
+  assert.doesNotThrow(() => validateMultiBidUserMaxPrice('multi_bid', 6000, 6000));
+  assert.throws(() => validateMultiBidUserMaxPrice('multi_bid', 5999, 6000), /6000/);
   assert.doesNotThrow(() => validateMultiBidUserMaxPrice('direct', 1000));
 }
 

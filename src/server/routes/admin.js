@@ -9,8 +9,10 @@ const {
   getMultiBidConfig: getPluginMultiBidConfig,
   getMultiBidIntervalMs,
   getStrategyLeadMs,
-  isMultiBidTask
+  isMultiBidTask,
+  DEFAULT_MULTI_BID_MIN_PRICE
 } = require('./plugin');
+const { productService, normalizeAuctionUrl } = require('./proxy');
 const { buildYahooLoginStatus } = require('../services/yahooLoginStatus');
 const {
   deleteStaleTaskData,
@@ -364,7 +366,7 @@ router.get('/orders', async (req, res) => {
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      WHERE t.status = 'success'
-     ORDER BY o.created_at DESC LIMIT ? OFFSET ?`,
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC LIMIT ? OFFSET ?`,
     [pageSize, offset]
   );
   const countResult = await db.getOne(`
@@ -446,13 +448,15 @@ router.put('/finance-config', async (req, res) => {
 
 async function getMultiBidConfig() {
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
     startHours: Number(values.multi_bid_start_hours || 0.5),
     intervalMinutes: Number(values.multi_bid_interval_minutes || 5),
-    idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5)
+    idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5),
+    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || 10),
+    multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE)
   };
 }
 
@@ -464,6 +468,8 @@ router.put('/multi-bid-config', async (req, res) => {
   const startHours = Number(req.body.startHours);
   const intervalMinutes = Number(req.body.intervalMinutes);
   const idleSyncIntervalMinutes = Number(req.body.idleSyncIntervalMinutes ?? 5);
+  const idleBidGuardMinutes = Number(req.body.idleBidGuardMinutes ?? 10);
+  const multiBidMinPrice = Number(req.body.multiBidMinPrice ?? DEFAULT_MULTI_BID_MIN_PRICE);
   if (!Number.isFinite(startHours) || startHours <= 0) {
     return res.status(400).json({ error: 'valid startHours is required' });
   }
@@ -472,6 +478,12 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (!Number.isFinite(idleSyncIntervalMinutes) || idleSyncIntervalMinutes <= 0) {
     return res.status(400).json({ error: 'valid idleSyncIntervalMinutes is required' });
+  }
+  if (!Number.isFinite(idleBidGuardMinutes) || idleBidGuardMinutes <= 0) {
+    return res.status(400).json({ error: 'valid idleBidGuardMinutes is required' });
+  }
+  if (!Number.isFinite(multiBidMinPrice) || multiBidMinPrice <= 0 || Math.floor(multiBidMinPrice) !== multiBidMinPrice) {
+    return res.status(400).json({ error: 'valid multiBidMinPrice is required' });
   }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_start_hours', ?, CURRENT_TIMESTAMP)`,
@@ -485,7 +497,78 @@ router.put('/multi-bid-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('idle_sync_interval_minutes', ?, CURRENT_TIMESTAMP)`,
     [String(idleSyncIntervalMinutes)]
   );
-  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes });
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('idle_bid_guard_minutes', ?, CURRENT_TIMESTAMP)`,
+    [String(idleBidGuardMinutes)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_min_price', ?, CURRENT_TIMESTAMP)`,
+    [String(multiBidMinPrice)]
+  );
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice });
+});
+
+function parseShippingRefreshIds(value) {
+  const seen = new Set();
+  return String(value || '')
+    .split(/\r?\n|,|，/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => normalizeAuctionUrl(item)?.auctionId || '')
+    .filter(id => {
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+}
+
+router.post('/shipping-refresh/run', async (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: 'productIds is required' });
+  }
+
+  const results = [];
+  for (const productId of productIds) {
+    const taskCount = await db.getOne('SELECT COUNT(*) AS count FROM tasks WHERE product_id = ?', [productId]);
+    if (!taskCount?.count) {
+      results.push({ productId, success: false, error: '系统中没有这个商品' });
+      continue;
+    }
+
+    try {
+      const product = await productService.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${productId}`);
+      const shippingFeeText = String(product?.data?.shippingFeeText || '').trim();
+      if (!shippingFeeText) {
+        results.push({ productId, success: false, error: '未解析到运费，未更新' });
+        continue;
+      }
+      const updateResult = await db.query(
+        `UPDATE tasks
+         SET shipping_fee_text = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE product_id = ?`,
+        [shippingFeeText, productId]
+      );
+      results.push({
+        productId,
+        success: true,
+        shippingFeeText,
+        updatedCount: updateResult.rowCount || 0
+      });
+    } catch (err) {
+      results.push({ productId, success: false, error: err.message || '运费更新失败' });
+    }
+  }
+
+  res.json({
+    success: true,
+    results,
+    updated: results.filter(item => item.success).length,
+    failed: results.filter(item => !item.success).length
+  });
 });
 
 router.get('/data-cleanup/config', async (req, res) => {

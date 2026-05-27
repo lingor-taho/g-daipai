@@ -18,6 +18,7 @@ export default {
         { path: '/server-accounts', component: '@/Accounts' },
         { path: '/multi-bid-settings', component: '@/MultiBidSettings' },
         { path: '/data-cleanup', component: '@/DataCleanup' },
+        { path: '/shipping-refresh', component: '@/ShippingRefresh' },
         { path: '/orders', component: '@/Orders' },
       ],
     },
