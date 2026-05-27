@@ -650,8 +650,10 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function validateCurrentPrice() {
     const currentPrice = extractCurrentAuctionPrice();
-    if (currentPrice > 0 && currentPrice > numericUserMaxPrice) {
-      return buildPriceTooHighResult(currentPrice, numericUserMaxPrice);
+    // currentPrice 来自 Yahoo HTML price 字段，是税前。numericMaxPrice 也是税前（task.max_price）。
+    // 两者同口径直接比较；用 numericUserMaxPrice（税后）会错位。
+    if (currentPrice > 0 && currentPrice > numericMaxPrice) {
+      return buildPriceTooHighResult(currentPrice, numericMaxPrice);
     }
     return null;
   }
@@ -742,8 +744,6 @@ async function executeBidV3(maxPrice, options = {}) {
   if (priceError) return priceError;
   const userMaxError = validateUserMaxBeforeSubmit();
   if (userMaxError) return userMaxError;
-  const autoBidSkip = buildSkipWhenWithinAutoBidLimit(numericMaxPrice);
-  if (autoBidSkip) return autoBidSkip;
 
   const bidEntryBtn = findBidEntryButton(bidMode);
   if (!bidEntryBtn) {

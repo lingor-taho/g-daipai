@@ -138,6 +138,8 @@ async function expireOverduePendingTasks(database = db, nowMs = Date.now()) {
 }
 
 async function failPricedOutPendingTasks(database = db) {
+  // current_price 和 max_price 都是税前口径，user_max_price 是税后口径。
+  // 这里要做"当前价已超过你愿意出的税前金额"的判断，应该用 max_price（税前）作比较基准。
   const result = await database.query(
     `UPDATE tasks
      SET status = 'failed',
@@ -149,7 +151,7 @@ async function failPricedOutPendingTasks(database = db) {
        AND max_price IS NOT NULL
        AND current_price > 0
        AND max_price > 0
-       AND current_price > COALESCE(user_max_price, max_price)`,
+       AND current_price > max_price`,
     ['Current price is above max price before execution']
   );
   return result.rowCount || 0;
@@ -354,6 +356,114 @@ function normalizeBiddingStatus(value) {
   return value === 'highest' || value === 'outbid' ? value : null;
 }
 
+const YAHOO_LOW_PRICE_THRESHOLD = 1000;
+const YAHOO_LOW_PRICE_BID_LIMIT = 10000;
+const YAHOO_LOW_PRICE_INITIAL_BID = 9000;
+// followup 触发阈值高于 Yahoo 规则边界（1000），留 20% 缓冲，绕开税前/税后差异。
+const YAHOO_LOW_PRICE_FOLLOWUP_THRESHOLD = 1200;
+
+// 把含税值折回税前（Yahoo 内部口径）。普通商品税前=原值。
+function toTaxExcludedYen(value, taxType) {
+  const v = Number(value || 0);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  if (taxType !== 'tax_included' || v < 10) return Math.floor(v);
+  return Math.floor(((v / 1.1) + 1e-6) / 10) * 10;
+}
+
+/**
+ * Yahoo 出价规则：商品税前价不足 1000 时，单次税前出价不能超过 10000。
+ * 口径：
+ * - submitMaxPrice 是税后值（user_max_price 口径），需折回税前再比较 10000
+ * - currentPrice 来自 proxy 抓的 HTML price 字段，本身就是税前，直接比较 1000
+ * 仅对 direct + bid 模式生效；buyout 不受影响。
+ */
+function shouldSplitDirectBidByYahooLowPriceRule({ strategy, bidMode, currentPrice, submitMaxPrice, taxType }) {
+  if (strategy !== 'direct') return false;
+  if (bidMode !== 'bid') return false;
+  const submitTaxExcluded = toTaxExcludedYen(submitMaxPrice, taxType);
+  if (submitTaxExcluded <= YAHOO_LOW_PRICE_BID_LIMIT) return false;
+  const currentTaxExcluded = Number(currentPrice || 0);
+  // 当前价未知（0）时按"低于 1000"处理，给出提示更安全。
+  if (!Number.isFinite(currentTaxExcluded) || currentTaxExcluded <= 0) return true;
+  return currentTaxExcluded < YAHOO_LOW_PRICE_THRESHOLD;
+}
+
+function isFollowupTaskReady(task, nowMs = Date.now()) {
+  if (!task) return false;
+  if (!Number(task.pending_followup_max_price || 0)) return false;
+  // current_price 是税前价。followup 阈值 1200 留 20% 缓冲，> Yahoo 规则边界 1000。
+  const current = Number(task.current_price || 0);
+  if (!Number.isFinite(current) || current < YAHOO_LOW_PRICE_FOLLOWUP_THRESHOLD) return false;
+  if (!['pending', 'processing', 'bidding'].includes(task.status)) return false;
+  const endMs = parseTimeMs(task.end_time);
+  if (endMs && endMs <= nowMs) return false;
+  return true;
+}
+
+async function processPendingFollowupTasks(database = db, nowMs = Date.now()) {
+  const candidates = await database.getAll(
+    `SELECT id, user_id, product_id, product_url, product_title, product_image_url,
+            current_price, buyout_price, tax_type, shipping_fee_text,
+            pending_followup_max_price, status, end_time
+     FROM tasks
+     WHERE pending_followup_max_price IS NOT NULL
+       AND status IN ('pending', 'processing', 'bidding')`
+  );
+  let created = 0;
+  for (const task of candidates) {
+    if (!isFollowupTaskReady(task, nowMs)) continue;
+    const followupUserMaxPrice = Math.floor(Number(task.pending_followup_max_price));
+    // followup 任务的口径与原任务保持一致：
+    // - user_max_price 是用户视角（含税商品=含税值）
+    // - max_price 是 Yahoo 表单接收的除税值
+    const followupBidMaxPrice = task.tax_type === 'tax_included' && followupUserMaxPrice >= 10
+      ? Math.floor(((followupUserMaxPrice / 1.1) + 1e-6) / 10) * 10
+      : followupUserMaxPrice;
+    const clientRequestId = `followup-${task.id}`;
+    // 原子地清空标记，避免被并发触发多次
+    const cleared = await database.query(
+      `UPDATE tasks
+       SET pending_followup_max_price = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND pending_followup_max_price IS NOT NULL`,
+      [task.id]
+    );
+    if (!cleared.rowCount) continue;
+    const existing = await database.getOne(
+      'SELECT id FROM tasks WHERE user_id = ? AND client_request_id = ? LIMIT 1',
+      [task.user_id, clientRequestId]
+    );
+    if (existing) continue;
+    await database.query(
+      `INSERT INTO tasks (
+         user_id, product_id, product_url, product_title, product_image_url,
+         current_price, buyout_price, tax_type, shipping_fee_text,
+         max_price, user_max_price, strategy, bid_mode,
+         status, end_time, client_request_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct', 'bid', 'pending', ?, ?)`,
+      [
+        task.user_id,
+        task.product_id,
+        task.product_url,
+        task.product_title,
+        task.product_image_url,
+        task.current_price,
+        task.buyout_price,
+        task.tax_type || 'tax_zero',
+        task.shipping_fee_text,
+        followupBidMaxPrice,
+        followupUserMaxPrice,
+        task.end_time,
+        clientRequestId
+      ]
+    );
+    created += 1;
+  }
+  return created;
+}
+
 async function syncBiddingItems(items, database = db) {
   const biddingItems = Array.isArray(items) ? items : [];
   let highest = 0;
@@ -437,7 +547,8 @@ async function syncBiddingItems(items, database = db) {
     }
   }
 
-  return { highest, outbid, total: highest + outbid };
+  const followupCreated = await processPendingFollowupTasks(database);
+  return { highest, outbid, total: highest + outbid, followup: followupCreated };
 }
 
 router.post('/bidding/sync', async (req, res) => {
@@ -526,6 +637,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
       req.params.id
     ]
   );
+  await processPendingFollowupTasks();
   res.json({ success: true });
 });
 
@@ -564,5 +676,12 @@ module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
 module.exports.sweepPendingTasks = sweepPendingTasks;
 module.exports.isYahooLoginError = isYahooLoginError;
 module.exports.syncBiddingItems = syncBiddingItems;
+module.exports.processPendingFollowupTasks = processPendingFollowupTasks;
+module.exports.isFollowupTaskReady = isFollowupTaskReady;
+module.exports.shouldSplitDirectBidByYahooLowPriceRule = shouldSplitDirectBidByYahooLowPriceRule;
+module.exports.YAHOO_LOW_PRICE_THRESHOLD = YAHOO_LOW_PRICE_THRESHOLD;
+module.exports.YAHOO_LOW_PRICE_FOLLOWUP_THRESHOLD = YAHOO_LOW_PRICE_FOLLOWUP_THRESHOLD;
+module.exports.YAHOO_LOW_PRICE_BID_LIMIT = YAHOO_LOW_PRICE_BID_LIMIT;
+module.exports.YAHOO_LOW_PRICE_INITIAL_BID = YAHOO_LOW_PRICE_INITIAL_BID;
 module.exports.resolveOrderFinalPrice = resolveOrderFinalPrice;
 module.exports.normalizeYahooWonTimeText = normalizeYahooWonTimeText;

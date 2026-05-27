@@ -20,8 +20,12 @@ function formatJPY(value) {
   return amount > 0 ? `${amount.toLocaleString('ja-JP')}円` : '-';
 }
 
+// current_price 是税前口径。商城商品页面显示是税后，要 ×1.1 才符合用户预期。
 function getDisplayPrice(item) {
-  return item.current_price;
+  const value = Number(item?.current_price || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (item?.tax_type !== 'tax_included' || value < 10) return value;
+  return Math.floor(value * 1.1);
 }
 
 function isOutbidItem(item) {

@@ -4,7 +4,7 @@ const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
 const { actingUserMiddleware } = require('../services/actingUser');
-const { DEFAULT_MULTI_BID_MIN_PRICE } = require('./plugin');
+const { DEFAULT_MULTI_BID_MIN_PRICE, shouldSplitDirectBidByYahooLowPriceRule, YAHOO_LOW_PRICE_INITIAL_BID } = require('./plugin');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
@@ -195,7 +195,7 @@ function buildActiveBiddingTaskListQuery(input) {
 
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, multi_bid_increment, client_request_id } = req.body;
+  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
     input.userId = req.actingUser.id;
@@ -253,9 +253,37 @@ router.post('/submit', async (req, res) => {
       ? fetchedBuyoutPrice
       : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
     const shippingFeeText = shipping_fee_text || productInfo?.shippingFeeText || null;
+    const followupMaxPriceRaw = Number(pending_followup_max_price || 0);
+    let followupMaxPrice = Number.isFinite(followupMaxPriceRaw) && followupMaxPriceRaw > userMaxPrice
+      ? Math.floor(followupMaxPriceRaw)
+      : null;
+
+    // 服务端兜底：旧客户端、API 直连等场景下，命中 Yahoo 低价规则时自动拆分。
+    let finalUserMaxPrice = userMaxPrice;
+    let finalBidMaxPrice = bidMaxPrice;
+    const productCurrentPrice = Number(current_price || productInfo?.currentPrice || 0);
+    const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
+    if (
+      !followupMaxPrice &&
+      shouldSplitDirectBidByYahooLowPriceRule({
+        strategy: incomingStrategy,
+        bidMode: input.bidMode,
+        currentPrice: productCurrentPrice,
+        submitMaxPrice: userMaxPrice,
+        taxType: resolvedTaxType
+      })
+    ) {
+      followupMaxPrice = userMaxPrice;
+      // 想让 Yahoo 实际收到 9000，对含税商品要把 user_max_price 折成含税值（9000×1.1）。
+      finalUserMaxPrice = resolvedTaxType === 'tax_included'
+        ? Math.floor(YAHOO_LOW_PRICE_INITIAL_BID * 1.1)
+        : YAHOO_LOW_PRICE_INITIAL_BID;
+      finalBidMaxPrice = YAHOO_LOW_PRICE_INITIAL_BID;
+    }
+
     await db.query(
-      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id, pending_followup_max_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       [
         input.userId,
         input.productId,
@@ -266,15 +294,16 @@ router.post('/submit', async (req, res) => {
         buyoutPrice,
         resolvedTaxType,
         shippingFeeText,
-        bidMaxPrice,
-        userMaxPrice,
+        finalBidMaxPrice,
+        finalUserMaxPrice,
         multiBidIncrement,
-        input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct'),
+        incomingStrategy,
         input.bidMode,
         start_minutes_before || null,
         start_seconds_before || null,
         endTime,
-        clientRequestId
+        clientRequestId,
+        followupMaxPrice
       ]
     );
     const inserted = await db.getOne('SELECT id, product_id FROM tasks WHERE id = last_insert_rowid()');

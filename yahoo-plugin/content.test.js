@@ -453,18 +453,19 @@ function testExtractAutoBidLimit() {
   assert.equal(api.extractAutoBidLimit(), 1000);
 }
 
-async function testSkipWhenBidIsWithinAutoBidLimit() {
+async function testDirectBidNoLongerSkipsWhenWithinAutoBidLimit() {
+  // 移除"已是最高 + 新出价≤自动上限就跳过"的拦截逻辑后，direct 任务会正常去找出价按钮，
+  // 即使新出价低于当前 Yahoo 自动上限。这样用户才能用更低金额覆盖（降低）旧上限。
   const result = await loadAndExecuteBidForTest(
     '\u73fe\u5728 510\u5186 \u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059! \u81ea\u52d5\u5165\u672d\u4e0a\u9650 1,000\u5186',
     { maxPrice: 900, userMaxPrice: 900, strategy: 'direct' },
     '/jp/auction/x123456789'
   );
 
-  assert.equal(result.success, true);
-  assert.equal(result.noBid, true);
-  assert.equal(result.noStatus, true);
-  assert.equal(result.closeTab, true);
-  assert.equal(result.autoBidLimit, 1000);
+  // 不再返回 noStatus 跳过；测试页面没有出价按钮，所以会返回 bid button not found
+  assert.equal(result.success, false);
+  assert.notEqual(result.noStatus, true);
+  assert.match(String(result.error || ''), /bid button not found/);
 }
 
 async function testDirectBidWaitsForConfirmButtonEnabledAfterInput() {
@@ -545,6 +546,8 @@ async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() 
     }
   });
 
+  // max_price=2450（要填到 Yahoo 表单的税前金额）< 当前价 2530，插件应拒绝。
+  // 之前用 user_max_price(2700) 比较的逻辑会通过，但语义错位：填 2450 进 Yahoo 必被拒。
   const result = await api.executeBidV3(2450, {
     maxPrice: 2450,
     userMaxPrice: 2700,
@@ -552,10 +555,10 @@ async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() 
     taxType: 'tax_zero'
   });
 
-  assert.equal(result.success, true);
-  assert.equal(result.pendingFinal, true);
-  assert.equal(priceInput.value, '2450');
-  assert.equal(confirmButton.clicked, true);
+  assert.equal(result.success, false);
+  assert.match(String(result.error || ''), /已高于最高价/);
+  assert.equal(result.currentPrice, 2530);
+  assert.equal(result.maxPrice, 2450);
 }
 
 async function testMultiBidClicksConfirmAfterInput() {
@@ -721,7 +724,7 @@ async function run() {
   testMultiBidInputPageDetection();
   testProductHighestBidderNoticeDetection();
   testExtractAutoBidLimit();
-  await testSkipWhenBidIsWithinAutoBidLimit();
+  await testDirectBidNoLongerSkipsWhenWithinAutoBidLimit();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();

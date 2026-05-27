@@ -16,7 +16,10 @@ const {
   isMultiBidTask,
   syncBiddingItems,
   resolveOrderFinalPrice,
-  normalizeYahooWonTimeText
+  normalizeYahooWonTimeText,
+  shouldSplitDirectBidByYahooLowPriceRule,
+  isFollowupTaskReady,
+  processPendingFollowupTasks
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -183,7 +186,7 @@ async function testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed() {
 
   assert.equal(count, 1);
   assert.match(calls[0].sql, /status = 'pending'/);
-  assert.match(calls[0].sql, /current_price > COALESCE\(user_max_price, max_price\)/);
+  assert.match(calls[0].sql, /current_price > max_price/);
   assert.equal(calls[0].params[0], 'Current price is above max price before execution');
 }
 
@@ -225,6 +228,12 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
     async query(sql, params) {
       calls.push({ sql, params });
       return { rowCount: 1 };
+    },
+    async getAll() {
+      return [];
+    },
+    async getOne() {
+      return null;
     }
   };
 
@@ -233,7 +242,10 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
     { productId: 'b123456789', title: 'B', price: '1,500', url: 'https://auctions.yahoo.co.jp/jp/auction/b123456789', status: 'outbid' }
   ], fakeDb);
 
-  assert.deepEqual(result, { highest: 1, outbid: 1, total: 2 });
+  assert.equal(result.highest, 1);
+  assert.equal(result.outbid, 1);
+  assert.equal(result.total, 2);
+  assert.equal(result.followup, 0);
   assert.match(calls[0].sql, /UPDATE bidding_items/);
   assert.match(calls[1].sql, /INSERT INTO bidding_items/);
   assert.equal(calls[1].params[0], 'a123456789');
@@ -267,6 +279,233 @@ function testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay() {
   assert.match(normalized, /^2025-12-31T/);
 }
 
+function testShouldSplitDirectBidByYahooLowPriceRule() {
+  // 普通商品（税前=税后）
+  // 税前当前价<1000 + 税前出价>10000，触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 500, submitMaxPrice: 15000, taxType: 'tax_zero'
+  }), true);
+  // 当前价>=1000，不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 1000, submitMaxPrice: 15000, taxType: 'tax_zero'
+  }), false);
+  // 税前出价不超过10000，不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 500, submitMaxPrice: 10000, taxType: 'tax_zero'
+  }), false);
+  // 非 direct 策略不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'multi_bid', bidMode: 'bid', currentPrice: 500, submitMaxPrice: 15000, taxType: 'tax_zero'
+  }), false);
+  // buyout 模式不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'buyout', currentPrice: 500, submitMaxPrice: 15000, taxType: 'tax_zero'
+  }), false);
+  // 当前价未知（0/null）按"低于 1000"处理触发，避免漏判
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 0, submitMaxPrice: 15000, taxType: 'tax_zero'
+  }), true);
+
+  // 商城商品（current_price 是税前；submitMaxPrice 是税后）
+  // 用户输入税前 9100 → effectiveMaxPrice 税后 10010，但税前 9100 ≤ 10000，不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 1, submitMaxPrice: 10010, taxType: 'tax_included'
+  }), false);
+  // 用户输入税前 11000 → effectiveMaxPrice 税后 12100，税前 11000 > 10000，触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 1, submitMaxPrice: 12100, taxType: 'tax_included'
+  }), true);
+  // 商城商品 current_price=1000（税前），到边界，不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 1000, submitMaxPrice: 15000, taxType: 'tax_included'
+  }), false);
+  // 商城商品 current_price=999（税前），低于 1000，触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 999, submitMaxPrice: 15000, taxType: 'tax_included'
+  }), true);
+  // 边界：税前出价正好 10000（税后 11000），不触发
+  assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
+    strategy: 'direct', bidMode: 'bid', currentPrice: 1, submitMaxPrice: 11000, taxType: 'tax_included'
+  }), false);
+}
+
+function testIsFollowupTaskReady() {
+  // 当前价>=1200 且任务未结束，可触发
+  assert.equal(isFollowupTaskReady({
+    pending_followup_max_price: 20000,
+    current_price: 1200,
+    status: 'bidding',
+    end_time: minutesFromNow(60)
+  }, now), true);
+  // 当前价仍<1200（即使>1000），不触发，绕开税前/税后差异
+  assert.equal(isFollowupTaskReady({
+    pending_followup_max_price: 20000,
+    current_price: 1100,
+    status: 'bidding',
+    end_time: minutesFromNow(60)
+  }, now), false);
+  assert.equal(isFollowupTaskReady({
+    pending_followup_max_price: 20000,
+    current_price: 800,
+    status: 'bidding',
+    end_time: minutesFromNow(60)
+  }, now), false);
+  // 标记已清空
+  assert.equal(isFollowupTaskReady({
+    pending_followup_max_price: null,
+    current_price: 2000,
+    status: 'bidding'
+  }, now), false);
+  // 任务已结束
+  assert.equal(isFollowupTaskReady({
+    pending_followup_max_price: 20000,
+    current_price: 2000,
+    status: 'bidding',
+    end_time: minutesFromNow(-10)
+  }, now), false);
+  // 任务已 success / failed，不再追加
+  assert.equal(isFollowupTaskReady({
+    pending_followup_max_price: 20000,
+    current_price: 2000,
+    status: 'success'
+  }, now), false);
+}
+
+async function testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker() {
+  const queries = [];
+  const fakeDb = {
+    async getAll() {
+      return [{
+        id: 42,
+        user_id: 7,
+        product_id: 'a123456789',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789',
+        product_title: 'sample',
+        product_image_url: 'https://example.com/img.jpg',
+        current_price: 1200,
+        buyout_price: null,
+        tax_type: 'tax_zero',
+        shipping_fee_text: '送料 落札者負担',
+        pending_followup_max_price: 20000,
+        status: 'bidding',
+        end_time: minutesFromNow(60)
+      }];
+    },
+    async getOne() {
+      return null;
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const created = await processPendingFollowupTasks(fakeDb, now);
+
+  assert.equal(created, 1);
+  assert.match(queries[0].sql, /pending_followup_max_price = NULL/);
+  assert.equal(queries[0].params[0], 42);
+  assert.match(queries[1].sql, /INSERT INTO tasks/);
+  // 检查关键字段位置：user_id=7, product_id, ...
+  assert.equal(queries[1].params[0], 7);
+  assert.equal(queries[1].params[1], 'a123456789');
+  // tax_zero 商品：max_price / user_max_price 都是 20000
+  assert.equal(queries[1].params[9], 20000);
+  assert.equal(queries[1].params[10], 20000);
+  // client_request_id 用 followup-{id}
+  assert.equal(queries[1].params.at(-1), 'followup-42');
+}
+
+async function testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxExcluded() {
+  let insertParams = null;
+  const fakeDb = {
+    async getAll() {
+      return [{
+        id: 42,
+        user_id: 7,
+        product_id: 'a123456789',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789',
+        current_price: 1210,
+        buyout_price: null,
+        tax_type: 'tax_included',
+        shipping_fee_text: null,
+        pending_followup_max_price: 12100,
+        status: 'bidding',
+        end_time: minutesFromNow(60)
+      }];
+    },
+    async getOne() {
+      return null;
+    },
+    async query(sql, params) {
+      if (/INSERT INTO tasks/.test(sql)) insertParams = params;
+      return { rowCount: 1 };
+    }
+  };
+
+  const created = await processPendingFollowupTasks(fakeDb, now);
+  assert.equal(created, 1);
+  // 含税商品口径：user_max_price 是含税值 12100，max_price 是除税值 11000
+  assert.equal(insertParams[9], 11000); // max_price
+  assert.equal(insertParams[10], 12100); // user_max_price
+}
+
+async function testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup() {
+  const fakeDb = {
+    async getAll() {
+      return [{
+        id: 42,
+        user_id: 7,
+        product_id: 'a123456789',
+        current_price: 1200,
+        pending_followup_max_price: 20000,
+        status: 'bidding',
+        end_time: minutesFromNow(60),
+        tax_type: 'tax_zero'
+      }];
+    },
+    async getOne() {
+      // 已存在同 client_request_id 的任务
+      return { id: 99 };
+    },
+    async query() {
+      return { rowCount: 1 };
+    }
+  };
+
+  const created = await processPendingFollowupTasks(fakeDb, now);
+  assert.equal(created, 0);
+}
+
+async function testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThreshold() {
+  let inserted = false;
+  const fakeDb = {
+    async getAll() {
+      return [{
+        id: 42,
+        user_id: 7,
+        product_id: 'a123456789',
+        // 1100 高于 Yahoo 规则 1000，但仍低于 followup 阈值 1200，绕开税前/税后差异
+        current_price: 1100,
+        pending_followup_max_price: 20000,
+        status: 'bidding',
+        end_time: minutesFromNow(60)
+      }];
+    },
+    async getOne() {
+      return null;
+    },
+    async query(sql) {
+      if (/INSERT INTO tasks/.test(sql)) inserted = true;
+      return { rowCount: 1 };
+    }
+  };
+
+  const created = await processPendingFollowupTasks(fakeDb, now);
+  assert.equal(created, 0);
+  assert.equal(inserted, false);
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -288,3 +527,14 @@ testResolveOrderFinalPriceUsesYahooParsedPriceWhenHigherThanTaskPrice();
 testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing();
 testNormalizeYahooWonTimeTextInfersCurrentYear();
 testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
+testShouldSplitDirectBidByYahooLowPriceRule();
+testIsFollowupTaskReady();
+Promise.all([
+  testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
+  testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxExcluded(),
+  testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup(),
+  testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThreshold()
+]).catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});

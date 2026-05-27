@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   is_highest_bidder INTEGER DEFAULT 0,
   bid_count INTEGER DEFAULT 0,
   last_bid_at DATETIME,
+  pending_followup_max_price INTEGER,
   error_msg TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

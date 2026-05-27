@@ -542,7 +542,14 @@ async function pollAndExecute() {
         const result = await executeTaskInTabV2(tab, task);
         await chrome.storage.session.remove(['currentTask']);
         if (result?.noStatus) {
-          await touchTaskSchedule(task.id, task.status);
+          // direct 任务命中"已是最高价 + 计划出价≤自动入札上限"时，本次跳过出价。
+          // 之前直接 touchTaskSchedule 会把 status 写回 task.status（pending），
+          // 导致下一轮轮询又取出来执行，陷入死循环。这里直接标 bidding。
+          if (isDirectTask(task)) {
+            await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true });
+          } else {
+            await touchTaskSchedule(task.id, task.status);
+          }
         } else {
           await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
         }
@@ -611,7 +618,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         closeTaskTab(sender.tab.id);
       }
       if (result.noStatus) {
-        touchTaskSchedule(taskId);
+        // 已是最高价且新出价≤自动入札上限，跳过出价。直接标 bidding，避免任务一直停留 processing/pending。
+        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: true });
       } else {
         markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest });
       }

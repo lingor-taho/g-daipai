@@ -31,6 +31,34 @@ function getDisplayPrice(price, taxType) {
   return Math.floor(value * 1.1);
 }
 
+const YAHOO_LOW_PRICE_THRESHOLD = 1000;
+const YAHOO_LOW_PRICE_BID_LIMIT = 10000;
+const YAHOO_LOW_PRICE_INITIAL_BID = 9000;
+
+// 把含税值折回税前（Yahoo 内部口径）。普通商品税前=原值。
+function toTaxExcludedYen(value, taxType) {
+  const v = Number(value || 0);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  if (taxType !== 'tax_included' || v < 10) return Math.floor(v);
+  return Math.floor(((v / 1.1) + 1e-6) / 10) * 10;
+}
+
+/**
+ * Yahoo 出价规则：商品税前价不足 1000 时，单次税前出价不能超过 10000。
+ * 口径：
+ * - submitMaxPrice 是税后值，需折回税前再比较 10000
+ * - currentPrice 来自 proxy 抓的 HTML price 字段，本身就是税前，直接比较 1000
+ */
+function shouldSplitDirectBidByYahooLowPriceRule({ strategy, bidMode, currentPrice, submitMaxPrice, taxType }) {
+  if (strategy !== 'direct') return false;
+  if (bidMode !== 'bid') return false;
+  const submitTaxExcluded = toTaxExcludedYen(submitMaxPrice, taxType);
+  if (submitTaxExcluded <= YAHOO_LOW_PRICE_BID_LIMIT) return false;
+  const currentTaxExcluded = Number(currentPrice || 0);
+  if (!Number.isFinite(currentTaxExcluded) || currentTaxExcluded <= 0) return true;
+  return currentTaxExcluded < YAHOO_LOW_PRICE_THRESHOLD;
+}
+
 function getMinMultiBidIncrement(maxPrice) {
   const value = Number(maxPrice || 0);
   return value > 0 ? Math.floor(value / 20) : 0;
@@ -207,12 +235,44 @@ export default function Submit() {
           if (!confirmed) return;
         }
       }
+      // Yahoo 出价规则：商品当前价不足 1000 时，单次出价不能超过 10000。
+      // 仅对 direct + bid 模式生效，需要先拆分出 9000 的初始即时拍。
+      const bidMode = buyoutSelected ? 'buyout' : 'bid';
+      let submittedMaxPrice = effectiveMaxPrice;
+      let pendingFollowupMaxPrice = null;
+      if (shouldSplitDirectBidByYahooLowPriceRule({
+        strategy: selectedStrategy,
+        bidMode,
+        currentPrice: product?.currentPrice,
+        submitMaxPrice: effectiveMaxPrice,
+        taxType: submitTaxType
+      })) {
+        // 弹窗里显示用户原本输入的最高价和价格类型（税前/税后），避免与"实际出价"混淆。
+        const userTypedMaxPrice = Math.floor(Number(maxPrice || 0));
+        const isStore = isStoreProduct(product);
+        const priceTypeLabel = isStore
+          ? (storeBidPriceMode === 'tax_before' ? '税前最高价' : '税后最高价')
+          : '最高价';
+        const confirmed = await Dialog.confirm({
+          title: 'Yahoo 出价规则提示',
+          content: `商品目前价格不足${YAHOO_LOW_PRICE_THRESHOLD}円，单次出价不能超过${YAHOO_LOW_PRICE_BID_LIMIT}円。本次出价将分两步：\n\n1. 先以 ${YAHOO_LOW_PRICE_INITIAL_BID.toLocaleString('ja-JP')}円 提交即时拍\n2. 当商品价格突破 ${YAHOO_LOW_PRICE_THRESHOLD}円 后，自动以原${priceTypeLabel} ${userTypedMaxPrice.toLocaleString('ja-JP')}円 再次提交即时拍`,
+          confirmText: '继续提交',
+          cancelText: '取消'
+        });
+        if (!confirmed) return;
+        // 服务端会按 tax_type 再做一次税前换算（max_price = user_max_price / 1.1）。
+        // 想让 Yahoo 实际收到 9000，对于含税商品要传 9900 给服务端。
+        submittedMaxPrice = isStore
+          ? Math.floor(YAHOO_LOW_PRICE_INITIAL_BID * 1.1)
+          : YAHOO_LOW_PRICE_INITIAL_BID;
+        pendingFollowupMaxPrice = effectiveMaxPrice;
+      }
       // Include product data so server can save title/image_url
       await submitTask({
         product_url: standardUrl,
-        max_price: effectiveMaxPrice,
+        max_price: submittedMaxPrice,
         strategy: selectedStrategy,
-        bid_mode: buyoutSelected ? 'buyout' : 'bid',
+        bid_mode: bidMode,
         product_title: product?.title || null,
         product_image_url: product?.imageUrl || null,
         current_price: product?.currentPrice || null,
@@ -220,7 +280,8 @@ export default function Submit() {
         tax_type: submitTaxType,
         shipping_fee_text: product?.shippingFeeText || null,
         multi_bid_increment: selectedStrategy === 'multi_bid' ? effectiveMultiBidIncrement : null,
-        end_time: product?.endTime || null
+        end_time: product?.endTime || null,
+        pending_followup_max_price: pendingFollowupMaxPrice
       });
       Toast.show({ content: '任务已提交' });
       setUrl('');
