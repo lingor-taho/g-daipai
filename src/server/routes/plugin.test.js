@@ -269,6 +269,31 @@ function testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing() {
   assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 2450, user_max_price: 2700 }, ''), null);
 }
 
+async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
+  // /my/bidding 列表"現在 ××円"对商城商品是税后值，写入 bidding_items 时应折回税前。
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    },
+    async getAll() {
+      return [];
+    },
+    async getOne() {
+      return { tax_type: 'tax_included' };
+    }
+  };
+
+  await syncBiddingItems([
+    { productId: 'a123456789', title: 'A', price: '189,431', url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789', status: 'highest' }
+  ], fakeDb);
+
+  // INSERT INTO bidding_items 的 current_price 参数（第 5 个，0-indexed=4）应该是折回税前的 172,210
+  const insertCall = calls.find(c => /INSERT INTO bidding_items/.test(c.sql));
+  assert.equal(insertCall.params[4], 172210);
+}
+
 function testNormalizeYahooWonTimeTextInfersCurrentYear() {
   const normalized = normalizeYahooWonTimeText('5/23 22:26', Date.parse('2026-05-26T12:00:00.000Z'));
   assert.match(normalized, /^2026-05-23T/);
@@ -530,6 +555,7 @@ testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIsFollowupTaskReady();
 Promise.all([
+  testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
   testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
   testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxExcluded(),
   testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup(),

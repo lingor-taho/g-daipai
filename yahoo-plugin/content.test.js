@@ -109,12 +109,17 @@ function createTestAnchor(text, href) {
   };
 }
 
-function createOrderContainer(text, linkText, href) {
+function createOrderContainer(text, linkText, href, priceElements = []) {
   const link = createTestAnchor(linkText, href);
   return {
     textContent: text,
     querySelectorAll(selector) {
-      return selector === 'a[href*="/jp/auction/"]' ? [link] : [];
+      if (selector === 'a[href*="/jp/auction/"]') return [link];
+      // 模拟 DOM 叶子价格元素查找，对应 extractOrderHistory 的 findPriceElementText。
+      if (/span|li|dd|td|p|strong|b/.test(selector)) {
+        return priceElements.map(t => ({ textContent: t, querySelectorAll: () => [] }));
+      }
+      return [];
     }
   };
 }
@@ -667,6 +672,53 @@ function testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened() {
   assert.equal(orders[0].wonTimeText, '5/23 22:26');
 }
 
+function testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice() {
+  // 真实 DOM：标题"...F26171"（独立 <p>）和价格"23,100円"（独立 <span>）相邻但分两个元素。
+  // textContent 拼接 → "...F2617123,100円"，正则会错抓 2,617,123,100。
+  // 修复：从容器内查找单独的"价格元素"（textContent 干净就是 23,100円）。
+  const orderContainer = createOrderContainer(
+    '商品が発送されました唐筆 【超品玉蘭蕊】5本 善連 双羊牌 羊毫筆 手彫り 牛骨 書道用筆 古い筆 F2617123,100円未使用ストア5/24 20:26商品ID：l1230196918',
+    '唐筆 【超品玉蘭蕊】5本 善連 双羊牌 羊毫筆 手彫り 牛骨 書道用筆 古い筆 F26171',
+    'https://auctions.yahoo.co.jp/jp/auction/l1230196918',
+    ['23,100円']
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'l1230196918');
+  assert.equal(orders[0].price, '23,100');
+}
+
+function testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice() {
+  // 没有独立价格元素时，兜底正则要求"千位逗号格式"或纯短数字，避免吃到 F2617123,100 这种粘连。
+  const orderContainer = createOrderContainer(
+    '空箱 SONY WM-DX100 カセットプレーヤー 元箱 本体無し 空き箱 説明書等有り 中古 現状品 管理ZI-80 31,500円 5/24 20:18 商品ID：k1230839207',
+    '空箱 SONY WM-DX100 カセットプレーヤー 元箱 本体無し 空き箱 説明書等有り 中古 現状品 管理ZI-80',
+    'https://auctions.yahoo.co.jp/jp/auction/k1230839207'
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'k1230839207');
+  assert.equal(orders[0].price, '31,500');
+}
+
 function testBiddingItemsExtractsOutbidRebidRows() {
   const { container, link } = createBiddingContainer(
     '高値更新 再入札する 現在 1,500円 MD ゴールデンアックス',
@@ -732,6 +784,8 @@ async function run() {
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
   testOrderHistoryExtractsUnlabeledWonPriceLine();
   testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened();
+  testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice();
+  testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
   testBiddingItemsExtractsOutbidRebidRows();
 }
 

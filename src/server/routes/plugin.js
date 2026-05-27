@@ -481,7 +481,17 @@ async function syncBiddingItems(items, database = db) {
     const productId = match[0].toLowerCase();
     const itemStatus = normalizeBiddingStatus(item.status);
     if (!itemStatus) continue;
-    const currentPrice = normalizeYenAmount(item.price);
+    const rawPrice = normalizeYenAmount(item.price);
+    // /my/bidding 列表页"現在 ××円"对商城商品是税后值，对普通商品是税前。
+    // 数据库 current_price 统一存税前口径，写入前按 task 的 tax_type 折回税前。
+    const taskTaxRow = await database.getOne(
+      "SELECT tax_type FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1",
+      [productId]
+    );
+    const taxType = taskTaxRow?.tax_type === 'tax_included' ? 'tax_included' : 'tax_zero';
+    const currentPrice = rawPrice && taxType === 'tax_included' && rawPrice >= 10
+      ? Math.floor(((rawPrice / 1.1) + 1e-6) / 10) * 10
+      : rawPrice;
 
     await database.query(
       `INSERT INTO bidding_items (

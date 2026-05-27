@@ -756,7 +756,23 @@ async function executeBidV3(maxPrice, options = {}) {
 }
 
 function extractOrderHistory() {
-  function extractOrderPrice(text) {
+  // Yahoo 落札页的 DOM 结构：标题（含尾部商品代码 F26171）和价格 23,100円 分属不同元素，
+  // 用 item.textContent 会把它们拼成 "...F2617123,100円"，正则吃错。
+  // 这个函数从容器内部直接找"叶子价格元素"（只含数字+円），返回干净文本。
+  function findPriceElementText(container) {
+    const candidates = container.querySelectorAll
+      ? container.querySelectorAll('span, li, dd, td, p, strong, b')
+      : [];
+    for (const el of candidates) {
+      const text = String(el.textContent || '').replace(/\s+/g, '').trim();
+      // 优先匹配 "X,XXX円" 或 "XXX円" 这种纯价格格式（千位逗号分隔）
+      const labeledMatch = text.match(/^(\d{1,3}(?:,\d{3})+|\d+)円$/);
+      if (labeledMatch) return labeledMatch[1];
+    }
+    return '';
+  }
+
+  function extractOrderPrice(text, container) {
     const value = String(text || '');
     const labeledPatterns = [
       /(?:\u843d\u672d\u4fa1\u683c|\u843d\u672d\u984d|\u843d\u672d\u91d1\u984d|\u652f\u6255\u91d1\u984d|\u5408\u8a08\u91d1\u984d)[^\d]{0,40}([\d,]+)\s*(?:\u5186|JPY)/i,
@@ -765,6 +781,12 @@ function extractOrderHistory() {
     for (const pattern of labeledPatterns) {
       const match = value.match(pattern);
       if (match?.[1]) return match[1];
+    }
+
+    // 优先用 DOM 叶子节点查找：避开 textContent 跨元素拼接造成的数字粘连。
+    if (container) {
+      const fromDom = findPriceElementText(container);
+      if (fromDom) return fromDom;
     }
 
     const lines = value
@@ -776,8 +798,9 @@ function extractOrderHistory() {
       if (match?.[1]) return match[1];
     }
 
-    const firstYenAmount = value.match(/([\d,]+)\s*(?:\u5186|JPY)/i);
-    if (firstYenAmount?.[1]) return firstYenAmount[1];
+    // 最后兜底：要求千位格式（带 ,）或单纯数字 + 円
+    const safeYenAmount = value.match(/(\d{1,3}(?:,\d{3})+|\b\d{1,7})\s*(?:\u5186|JPY)/i);
+    if (safeYenAmount?.[1]) return safeYenAmount[1];
 
     return '';
   }
@@ -813,7 +836,7 @@ function extractOrderHistory() {
     orders.push({
       productId,
       title: link.textContent?.trim() || '',
-      price: extractOrderPrice(text),
+      price: extractOrderPrice(text, item),
       wonTimeText: extractWonTimeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       trackingNumber: trackingMatch?.[1] || ''
