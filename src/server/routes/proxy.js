@@ -157,6 +157,16 @@ function extractBuyoutPrice(html) {
   return 0;
 }
 
+function extractBuyoutOnly(html) {
+  const buyoutPrice = extractBuyoutPrice(html);
+  if (buyoutPrice <= 0) return false;
+  const buttonGroupText = normalizeText(extractElementHtmlById(html, 'bidButtonGroup'));
+  if (!buttonGroupText) return false;
+  const hasInstantBuyButton = /今すぐ落札/.test(buttonGroupText);
+  const hasBidButton = /入札する|入札に進む|値段を上げて入札/.test(buttonGroupText);
+  return hasInstantBuyButton && !hasBidButton;
+}
+
 function extractTaxType(html) {
   const text = normalizeText(html || '');
   if (/（\s*税\s*0\s*円\s*）|\(\s*税\s*0\s*円\s*\)/.test(text)) return 'tax_zero';
@@ -267,6 +277,7 @@ function parseProductHtml(html, auctionId, standardUrl) {
     title,
     currentPrice: extractPrice(html),
     buyoutPrice: extractBuyoutPrice(html),
+    buyoutOnly: extractBuyoutOnly(html),
     taxType: extractTaxType(html),
     shippingFeeText: extractShippingFeeText(html),
     endTime: extractEndTime(html),
@@ -408,6 +419,7 @@ function createProductService({
       title: rawProduct.title || ('商品 ' + parsed.auctionId),
       currentPrice: Number(rawProduct.currentPrice || 0),
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
+      buyoutOnly: Boolean(rawProduct.buyoutOnly || rawProduct.buyout_only),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
       shippingFeeText: rawProduct.shippingFeeText || rawProduct.shipping_fee_text || '',
       endTime: rawProduct.endTime || '',

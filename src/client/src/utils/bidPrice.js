@@ -2,6 +2,11 @@ export function isStoreProduct(product) {
   return (product?.taxType || product?.tax_type) === 'tax_included';
 }
 
+export function isBuyoutOnlyProduct(product) {
+  const buyoutPrice = Number(product?.buyoutPrice ?? product?.buyout_price ?? 0);
+  return Boolean(product?.buyoutOnly || product?.buyout_only) && buyoutPrice > 0;
+}
+
 export function getSubmitTaxType(product, storeBidPriceMode) {
   if (!isStoreProduct(product)) return product?.taxType || product?.tax_type || 'tax_zero';
   return 'tax_included';

@@ -6,9 +6,9 @@ import { runDeduped } from '../utils/requestDedupe';
 
 const items = [
   { to: '/submit', label: '提交任务' },
-  { to: '/tasks', label: '任务列表' },
   { to: '/bidding', label: '入札中' },
-  { to: '/won', label: '落札商品' }
+  { to: '/won', label: '落札商品' },
+  { to: '/stats', label: '统计页面' }
 ];
 
 const levelLabels = {

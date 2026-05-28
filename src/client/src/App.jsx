@@ -4,6 +4,7 @@ import ActiveBidding from './pages/ActiveBidding';
 import Submit from './pages/Submit';
 import TaskList from './pages/TaskList';
 import WonItems from './pages/WonItems';
+import Statistics from './pages/Statistics';
 import { installUserActivityListeners } from './utils/activity';
 
 installUserActivityListeners();
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/tasks" element={<ProtectedRoute><TaskList /></ProtectedRoute>} />
         <Route path="/bidding" element={<ProtectedRoute><ActiveBidding /></ProtectedRoute>} />
         <Route path="/won" element={<ProtectedRoute><WonItems /></ProtectedRoute>} />
+        <Route path="/stats" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/submit" />} />
       </Routes>
     </BrowserRouter>

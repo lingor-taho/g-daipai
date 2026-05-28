@@ -5,6 +5,9 @@ const {
   buildActiveBiddingTaskListInput,
   buildWonTaskListInput,
   buildActiveBiddingTaskListQuery,
+  buildWonStatsInput,
+  buildWonStatsSummaryQuery,
+  buildWonStatsExportQuery,
   calculateBidMaxPrice,
   getTaxIncludedPrice,
   validateMultiBidUserMaxPrice,
@@ -43,6 +46,19 @@ function testSubmitAcceptsBuyoutMode() {
       product_url: 'https://auctions.yahoo.co.jp/jp/auction/x1234567890',
       max_price: 1200,
       bid_mode: 'buyout'
+    }
+  );
+
+  assert.equal(input.bidMode, 'buyout');
+}
+
+function testSubmitForcesBuyoutModeForBuyoutOnlyProducts() {
+  const input = buildSubmitTaskInput(
+    { id: 7 },
+    {
+      product_url: 'https://auctions.yahoo.co.jp/jp/auction/t1204059533',
+      max_price: 2800,
+      buyout_only: true
     }
   );
 
@@ -151,6 +167,32 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
   assert.match(query.sql, /MAX\(t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.deepEqual(query.params, [9, 100]);
+}
+
+function testWonStatsInputDefaultsToThirtyDays() {
+  const input = buildWonStatsInput({ id: 9 }, {});
+
+  assert.equal(input.userId, 9);
+  assert.equal(input.days, 30);
+  assert.throws(() => buildWonStatsInput(null, {}), /not logged in/);
+}
+
+function testWonStatsQueriesUseWonDateAndExportFields() {
+  const input = { userId: 9, days: 30 };
+  const summary = buildWonStatsSummaryQuery(input);
+  const exportQuery = buildWonStatsExportQuery(input);
+
+  assert.match(summary.sql, /date\(COALESCE\(o\.won_at, t\.updated_at\), 'localtime'\) AS won_date/);
+  assert.match(summary.sql, /SUM\(CASE\s+WHEN t\.tax_type = 'tax_included'/);
+  assert.match(summary.sql, /COUNT\(\*\) AS item_count/);
+  assert.deepEqual(summary.params, [9, 30]);
+
+  assert.match(exportQuery.sql, /t\.product_id/);
+  assert.match(exportQuery.sql, /t\.product_title/);
+  assert.match(exportQuery.sql, /o\.final_price/);
+  assert.match(exportQuery.sql, /t\.shipping_fee_text/);
+  assert.match(exportQuery.sql, /o\.won_at/);
+  assert.deepEqual(exportQuery.params, [9, 30]);
 }
 
 function testStoreUserMaxPriceConvertsToTaxExcludedBidMax() {
@@ -266,12 +308,15 @@ async function testFindTaskByClientRequestIdSkipsEmptyId() {
 
 testSubmitUsesAuthenticatedUserId();
 testSubmitAcceptsBuyoutMode();
+testSubmitForcesBuyoutModeForBuyoutOnlyProducts();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
 testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
 testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
+testWonStatsInputDefaultsToThirtyDays();
+testWonStatsQueriesUseWonDateAndExportFields();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
 testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000();

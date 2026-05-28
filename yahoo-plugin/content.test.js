@@ -532,6 +532,53 @@ async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
   assert.equal(confirmButton.clicked, true);
 }
 
+async function testBuyoutClicksInstantBuyThenFinalAgree() {
+  let stage = 'product';
+  const instantBuyButton = createTestElement('\u4eca\u3059\u3050\u843d\u672d');
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306e\u30ac\u30a4\u30c9\u30e9\u30a4\u30f3\u7b49\u306b\u540c\u610f\u3057\u3066 \u843d\u672d\u3059\u308b');
+  instantBuyButton.click = () => {
+    instantBuyButton.clicked = true;
+    stage = 'confirm';
+  };
+  finalAgreeButton.click = () => {
+    finalAgreeButton.clicked = true;
+    stage = 'done';
+  };
+
+  const api = loadContentForTest('', '/jp/auction/t1204059533', {
+    getBodyText: () => {
+      if (stage === 'product') return '\u73fe\u5728 2,800\u5186 \u4eca\u3059\u3050\u843d\u672d';
+      if (stage === 'confirm') return '\u843d\u672d\u78ba\u8a8d \u4e0a\u8a18\u306e\u30ac\u30a4\u30c9\u30e9\u30a4\u30f3\u7b49\u306b\u540c\u610f\u3057\u3066 \u843d\u672d\u3059\u308b';
+      return '\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+    },
+    scripts: [
+      'var pageData = {"items":{"productID":"t1204059533","price":"2800","winPrice":"2800","productName":"buyout only product"}};'
+    ],
+    querySelectorAll(selector) {
+      if (selector === 'script') return [
+        { textContent: 'var pageData = {"items":{"productID":"t1204059533","price":"2800","winPrice":"2800","productName":"buyout only product"}};' }
+      ];
+      if (selector.includes('button') || selector === 'body *') {
+        if (stage === 'product') return [instantBuyButton];
+        if (stage === 'confirm') return [finalAgreeButton];
+      }
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(2800, {
+    maxPrice: 2800,
+    userMaxPrice: 2800,
+    bidMode: 'buyout',
+    strategy: 'direct'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(instantBuyButton.clicked, true);
+  assert.equal(finalAgreeButton.clicked, true);
+  assert.notEqual(result.error, 'buyout button not found');
+}
+
 async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() {
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
@@ -779,6 +826,7 @@ async function run() {
   await testDirectBidNoLongerSkipsWhenWithinAutoBidLimit();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
+  await testBuyoutClicksInstantBuyThenFinalAgree();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();

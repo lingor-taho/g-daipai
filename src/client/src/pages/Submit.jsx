@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getComparableCurrentPrice, getSubmitMaxPrice, getSubmitTaxType, isStoreProduct, isSubmitMaxPriceAboveCurrentPrice } from '../utils/bidPrice';
+import { getActualBidPrice, getComparableCurrentPrice, getSubmitMaxPrice, getSubmitTaxType, isBuyoutOnlyProduct, isStoreProduct, isSubmitMaxPriceAboveCurrentPrice } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -97,6 +97,7 @@ export default function Submit() {
     intervalMinutes: 5,
     minPrice: 5000
   });
+  const buyoutOnly = isBuyoutOnlyProduct(product);
 
   useEffect(() => {
     runDeduped('Submit:getPluginConfig', getPluginConfig)
@@ -150,17 +151,26 @@ export default function Submit() {
         return;
       }
       if (data?.title && data.title !== '商品 ' + auctionId) {
-        setProduct({
+        const nextProduct = {
           auctionId,
           title: data.title || ('商品 ' + auctionId),
           currentPrice: data.currentPrice || 0,
           buyoutPrice: data.buyoutPrice || 0,
+          buyoutOnly: Boolean(data.buyoutOnly || data.buyout_only),
           taxType: data.taxType || 'tax_zero',
           shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
           imageUrl: data.imageUrl || '',
           endTime: data.endTime || ''
-        });
+        };
+        setProduct(nextProduct);
         setStoreBidPriceMode('tax_before');
+        if (isBuyoutOnlyProduct(nextProduct)) {
+          setBuyoutSelected(true);
+          setMaxPrice(String(getDisplayPrice(nextProduct.buyoutPrice, nextProduct.taxType) || ''));
+          setStrategy('direct');
+        } else {
+          setBuyoutSelected(false);
+        }
         setLastFetchedUrl(normalizedInput);
         Toast.show({ content: data.imageUrl ? '已获取商品信息' : '已获取标题（价格需在页面提取）' });
       } else {
@@ -190,10 +200,10 @@ export default function Submit() {
     if (submitting) return;
     const submitTaxType = getSubmitTaxType(product, storeBidPriceMode);
     const buyoutPrice = Number(product?.buyoutPrice || 0);
-    const effectiveMaxPrice = buyoutSelected
+    const effectiveMaxPrice = (buyoutSelected || buyoutOnly)
       ? getDisplayPrice(buyoutPrice, submitTaxType)
       : getSubmitMaxPrice(maxPrice, product, storeBidPriceMode);
-    if (buyoutSelected && buyoutPrice <= 0) {
+    if ((buyoutSelected || buyoutOnly) && buyoutPrice <= 0) {
       Toast.show({ content: '出价失败：该商品没有即決价格' });
       return;
     }
@@ -204,11 +214,11 @@ export default function Submit() {
     // 修改校验：最高价的税前价 >= 商品目前的税前价即可提交（支持起拍价出价）
     const submitTaxExcludedPrice = toTaxExcludedYen(effectiveMaxPrice, submitTaxType);
     const currentTaxExcludedPrice = Number(product?.currentPrice || 0);
-    if (!buyoutSelected && submitTaxExcludedPrice < currentTaxExcludedPrice) {
+    if (!buyoutSelected && !buyoutOnly && submitTaxExcludedPrice < currentTaxExcludedPrice) {
       Toast.show({ content: `最高出价不能低于当前价格（当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円）` });
       return;
     }
-    const selectedStrategy = buyoutSelected ? 'direct' : (strategy || 'direct');
+    const selectedStrategy = (buyoutSelected || buyoutOnly) ? 'direct' : (strategy || 'direct');
     if (selectedStrategy === 'multi_bid' && effectiveMaxPrice < multiBidConfig.minPrice) {
       Toast.show({ content: `多次出价最高价不能低于${multiBidConfig.minPrice}円` });
       return;
@@ -240,7 +250,7 @@ export default function Submit() {
       }
       // Yahoo 出价规则：商品当前价不足 1000 时，单次出价不能超过 10000。
       // 仅对 direct + bid 模式生效，需要先拆分出 9000 的初始即时拍。
-      const bidMode = buyoutSelected ? 'buyout' : 'bid';
+      const bidMode = (buyoutSelected || buyoutOnly) ? 'buyout' : 'bid';
       let submittedMaxPrice = effectiveMaxPrice;
       let pendingFollowupMaxPrice = null;
       if (shouldSplitDirectBidByYahooLowPriceRule({
@@ -276,6 +286,7 @@ export default function Submit() {
         max_price: submittedMaxPrice,
         strategy: selectedStrategy,
         bid_mode: bidMode,
+        buyout_only: buyoutOnly,
         product_title: product?.title || null,
         product_image_url: product?.imageUrl || null,
         current_price: product?.currentPrice || null,
@@ -352,8 +363,10 @@ export default function Submit() {
                 prefix="即決"
                 extra={
                   <Checkbox
-                    checked={buyoutSelected}
+                    checked={buyoutSelected || buyoutOnly}
+                    disabled={buyoutOnly}
                     onChange={(checked) => {
+                      if (buyoutOnly) return;
                       setBuyoutSelected(checked);
                       if (checked) {
                         setMaxPrice(String(getDisplayPrice(product.buyoutPrice, product.taxType) || ''));
@@ -364,9 +377,12 @@ export default function Submit() {
                 }
               >
                 <span style={{ color: '#999', fontSize: 12 }}>使用即決价格直接落札</span>
+                {buyoutOnly && (
+                  <span style={{ color: '#d4380d', fontSize: 12, marginLeft: 8 }}>该商品仅支持即決</span>
+                )}
               </List.Item>
             )}
-            {isStoreProduct(product) && !buyoutSelected && (
+            {isStoreProduct(product) && !buyoutSelected && !buyoutOnly && (
               <List.Item prefix="价格类型">
                 <Radio.Group
                   value={storeBidPriceMode}
@@ -389,7 +405,7 @@ export default function Submit() {
               extra={
                 <Input
                   type="number"
-                  value={buyoutSelected ? String(getDisplayPrice(product.buyoutPrice, getSubmitTaxType(product, storeBidPriceMode)) || '') : maxPrice}
+                  value={(buyoutSelected || buyoutOnly) ? String(getDisplayPrice(product.buyoutPrice, getSubmitTaxType(product, storeBidPriceMode)) || '') : maxPrice}
                   onChange={(value) => {
                     setMaxPrice(value);
                     if (strategy === 'multi_bid') {
@@ -399,14 +415,14 @@ export default function Submit() {
                     }
                   }}
                   placeholder="日元"
-                  disabled={buyoutSelected}
+                  disabled={buyoutSelected || buyoutOnly}
                   style={{ width: 100 }}
                 />
               }
             >
               <span style={{ color: '#999', fontSize: 12 }}>日元</span>
             </List.Item>
-            {isStoreProduct(product) && !buyoutSelected && (
+            {isStoreProduct(product) && !buyoutSelected && !buyoutOnly && (
               <List.Item>
                 <div style={{ textAlign: 'right', color: '#d4380d', fontSize: 13, fontWeight: 600 }}>
                   实际出价：{getActualBidPrice(maxPrice, product, storeBidPriceMode).toLocaleString('ja-JP')}日元
@@ -418,12 +434,12 @@ export default function Submit() {
           <List style={{ marginTop: 12 }}>
             <List.Item
               prefix="出价策略"
-              clickable={!buyoutSelected}
+              clickable={!buyoutSelected && !buyoutOnly}
               extra={STRATEGY_OPTIONS[0].find(item => item.value === strategy)?.label || '即时拍（立即）'}
               onClick={() => {
-                if (!buyoutSelected) setStrategyPickerVisible(true);
+                if (!buyoutSelected && !buyoutOnly) setStrategyPickerVisible(true);
               }}
-              style={buyoutSelected ? { opacity: 0.45 } : undefined}
+              style={(buyoutSelected || buyoutOnly) ? { opacity: 0.45 } : undefined}
             />
           </List>
           <Picker
@@ -440,7 +456,7 @@ export default function Submit() {
               }
             }}
           />
-          {strategy === 'multi_bid' && !buyoutSelected && (
+          {strategy === 'multi_bid' && !buyoutSelected && !buyoutOnly && (
             <>
               <List style={{ marginTop: 12 }}>
                 <List.Item

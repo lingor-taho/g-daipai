@@ -5,6 +5,7 @@ import {
   getSubmitMaxPrice,
   getSubmitTaxType,
   isSubmitMaxPriceAboveCurrentPrice,
+  isBuyoutOnlyProduct,
   isStoreProduct
 } from './bidPrice.js';
 
@@ -38,6 +39,13 @@ function testNormalProductDoesNotApplyStoreMode() {
   assert.equal(getSubmitMaxPrice(1000, product, 'tax_before'), 1000);
 }
 
+function testBuyoutOnlyProductDetection() {
+  assert.equal(isBuyoutOnlyProduct({ buyoutOnly: true, buyoutPrice: 2800 }), true);
+  assert.equal(isBuyoutOnlyProduct({ buyout_only: true, buyout_price: 2800 }), true);
+  assert.equal(isBuyoutOnlyProduct({ buyoutOnly: true, buyoutPrice: 0 }), false);
+  assert.equal(isBuyoutOnlyProduct({ buyoutOnly: false, buyoutPrice: 2800 }), false);
+}
+
 function testComparableCurrentPriceAddsTaxForStoreProducts() {
   // current_price 来自 HTML price 字段（税前）。商城商品要 ×1.1 才能跟税后的 effectiveMaxPrice 比较。
   assert.equal(getComparableCurrentPrice({ taxType: 'tax_included', currentPrice: 1000 }), 1100);
@@ -57,5 +65,6 @@ testStoreProductDetection();
 testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual();
 testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual();
 testNormalProductDoesNotApplyStoreMode();
+testBuyoutOnlyProductDetection();
 testComparableCurrentPriceAddsTaxForStoreProducts();
 testSubmitMaxPriceMustBeAboveCurrentPrice();

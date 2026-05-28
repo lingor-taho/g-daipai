@@ -21,7 +21,7 @@ function extractAuctionId(input) {
 
 function buildSubmitTaskInput(user, body) {
   if (!user?.id) throw new Error('not logged in');
-  const { product_url, max_price, bid_mode } = body;
+  const { product_url, max_price, bid_mode, buyout_only } = body;
   if (!product_url || !max_price) {
     const error = new Error('product_url, max_price are required');
     error.statusCode = 400;
@@ -34,7 +34,7 @@ function buildSubmitTaskInput(user, body) {
     productId,
     standardUrl: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
     maxPrice: parseInt(max_price, 10),
-    bidMode: bid_mode === 'buyout' ? 'buyout' : 'bid'
+    bidMode: bid_mode === 'buyout' || buyout_only === true || buyout_only === 'true' ? 'buyout' : 'bid'
   };
 }
 
@@ -155,6 +155,75 @@ function buildActiveBiddingTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
   const limit = Math.min(Math.max(parseInt(query.limit || '50', 10) || 50, 1), 100);
   return { userId: user.id, limit };
+}
+
+function buildWonStatsInput(user, query = {}) {
+  if (!user?.id) throw new Error('not logged in');
+  const days = Math.min(Math.max(parseInt(query.days || '30', 10) || 30, 1), 90);
+  return { userId: user.id, days };
+}
+
+function getWonTaxIncludedAmountExpression() {
+  return `CASE
+           WHEN t.tax_type = 'tax_included' AND o.final_price >= 10 THEN CAST(o.final_price * 1.1 AS INTEGER)
+           ELSE COALESCE(o.final_price, 0)
+         END`;
+}
+
+function buildWonStatsSummaryQuery(input) {
+  const amountExpression = getWonTaxIncludedAmountExpression();
+  return {
+    sql: `SELECT
+         date(COALESCE(o.won_at, t.updated_at), 'localtime') AS won_date,
+         SUM(${amountExpression}) AS total_amount,
+         COUNT(*) AS item_count
+       FROM tasks t
+       INNER JOIN orders o ON o.task_id = t.id
+       WHERE t.user_id = ?
+         AND t.status = 'success'
+         AND date(COALESCE(o.won_at, t.updated_at), 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+       GROUP BY won_date
+       ORDER BY won_date ASC`,
+    params: [input.userId, input.days]
+  };
+}
+
+function buildWonStatsExportQuery(input) {
+  return {
+    sql: `SELECT
+         t.product_id,
+         COALESCE(o.product_title, t.product_title, '') AS product_title,
+         o.final_price,
+         t.shipping_fee_text,
+         o.won_at,
+         o.won_time_text,
+         t.updated_at
+       FROM tasks t
+       INNER JOIN orders o ON o.task_id = t.id
+       WHERE t.user_id = ?
+         AND t.status = 'success'
+         AND date(COALESCE(o.won_at, t.updated_at), 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+       ORDER BY datetime(COALESCE(o.won_at, t.updated_at)) DESC, t.id DESC`,
+    params: [input.userId, input.days]
+  };
+}
+
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildRecentDateKeys(days, now = new Date()) {
+  const keys = [];
+  for (let offset = days - 1; offset >= 0; offset--) {
+    const date = new Date(now);
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - offset);
+    keys.push(formatLocalDate(date));
+  }
+  return keys;
 }
 
 function buildActiveBiddingTaskListQuery(input) {
@@ -354,6 +423,34 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// GET /api/task/won-stats - 近 N 天落札统计和导出明细
+router.get('/won-stats', async (req, res) => {
+  try {
+    const input = buildWonStatsInput(req.user, req.query);
+    input.userId = req.actingUser.id;
+    const summaryQuery = buildWonStatsSummaryQuery(input);
+    const exportQuery = buildWonStatsExportQuery(input);
+    const [summaryRows, exportRows] = await Promise.all([
+      db.getAll(summaryQuery.sql, summaryQuery.params),
+      db.getAll(exportQuery.sql, exportQuery.params)
+    ]);
+
+    const summaryByDate = new Map(summaryRows.map(row => [row.won_date, row]));
+    const daily = buildRecentDateKeys(input.days).map(date => {
+      const row = summaryByDate.get(date);
+      return {
+        date,
+        total_amount: Number(row?.total_amount || 0),
+        item_count: Number(row?.item_count || 0)
+      };
+    });
+
+    res.json({ success: true, data: { days: input.days, daily, items: exportRows } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/task/won - 用户落札商品列表
 router.get('/won', async (req, res) => {
   try {
@@ -473,6 +570,10 @@ module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
 module.exports.buildActiveBiddingTaskListQuery = buildActiveBiddingTaskListQuery;
 module.exports.buildWonTaskListInput = buildWonTaskListInput;
+module.exports.buildWonStatsInput = buildWonStatsInput;
+module.exports.buildWonStatsSummaryQuery = buildWonStatsSummaryQuery;
+module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;
+module.exports.buildRecentDateKeys = buildRecentDateKeys;
 module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
 module.exports.getTaxIncludedPrice = getTaxIncludedPrice;

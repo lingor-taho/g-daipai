@@ -129,6 +129,49 @@ async function testParseBuyoutPriceFromPageData() {
   assert.equal(product.buyoutPrice, 5600);
 }
 
+async function testParseBuyoutOnlyProductFromSingleInstantBuyButton() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Buyout Only Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"2800","winPrice":"2800","bids":"0"}};
+        </script>
+      </head>
+      <body>
+        <div id="bidButtonGroup">
+          <button disabled>今すぐ落札</button>
+        </div>
+      </body>
+    </html>
+  `, 't1204059533', 'https://auctions.yahoo.co.jp/jp/auction/t1204059533');
+
+  assert.equal(product.currentPrice, 2800);
+  assert.equal(product.buyoutPrice, 2800);
+  assert.equal(product.buyoutOnly, true);
+}
+
+async function testParseNormalBuyoutProductKeepsBidAvailable() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Bid And Buyout Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"1200","winPrice":"5600","bids":"0"}};
+        </script>
+      </head>
+      <body>
+        <div id="bidButtonGroup">
+          <button>入札する</button>
+          <button>今すぐ落札</button>
+        </div>
+      </body>
+    </html>
+  `, 'b1222222222', 'https://auctions.yahoo.co.jp/jp/auction/b1222222222');
+
+  assert.equal(product.buyoutOnly, false);
+}
+
 async function testParseStoreTaxTypeFromTaxIncludedLabel() {
   const product = parseProductHtml(`
     <html>
@@ -507,6 +550,8 @@ async function run() {
   await testParseCurrentDisplayedPriceBeforeJsonLdOffer();
   await testParsePriceValidUntilAsEndTime();
   await testParseBuyoutPriceFromPageData();
+  await testParseBuyoutOnlyProductFromSingleInstantBuyButton();
+  await testParseNormalBuyoutProductKeepsBidAvailable();
   await testParseStoreTaxTypeFromTaxIncludedLabel();
   await testParseShippingFeeFromItemPostage();
   await testParsePersonalTaxTypeFromTaxZeroLabel();

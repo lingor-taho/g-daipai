@@ -6,6 +6,7 @@ import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
 import { getTaskFailureLabel } from '../utils/taskFailureReason';
+import { getTaskStatCards } from '../utils/taskStats';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -117,18 +118,10 @@ export default function TaskList({ limit = 10, embedded = false }) {
       )}
       {stats && (
         <div style={{ margin: '12px 0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-          {[
-            ['总任务', stats.total],
-            ['队列中', stats.pending],
-            ['执行中', stats.processing],
-            ['已出价', stats.bidding],
-            ['成功', stats.success],
-            ['出价失败', stats.failed],
-            ['已终止', stats.cancelled],
-          ].map(([label, value]) => (
+          {getTaskStatCards(stats).map(({ label, value }) => (
             <div key={label} style={{ background: '#fff', border: '1px solid #eee', borderRadius: 8, padding: 10 }}>
               <div style={{ fontSize: 12, color: '#666' }}>{label}</div>
-              <div style={{ fontSize: 18, fontWeight: 600, marginTop: 4 }}>{value || 0}</div>
+              <div style={{ fontSize: 18, fontWeight: 600, marginTop: 4 }}>{value}</div>
             </div>
           ))}
         </div>
