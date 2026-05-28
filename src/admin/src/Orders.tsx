@@ -29,7 +29,11 @@ export default function OrdersPage() {
 
   async function loadFinanceConfig() {
     const data = await fetchAdminJson('/api/admin/finance-config');
-    form.setFieldsValue({ rate: data.rate, handlingFeeJpy: data.handlingFeeJpy });
+    form.setFieldsValue({ 
+      rate: data.rate, 
+      bankFeeJpy: data.bankFeeJpy,
+      handlingFeeCny: data.handlingFeeCny
+    });
   }
 
   useEffect(() => {
@@ -51,21 +55,25 @@ export default function OrdersPage() {
   }
 
   const columns = [
+    { title: '用户名', dataIndex: 'username', width: 100 },
     {
       title: '商品ID',
       dataIndex: 'product_id',
+      width: 120,
       render: (_: any, row: any) => {
         const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
         const url = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
         return url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : productId || '-';
       }
     },
-    { title: '落札金额', dataIndex: 'final_price', render: (_: any, row: any) => formatJPY(row.final_price) },
-    { title: '手续费', dataIndex: 'handling_fee_jpy', render: (_: any, row: any) => formatJPY(row.handling_fee_jpy) },
-    { title: '汇率', dataIndex: 'jpy_to_cny_rate' },
-    { title: '应付款', dataIndex: 'payable_cny', render: (_: any, row: any) => formatCNY(row.payable_cny) },
-    { title: '订单状态', dataIndex: 'order_status' },
-    { title: '追踪号', dataIndex: 'tracking_number' }
+    { title: '运费', dataIndex: 'shipping_fee_text', width: 150 },
+    { title: '落札金额', dataIndex: 'final_price', width: 120, render: (_: any, row: any) => formatJPY(row.final_price) },
+    { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 120, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
+    { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 120, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },
+    { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 80 },
+    { title: '应付款', dataIndex: 'payable_cny', width: 120, render: (_: any, row: any) => formatCNY(row.payable_cny) },
+    { title: '订单状态', dataIndex: 'order_status', width: 120 },
+    { title: '追踪号', dataIndex: 'tracking_number', width: 150 }
   ];
 
   return (
@@ -75,13 +83,16 @@ export default function OrdersPage() {
           <Form.Item name="rate" label="汇率" rules={[{ required: true, message: '请输入汇率' }]}>
             <InputNumber min={0} step={0.001} precision={4} />
           </Form.Item>
-          <Form.Item name="handlingFeeJpy" label="手续费（日元）" rules={[{ required: true, message: '请输入手续费' }]}>
+          <Form.Item name="bankFeeJpy" label="银行手续费(日元)" rules={[{ required: true, message: '请输入银行手续费' }]}>
             <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item name="handlingFeeCny" label="手续费(RMB)" rules={[{ required: true, message: '请输入手续费' }]}>
+            <InputNumber min={0} step={0.01} precision={2} />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={saving}>保存参数</Button>
           </Form.Item>
-          <Typography.Text type="secondary">应付款 =（落札金额 + 手续费）* 汇率</Typography.Text>
+          <Typography.Text type="secondary">应付款 =（落札金额 + 运费 + 银行手续费）* 汇率 + 手续费</Typography.Text>
         </Form>
       </Card>
 
@@ -94,7 +105,8 @@ export default function OrdersPage() {
             if (data.financeConfig) {
               form.setFieldsValue({
                 rate: data.financeConfig.rate,
-                handlingFeeJpy: data.financeConfig.handlingFeeJpy
+                bankFeeJpy: data.financeConfig.bankFeeJpy,
+                handlingFeeCny: data.financeConfig.handlingFeeCny
               });
             }
             return { data: data.items || [], total: data.total || 0 };

@@ -362,9 +362,10 @@ router.get('/orders', async (req, res) => {
   const offset = (current - 1) * pageSize;
   const financeConfig = await getFinanceConfig();
   const items = await db.getAll(
-    `SELECT o.*, t.product_id
+    `SELECT o.*, t.product_id, t.shipping_fee_text, u.username
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN users u ON t.user_id = u.id
      WHERE t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC LIMIT ? OFFSET ?`,
     [pageSize, offset]
@@ -377,14 +378,20 @@ router.get('/orders', async (req, res) => {
   `);
   const mappedItems = items.map(item => {
     const finalPrice = Number(item.final_price || 0);
-    const handlingFeeJpy = Number(item.handling_fee || financeConfig.handlingFeeJpy || 0);
+    const shippingFee = parseShippingFeeToNumber(item.shipping_fee_text);
+    const bankFeeJpy = Number(financeConfig.bankFeeJpy || 0);
+    const handlingFeeCny = Number(financeConfig.handlingFeeCny || 0);
     const rate = Number(item.jpy_to_cny_rate || financeConfig.rate || 0);
+    const payableCny = Number((((finalPrice + shippingFee + bankFeeJpy) * rate) + handlingFeeCny).toFixed(2));
     return {
       ...item,
+      username: item.username || '-',
       product_id: item.product_id || extractAuctionId(item.product_url) || '',
-      handling_fee_jpy: handlingFeeJpy,
+      shipping_fee_text: item.shipping_fee_text || '-',
+      bank_fee_jpy: bankFeeJpy,
+      handling_fee_cny: handlingFeeCny,
       jpy_to_cny_rate: rate,
-      payable_cny: Number(((finalPrice + handlingFeeJpy) * rate).toFixed(2))
+      payable_cny: payableCny
     };
   });
   res.json({ items: mappedItems, total: countResult?.total || 0, financeConfig });
@@ -405,7 +412,7 @@ router.get('/orders/stats', async (req, res) => {
 });
 
 async function getFinanceConfig() {
-  const rows = await db.getAll("SELECT key, value FROM config WHERE key IN ('jpy_to_cny_rate', 'handling_fee_jpy')");
+  const rows = await db.getAll("SELECT key, value FROM config WHERE key IN ('jpy_to_cny_rate', 'bank_fee_jpy', 'handling_fee_cny')");
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   if (!values.jpy_to_cny_rate) {
     const latestRate = await db.getOne('SELECT rate FROM exchange_config ORDER BY updated_at DESC LIMIT 1');
@@ -413,8 +420,17 @@ async function getFinanceConfig() {
   }
   return {
     rate: Number(values.jpy_to_cny_rate || 0.049),
-    handlingFeeJpy: Number(values.handling_fee_jpy || 0)
+    bankFeeJpy: Number(values.bank_fee_jpy || 0),
+    handlingFeeCny: Number(values.handling_fee_cny || 0)
   };
+}
+
+function parseShippingFeeToNumber(shippingFeeText) {
+  const text = String(shippingFeeText || '').trim();
+  if (!text || text === '-') return 0;
+  if (/無料|着払い|落札者負担/i.test(text)) return 0;
+  const match = text.match(/(\d[\d,]*)\s*円/);
+  return match ? Number(match[1].replace(/,/g, '')) : 0;
 }
 
 function extractAuctionId(input) {
@@ -428,22 +444,30 @@ router.get('/finance-config', async (req, res) => {
 
 router.put('/finance-config', async (req, res) => {
   const rate = Number(req.body.rate);
-  const handlingFeeJpy = Number(req.body.handlingFeeJpy);
+  const bankFeeJpy = Number(req.body.bankFeeJpy);
+  const handlingFeeCny = Number(req.body.handlingFeeCny);
   if (!Number.isFinite(rate) || rate <= 0) {
     return res.status(400).json({ error: 'valid rate is required' });
   }
-  if (!Number.isFinite(handlingFeeJpy) || handlingFeeJpy < 0) {
-    return res.status(400).json({ error: 'valid handlingFeeJpy is required' });
+  if (!Number.isFinite(bankFeeJpy) || bankFeeJpy < 0) {
+    return res.status(400).json({ error: 'valid bankFeeJpy is required' });
+  }
+  if (!Number.isFinite(handlingFeeCny) || handlingFeeCny < 0) {
+    return res.status(400).json({ error: 'valid handlingFeeCny is required' });
   }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('jpy_to_cny_rate', ?, CURRENT_TIMESTAMP)`,
     [String(rate)]
   );
   await db.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('handling_fee_jpy', ?, CURRENT_TIMESTAMP)`,
-    [String(handlingFeeJpy)]
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('bank_fee_jpy', ?, CURRENT_TIMESTAMP)`,
+    [String(bankFeeJpy)]
   );
-  res.json({ success: true, rate, handlingFeeJpy });
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('handling_fee_cny', ?, CURRENT_TIMESTAMP)`,
+    [String(handlingFeeCny)]
+  );
+  res.json({ success: true, rate, bankFeeJpy, handlingFeeCny });
 });
 
 async function getMultiBidConfig() {

@@ -201,8 +201,11 @@ export default function Submit() {
       Toast.show({ content: '请输入最高出价' });
       return;
     }
-    if (!buyoutSelected && !isSubmitMaxPriceAboveCurrentPrice(effectiveMaxPrice, product)) {
-      Toast.show({ content: `最高出价必须高于当前价格（当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円）` });
+    // 修改校验：最高价的税前价 >= 商品目前的税前价即可提交（支持起拍价出价）
+    const submitTaxExcludedPrice = toTaxExcludedYen(effectiveMaxPrice, submitTaxType);
+    const currentTaxExcludedPrice = Number(product?.currentPrice || 0);
+    if (!buyoutSelected && submitTaxExcludedPrice < currentTaxExcludedPrice) {
+      Toast.show({ content: `最高出价不能低于当前价格（当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円）` });
       return;
     }
     const selectedStrategy = buyoutSelected ? 'direct' : (strategy || 'direct');
