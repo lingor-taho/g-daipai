@@ -571,6 +571,54 @@ router.post('/shipping-refresh/run', async (req, res) => {
   });
 });
 
+router.post('/orders-resync/run', async (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: 'productIds is required' });
+  }
+
+  const results = [];
+  for (const productId of productIds) {
+    const task = await db.getOne(
+      `SELECT id, status FROM tasks
+       WHERE product_id = ?
+       ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
+       LIMIT 1`,
+      [productId]
+    );
+    if (!task) {
+      results.push({ productId, success: false, error: '系统中没有这个商品' });
+      continue;
+    }
+    // 标记任务下次插件 /orders/sync 时强制覆盖；处理后插件路由会自动清除标记。
+    const updateResult = await db.query(
+      `UPDATE tasks
+       SET force_orders_resync = 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [task.id]
+    );
+    const existingOrder = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
+    results.push({
+      productId,
+      success: true,
+      taskId: task.id,
+      taskStatus: task.status,
+      hasExistingOrder: Boolean(existingOrder),
+      markedCount: updateResult.rowCount || 0
+    });
+  }
+
+  res.json({
+    success: true,
+    results,
+    queued: results.filter(item => item.success).length,
+    failed: results.filter(item => !item.success).length
+  });
+});
+
 router.get('/data-cleanup/config', async (req, res) => {
   res.json(await getDataCleanupConfig(db));
 });

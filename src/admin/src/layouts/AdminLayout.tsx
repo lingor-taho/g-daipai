@@ -12,6 +12,7 @@ const menuItems = [
   { key: '/multi-bid-settings', label: <Link to="/multi-bid-settings">系统配置</Link> },
   { key: '/data-cleanup', label: <Link to="/data-cleanup">清理数据</Link> },
   { key: '/shipping-refresh', label: <Link to="/shipping-refresh">运费更新</Link> },
+  { key: '/orders-resync', label: <Link to="/orders-resync">落札商品更新</Link> },
   { key: '/orders', label: <Link to="/orders">订单管理</Link> }
 ];
 

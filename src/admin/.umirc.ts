@@ -19,6 +19,7 @@ export default {
         { path: '/multi-bid-settings', component: '@/MultiBidSettings' },
         { path: '/data-cleanup', component: '@/DataCleanup' },
         { path: '/shipping-refresh', component: '@/ShippingRefresh' },
+        { path: '/orders-resync', component: '@/OrdersResync' },
         { path: '/orders', component: '@/Orders' },
       ],
     },

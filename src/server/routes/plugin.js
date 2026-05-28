@@ -576,22 +576,35 @@ router.post('/bidding/sync', async (req, res) => {
 router.post('/orders/sync', async (req, res) => {
   const orders = Array.isArray(req.body?.orders) ? req.body.orders : [];
   let updated = 0;
+  let skippedExisting = 0;
+  let forcedResync = 0;
+  // Yahoo /my/won 页面按落札时间倒序（最新在前）。从第一条开始处理，
+  // 碰到已经存在 orders 行的任务就停下来——这条之后的都早就同步过了。
+  // 例外：如果任务被打上 force_orders_resync 标记（后台"落札商品更新"功能触发），
+  // 则强制覆盖且不中断后续遍历，处理后清除标记。
   for (const order of orders) {
     const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
     const task = await db.getOne(
-      `SELECT id FROM tasks
+      `SELECT id, force_orders_resync FROM tasks
        WHERE product_id = ? AND status IN ('bidding', 'success')
        ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
        LIMIT 1`,
       [productId]
     );
     if (!task) continue;
+    const isForced = Number(task.force_orders_resync || 0) === 1;
+    const existingOrder = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
+    if (existingOrder && !isForced) {
+      skippedExisting += 1;
+      break;
+    }
     await db.query(
       `UPDATE tasks
        SET status = 'success',
            error_msg = NULL,
+           force_orders_resync = 0,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [task.id]
@@ -600,11 +613,12 @@ router.post('/orders/sync', async (req, res) => {
     if (order.trackingNumber) {
       await db.query('UPDATE orders SET tracking_number = ? WHERE task_id = ?', [order.trackingNumber, task.id]);
     }
+    if (isForced) forcedResync += 1;
     updated += 1;
   }
   await setYahooLoginStatus('ok');
   const failed = 0;
-  res.json({ success: true, updated, failed });
+  res.json({ success: true, updated, failed, skippedExisting, forcedResync });
 });
 
 router.post('/yahoo-login/status', async (req, res) => {
