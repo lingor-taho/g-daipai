@@ -59,7 +59,8 @@ D:/www/g-daipai/
 │   ├── admin/               — 管理后台（支持移动端查看）
 │   │   ├── layouts/AdminLayout.tsx — 后台布局，支持菜单折叠（展开 210px / 折叠 50px）
 │   │   ├── Tasks.tsx
-│   │   ├── Orders.tsx       — 订单管理，含用户名、运费、银行手续费、手续费(RMB)
+│   │   ├── Orders.tsx       — 订单管理，含用户名、运费、银行手续费、手续费(RMB)、大金额费用
+│   │   ├── SpecialUserSettings.tsx — 特殊用户参数设置，按用户覆盖订单费用参数
 │   │   ├── Users.tsx
 │   │   ├── MultiBidSettings.tsx — 多次出价、入札/落札空闲同步配置
 │   │   ├── DataCleanup.tsx      — 清理 30 天无用数据
@@ -93,6 +94,7 @@ D:/www/g-daipai/
 - `bid_logs`: 出价日志。
 - `orders`: 落札订单，`final_price` 现在只使用 Yahoo 落札页抓到的该商品价格，`won_at/won_time_text` 保存 Yahoo 落札时间。
 - `bidding_items`: 插件从 Yahoo `/my/bidding` 同步的入札中商品状态，`status` 支持 `highest`、`outbid`、`stale`。
+- `user_finance_overrides`: 特殊用户费用参数，按用户覆盖汇率调节、银行手续费、手续费(RMB)、大金额费用。
 - `exchange_config`: 汇率配置。
 - `config`: 全局配置，如多次出价开始时间、间隔、最低最高价、空闲同步间隔、出价保护窗口、数据清理参数。
 
@@ -224,6 +226,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 清理数据 | 清 |
 | 运费更新 | 运 |
 | 落札商品更新 | 落 |
+| 特殊用户设置 | 特 |
 | 订单管理 | 订 |
 
 移动端效果（375px 手机）：
@@ -241,12 +244,14 @@ background.js 每 10 秒轮询 /api/plugin/task
 - **落札金额**：Yahoo 落札页抓取的价格
 - **银行手续费**：日元，可在页面配置
 - **手续费(RMB)**：人民币，可在页面配置
+- **大金额费用**：人民币，可在页面配置，落札商品税后金额 >= 30,000円 时生效，默认 0
 - **汇率**：可在页面配置
+- **特殊用户设置**：订单管理页按钮进入，按用户覆盖汇率调节、银行手续费、手续费(RMB)、大金额费用；未填写字段继续使用订单管理默认值
 - **应付款**：自动计算
 
 应付款公式：
 ```
-应付款 = (落札金额 + 运费 + 银行手续费) * 汇率 + 手续费(RMB)
+应付款 = (落札金额 + 运费 + 银行手续费) * 汇率 + 手续费(RMB) + 大金额费用
 ```
 
 示例：
@@ -256,7 +261,8 @@ background.js 每 10 秒轮询 /api/plugin/task
 银行手续费：500円
 汇率：0.05
 手续费(RMB)：15元
-应付款 = (20000 + 1000 + 500) * 0.05 + 15 = 1090元
+大金额费用：0元（税后落札金额未达到 30,000円）
+应付款 = (20000 + 1000 + 500) * 0.05 + 15 + 0 = 1090元
 ```
 
 ---
@@ -289,6 +295,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-05-28 | 用户端缺少近 30 天落札统计 | 新增 `/stats` 统计页面和 `/api/task/won-stats`，展示每日落札税后总金额柱状图，支持手机点击/PC hover 查看每日数量，并支持 CSV 导出商品id、商品名称、落札价、运费、落札时间 |
 | 2026-05-28 | 用户端菜单和提交页状态卡片不够简洁 | 用户端去掉“任务列表”菜单，菜单改为“提交任务、入札中、落札商品、统计页面”；提交页统计卡片去掉“执行中”，保留其他 6 个卡片 |
 | 2026-05-28 | 只有即決没有普通出价的商品会走错普通出价流程 | `proxy.js` 解析 `bidButtonGroup`，仅存在“今すぐ落札”且没有普通入札按钮时返回 `buyoutOnly=true`；提交页自动勾选并锁定即決、最高出价锁定为即決价；服务端收到 `buyout_only=true` 时强制 `bid_mode=buyout`；插件测试覆盖“今すぐ落札 → 落札する”链路 |
+| 2026-05-28 | 订单管理缺少大金额费用和特殊用户单独参数 | 订单管理新增“大金额费用”，默认 0，仅税后落札金额 >= 30,000円 时计入；公式改为 `(落札金额 + 运费 + 银行手续费) * 汇率 + 手续费 + 大金额费用`。新增“特殊用户设置”页面，可按用户覆盖汇率调节、银行手续费、手续费(RMB)、大金额费用 |
 
 ---
 
@@ -313,6 +320,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 node src\server\routes\task.test.js
 node src\server\routes\plugin.test.js
 node src\server\routes\proxy.test.js
+node src\server\routes\admin.orders.test.js
 node yahoo-plugin\content.test.js
 node yahoo-plugin\background.test.js
 node src\client\src\utils\bidPrice.test.mjs

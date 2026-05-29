@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Empty, SpinLoading, Toast } from 'antd-mobile';
 import UserNav from '../components/UserNav';
 import { getWonStats } from '../utils/api';
@@ -29,6 +29,7 @@ export default function Statistics() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeDate, setActiveDate] = useState('');
+  const chartScrollRef = useRef(null);
 
   const fetchStats = useCallback(() => {
     setLoading(true);
@@ -59,6 +60,14 @@ export default function Statistics() {
       window.removeEventListener('focus', fetchStats);
     };
   }, [fetchStats]);
+
+  useEffect(() => {
+    const node = chartScrollRef.current;
+    if (!node || !daily.length || loading) return;
+    requestAnimationFrame(() => {
+      node.scrollLeft = node.scrollWidth - node.clientWidth;
+    });
+  }, [daily, loading]);
 
   const maxAmount = useMemo(
     () => Math.max(1, ...daily.map(item => Number(item.total_amount || 0))),
@@ -111,7 +120,7 @@ export default function Statistics() {
                 </>
               ) : null}
             </div>
-            <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+            <div ref={chartScrollRef} style={{ overflowX: 'auto', paddingBottom: 4 }}>
               <div
                 style={{
                   minWidth: 720,

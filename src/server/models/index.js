@@ -58,6 +58,20 @@ db.prepare(`
   )
 `).run();
 
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS user_finance_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    rate_adjustment DECIMAL(10,4),
+    bank_fee_jpy INTEGER,
+    handling_fee_cny DECIMAL(10,2),
+    large_amount_fee_cny DECIMAL(10,2),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`).run();
+
 module.exports = {
   db,
   async query(text, params) {

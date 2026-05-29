@@ -14,6 +14,7 @@ const menuItemsConfig = [
   { key: '/data-cleanup', fullLabel: '清理数据', shortLabel: '清' },
   { key: '/shipping-refresh', fullLabel: '运费更新', shortLabel: '运' },
   { key: '/orders-resync', fullLabel: '落札商品更新', shortLabel: '落' },
+  { key: '/special-user-settings', fullLabel: '特殊用户设置', shortLabel: '特' },
   { key: '/orders', fullLabel: '订单管理', shortLabel: '订' }
 ];
 

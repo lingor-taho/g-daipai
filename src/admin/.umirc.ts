@@ -20,6 +20,7 @@ export default {
         { path: '/data-cleanup', component: '@/DataCleanup' },
         { path: '/shipping-refresh', component: '@/ShippingRefresh' },
         { path: '/orders-resync', component: '@/OrdersResync' },
+        { path: '/special-user-settings', component: '@/SpecialUserSettings' },
         { path: '/orders', component: '@/Orders' },
       ],
     },

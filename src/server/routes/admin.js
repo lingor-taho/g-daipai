@@ -362,10 +362,15 @@ router.get('/orders', async (req, res) => {
   const offset = (current - 1) * pageSize;
   const financeConfig = await getFinanceConfig();
   const items = await db.getAll(
-    `SELECT o.*, t.product_id, t.shipping_fee_text, u.username
+    `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, u.id AS user_id, u.username,
+            ufo.rate_adjustment,
+            ufo.bank_fee_jpy AS user_bank_fee_jpy,
+            ufo.handling_fee_cny AS user_handling_fee_cny,
+            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN users u ON t.user_id = u.id
+     LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC LIMIT ? OFFSET ?`,
     [pageSize, offset]
@@ -378,20 +383,33 @@ router.get('/orders', async (req, res) => {
   `);
   const mappedItems = items.map(item => {
     const finalPrice = Number(item.final_price || 0);
-    const shippingFee = parseShippingFeeToNumber(item.shipping_fee_text);
-    const bankFeeJpy = Number(financeConfig.bankFeeJpy || 0);
-    const handlingFeeCny = Number(financeConfig.handlingFeeCny || 0);
-    const rate = Number(item.jpy_to_cny_rate || financeConfig.rate || 0);
-    const payableCny = Number((((finalPrice + shippingFee + bankFeeJpy) * rate) + handlingFeeCny).toFixed(2));
+    const effectiveConfig = applyUserFinanceConfig(financeConfig, {
+      rate_adjustment: item.rate_adjustment,
+      bank_fee_jpy: item.user_bank_fee_jpy,
+      handling_fee_cny: item.user_handling_fee_cny,
+      large_amount_fee_cny: item.user_large_amount_fee_cny
+    });
+    const payable = calculateOrderPayable({
+      finalPrice,
+      taxType: item.tax_type,
+      shippingFeeText: item.shipping_fee_text,
+      config: effectiveConfig
+    });
     return {
       ...item,
       username: item.username || '-',
       product_id: item.product_id || extractAuctionId(item.product_url) || '',
       shipping_fee_text: item.shipping_fee_text || '-',
-      bank_fee_jpy: bankFeeJpy,
-      handling_fee_cny: handlingFeeCny,
-      jpy_to_cny_rate: rate,
-      payable_cny: payableCny
+      shipping_fee_jpy: payable.shippingFee,
+      bank_fee_jpy: payable.bankFeeJpy,
+      handling_fee_cny: payable.handlingFeeCny,
+      large_amount_fee_cny: payable.largeAmountFeeCny,
+      large_amount_fee_applied: payable.largeAmountFeeApplied,
+      tax_included_final_price: payable.taxIncludedFinalPrice,
+      jpy_to_cny_rate: payable.rate,
+      rate_adjustment: effectiveConfig.rateAdjustment,
+      has_user_finance_override: effectiveConfig.hasUserFinanceOverride,
+      payable_cny: payable.payableCny
     };
   });
   res.json({ items: mappedItems, total: countResult?.total || 0, financeConfig });
@@ -412,7 +430,7 @@ router.get('/orders/stats', async (req, res) => {
 });
 
 async function getFinanceConfig() {
-  const rows = await db.getAll("SELECT key, value FROM config WHERE key IN ('jpy_to_cny_rate', 'bank_fee_jpy', 'handling_fee_cny')");
+  const rows = await db.getAll("SELECT key, value FROM config WHERE key IN ('jpy_to_cny_rate', 'bank_fee_jpy', 'handling_fee_cny', 'large_amount_fee_cny')");
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   if (!values.jpy_to_cny_rate) {
     const latestRate = await db.getOne('SELECT rate FROM exchange_config ORDER BY updated_at DESC LIMIT 1');
@@ -421,7 +439,67 @@ async function getFinanceConfig() {
   return {
     rate: Number(values.jpy_to_cny_rate || 0.049),
     bankFeeJpy: Number(values.bank_fee_jpy || 0),
-    handlingFeeCny: Number(values.handling_fee_cny || 0)
+    handlingFeeCny: Number(values.handling_fee_cny || 0),
+    largeAmountFeeCny: Number(values.large_amount_fee_cny || 0)
+  };
+}
+
+function getTaxIncludedFinalPrice(finalPrice, taxType) {
+  const value = Number(finalPrice || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
+  return Math.floor(value * 1.1);
+}
+
+function normalizeNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function applyUserFinanceConfig(baseConfig = {}, userConfig = null) {
+  const rateAdjustment = normalizeNullableNumber(userConfig?.rate_adjustment) || 0;
+  const userBankFee = normalizeNullableNumber(userConfig?.bank_fee_jpy);
+  const userHandlingFee = normalizeNullableNumber(userConfig?.handling_fee_cny);
+  const userLargeAmountFee = normalizeNullableNumber(userConfig?.large_amount_fee_cny);
+  const hasUserFinanceOverride = Boolean(userConfig) && (
+    normalizeNullableNumber(userConfig.rate_adjustment) !== null ||
+    userBankFee !== null ||
+    userHandlingFee !== null ||
+    userLargeAmountFee !== null
+  );
+
+  return {
+    rate: Number((Number(baseConfig.rate || 0) + rateAdjustment).toFixed(4)),
+    rateAdjustment,
+    bankFeeJpy: userBankFee !== null ? userBankFee : Number(baseConfig.bankFeeJpy || 0),
+    handlingFeeCny: userHandlingFee !== null ? userHandlingFee : Number(baseConfig.handlingFeeCny || 0),
+    largeAmountFeeCny: userLargeAmountFee !== null ? userLargeAmountFee : Number(baseConfig.largeAmountFeeCny || 0),
+    hasUserFinanceOverride
+  };
+}
+
+function calculateOrderPayable({ finalPrice, taxType, shippingFeeText, config }) {
+  const finalPriceValue = Number(finalPrice || 0);
+  const shippingFee = parseShippingFeeToNumber(shippingFeeText);
+  const rate = Number(config?.rate || 0);
+  const bankFeeJpy = Number(config?.bankFeeJpy || 0);
+  const handlingFeeCny = Number(config?.handlingFeeCny || 0);
+  const taxIncludedFinalPrice = getTaxIncludedFinalPrice(finalPriceValue, taxType);
+  const largeAmountFeeApplied = taxIncludedFinalPrice >= 30000;
+  const largeAmountFeeCny = largeAmountFeeApplied ? Number(config?.largeAmountFeeCny || 0) : 0;
+  const payableCny = Number((((finalPriceValue + shippingFee + bankFeeJpy) * rate) + handlingFeeCny + largeAmountFeeCny).toFixed(2));
+
+  return {
+    finalPrice: finalPriceValue,
+    taxIncludedFinalPrice,
+    shippingFee,
+    rate,
+    bankFeeJpy,
+    handlingFeeCny,
+    largeAmountFeeCny,
+    largeAmountFeeApplied,
+    payableCny
   };
 }
 
@@ -446,6 +524,7 @@ router.put('/finance-config', async (req, res) => {
   const rate = Number(req.body.rate);
   const bankFeeJpy = Number(req.body.bankFeeJpy);
   const handlingFeeCny = Number(req.body.handlingFeeCny);
+  const largeAmountFeeCny = Number(req.body.largeAmountFeeCny ?? 0);
   if (!Number.isFinite(rate) || rate <= 0) {
     return res.status(400).json({ error: 'valid rate is required' });
   }
@@ -454,6 +533,9 @@ router.put('/finance-config', async (req, res) => {
   }
   if (!Number.isFinite(handlingFeeCny) || handlingFeeCny < 0) {
     return res.status(400).json({ error: 'valid handlingFeeCny is required' });
+  }
+  if (!Number.isFinite(largeAmountFeeCny) || largeAmountFeeCny < 0) {
+    return res.status(400).json({ error: 'valid largeAmountFeeCny is required' });
   }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('jpy_to_cny_rate', ?, CURRENT_TIMESTAMP)`,
@@ -467,8 +549,96 @@ router.put('/finance-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('handling_fee_cny', ?, CURRENT_TIMESTAMP)`,
     [String(handlingFeeCny)]
   );
-  res.json({ success: true, rate, bankFeeJpy, handlingFeeCny });
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('large_amount_fee_cny', ?, CURRENT_TIMESTAMP)`,
+    [String(largeAmountFeeCny)]
+  );
+  res.json({ success: true, rate, bankFeeJpy, handlingFeeCny, largeAmountFeeCny });
 });
+
+router.get('/user-finance-overrides', async (req, res) => {
+  const items = await db.getAll(
+    `SELECT ufo.*, u.username
+     FROM user_finance_overrides ufo
+     INNER JOIN users u ON u.id = ufo.user_id
+     WHERE u.role = 'user'
+     ORDER BY u.username ASC`
+  );
+  res.json({ items });
+});
+
+router.post('/user-finance-overrides', async (req, res) => {
+  try {
+    const result = await saveUserFinanceOverride(req.body);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'save failed' });
+  }
+});
+
+router.put('/user-finance-overrides/:id', async (req, res) => {
+  try {
+    const result = await saveUserFinanceOverride({ ...req.body, id: req.params.id });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'save failed' });
+  }
+});
+
+router.delete('/user-finance-overrides/:id', async (req, res) => {
+  await db.query('DELETE FROM user_finance_overrides WHERE id = ?', [req.params.id]);
+  res.json({ success: true });
+});
+
+async function saveUserFinanceOverride(body = {}) {
+  const id = body.id ? Number(body.id) : null;
+  const userId = Number(body.userId ?? body.user_id);
+  const rateAdjustment = normalizeNullableNumber(body.rateAdjustment ?? body.rate_adjustment);
+  const bankFeeJpy = normalizeNullableNumber(body.bankFeeJpy ?? body.bank_fee_jpy);
+  const handlingFeeCny = normalizeNullableNumber(body.handlingFeeCny ?? body.handling_fee_cny);
+  const largeAmountFeeCny = normalizeNullableNumber(body.largeAmountFeeCny ?? body.large_amount_fee_cny);
+
+  if (!Number.isFinite(userId) || userId <= 0) {
+    const error = new Error('valid userId is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  for (const [name, value] of [
+    ['bankFeeJpy', bankFeeJpy],
+    ['handlingFeeCny', handlingFeeCny],
+    ['largeAmountFeeCny', largeAmountFeeCny]
+  ]) {
+    if (value !== null && value < 0) {
+      const error = new Error(`valid ${name} is required`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (id) {
+    await db.query(
+      `UPDATE user_finance_overrides
+       SET user_id = ?, rate_adjustment = ?, bank_fee_jpy = ?, handling_fee_cny = ?, large_amount_fee_cny = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [userId, rateAdjustment, bankFeeJpy, handlingFeeCny, largeAmountFeeCny, id]
+    );
+    return { id };
+  }
+
+  await db.query(
+    `INSERT INTO user_finance_overrides (user_id, rate_adjustment, bank_fee_jpy, handling_fee_cny, large_amount_fee_cny)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       rate_adjustment = excluded.rate_adjustment,
+       bank_fee_jpy = excluded.bank_fee_jpy,
+       handling_fee_cny = excluded.handling_fee_cny,
+       large_amount_fee_cny = excluded.large_amount_fee_cny,
+       updated_at = CURRENT_TIMESTAMP`,
+    [userId, rateAdjustment, bankFeeJpy, handlingFeeCny, largeAmountFeeCny]
+  );
+  const row = await db.getOne('SELECT id FROM user_finance_overrides WHERE user_id = ?', [userId]);
+  return { id: row?.id };
+}
 
 async function getMultiBidConfig() {
   const rows = await db.getAll(
@@ -709,4 +879,6 @@ router.get('/logs', async (req, res) => {
 });
 
 module.exports = router;
-
+module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
+module.exports.calculateOrderPayable = calculateOrderPayable;
+module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;

@@ -1,6 +1,7 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import { useEffect, useState } from 'react';
 import { Button, Card, Form, InputNumber, Space, Typography, message } from 'antd';
+import { Link } from 'react-router-dom';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
 function formatJPY(value: number | string | null | undefined) {
@@ -32,7 +33,8 @@ export default function OrdersPage() {
     form.setFieldsValue({ 
       rate: data.rate, 
       bankFeeJpy: data.bankFeeJpy,
-      handlingFeeCny: data.handlingFeeCny
+      handlingFeeCny: data.handlingFeeCny,
+      largeAmountFeeCny: data.largeAmountFeeCny
     });
   }
 
@@ -70,7 +72,14 @@ export default function OrdersPage() {
     { title: '落札金额', dataIndex: 'final_price', width: 120, render: (_: any, row: any) => formatJPY(row.final_price) },
     { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 120, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
     { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 120, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },
+    {
+      title: '大金额费用',
+      dataIndex: 'large_amount_fee_cny',
+      width: 120,
+      render: (_: any, row: any) => row.large_amount_fee_applied ? formatCNY(row.large_amount_fee_cny) : '-'
+    },
     { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 80 },
+    { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 100, render: (_: any, row: any) => row.has_user_finance_override ? '已应用' : '-' },
     { title: '应付款', dataIndex: 'payable_cny', width: 120, render: (_: any, row: any) => formatCNY(row.payable_cny) },
     { title: '订单状态', dataIndex: 'order_status', width: 120 },
     { title: '追踪号', dataIndex: 'tracking_number', width: 150 }
@@ -89,10 +98,20 @@ export default function OrdersPage() {
           <Form.Item name="handlingFeeCny" label="手续费(RMB)" rules={[{ required: true, message: '请输入手续费' }]}>
             <InputNumber min={0} step={0.01} precision={2} />
           </Form.Item>
+          <Form.Item name="largeAmountFeeCny" label="大金额费用(RMB)" rules={[{ required: true, message: '请输入大金额费用' }]}>
+            <InputNumber min={0} step={0.01} precision={2} />
+          </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={saving}>保存参数</Button>
           </Form.Item>
-          <Typography.Text type="secondary">应付款 =（落札金额 + 运费 + 银行手续费）* 汇率 + 手续费</Typography.Text>
+          <Form.Item>
+            <Link to="/special-user-settings">
+              <Button>特殊用户设置</Button>
+            </Link>
+          </Form.Item>
+          <Typography.Text type="secondary">
+            应付款 =（落札金额 + 运费 + 银行手续费）* 汇率 + 手续费 + 大金额费用（税后落札金额 &gt;= 30,000円时生效）
+          </Typography.Text>
         </Form>
       </Card>
 
@@ -106,7 +125,8 @@ export default function OrdersPage() {
               form.setFieldsValue({
                 rate: data.financeConfig.rate,
                 bankFeeJpy: data.financeConfig.bankFeeJpy,
-                handlingFeeCny: data.financeConfig.handlingFeeCny
+                handlingFeeCny: data.financeConfig.handlingFeeCny,
+                largeAmountFeeCny: data.financeConfig.largeAmountFeeCny
               });
             }
             return { data: data.items || [], total: data.total || 0 };
@@ -120,4 +140,3 @@ export default function OrdersPage() {
     </Space>
   );
 }
-
