@@ -311,6 +311,10 @@ function isRebidRequiredText(text = getBodyText()) {
   return /\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059/.test(text);
 }
 
+function isYahooBidAccessFailureText(text = getBodyText()) {
+  return /\u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f|\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f/.test(text);
+}
+
 function hasBidSuccessText(text = getBodyText()) {
   return /\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u5165\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f|\u5165\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u843d\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f|\u3053\u306e\u5546\u54c1\u3092\u843d\u672d\u3057\u307e\u3057\u305f\u304c|\u307e\u3060\u8cfc\u5165\u624b\u7d9a\u304d\u304c\u5b8c\u4e86\u3057\u3066\u3044\u307e\u305b\u3093/.test(text);
 }
@@ -430,6 +434,9 @@ async function waitForBidOutcome(timeoutMs = 8000) {
     if (isHighestBidderPage()) {
       return { success: true };
     }
+    if (isYahooBidAccessFailureText()) {
+      return { success: false, error: 'Yahoo入札失败：オークションにアクセスできませんでした', closeTab: true };
+    }
     if (isOutbidPage()) {
       return { success: false, error: 'outbid after bid', outbid: true, closeTab: true };
     }
@@ -466,6 +473,10 @@ async function executeBidV3(maxPrice, options = {}) {
 
   if (/\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044/.test(bodyText)) {
     return { success: false, error: '需要登录 Yahoo' };
+  }
+
+  if (isYahooBidAccessFailureText(bodyText)) {
+    return { success: false, error: 'Yahoo入札失败：オークションにアクセスできませんでした', closeTab: true };
   }
 
   if (bidMode === 'buyout' && Number(extractProductData()?.buyoutPrice || numericMaxPrice || 0) <= 0) {
@@ -1047,6 +1058,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 window.__G_DAIPAI_TEST__ = {
   isOutbidText: () => isOutbidText(),
   isRebidRequiredText: () => isRebidRequiredText(),
+  isYahooBidAccessFailureText: () => isYahooBidAccessFailureText(),
   isHighestBidderText: () => isHighestBidderText(),
   hasCurrentHighestBidderNotice: () => hasCurrentHighestBidderNotice(),
   extractAutoBidLimit: () => extractAutoBidLimit(),

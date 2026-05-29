@@ -10,6 +10,7 @@ function loadBackgroundForTest() {
     globalThis: {},
     setInterval() {},
     setTimeout(fn) { fn(); },
+    clearTimeout() {},
     fetch: async () => ({ async json() { return { task: null }; } }),
     chrome: {
       alarms: {
@@ -62,5 +63,22 @@ function testAlreadyHighestMultiBidClosesTab() {
   ), false);
 }
 
+async function testWithTimeoutMarksCloseTab() {
+  const api = loadBackgroundForTest();
+
+  await assert.rejects(
+    () => api.withTimeout(new Promise(() => {}), 30000),
+    error => {
+      assert.equal(error.closeTab, true);
+      assert.match(error.message, /30秒/);
+      return true;
+    }
+  );
+}
+
 testMultiBidSuccessKeepsTabOpenForImmediateRebid();
 testAlreadyHighestMultiBidClosesTab();
+testWithTimeoutMarksCloseTab().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

@@ -2,6 +2,7 @@ const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
+const TASK_EXECUTION_TIMEOUT_MS = 30000;
 
 let isRunning = false;
 let fetchFailureCount = 0;
@@ -89,6 +90,20 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function buildTaskTimeoutError(timeoutMs = TASK_EXECUTION_TIMEOUT_MS) {
+  const error = new Error(`任务执行超过${Math.round(timeoutMs / 1000)}秒无响应，已自动关闭任务tab`);
+  error.closeTab = true;
+  return error;
+}
+
+function withTimeout(promise, timeoutMs, errorFactory = () => buildTaskTimeoutError(timeoutMs)) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(errorFactory()), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
 function isMessageChannelClosed(error) {
   return /message channel closed|Receiving end does not exist|Could not establish connection/i.test(error?.message || '');
 }
@@ -131,7 +146,13 @@ async function openTaskPage(task) {
   managedTaskTabs.add(tab.id);
   managedTaskTabsByTaskId.set(task.id, tab.id);
 
-  await waitForTabComplete(tab.id);
+  try {
+    await waitForTabComplete(tab.id);
+  } catch (e) {
+    await closeTaskTab(tab.id);
+    e.closeTab = true;
+    throw e;
+  }
   return tab;
 }
 
@@ -525,38 +546,52 @@ async function pollAndExecute() {
     if (task) {
       console.log('[Yahoo Bid] ִ������:', task.product_url);
       let taskTab = null;
+      let taskTimedOut = false;
       try {
-        const markedProcessing = await markTaskStatus(task.id, 'processing');
-        if (!markedProcessing?.success) {
-          console.log('[Yahoo Bid] Task skipped because it is no longer active:', task.id);
-          return;
-        }
-        taskTab = await openTaskPage(task);
-        const tab = taskTab;
-        await injectContentScript(tab.id);
-        const ready = await ensureTaskReadyByCurrentEndTime(tab, task);
-        if (!ready) {
-          await chrome.storage.session.remove(['currentTask']);
-          return;
-        }
-        const result = await executeTaskInTabV2(tab, task);
-        await chrome.storage.session.remove(['currentTask']);
-        if (result?.noStatus) {
-          // direct 任务命中"已是最高价 + 计划出价≤自动入札上限"时，本次跳过出价。
-          // 之前直接 touchTaskSchedule 会把 status 写回 task.status（pending），
-          // 导致下一轮轮询又取出来执行，陷入死循环。这里直接标 bidding。
-          if (isDirectTask(task)) {
-            await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true });
-          } else {
-            await touchTaskSchedule(task.id, task.status);
+        await withTimeout((async () => {
+          const markedProcessing = await markTaskStatus(task.id, 'processing');
+          if (taskTimedOut) return;
+          if (!markedProcessing?.success) {
+            console.log('[Yahoo Bid] Task skipped because it is no longer active:', task.id);
+            return;
           }
-        } else {
-          await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
-        }
-        if (!shouldKeepTaskTabOpen(task, result)) {
-          await closeTaskTab(tab.id);
-        }
-        console.log('[Yahoo Bid] ������ִ��:', task.id, result);
+          taskTab = await openTaskPage(task);
+          if (taskTimedOut) {
+            await closeTaskTab(taskTab.id);
+            return;
+          }
+          const tab = taskTab;
+          await injectContentScript(tab.id);
+          if (taskTimedOut) return;
+          const ready = await ensureTaskReadyByCurrentEndTime(tab, task);
+          if (taskTimedOut) return;
+          if (!ready) {
+            await chrome.storage.session.remove(['currentTask']);
+            return;
+          }
+          const result = await executeTaskInTabV2(tab, task);
+          if (taskTimedOut) return;
+          await chrome.storage.session.remove(['currentTask']);
+          if (result?.noStatus) {
+            // direct 任务命中"已是最高价 + 计划出价≤自动入札上限"时，本次跳过出价。
+            // 之前直接 touchTaskSchedule 会把 status 写回 task.status（pending），
+            // 导致下一轮轮询又取出来执行，陷入死循环。这里直接标 bidding。
+            if (isDirectTask(task)) {
+              await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true });
+            } else {
+              await touchTaskSchedule(task.id, task.status);
+            }
+          } else {
+            await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
+          }
+          if (!shouldKeepTaskTabOpen(task, result)) {
+            await closeTaskTab(tab.id);
+          }
+          console.log('[Yahoo Bid] ������ִ��:', task.id, result);
+        })(), TASK_EXECUTION_TIMEOUT_MS, () => {
+          taskTimedOut = true;
+          return buildTaskTimeoutError(TASK_EXECUTION_TIMEOUT_MS);
+        });
       } catch (e) {
         await chrome.storage.session.remove(['currentTask']);
         if (taskTab?.id && e.closeTab) {
@@ -591,7 +626,9 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 
 globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
-  shouldKeepTaskTabOpen
+  shouldKeepTaskTabOpen,
+  buildTaskTimeoutError,
+  withTimeout
 };
 chrome.tabs.onRemoved.addListener(tabId => {
   managedTaskTabs.delete(tabId);

@@ -184,6 +184,24 @@ async function testRebidRequiredFailsAfterOutcomeWait() {
   assert.equal(result.closeTab, true);
 }
 
+function testYahooBidAccessFailureTextIsDetected() {
+  const api = loadContentForTest('\u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f \u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f \u518d\u8aad\u307f\u8fbc\u307f\u3059\u308b');
+
+  assert.equal(api.isYahooBidAccessFailureText(), true);
+}
+
+async function testYahooBidAccessFailureClosesTask() {
+  const result = await loadAndExecuteBidForTest(
+    '\u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f \u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f \u518d\u8aad\u307f\u8fbc\u307f\u3059\u308b',
+    { maxPrice: 1000, strategy: 'direct' },
+    '/jp/auction/1231265568'
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.closeTab, true);
+  assert.match(result.error, /\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9/);
+}
+
 function testAcceptedBidTextIsHighestBidder() {
   const api = loadContentForTest('あなたが最高額入札者です。入札を受け付けました。');
 
@@ -876,6 +894,8 @@ async function run() {
   testRebidRequiredIsSeparateFromOutbidFailure();
   testRebidRequiredWinsOverBidCompletedText();
   await testRebidRequiredFailsAfterOutcomeWait();
+  testYahooBidAccessFailureTextIsDetected();
+  await testYahooBidAccessFailureClosesTask();
   testAcceptedBidTextIsHighestBidder();
   testProductPageHighestBidderNoticeDoesNotSkipNewBid();
   testAcceptedBuyoutTextIsSuccess();
