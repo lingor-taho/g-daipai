@@ -10,6 +10,7 @@ const {
   buildWonStatsExportQuery,
   calculateBidMaxPrice,
   getTaxIncludedPrice,
+  resolveBuyoutTaskPrices,
   validateMultiBidUserMaxPrice,
   getMinMultiBidIncrement,
   getDefaultMultiBidIncrement,
@@ -208,6 +209,35 @@ function testStoreCurrentPriceDisplaysAsTaxIncluded() {
   assert.equal(getTaxIncludedPrice(1000, 'tax_zero'), 1000);
 }
 
+function testStoreBuyoutPriceIsAlreadyTaxIncluded() {
+  assert.deepEqual(
+    resolveBuyoutTaskPrices({
+      fetchedBuyoutPrice: 2460,
+      submittedBuyoutPrice: 0,
+      inputMaxPrice: 2460,
+      taxType: 'tax_included'
+    }),
+    {
+      buyoutPrice: 2460,
+      userMaxPrice: 2460,
+      bidMaxPrice: 2230
+    }
+  );
+  assert.deepEqual(
+    resolveBuyoutTaskPrices({
+      fetchedBuyoutPrice: 1982,
+      submittedBuyoutPrice: 0,
+      inputMaxPrice: 1982,
+      taxType: 'tax_zero'
+    }),
+    {
+      buyoutPrice: 1982,
+      userMaxPrice: 1982,
+      bidMaxPrice: 1982
+    }
+  );
+}
+
 function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000() {
   assert.doesNotThrow(() => validateMultiBidUserMaxPrice('multi_bid', 5000));
   assert.throws(() => validateMultiBidUserMaxPrice('multi_bid', 4999), /多次出价最高价不能低于5000円/);
@@ -319,6 +349,7 @@ testWonStatsInputDefaultsToThirtyDays();
 testWonStatsQueriesUseWonDateAndExportFields();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
+testStoreBuyoutPriceIsAlreadyTaxIncluded();
 testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000();
 testMultiBidIncrementUsesOneTwentiethRule();
 testProductSubmissionOwnerAllowsOriginalUser();

@@ -56,6 +56,27 @@ function getTaxIncludedPrice(price, taxType) {
   return Math.floor(value * 1.1);
 }
 
+function resolveBuyoutTaskPrices({ fetchedBuyoutPrice, submittedBuyoutPrice, inputMaxPrice, taxType }) {
+  const resolvedTaxType = normalizeTaxType(taxType);
+  const value = Number(fetchedBuyoutPrice || submittedBuyoutPrice || inputMaxPrice || 0);
+  if (!Number.isFinite(value) || value <= 0) {
+    return { buyoutPrice: 0, userMaxPrice: 0, bidMaxPrice: 0 };
+  }
+  const buyoutPrice = Math.floor(value);
+  if (resolvedTaxType === 'tax_included') {
+    return {
+      buyoutPrice,
+      userMaxPrice: buyoutPrice,
+      bidMaxPrice: calculateBidMaxPrice(buyoutPrice, resolvedTaxType)
+    };
+  }
+  return {
+    buyoutPrice,
+    userMaxPrice: buyoutPrice,
+    bidMaxPrice: buyoutPrice
+  };
+}
+
 async function getMultiBidMinPrice(database = db) {
   const row = await database.getOne("SELECT value FROM config WHERE key = 'multi_bid_min_price'");
   const value = Number(row?.value || DEFAULT_MULTI_BID_MIN_PRICE);
@@ -304,22 +325,28 @@ router.post('/submit', async (req, res) => {
     const resolvedTaxType = normalizeTaxType(tax_type || productInfo?.taxType);
     const fetchedBuyoutPrice = Number(productInfo?.buyoutPrice || 0) || 0;
     const submittedBuyoutPrice = Number(buyout_price || 0) || 0;
+    const buyoutPrices = resolveBuyoutTaskPrices({
+      fetchedBuyoutPrice,
+      submittedBuyoutPrice,
+      inputMaxPrice: input.maxPrice,
+      taxType: resolvedTaxType
+    });
     const userMaxPrice = input.bidMode === 'buyout'
-      ? getTaxIncludedPrice(fetchedBuyoutPrice || submittedBuyoutPrice || input.maxPrice, resolvedTaxType)
+      ? buyoutPrices.userMaxPrice
       : input.maxPrice;
     const bidMaxPrice = input.bidMode === 'buyout'
-      ? (fetchedBuyoutPrice || submittedBuyoutPrice || input.maxPrice)
+      ? buyoutPrices.bidMaxPrice
       : calculateBidMaxPrice(userMaxPrice, resolvedTaxType);
     const multiBidMinPrice = await getMultiBidMinPrice();
     validateMultiBidUserMaxPrice(strategy || 'direct', userMaxPrice, multiBidMinPrice);
     const multiBidIncrement = validateMultiBidIncrement(strategy || 'direct', userMaxPrice, multi_bid_increment);
-    if (input.bidMode === 'buyout' && fetchedBuyoutPrice <= 0) {
+    if (input.bidMode === 'buyout' && buyoutPrices.buyoutPrice <= 0) {
       const error = new Error('出价失败：该商品没有即決价格');
       error.statusCode = 400;
       throw error;
     }
     const buyoutPrice = input.bidMode === 'buyout'
-      ? fetchedBuyoutPrice
+      ? buyoutPrices.buyoutPrice
       : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
     const shippingFeeText = shipping_fee_text || productInfo?.shippingFeeText || null;
     const followupMaxPriceRaw = Number(pending_followup_max_price || 0);
@@ -577,6 +604,7 @@ module.exports.buildRecentDateKeys = buildRecentDateKeys;
 module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
 module.exports.getTaxIncludedPrice = getTaxIncludedPrice;
+module.exports.resolveBuyoutTaskPrices = resolveBuyoutTaskPrices;
 module.exports.getMultiBidMinPrice = getMultiBidMinPrice;
 module.exports.validateMultiBidUserMaxPrice = validateMultiBidUserMaxPrice;
 module.exports.getMinMultiBidIncrement = getMinMultiBidIncrement;

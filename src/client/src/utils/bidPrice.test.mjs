@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   getComparableCurrentPrice,
   getActualBidPrice,
+  getBuyoutPrice,
+  getBuyoutSubmitPrice,
   getSubmitMaxPrice,
   getSubmitTaxType,
   isSubmitMaxPriceAboveCurrentPrice,
@@ -42,8 +44,12 @@ function testNormalProductDoesNotApplyStoreMode() {
 function testBuyoutOnlyProductDetection() {
   assert.equal(isBuyoutOnlyProduct({ buyoutOnly: true, buyoutPrice: 2800 }), true);
   assert.equal(isBuyoutOnlyProduct({ buyout_only: true, buyout_price: 2800 }), true);
-  assert.equal(isBuyoutOnlyProduct({ buyoutOnly: true, buyoutPrice: 0 }), false);
+  assert.equal(isBuyoutOnlyProduct({ buyoutOnly: true, buyoutPrice: 0, currentPrice: 1982 }), true);
+  assert.equal(isBuyoutOnlyProduct({ buyoutOnly: true, buyoutPrice: 0, currentPrice: 0 }), false);
   assert.equal(isBuyoutOnlyProduct({ buyoutOnly: false, buyoutPrice: 2800 }), false);
+  assert.equal(getBuyoutPrice({ buyoutOnly: true, currentPrice: 1982 }), 1982);
+  assert.equal(getBuyoutPrice({ buyout_only: true, current_price: 1982 }), 1982);
+  assert.equal(getBuyoutSubmitPrice({ buyoutOnly: true, taxType: 'tax_included', buyoutPrice: 2460 }), 2460);
 }
 
 function testComparableCurrentPriceAddsTaxForStoreProducts() {

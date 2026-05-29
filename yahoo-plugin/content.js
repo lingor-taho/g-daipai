@@ -105,7 +105,9 @@ function extractProductData() {
 
     const bodyText = document.body.textContent || '';
     const match = bodyText.match(/\u5373\u6c7a(?:\u4fa1\u683c)?[^\d]{0,20}([\d,]+)\s*(?:\u5186|JPY)?/i);
-    return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
+    if (match?.[1]) return parseInt(match[1].replace(/,/g, ''), 10) || 0;
+    if (/\u8cfc\u5165\u624b\u7d9a\u304d\u3078/.test(bodyText)) return getPrice();
+    return 0;
   }
 
   function getTaxType() {
@@ -300,7 +302,7 @@ function isRebidRequiredText(text = getBodyText()) {
 }
 
 function hasBidSuccessText(text = getBodyText()) {
-  return /\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u5165\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f|\u5165\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u843d\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f/.test(text);
+  return /\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u5165\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f|\u5165\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u843d\u672d\u3057\u307e\u3057\u305f|\u843d\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f|\u3053\u306e\u5546\u54c1\u3092\u843d\u672d\u3057\u307e\u3057\u305f\u304c|\u307e\u3060\u8cfc\u5165\u624b\u7d9a\u304d\u304c\u5b8c\u4e86\u3057\u3066\u3044\u307e\u305b\u3093/.test(text);
 }
 
 function isHighestBidderText(text = getBodyText(), pathname = window.location.pathname) {
@@ -361,10 +363,14 @@ function isInstantBuyButtonText(text) {
   return /\u4eca\u3059\u3050\u843d\u672d/.test(text);
 }
 
+function isStorePurchaseButtonText(text) {
+  return /\u8cfc\u5165\u624b\u7d9a\u304d\u3078/.test(text);
+}
+
 function isBidEntryButtonText(text, bidMode = 'bid') {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (bidMode === 'buyout') {
-    return /\u4eca\u3059\u3050\u843d\u672d/.test(normalized);
+    return /\u4eca\u3059\u3050\u843d\u672d/.test(normalized) || isStorePurchaseButtonText(normalized);
   }
   return /(?:^| )\u5165\u672d\u3059\u308b(?: |$)|\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d/.test(normalized);
 }
@@ -452,7 +458,7 @@ async function executeBidV3(maxPrice, options = {}) {
     return { success: false, error: '需要登录 Yahoo' };
   }
 
-  if (bidMode === 'buyout' && Number(extractProductData()?.buyoutPrice || 0) <= 0) {
+  if (bidMode === 'buyout' && Number(extractProductData()?.buyoutPrice || numericMaxPrice || 0) <= 0) {
     return { success: false, error: '出价失败：该商品没有即決价格', closeTab: true };
   }
 
@@ -512,6 +518,24 @@ async function executeBidV3(maxPrice, options = {}) {
       return isClickableElement(el) &&
         isBidEntryButtonText(textOf(el), mode);
     }) || null;
+  }
+
+  function findBulkPurchaseCheckbox() {
+    if (!/\u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b/.test(getBodyText())) {
+      return null;
+    }
+    const checkboxes = [
+      ...document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')
+    ].filter(el => isClickableElement(el));
+    const matched = checkboxes.find(el => {
+      const labelText = [
+        textOf(el),
+        el.closest?.('label')?.textContent || '',
+        el.parentElement?.textContent || ''
+      ].join(' ');
+      return /\u3053\u306e\u51fa\u54c1\u8005.*\u4ed6\u306e\u5546\u54c1.*\u307e\u3068\u3081\u3066\u8cfc\u5165/.test(labelText);
+    });
+    return matched || (checkboxes.length === 1 ? checkboxes[0] : null);
   }
 
   function isClickableElement(el) {
@@ -686,6 +710,17 @@ async function executeBidV3(maxPrice, options = {}) {
 
   if (isHighestBidderPage()) {
     return { success: true, bidPrice: numericMaxPrice, stage: 'highest-bidder' };
+  }
+
+  if (bidMode === 'buyout') {
+    const bulkPurchaseCheckbox = findBulkPurchaseCheckbox();
+    const checked = bulkPurchaseCheckbox?.checked === true ||
+      bulkPurchaseCheckbox?.getAttribute?.('aria-checked') === 'true';
+    if (bulkPurchaseCheckbox && !checked) {
+      clickElement(bulkPurchaseCheckbox);
+      await new Promise(resolve => setTimeout(resolve, 800));
+      return executeBidV3(numericMaxPrice, options);
+    }
   }
 
   const finalAgreePatterns = bidMode === 'buyout'
@@ -1015,6 +1050,7 @@ window.__G_DAIPAI_TEST__ = {
   executeBidV3,
   isBidInputPage: () => isBidInputPage(),
   isInstantBuyButtonText,
+  isStorePurchaseButtonText,
   isBidEntryButtonText,
   isFinalAgreeButtonText,
   isConfirmButtonText,

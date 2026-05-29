@@ -172,6 +172,28 @@ async function testParseNormalBuyoutProductKeepsBidAvailable() {
   assert.equal(product.buyoutOnly, false);
 }
 
+async function testParseStoreBuyoutOnlyProductFromPurchaseButton() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Store Buyout Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"2237","winPrice":"2237","bids":"0"}};
+        </script>
+      </head>
+      <body>
+        <span>価格</span><span>2,460円（税込）</span>
+        <a href="https://buy.auctions.yahoo.co.jp/order/confirm">購入手続きへ</a>
+      </body>
+    </html>
+  `, 'v1184829642', 'https://auctions.yahoo.co.jp/jp/auction/v1184829642');
+
+  assert.equal(product.currentPrice, 2237);
+  assert.equal(product.buyoutPrice, 2460);
+  assert.equal(product.taxType, 'tax_included');
+  assert.equal(product.buyoutOnly, true);
+}
+
 async function testParseStoreTaxTypeFromTaxIncludedLabel() {
   const product = parseProductHtml(`
     <html>
@@ -552,6 +574,7 @@ async function run() {
   await testParseBuyoutPriceFromPageData();
   await testParseBuyoutOnlyProductFromSingleInstantBuyButton();
   await testParseNormalBuyoutProductKeepsBidAvailable();
+  await testParseStoreBuyoutOnlyProductFromPurchaseButton();
   await testParseStoreTaxTypeFromTaxIncludedLabel();
   await testParseShippingFeeFromItemPostage();
   await testParsePersonalTaxTypeFromTaxZeroLabel();

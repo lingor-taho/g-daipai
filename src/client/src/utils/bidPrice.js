@@ -3,8 +3,24 @@ export function isStoreProduct(product) {
 }
 
 export function isBuyoutOnlyProduct(product) {
-  const buyoutPrice = Number(product?.buyoutPrice ?? product?.buyout_price ?? 0);
+  const buyoutPrice = getBuyoutPrice(product);
   return Boolean(product?.buyoutOnly || product?.buyout_only) && buyoutPrice > 0;
+}
+
+export function getBuyoutPrice(product) {
+  const directBuyoutPrice = Number(product?.buyoutPrice ?? product?.buyout_price ?? 0);
+  if (Number.isFinite(directBuyoutPrice) && directBuyoutPrice > 0) {
+    return Math.floor(directBuyoutPrice);
+  }
+  if (product?.buyoutOnly || product?.buyout_only) {
+    const currentPrice = Number(product?.currentPrice ?? product?.current_price ?? 0);
+    if (Number.isFinite(currentPrice) && currentPrice > 0) return Math.floor(currentPrice);
+  }
+  return 0;
+}
+
+export function getBuyoutSubmitPrice(product) {
+  return getBuyoutPrice(product);
 }
 
 export function getSubmitTaxType(product, storeBidPriceMode) {

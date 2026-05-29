@@ -161,10 +161,20 @@ function extractBuyoutOnly(html) {
   const buyoutPrice = extractBuyoutPrice(html);
   if (buyoutPrice <= 0) return false;
   const buttonGroupText = normalizeText(extractElementHtmlById(html, 'bidButtonGroup'));
-  if (!buttonGroupText) return false;
+  const pageText = normalizeText(html);
+  const actionText = buttonGroupText || pageText;
   const hasInstantBuyButton = /今すぐ落札/.test(buttonGroupText);
-  const hasBidButton = /入札する|入札に進む|値段を上げて入札/.test(buttonGroupText);
-  return hasInstantBuyButton && !hasBidButton;
+  const hasStorePurchaseButton = /購入手続きへ/.test(actionText);
+  const hasStorePriceLabel = /価格[^\d]{0,20}[\d,]+\s*円/.test(pageText);
+  const hasBidButton = /入札する|入札に進む|値段を上げて入札/.test(actionText);
+  return ((hasInstantBuyButton && Boolean(buttonGroupText)) || (hasStorePurchaseButton && hasStorePriceLabel)) && !hasBidButton;
+}
+
+function extractStorePurchaseTaxIncludedPrice(html) {
+  const text = normalizeText(html);
+  if (!/購入手続きへ/.test(text)) return 0;
+  const match = text.match(/価格[^\d]{0,40}([\d,]+)\s*円\s*[\(（]?\s*税込/i);
+  return match?.[1] ? parsePriceText(match[1]) : 0;
 }
 
 function extractTaxType(html) {
@@ -271,14 +281,19 @@ function extractTitle(html, auctionId) {
 
 function parseProductHtml(html, auctionId, standardUrl) {
   const title = extractTitle(html, auctionId);
+  const taxType = extractTaxType(html);
+  const rawBuyoutPrice = extractBuyoutPrice(html);
+  const storePurchaseTaxIncludedPrice = taxType === 'tax_included'
+    ? extractStorePurchaseTaxIncludedPrice(html)
+    : 0;
   return {
     auctionId,
     standardUrl,
     title,
     currentPrice: extractPrice(html),
-    buyoutPrice: extractBuyoutPrice(html),
+    buyoutPrice: storePurchaseTaxIncludedPrice || rawBuyoutPrice,
     buyoutOnly: extractBuyoutOnly(html),
-    taxType: extractTaxType(html),
+    taxType,
     shippingFeeText: extractShippingFeeText(html),
     endTime: extractEndTime(html),
     imageUrl: extractImage(html)

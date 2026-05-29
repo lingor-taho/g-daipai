@@ -1,3 +1,5 @@
+import { getBuyoutPrice } from '../utils/bidPrice';
+
 function getDisplayPrice(price, taxType) {
   const value = Number(price || 0);
   if (taxType !== 'tax_included' || value < 10) return value;
@@ -8,7 +10,7 @@ export default function ProductCard({ product }) {
   const taxType = product.taxType || product.tax_type || 'tax_zero';
   const isStore = taxType === 'tax_included';
   const displayPrice = getDisplayPrice(product.currentPrice, taxType);
-  const displayBuyoutPrice = getDisplayPrice(product.buyoutPrice, taxType);
+  const displayBuyoutPrice = getBuyoutPrice(product);
   const price = Number(displayPrice || 0).toLocaleString('ja-JP');
   const buyoutPrice = Number(displayBuyoutPrice || 0);
   const shippingFeeText = product.shippingFeeText || product.shipping_fee_text || '';

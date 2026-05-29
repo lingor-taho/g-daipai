@@ -86,9 +86,12 @@ function createTestElement(text = '') {
     scrollIntoView() {},
     click() { this.clicked = true; },
     closest() { return null; },
+    parentElement: null,
+    checked: false,
     getAttribute(name) {
       if (name === 'aria-label') return '';
       if (name === 'href') return this.href;
+      if (name === 'aria-checked') return this.checked ? 'true' : 'false';
       return '';
     },
     dispatchEvent(event) {
@@ -240,6 +243,7 @@ function testInstantBuyButtonTextIsRecognized() {
   const api = loadContentForTest('');
 
   assert.equal(api.isInstantBuyButtonText('今すぐ落札'), true);
+  assert.equal(api.isStorePurchaseButtonText('購入手続きへ'), true);
   assert.equal(api.isFinalAgreeButtonText('上記のガイドライン等、情報提供に同意して 落札する'), true);
   assert.equal(api.isConfirmButtonText('確認する'), true);
 }
@@ -251,6 +255,7 @@ function testBidEntryButtonTextAvoidsHelpLinks() {
   assert.equal(api.isBidEntryButtonText('入札する'), true);
   assert.equal(api.isBidEntryButtonText('値段を上げて入札'), true);
   assert.equal(api.isBidEntryButtonText('今すぐ落札', 'buyout'), true);
+  assert.equal(api.isBidEntryButtonText('購入手続きへ', 'buyout'), true);
 }
 
 function testProductDataExtractsBuyoutPriceFromPageData() {
@@ -579,6 +584,70 @@ async function testBuyoutClicksInstantBuyThenFinalAgree() {
   assert.notEqual(result.error, 'buyout button not found');
 }
 
+async function testStoreBuyoutClicksPurchaseFlow() {
+  let stage = 'product';
+  const purchaseButton = createTestElement('\u8cfc\u5165\u624b\u7d9a\u304d\u3078');
+  const bulkCheckbox = createTestElement('');
+  const instantBuyButton = createTestElement('\u4eca\u3059\u3050\u843d\u672d\u3059\u308b');
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b');
+
+  purchaseButton.click = () => {
+    purchaseButton.clicked = true;
+    stage = 'confirm';
+  };
+  bulkCheckbox.click = () => {
+    bulkCheckbox.clicked = true;
+    bulkCheckbox.checked = true;
+  };
+  instantBuyButton.click = () => {
+    instantBuyButton.clicked = true;
+    stage = 'modal';
+  };
+  finalAgreeButton.click = () => {
+    finalAgreeButton.clicked = true;
+    stage = 'success';
+  };
+
+  const api = loadContentForTest('', '/jp/auction/v1184829642', {
+    getBodyText: () => {
+      if (stage === 'product') return '\u4fa1\u683c 2,460\u5186\uff08\u7a0e\u8fbc\uff09 \u8cfc\u5165\u624b\u7d9a\u304d\u3078';
+      if (stage === 'confirm') return '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d \u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b \u4eca\u3059\u3050\u843d\u672d\u3059\u308b';
+      if (stage === 'modal') return '\u78ba\u8a8d \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b';
+      return '\u3053\u306e\u5546\u54c1\u3092\u843d\u672d\u3057\u307e\u3057\u305f\u304c\u3001\u307e\u3060\u8cfc\u5165\u624b\u7d9a\u304d\u304c\u5b8c\u4e86\u3057\u3066\u3044\u307e\u305b\u3093\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3046';
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') {
+        return stage === 'product'
+          ? [{ textContent: 'var pageData = {"items":{"productID":"v1184829642","price":"2237","winPrice":"2237","productName":"store buyout"}};' }]
+          : [];
+      }
+      if (selector === 'input[type="checkbox"], [role="checkbox"]') {
+        return stage === 'confirm' ? [bulkCheckbox] : [];
+      }
+      if (selector.includes('button') || selector === 'body *') {
+        if (stage === 'product') return [purchaseButton];
+        if (stage === 'confirm') return [bulkCheckbox, instantBuyButton];
+        if (stage === 'modal') return [finalAgreeButton];
+      }
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(2237, {
+    maxPrice: 2237,
+    userMaxPrice: 2460,
+    bidMode: 'buyout',
+    taxType: 'tax_included',
+    strategy: 'direct'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(purchaseButton.clicked, true);
+  assert.equal(bulkCheckbox.clicked, true);
+  assert.equal(instantBuyButton.clicked, true);
+  assert.equal(finalAgreeButton.clicked, true);
+}
+
 async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() {
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
@@ -827,6 +896,7 @@ async function run() {
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
   await testBuyoutClicksInstantBuyThenFinalAgree();
+  await testStoreBuyoutClicksPurchaseFlow();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();

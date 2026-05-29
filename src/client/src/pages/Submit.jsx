@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getComparableCurrentPrice, getSubmitMaxPrice, getSubmitTaxType, isBuyoutOnlyProduct, isStoreProduct, isSubmitMaxPriceAboveCurrentPrice } from '../utils/bidPrice';
+import { getActualBidPrice, getBuyoutPrice, getBuyoutSubmitPrice, getComparableCurrentPrice, getSubmitMaxPrice, getSubmitTaxType, isBuyoutOnlyProduct, isStoreProduct, isSubmitMaxPriceAboveCurrentPrice } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -155,7 +155,7 @@ export default function Submit() {
           auctionId,
           title: data.title || ('商品 ' + auctionId),
           currentPrice: data.currentPrice || 0,
-          buyoutPrice: data.buyoutPrice || 0,
+          buyoutPrice: data.buyoutPrice ?? data.buyout_price ?? 0,
           buyoutOnly: Boolean(data.buyoutOnly || data.buyout_only),
           taxType: data.taxType || 'tax_zero',
           shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
@@ -166,7 +166,7 @@ export default function Submit() {
         setStoreBidPriceMode('tax_before');
         if (isBuyoutOnlyProduct(nextProduct)) {
           setBuyoutSelected(true);
-          setMaxPrice(String(getDisplayPrice(nextProduct.buyoutPrice, nextProduct.taxType) || ''));
+          setMaxPrice(String(getBuyoutSubmitPrice(nextProduct) || ''));
           setStrategy('direct');
         } else {
           setBuyoutSelected(false);
@@ -199,9 +199,9 @@ export default function Submit() {
   async function handleSubmit() {
     if (submitting) return;
     const submitTaxType = getSubmitTaxType(product, storeBidPriceMode);
-    const buyoutPrice = Number(product?.buyoutPrice || 0);
+    const buyoutPrice = getBuyoutPrice(product);
     const effectiveMaxPrice = (buyoutSelected || buyoutOnly)
-      ? getDisplayPrice(buyoutPrice, submitTaxType)
+      ? getBuyoutSubmitPrice(product)
       : getSubmitMaxPrice(maxPrice, product, storeBidPriceMode);
     if ((buyoutSelected || buyoutOnly) && buyoutPrice <= 0) {
       Toast.show({ content: '出价失败：该商品没有即決价格' });
@@ -358,7 +358,7 @@ export default function Submit() {
       {product && (
         <>
           <List style={{ marginTop: 12 }}>
-            {Number(product.buyoutPrice || 0) > 0 && (
+            {getBuyoutPrice(product) > 0 && (
               <List.Item
                 prefix="即決"
                 extra={
@@ -369,7 +369,7 @@ export default function Submit() {
                       if (buyoutOnly) return;
                       setBuyoutSelected(checked);
                       if (checked) {
-                        setMaxPrice(String(getDisplayPrice(product.buyoutPrice, product.taxType) || ''));
+                        setMaxPrice(String(getBuyoutSubmitPrice(product) || ''));
                         setStrategy('direct');
                       }
                     }}
@@ -405,7 +405,7 @@ export default function Submit() {
               extra={
                 <Input
                   type="number"
-                  value={(buyoutSelected || buyoutOnly) ? String(getDisplayPrice(product.buyoutPrice, getSubmitTaxType(product, storeBidPriceMode)) || '') : maxPrice}
+                  value={(buyoutSelected || buyoutOnly) ? String(getBuyoutSubmitPrice(product) || '') : maxPrice}
                   onChange={(value) => {
                     setMaxPrice(value);
                     if (strategy === 'multi_bid') {
