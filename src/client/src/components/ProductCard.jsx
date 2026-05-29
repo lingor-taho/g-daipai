@@ -1,4 +1,5 @@
 import { getBuyoutPrice } from '../utils/bidPrice';
+import { formatTotalAmount } from '../utils/totalAmount';
 
 function getDisplayPrice(price, taxType) {
   const value = Number(price || 0);
@@ -36,6 +37,9 @@ export default function ProductCard({ product }) {
             即決价格: {buyoutPrice.toLocaleString('ja-JP')}円（{taxLabel}）
           </div>
         )}
+        <div style={{ color: '#111827', fontSize: 14, fontWeight: 600, marginTop: 4 }}>
+          当前合计金额：{formatTotalAmount(displayPrice, shippingFeeText)}
+        </div>
         {product.endTime && (
           <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>截止: {product.endTime}</div>
         )}

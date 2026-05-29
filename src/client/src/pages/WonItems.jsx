@@ -5,6 +5,7 @@ import { getWonTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
+import { formatTotalAmount } from '../utils/totalAmount';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -115,6 +116,8 @@ export default function WonItems() {
                     {item.shipping_fee_text ? (
                       <span>　运费：{item.shipping_fee_text}</span>
                     ) : null}
+                    <br />
+                    合计金额：<span style={{ color: '#111827', fontWeight: 700 }}>{formatTotalAmount(finalPrice, item.shipping_fee_text)}</span>
                     {wonTime ? (
                       <>
                         <br />

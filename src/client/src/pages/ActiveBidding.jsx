@@ -5,6 +5,7 @@ import UserNav from '../components/UserNav';
 import { getActiveBiddingTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
+import { formatTotalAmount } from '../utils/totalAmount';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -115,6 +116,7 @@ export default function ActiveBidding() {
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
           const outbid = isOutbidItem(item);
           const canRebid = item.strategy === 'direct';
+          const displayPrice = getDisplayPrice(item);
           return (
             <List.Item key={item.id}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -141,8 +143,10 @@ export default function ActiveBidding() {
                   </div>
                   <div style={{ fontSize: 12, color: '#666', lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
-                    当前价格：<span style={{ color: '#dc2626', fontWeight: 700 }}>{formatJPY(getDisplayPrice(item))}</span>
+                    当前价格：<span style={{ color: '#dc2626', fontWeight: 700 }}>{formatJPY(displayPrice)}</span>
                     {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
+                    <br />
+                    当前合计金额：<span style={{ color: '#111827', fontWeight: 700 }}>{formatTotalAmount(displayPrice, item.shipping_fee_text)}</span>
                     {item.updated_at ? (
                       <>
                         <br />
