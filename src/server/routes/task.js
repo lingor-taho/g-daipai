@@ -253,7 +253,7 @@ function buildActiveBiddingTaskListQuery(input) {
          MAX(t.id) AS id,
          bi.product_id,
          bi.product_url,
-         bi.product_title,
+         MAX(t.product_title) AS product_title,
          bi.product_image_url,
          bi.current_price,
          MAX(t.buyout_price) AS buyout_price,

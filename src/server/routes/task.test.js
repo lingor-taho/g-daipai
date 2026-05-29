@@ -165,6 +165,8 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
 
   assert.match(query.sql, /bi\.status IN \('highest', 'outbid'\)/);
   assert.match(query.sql, /bi\.status AS bidding_status/);
+  assert.match(query.sql, /MAX\(t\.product_title\) AS product_title/);
+  assert.doesNotMatch(query.sql, /bi\.product_title/);
   assert.match(query.sql, /MAX\(t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.deepEqual(query.params, [9, 100]);

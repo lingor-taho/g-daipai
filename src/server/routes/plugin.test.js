@@ -252,6 +252,7 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
   assert.equal(calls[1].params[5], 'highest');
   assert.match(calls[2].sql, /is_highest_bidder = 1/);
   assert.match(calls[2].sql, /status = 'bidding'/);
+  assert.doesNotMatch(calls[2].sql, /product_title\s*=/);
   assert.equal(calls[2].params.at(-1), 'a123456789');
   assert.match(calls[4].sql, /is_highest_bidder = 0/);
   assert.equal(calls[4].params.at(-1), 'b123456789');

@@ -265,6 +265,16 @@ function extractEndTime(html) {
 }
 
 function extractTitle(html, auctionId) {
+  const pageDataTitle = cleanupTitle(extractPageDataItems(html)?.productName, auctionId);
+  if (pageDataTitle !== '商品 ' + auctionId) return pageDataTitle;
+
+  const nextDataItem = extractNextDataItem(html);
+  const nextDataTitle = cleanupTitle(
+    nextDataItem?.productName || nextDataItem?.title || nextDataItem?.name,
+    auctionId
+  );
+  if (nextDataTitle !== '商品 ' + auctionId) return nextDataTitle;
+
   const patterns = [
     /<meta[^>]*(?:property|name)=["']og:title["'][^>]*content=["']([^"']+)["']/i,
     /<meta[^>]*(?:property|name)=["']twitter:title["'][^>]*content=["']([^"']+)["']/i,

@@ -507,7 +507,6 @@ async function syncBiddingItems(items, database = db) {
        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        ON CONFLICT(product_id) DO UPDATE SET
          product_url = excluded.product_url,
-         product_title = excluded.product_title,
          product_image_url = excluded.product_image_url,
          current_price = excluded.current_price,
          status = excluded.status,
@@ -528,7 +527,6 @@ async function syncBiddingItems(items, database = db) {
         `UPDATE tasks
          SET status = 'bidding',
              is_highest_bidder = 1,
-             product_title = COALESCE(?, product_title),
              product_image_url = COALESCE(?, product_image_url),
              current_price = COALESCE(?, current_price),
              error_msg = NULL,
@@ -536,7 +534,6 @@ async function syncBiddingItems(items, database = db) {
          WHERE product_id = ?
            AND status IN ('bidding', 'success')`,
         [
-          item.title || null,
           item.imageUrl || null,
           currentPrice,
           productId
@@ -630,7 +627,6 @@ router.post('/yahoo-login/status', async (req, res) => {
 
 router.patch('/task/:id/snapshot', async (req, res) => {
   const {
-    product_title,
     product_image_url,
     current_price,
     buyout_price,
@@ -640,8 +636,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
   } = req.body || {};
   await db.query(
     `UPDATE tasks
-     SET product_title = COALESCE(?, product_title),
-         product_image_url = COALESCE(?, product_image_url),
+     SET product_image_url = COALESCE(?, product_image_url),
          current_price = COALESCE(?, current_price),
          buyout_price = COALESCE(?, buyout_price),
          tax_type = COALESCE(?, tax_type),
@@ -651,7 +646,6 @@ router.patch('/task/:id/snapshot', async (req, res) => {
      WHERE id = ?
        AND status != 'cancelled'`,
     [
-      product_title || null,
       product_image_url || null,
       current_price || null,
       buyout_price || null,

@@ -188,6 +188,16 @@ function extractProductData() {
   }
 
   function getTitle() {
+    const pageDataTitle = cleanupProductTitle(getPageDataItems()?.productName, auctionId);
+    if (pageDataTitle && pageDataTitle !== '商品 ' + auctionId) return pageDataTitle;
+
+    const nextDataItem = getNextDataItem();
+    const nextDataTitle = cleanupProductTitle(
+      nextDataItem?.productName || nextDataItem?.title || nextDataItem?.name,
+      auctionId
+    );
+    if (nextDataTitle && nextDataTitle !== '商品 ' + auctionId) return nextDataTitle;
+
     const el = document.querySelector('[class*="productTitle"]') ||
                document.querySelector('h1[class*="title"]') ||
                document.querySelector('h1[class*="ProductName"]') ||

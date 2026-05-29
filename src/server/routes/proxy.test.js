@@ -77,6 +77,22 @@ async function testParseProductTitleWhenYahooPrefixComesFirst() {
   assert.equal(product.title, '最高級 イタリア製 OLIVER PEOPLES サングラス');
 }
 
+async function testParseProductTitlePrefersPageDataProductName() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>新品 ニニ・ロッソ リチャード...</title>
+        <script>
+          var pageData = {"items":{"productName":"新品 ニニ・ロッソ リチャード・クレイダーマン レイモン・ルフェーブル 日本のメロディー CD2枚組","price":"2237"}};
+        </script>
+      </head>
+      <body></body>
+    </html>
+  `, 'v1184829642', 'https://auctions.yahoo.co.jp/jp/auction/v1184829642');
+
+  assert.equal(product.title, '新品 ニニ・ロッソ リチャード・クレイダーマン レイモン・ルフェーブル 日本のメロディー CD2枚組');
+}
+
 async function testParseCurrentDisplayedPriceBeforeJsonLdOffer() {
   const product = parseProductHtml(`
     <html>
@@ -569,6 +585,7 @@ async function run() {
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
   await testParseProductTitleWhenYahooPrefixComesFirst();
+  await testParseProductTitlePrefersPageDataProductName();
   await testParseCurrentDisplayedPriceBeforeJsonLdOffer();
   await testParsePriceValidUntilAsEndTime();
   await testParseBuyoutPriceFromPageData();

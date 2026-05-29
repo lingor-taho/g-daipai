@@ -270,6 +270,17 @@ function testProductDataExtractsBuyoutPriceFromPageData() {
   assert.equal(product.buyoutPrice, 5600);
 }
 
+function testProductDataPrefersPageDataProductName() {
+  const api = loadContentForTest('', '/jp/auction/v1184829642', {
+    scripts: [
+      'var pageData = {"items":{"productID":"v1184829642","price":"2237","productName":"新品 ニニ・ロッソ リチャード・クレイダーマン レイモン・ルフェーブル 日本のメロディー CD2枚組"}};'
+    ]
+  });
+  const product = api.extractProductData();
+
+  assert.equal(product.title, '新品 ニニ・ロッソ リチャード・クレイダーマン レイモン・ルフェーブル 日本のメロディー CD2枚組');
+}
+
 function testProductDataExtractsTaxType() {
   const api = loadContentForTest('現在 1,000円 （税込）');
   const product = api.extractProductData();
@@ -875,6 +886,7 @@ async function run() {
   testInstantBuyButtonTextIsRecognized();
   testBidEntryButtonTextAvoidsHelpLinks();
   testProductDataExtractsBuyoutPriceFromPageData();
+  testProductDataPrefersPageDataProductName();
   testProductDataExtractsTaxType();
   testProductDataExtractsShippingFeeText();
   testProductDataPrefersRenderedShippingAmount();
