@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   current_price INTEGER,
   buyout_price INTEGER,
   tax_type VARCHAR(32) DEFAULT 'tax_zero',
+  product_type VARCHAR(32) DEFAULT 'normal',
   end_time DATETIME,
   max_price INTEGER NOT NULL,
   user_max_price INTEGER,

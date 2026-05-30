@@ -158,6 +158,7 @@ export default function Submit() {
           buyoutPrice: data.buyoutPrice ?? data.buyout_price ?? 0,
           buyoutOnly: Boolean(data.buyoutOnly || data.buyout_only),
           taxType: data.taxType || 'tax_zero',
+          productType: data.productType || data.product_type || (data.taxType === 'tax_included' ? 'store' : 'normal'),
           shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
           imageUrl: data.imageUrl || '',
           endTime: data.endTime || ''
@@ -292,6 +293,7 @@ export default function Submit() {
         current_price: product?.currentPrice || null,
         buyout_price: buyoutPrice || null,
         tax_type: submitTaxType,
+        product_type: product?.productType || product?.product_type || (submitTaxType === 'tax_included' ? 'store' : 'normal'),
         shipping_fee_text: product?.shippingFeeText || null,
         multi_bid_increment: selectedStrategy === 'multi_bid' ? effectiveMultiBidIncrement : null,
         end_time: product?.endTime || null,

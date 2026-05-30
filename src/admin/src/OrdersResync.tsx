@@ -57,8 +57,8 @@ export default function OrdersResyncPage() {
             />
           </Form.Item>
           <Typography.Paragraph type="secondary">
-            将这些商品 ID 标记为"强制刷新落札数据"。下次插件同步 Yahoo 落札页时，
-            即使该商品已经有订单数据，也会重新覆盖（落札价、运费、落札时间等）。
+            将这些商品 ID 标记为“强制刷新落札数据”。下次插件同步 Yahoo 落札页时，
+            即使该商品已经有订单数据，也会重新覆盖（落札价、落札时间）。
             标记会在更新成功后自动清除。
           </Typography.Paragraph>
           <Button type="primary" htmlType="submit" loading={loading}>批量标记</Button>

@@ -225,6 +225,30 @@ async function testParseStoreTaxTypeFromTaxIncludedLabel() {
   assert.equal(product.taxType, 'tax_included');
 }
 
+async function testParseProductTypeFromPriceTaxLabel() {
+  const normalProduct = parseProductHtml(`
+    <html>
+      <head><title>Normal Product - Yahoo!</title></head>
+      <body>
+        <dt>現在</dt>
+        <dd><span>1,000円</span><span>（税 0 円）</span></dd>
+      </body>
+    </html>
+  `, 'n1222222222', 'https://auctions.yahoo.co.jp/jp/auction/n1222222222');
+  const storeProduct = parseProductHtml(`
+    <html>
+      <head><title>Store Product - Yahoo!</title></head>
+      <body>
+        <dt>現在</dt>
+        <dd><span>1,100円</span><span>（税込）</span></dd>
+      </body>
+    </html>
+  `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
+
+  assert.equal(normalProduct.productType, 'normal');
+  assert.equal(storeProduct.productType, 'store');
+}
+
 async function testParseShippingFeeFromItemPostage() {
   const bidderPays = parseProductHtml(`
     <html><head><title>Shipping Test - Yahoo!</title></head>
@@ -593,6 +617,7 @@ async function run() {
   await testParseNormalBuyoutProductKeepsBidAvailable();
   await testParseStoreBuyoutOnlyProductFromPurchaseButton();
   await testParseStoreTaxTypeFromTaxIncludedLabel();
+  await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();
   await testParsePersonalTaxTypeFromTaxZeroLabel();
   await testParseTaxZeroWinsWhenBothTaxLabelsExist();

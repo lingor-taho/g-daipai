@@ -829,6 +829,13 @@ function parseShippingRefreshIds(value) {
     });
 }
 
+function normalizeProductType(value) {
+  if (value === 'normal' || value === 'store') return value;
+  if (value === 'tax_zero') return 'normal';
+  if (value === 'tax_included') return 'store';
+  return '';
+}
+
 router.post('/shipping-refresh/run', async (req, res) => {
   const productIds = Array.isArray(req.body?.productIds)
     ? parseShippingRefreshIds(req.body.productIds.join('\n'))
@@ -867,6 +874,56 @@ router.post('/shipping-refresh/run', async (req, res) => {
       });
     } catch (err) {
       results.push({ productId, success: false, error: err.message || '运费更新失败' });
+    }
+  }
+
+  res.json({
+    success: true,
+    results,
+    updated: results.filter(item => item.success).length,
+    failed: results.filter(item => !item.success).length
+  });
+});
+
+router.post('/product-type-refresh/run', async (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: 'productIds is required' });
+  }
+
+  const results = [];
+  for (const productId of productIds) {
+    const taskCount = await db.getOne('SELECT COUNT(*) AS count FROM tasks WHERE product_id = ?', [productId]);
+    if (!taskCount?.count) {
+      results.push({ productId, success: false, error: '系统中没有这个商品' });
+      continue;
+    }
+
+    try {
+      const product = await productService.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${productId}`);
+      const productType = normalizeProductType(product?.data?.productType || product?.data?.taxType);
+      if (!productType) {
+        results.push({ productId, success: false, error: '未解析到商品类型，未更新' });
+        continue;
+      }
+      const updateResult = await db.query(
+        `UPDATE tasks
+         SET product_type = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE product_id = ?`,
+        [productType, productId]
+      );
+      results.push({
+        productId,
+        success: true,
+        productType,
+        productTypeText: productType === 'store' ? '商城商品' : '普通商品',
+        updatedCount: updateResult.rowCount || 0
+      });
+    } catch (err) {
+      results.push({ productId, success: false, error: err.message || '商品类型更新失败' });
     }
   }
 
@@ -996,4 +1053,5 @@ module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
 module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
+module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;

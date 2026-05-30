@@ -184,6 +184,10 @@ function extractTaxType(html) {
   return 'tax_zero';
 }
 
+function getProductTypeFromTaxType(taxType) {
+  return taxType === 'tax_included' ? 'store' : 'normal';
+}
+
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
   const nextDataItem = extractNextDataItem(html);
@@ -304,6 +308,7 @@ function parseProductHtml(html, auctionId, standardUrl) {
     buyoutPrice: storePurchaseTaxIncludedPrice || rawBuyoutPrice,
     buyoutOnly: extractBuyoutOnly(html),
     taxType,
+    productType: getProductTypeFromTaxType(taxType),
     shippingFeeText: extractShippingFeeText(html),
     endTime: extractEndTime(html),
     imageUrl: extractImage(html)
@@ -446,6 +451,7 @@ function createProductService({
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
       buyoutOnly: Boolean(rawProduct.buyoutOnly || rawProduct.buyout_only),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
+      productType: rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
       shippingFeeText: rawProduct.shippingFeeText || rawProduct.shipping_fee_text || '',
       endTime: rawProduct.endTime || '',
       imageUrl: rawProduct.imageUrl || '',

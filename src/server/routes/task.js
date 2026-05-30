@@ -42,6 +42,11 @@ function normalizeTaxType(value) {
   return value === 'tax_included' ? 'tax_included' : 'tax_zero';
 }
 
+function normalizeProductType(value, taxType) {
+  if (value === 'store' || value === 'normal') return value;
+  return normalizeTaxType(taxType) === 'tax_included' ? 'store' : 'normal';
+}
+
 function calculateBidMaxPrice(userMaxPrice, taxType) {
   const value = Number(userMaxPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -258,6 +263,7 @@ function buildActiveBiddingTaskListQuery(input) {
          bi.current_price,
          MAX(t.buyout_price) AS buyout_price,
          COALESCE(MAX(t.tax_type), 'tax_zero') AS tax_type,
+         COALESCE(MAX(t.product_type), CASE WHEN COALESCE(MAX(t.tax_type), 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
          MAX(t.shipping_fee_text) AS shipping_fee_text,
          MAX(t.max_price) AS max_price,
          MAX(t.user_max_price) AS user_max_price,
@@ -285,7 +291,7 @@ function buildActiveBiddingTaskListQuery(input) {
 
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = req.body;
+  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
     input.userId = req.actingUser.id;
@@ -315,7 +321,7 @@ router.post('/submit', async (req, res) => {
     assertNoActiveAutomaticStrategy(activeAutomaticTask);
 
     let productInfo = null;
-    if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !shipping_fee_text) {
+    if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
       try {
         const result = await productService.fetchProduct(input.standardUrl);
         productInfo = result.data || null;
@@ -323,6 +329,7 @@ router.post('/submit', async (req, res) => {
     }
     const endTime = end_time || productInfo?.endTime || null;
     const resolvedTaxType = normalizeTaxType(tax_type || productInfo?.taxType);
+    const resolvedProductType = normalizeProductType(product_type || productInfo?.productType, resolvedTaxType);
     const fetchedBuyoutPrice = Number(productInfo?.buyoutPrice || 0) || 0;
     const submittedBuyoutPrice = Number(buyout_price || 0) || 0;
     const buyoutPrices = resolveBuyoutTaskPrices({
@@ -378,8 +385,8 @@ router.post('/submit', async (req, res) => {
     }
 
     await db.query(
-      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id, pending_followup_max_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id, pending_followup_max_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       [
         input.userId,
         input.productId,
@@ -389,6 +396,7 @@ router.post('/submit', async (req, res) => {
         current_price || productInfo?.currentPrice || null,
         buyoutPrice,
         resolvedTaxType,
+        resolvedProductType,
         shippingFeeText,
         finalBidMaxPrice,
         finalUserMaxPrice,
@@ -416,7 +424,7 @@ router.get('/list', async (req, res) => {
     input.userId = req.actingUser.id;
     const totalRow = await db.getOne('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [input.userId]);
     const tasks = await db.getAll(
-      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, tax_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, error_msg, end_time, is_highest_bidder, created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, error_msg, end_time, is_highest_bidder, created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
       [input.userId, input.limit, input.offset]
     );
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
@@ -493,6 +501,7 @@ router.get('/won', async (req, res) => {
          t.current_price,
          t.buyout_price,
          t.tax_type,
+         t.product_type,
          t.shipping_fee_text,
          t.max_price,
          t.user_max_price,
@@ -603,6 +612,7 @@ module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;
 module.exports.buildRecentDateKeys = buildRecentDateKeys;
 module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;
+module.exports.normalizeProductType = normalizeProductType;
 module.exports.getTaxIncludedPrice = getTaxIncludedPrice;
 module.exports.resolveBuyoutTaskPrices = resolveBuyoutTaskPrices;
 module.exports.getMultiBidMinPrice = getMultiBidMinPrice;

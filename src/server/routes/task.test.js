@@ -9,6 +9,7 @@ const {
   buildWonStatsSummaryQuery,
   buildWonStatsExportQuery,
   calculateBidMaxPrice,
+  normalizeProductType,
   getTaxIncludedPrice,
   resolveBuyoutTaskPrices,
   validateMultiBidUserMaxPrice,
@@ -168,8 +169,16 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
   assert.match(query.sql, /MAX\(t\.product_title\) AS product_title/);
   assert.doesNotMatch(query.sql, /bi\.product_title/);
   assert.match(query.sql, /MAX\(t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /AS product_type/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.deepEqual(query.params, [9, 100]);
+}
+
+function testProductTypeFallsBackToTaxLabel() {
+  assert.equal(normalizeProductType('normal', 'tax_included'), 'normal');
+  assert.equal(normalizeProductType('store', 'tax_zero'), 'store');
+  assert.equal(normalizeProductType('', 'tax_zero'), 'normal');
+  assert.equal(normalizeProductType('', 'tax_included'), 'store');
 }
 
 function testWonStatsInputDefaultsToThirtyDays() {
@@ -347,6 +356,7 @@ testTaskListUsesAuthenticatedUserId();
 testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
+testProductTypeFallsBackToTaxLabel();
 testWonStatsInputDefaultsToThirtyDays();
 testWonStatsQueriesUseWonDateAndExportFields();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();

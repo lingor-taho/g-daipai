@@ -4,6 +4,7 @@ const {
   calculateOrderPayable,
   canSettleShippingFeeText,
   buildOrderSettlement,
+  normalizeProductType,
   parseShippingFeeToNumber
 } = require('./admin');
 
@@ -140,9 +141,18 @@ function testBuildOrderSettlementUsesSubmittedRateAndOverrides() {
   });
 }
 
+function testNormalizeProductTypeForBatchRefresh() {
+  assert.equal(normalizeProductType('normal'), 'normal');
+  assert.equal(normalizeProductType('store'), 'store');
+  assert.equal(normalizeProductType('tax_zero'), 'normal');
+  assert.equal(normalizeProductType('tax_included'), 'store');
+  assert.equal(normalizeProductType(''), '');
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
 testStoreTaxIncludedThresholdUsesTaxIncludedPrice();
 testSpecialUserConfigOverridesOnlyConfiguredValues();
 testBuildOrderSettlementUsesSubmittedRateAndOverrides();
+testNormalizeProductTypeForBatchRefresh();
