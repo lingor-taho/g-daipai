@@ -290,19 +290,6 @@ router.patch('/task/:id/touch', async (req, res) => {
   res.json({ success: true });
 });
 
-async function getFinanceConfig() {
-  const rows = await db.getAll("SELECT key, value FROM config WHERE key IN ('jpy_to_cny_rate', 'handling_fee_jpy')");
-  const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
-  if (!values.jpy_to_cny_rate) {
-    const latestRate = await db.getOne('SELECT rate FROM exchange_config ORDER BY updated_at DESC LIMIT 1');
-    values.jpy_to_cny_rate = String(latestRate?.rate || '0.049');
-  }
-  return {
-    rate: Number(values.jpy_to_cny_rate || 0.049),
-    handlingFeeJpy: Number(values.handling_fee_jpy || 0)
-  };
-}
-
 function normalizeYenAmount(value) {
   if (value === null || value === undefined || value === '') return null;
   const amount = Number(String(value).replace(/[^\d]/g, ''));
@@ -329,25 +316,21 @@ async function upsertOrderFromTask(taskId, options = {}) {
   const task = await db.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task) return;
   const existing = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
-  const finance = await getFinanceConfig();
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
-  const totalAmountCny = finalPrice
-    ? Number(((finalPrice + finance.handlingFeeJpy) * finance.rate).toFixed(2))
-    : null;
   if (existing) {
     await db.query(
       `UPDATE orders
-       SET product_title = ?, product_url = ?, final_price = ?, won_at = COALESCE(?, won_at), won_time_text = COALESCE(?, won_time_text), jpy_to_cny_rate = ?, handling_fee = ?, total_amount_cny = ?
+       SET product_title = ?, product_url = ?, final_price = ?, won_at = COALESCE(?, won_at), won_time_text = COALESCE(?, won_time_text)
        WHERE task_id = ?`,
-      [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, finance.rate, finance.handlingFeeJpy, totalAmountCny, taskId]
+      [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, taskId]
     );
   } else {
     await db.query(
-      `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text, jpy_to_cny_rate, handling_fee, total_amount_cny, order_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment')`,
-      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, finance.rate, finance.handlingFeeJpy, totalAmountCny]
+      `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText]
     );
   }
 }

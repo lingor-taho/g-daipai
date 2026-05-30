@@ -2,6 +2,8 @@ const assert = require('assert/strict');
 const {
   applyUserFinanceConfig,
   calculateOrderPayable,
+  canSettleShippingFeeText,
+  buildOrderSettlement,
   parseShippingFeeToNumber
 } = require('./admin');
 
@@ -10,6 +12,14 @@ function testShippingFeeParsing() {
   assert.equal(parseShippingFeeToNumber('送料 着払い'), 0);
   assert.equal(parseShippingFeeToNumber('送料 落札者負担'), 0);
   assert.equal(parseShippingFeeToNumber('送料 1,000円'), 1000);
+}
+
+function testSettleableShippingFeeDetection() {
+  assert.equal(canSettleShippingFeeText('送料 無料'), true);
+  assert.equal(canSettleShippingFeeText('全国一律 230円'), true);
+  assert.equal(canSettleShippingFeeText('送料 着払い'), false);
+  assert.equal(canSettleShippingFeeText('送料 落札者負担'), false);
+  assert.equal(canSettleShippingFeeText('待定'), false);
 }
 
 function testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand() {
@@ -95,7 +105,44 @@ function testSpecialUserConfigOverridesOnlyConfiguredValues() {
   });
 }
 
+function testBuildOrderSettlementUsesSubmittedRateAndOverrides() {
+  const result = buildOrderSettlement({
+    order: {
+      final_price: 20000,
+      tax_type: 'tax_zero',
+      shipping_fee_text: '送料 1,000円'
+    },
+    baseConfig: {
+      rate: 0.05,
+      bankFeeJpy: 500,
+      handlingFeeCny: 15,
+      largeAmountFeeCny: 20
+    },
+    userFinanceOverride: {
+      rate_adjustment: 0.01,
+      bank_fee_jpy: 100,
+      handling_fee_cny: null,
+      large_amount_fee_cny: null
+    }
+  });
+
+  assert.deepEqual(result, {
+    shippingFeeJpy: 1000,
+    bankFeeJpy: 100,
+    handlingFeeCny: 15,
+    largeAmountFeeCny: 0,
+    largeAmountFeeApplied: false,
+    taxIncludedFinalPrice: 20000,
+    jpyToCnyRate: 0.06,
+    rateAdjustment: 0.01,
+    hasUserFinanceOverride: true,
+    payableCny: 1281
+  });
+}
+
 testShippingFeeParsing();
+testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
 testStoreTaxIncludedThresholdUsesTaxIncludedPrice();
 testSpecialUserConfigOverridesOnlyConfiguredValues();
+testBuildOrderSettlementUsesSubmittedRateAndOverrides();

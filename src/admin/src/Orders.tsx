@@ -1,14 +1,17 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
+import type { Key } from 'react';
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, InputNumber, Space, Typography, message } from 'antd';
+import { Button, Card, Form, InputNumber, Space, Tag, Typography, message } from 'antd';
 import { Link } from 'react-router-dom';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
 function formatJPY(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
   return `${Number(value || 0).toLocaleString('ja-JP')}円`;
 }
 
 function formatCNY(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
   return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
@@ -23,15 +26,28 @@ async function saveFinanceConfig(values: any) {
   return data;
 }
 
+async function settleOrders(values: { orderIds: Key[]; rate: number }) {
+  const res = await fetch('/api/admin/orders/settle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(values)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '结算失败');
+  return data;
+}
+
 export default function OrdersPage() {
   const [form] = Form.useForm();
   const [reloadKey, setReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [settling, setSettling] = useState(false);
+  const [settlementRate, setSettlementRate] = useState<number | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
 
   async function loadFinanceConfig() {
     const data = await fetchAdminJson('/api/admin/finance-config');
     form.setFieldsValue({ 
-      rate: data.rate, 
       bankFeeJpy: data.bankFeeJpy,
       handlingFeeCny: data.handlingFeeCny,
       largeAmountFeeCny: data.largeAmountFeeCny
@@ -53,6 +69,31 @@ export default function OrdersPage() {
       message.error(e.message || '保存失败');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSettle() {
+    if (!settlementRate || settlementRate <= 0) {
+      message.error('请输入本次结算汇率');
+      return;
+    }
+    if (selectedRowKeys.length === 0) {
+      message.error('请选择要结算的订单');
+      return;
+    }
+    setSettling(true);
+    try {
+      const data = await settleOrders({ orderIds: selectedRowKeys, rate: settlementRate });
+      if (data.failed) {
+        message.warning(`结算完成 ${data.settled || 0} 条，失败 ${data.failed} 条`);
+      } else {
+        message.success(`结算完成 ${data.settled || selectedRowKeys.length} 条`);
+      }
+      setReloadKey(key => key + 1);
+    } catch (e: any) {
+      message.error(e.message || '结算失败');
+    } finally {
+      setSettling(false);
     }
   }
 
@@ -79,9 +120,9 @@ export default function OrdersPage() {
       render: (_: any, row: any) => row.large_amount_fee_applied ? formatCNY(row.large_amount_fee_cny) : '-'
     },
     { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 80 },
-    { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 100, render: (_: any, row: any) => row.has_user_finance_override ? '已应用' : '-' },
+    { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 100, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
     { title: '应付款', dataIndex: 'payable_cny', width: 120, render: (_: any, row: any) => formatCNY(row.payable_cny) },
-    { title: '订单状态', dataIndex: 'order_status', width: 120 },
+    { title: '订单状态', dataIndex: 'order_status', width: 120, render: (_: any, row: any) => row.order_status === 'pending_payment' ? <Tag color="blue">待支付</Tag> : '' },
     { title: '追踪号', dataIndex: 'tracking_number', width: 150 }
   ];
 
@@ -89,9 +130,6 @@ export default function OrdersPage() {
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card>
         <Form form={form} layout="inline" onFinish={handleSaveConfig}>
-          <Form.Item name="rate" label="汇率" rules={[{ required: true, message: '请输入汇率' }]}>
-            <InputNumber min={0} step={0.001} precision={4} />
-          </Form.Item>
           <Form.Item name="bankFeeJpy" label="银行手续费(日元)" rules={[{ required: true, message: '请输入银行手续费' }]}>
             <InputNumber min={0} step={1} precision={0} />
           </Form.Item>
@@ -110,9 +148,20 @@ export default function OrdersPage() {
             </Link>
           </Form.Item>
           <Typography.Text type="secondary">
-            应付款 =（落札金额 + 运费 + 银行手续费）* 汇率 + 手续费 + 大金额费用（税后落札金额 &gt;= 30,000円时生效）
+            应付款在点击结算后写入订单；汇率使用本次结算输入值，特殊用户设置会覆盖对应费用参数。
           </Typography.Text>
         </Form>
+      </Card>
+
+      <Card>
+        <Space wrap>
+          <Typography.Text>本次结算汇率</Typography.Text>
+          <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
+          <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
+          <Typography.Text type="secondary">
+            已选择 {selectedRowKeys.length} 条；默认勾选运费为数值或無料的订单。
+          </Typography.Text>
+        </Space>
       </Card>
 
       <ProTable
@@ -121,20 +170,21 @@ export default function OrdersPage() {
         request={async (params: any) => {
           try {
             const data = await fetchAdminJson('/api/admin/orders?' + new URLSearchParams(params));
-            if (data.financeConfig) {
-              form.setFieldsValue({
-                rate: data.financeConfig.rate,
-                bankFeeJpy: data.financeConfig.bankFeeJpy,
-                handlingFeeCny: data.financeConfig.handlingFeeCny,
-                largeAmountFeeCny: data.financeConfig.largeAmountFeeCny
-              });
-            }
+            setSelectedRowKeys((data.items || []).filter((item: any) => item.can_settle && !item.settled_at).map((item: any) => item.id));
             return { data: data.items || [], total: data.total || 0 };
           } catch {
             return { data: [], total: 0 };
           }
         }}
         rowKey="id"
+        rowSelection={{
+          selectedRowKeys,
+          onChange: keys => setSelectedRowKeys(keys),
+          getCheckboxProps: (record: any) => ({
+            disabled: !record.can_settle,
+            title: record.can_settle ? undefined : '运费不是数值或無料，不能结算'
+          })
+        }}
         search={false}
       />
     </Space>

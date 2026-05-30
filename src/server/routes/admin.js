@@ -360,7 +360,6 @@ router.get('/tasks/stats', async (req, res) => {
 router.get('/orders', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
-  const financeConfig = await getFinanceConfig();
   const items = await db.getAll(
     `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, u.id AS user_id, u.username,
             ufo.rate_adjustment,
@@ -382,37 +381,27 @@ router.get('/orders', async (req, res) => {
     WHERE t.status = 'success'
   `);
   const mappedItems = items.map(item => {
-    const finalPrice = Number(item.final_price || 0);
-    const effectiveConfig = applyUserFinanceConfig(financeConfig, {
-      rate_adjustment: item.rate_adjustment,
-      bank_fee_jpy: item.user_bank_fee_jpy,
-      handling_fee_cny: item.user_handling_fee_cny,
-      large_amount_fee_cny: item.user_large_amount_fee_cny
-    });
-    const payable = calculateOrderPayable({
-      finalPrice,
-      taxType: item.tax_type,
-      shippingFeeText: item.shipping_fee_text,
-      config: effectiveConfig
-    });
+    const settled = Boolean(item.settled_at);
     return {
       ...item,
       username: item.username || '-',
       product_id: item.product_id || extractAuctionId(item.product_url) || '',
       shipping_fee_text: item.shipping_fee_text || '-',
-      shipping_fee_jpy: payable.shippingFee,
-      bank_fee_jpy: payable.bankFeeJpy,
-      handling_fee_cny: payable.handlingFeeCny,
-      large_amount_fee_cny: payable.largeAmountFeeCny,
-      large_amount_fee_applied: payable.largeAmountFeeApplied,
-      tax_included_final_price: payable.taxIncludedFinalPrice,
-      jpy_to_cny_rate: payable.rate,
-      rate_adjustment: effectiveConfig.rateAdjustment,
-      has_user_finance_override: effectiveConfig.hasUserFinanceOverride,
-      payable_cny: payable.payableCny
+      can_settle: canSettleShippingFeeText(item.shipping_fee_text),
+      shipping_fee_jpy: settled ? parseShippingFeeToNumber(item.shipping_fee_text) : null,
+      bank_fee_jpy: settled ? item.bank_fee_jpy : null,
+      handling_fee_cny: settled ? item.handling_fee_cny : null,
+      large_amount_fee_cny: settled ? item.large_amount_fee_cny : null,
+      large_amount_fee_applied: settled ? Boolean(item.large_amount_fee_applied) : null,
+      tax_included_final_price: settled ? item.tax_included_final_price : null,
+      jpy_to_cny_rate: settled ? item.jpy_to_cny_rate : null,
+      rate_adjustment: settled ? item.rate_adjustment : null,
+      has_user_finance_override: settled ? Boolean(item.has_user_finance_override) : null,
+      payable_cny: settled ? item.total_amount_cny : null,
+      order_status: settled ? item.order_status : null
     };
   });
-  res.json({ items: mappedItems, total: countResult?.total || 0, financeConfig });
+  res.json({ items: mappedItems, total: countResult?.total || 0 });
 });
 
 // 财务统计
@@ -421,7 +410,7 @@ router.get('/orders/stats', async (req, res) => {
     SELECT
       COUNT(*) as total_orders,
       COALESCE(SUM(final_price), 0) as total_jpy,
-      COALESCE(SUM(total_amount_cny), 0) as total_cny
+      COALESCE(SUM(CASE WHEN settled_at IS NOT NULL THEN total_amount_cny ELSE 0 END), 0) as total_cny
     FROM orders
     INNER JOIN tasks t ON orders.task_id = t.id
     WHERE t.status = 'success'
@@ -503,6 +492,41 @@ function calculateOrderPayable({ finalPrice, taxType, shippingFeeText, config })
   };
 }
 
+function canSettleShippingFeeText(shippingFeeText) {
+  const text = String(shippingFeeText || '').trim();
+  if (!text || text === '-') return false;
+  if (/無料/i.test(text)) return true;
+  return /(\d[\d,]*)\s*円/.test(text);
+}
+
+function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
+  if (!canSettleShippingFeeText(order?.shipping_fee_text)) {
+    const error = new Error('该订单运费无法确认，不能结算');
+    error.statusCode = 400;
+    throw error;
+  }
+  const effectiveConfig = applyUserFinanceConfig(baseConfig, userFinanceOverride);
+  const payable = calculateOrderPayable({
+    finalPrice: order.final_price,
+    taxType: order.tax_type,
+    shippingFeeText: order.shipping_fee_text,
+    config: effectiveConfig
+  });
+
+  return {
+    shippingFeeJpy: payable.shippingFee,
+    bankFeeJpy: payable.bankFeeJpy,
+    handlingFeeCny: payable.handlingFeeCny,
+    largeAmountFeeCny: payable.largeAmountFeeCny,
+    largeAmountFeeApplied: payable.largeAmountFeeApplied,
+    taxIncludedFinalPrice: payable.taxIncludedFinalPrice,
+    jpyToCnyRate: payable.rate,
+    rateAdjustment: effectiveConfig.rateAdjustment,
+    hasUserFinanceOverride: effectiveConfig.hasUserFinanceOverride,
+    payableCny: payable.payableCny
+  };
+}
+
 function parseShippingFeeToNumber(shippingFeeText) {
   const text = String(shippingFeeText || '').trim();
   if (!text || text === '-') return 0;
@@ -516,16 +540,103 @@ function extractAuctionId(input) {
   return match ? match[0].toLowerCase() : '';
 }
 
+router.post('/orders/settle', async (req, res) => {
+  const orderIds = Array.isArray(req.body?.orderIds) ? req.body.orderIds.map(Number).filter(Number.isFinite) : [];
+  const rate = Number(req.body?.rate);
+  if (orderIds.length === 0) {
+    return res.status(400).json({ error: 'orderIds is required' });
+  }
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return res.status(400).json({ error: 'valid rate is required' });
+  }
+
+  const financeConfig = await getFinanceConfig();
+  const baseConfig = { ...financeConfig, rate };
+  const results = [];
+
+  for (const orderId of orderIds) {
+    const order = await db.getOne(
+      `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, u.id AS user_id,
+              ufo.rate_adjustment,
+              ufo.bank_fee_jpy AS user_bank_fee_jpy,
+              ufo.handling_fee_cny AS user_handling_fee_cny,
+              ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+       FROM orders o
+       INNER JOIN tasks t ON o.task_id = t.id
+       LEFT JOIN users u ON t.user_id = u.id
+       LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
+       WHERE o.id = ? AND t.status = 'success'`,
+      [orderId]
+    );
+
+    if (!order) {
+      results.push({ orderId, success: false, error: '订单不存在' });
+      continue;
+    }
+
+    try {
+      const settlement = buildOrderSettlement({
+        order,
+        baseConfig,
+        userFinanceOverride: {
+          rate_adjustment: order.rate_adjustment,
+          bank_fee_jpy: order.user_bank_fee_jpy,
+          handling_fee_cny: order.user_handling_fee_cny,
+          large_amount_fee_cny: order.user_large_amount_fee_cny
+        }
+      });
+
+      await db.query(
+        `UPDATE orders
+         SET jpy_to_cny_rate = ?,
+             bank_fee_jpy = ?,
+             handling_fee_cny = ?,
+             large_amount_fee_cny = ?,
+             large_amount_fee_applied = ?,
+             tax_included_final_price = ?,
+             has_user_finance_override = ?,
+             total_amount_cny = ?,
+             order_status = 'pending_payment',
+             settled_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          settlement.jpyToCnyRate,
+          settlement.bankFeeJpy,
+          settlement.handlingFeeCny,
+          settlement.largeAmountFeeCny,
+          settlement.largeAmountFeeApplied ? 1 : 0,
+          settlement.taxIncludedFinalPrice,
+          settlement.hasUserFinanceOverride ? 1 : 0,
+          settlement.payableCny,
+          orderId
+        ]
+      );
+
+      results.push({ orderId, success: true, payableCny: settlement.payableCny });
+    } catch (error) {
+      results.push({ orderId, success: false, error: error.message || '结算失败' });
+    }
+  }
+
+  res.json({
+    success: results.some(item => item.success),
+    settled: results.filter(item => item.success).length,
+    failed: results.filter(item => !item.success).length,
+    results
+  });
+});
+
 router.get('/finance-config', async (req, res) => {
   res.json(await getFinanceConfig());
 });
 
 router.put('/finance-config', async (req, res) => {
-  const rate = Number(req.body.rate);
+  const hasRate = req.body.rate !== undefined && req.body.rate !== null && req.body.rate !== '';
+  const rate = hasRate ? Number(req.body.rate) : null;
   const bankFeeJpy = Number(req.body.bankFeeJpy);
   const handlingFeeCny = Number(req.body.handlingFeeCny);
   const largeAmountFeeCny = Number(req.body.largeAmountFeeCny ?? 0);
-  if (!Number.isFinite(rate) || rate <= 0) {
+  if (hasRate && (!Number.isFinite(rate) || rate <= 0)) {
     return res.status(400).json({ error: 'valid rate is required' });
   }
   if (!Number.isFinite(bankFeeJpy) || bankFeeJpy < 0) {
@@ -537,10 +648,12 @@ router.put('/finance-config', async (req, res) => {
   if (!Number.isFinite(largeAmountFeeCny) || largeAmountFeeCny < 0) {
     return res.status(400).json({ error: 'valid largeAmountFeeCny is required' });
   }
-  await db.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('jpy_to_cny_rate', ?, CURRENT_TIMESTAMP)`,
-    [String(rate)]
-  );
+  if (hasRate) {
+    await db.query(
+      `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('jpy_to_cny_rate', ?, CURRENT_TIMESTAMP)`,
+      [String(rate)]
+    );
+  }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('bank_fee_jpy', ?, CURRENT_TIMESTAMP)`,
     [String(bankFeeJpy)]
@@ -553,7 +666,7 @@ router.put('/finance-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('large_amount_fee_cny', ?, CURRENT_TIMESTAMP)`,
     [String(largeAmountFeeCny)]
   );
-  res.json({ success: true, rate, bankFeeJpy, handlingFeeCny, largeAmountFeeCny });
+  res.json({ success: true, ...(hasRate ? { rate } : {}), bankFeeJpy, handlingFeeCny, largeAmountFeeCny });
 });
 
 router.get('/user-finance-overrides', async (req, res) => {
@@ -880,5 +993,7 @@ router.get('/logs', async (req, res) => {
 
 module.exports = router;
 module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
+module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.calculateOrderPayable = calculateOrderPayable;
+module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;

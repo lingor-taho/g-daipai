@@ -74,10 +74,17 @@ CREATE TABLE IF NOT EXISTS orders (
   won_time_text VARCHAR(64),
   jpy_to_cny_rate DECIMAL(10,4),
   handling_fee DECIMAL(10,2),
+  bank_fee_jpy INTEGER,
+  handling_fee_cny DECIMAL(10,2),
+  large_amount_fee_cny DECIMAL(10,2),
+  large_amount_fee_applied INTEGER,
+  tax_included_final_price INTEGER,
+  has_user_finance_override INTEGER,
   total_amount_cny DECIMAL(10,2),
-  order_status VARCHAR(32) DEFAULT 'pending_payment',
+  order_status VARCHAR(32),
   tracking_number VARCHAR(128),
   shipped_at DATETIME,
+  settled_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

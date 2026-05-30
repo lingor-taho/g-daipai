@@ -26,6 +26,13 @@ ensureColumn('tasks', 'pending_followup_max_price', 'INTEGER');
 ensureColumn('tasks', 'force_orders_resync', 'INTEGER DEFAULT 0');
 ensureColumn('orders', 'won_at', 'DATETIME');
 ensureColumn('orders', 'won_time_text', 'VARCHAR(64)');
+ensureColumn('orders', 'bank_fee_jpy', 'INTEGER');
+ensureColumn('orders', 'handling_fee_cny', 'DECIMAL(10,2)');
+ensureColumn('orders', 'large_amount_fee_cny', 'DECIMAL(10,2)');
+ensureColumn('orders', 'large_amount_fee_applied', 'INTEGER');
+ensureColumn('orders', 'tax_included_final_price', 'INTEGER');
+ensureColumn('orders', 'has_user_finance_override', 'INTEGER');
+ensureColumn('orders', 'settled_at', 'DATETIME');
 ensureColumn('users', 'user_level', 'INTEGER DEFAULT 1');
 ensureColumn('users', 'parent_user_id', 'INTEGER');
 
