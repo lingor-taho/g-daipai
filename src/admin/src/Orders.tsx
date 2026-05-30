@@ -1,7 +1,7 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, InputNumber, Space, Tag, Typography, message } from 'antd';
+import { Button, Card, Form, InputNumber, Space, Switch, Tag, Typography, message } from 'antd';
 import { Link } from 'react-router-dom';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
@@ -26,6 +26,11 @@ const noWrapCell = {
     whiteSpace: 'nowrap'
   }
 };
+
+function isNonBidderPaysShipping(item: any) {
+  const text = String(item?.shipping_fee_text || '').trim();
+  return Boolean(item?.can_settle && text && text !== '-' && !text.includes('落札者負担'));
+}
 
 async function saveFinanceConfig(values: any) {
   const res = await fetch('/api/admin/finance-config', {
@@ -56,6 +61,8 @@ export default function OrdersPage() {
   const [settling, setSettling] = useState(false);
   const [settlementRate, setSettlementRate] = useState<number | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
+  const [autoSelectNonBidderPays, setAutoSelectNonBidderPays] = useState(false);
+  const [currentRows, setCurrentRows] = useState<any[]>([]);
 
   async function loadFinanceConfig() {
     const data = await fetchAdminJson('/api/admin/finance-config');
@@ -172,9 +179,19 @@ export default function OrdersPage() {
         <Space wrap>
           <Typography.Text>本次结算汇率</Typography.Text>
           <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
+          <Switch
+            checked={autoSelectNonBidderPays}
+            checkedChildren="已勾选"
+            unCheckedChildren="未勾选"
+            onChange={checked => {
+              setAutoSelectNonBidderPays(checked);
+              setSelectedRowKeys(checked ? currentRows.filter(item => isNonBidderPaysShipping(item) && !item.settled_at).map(item => item.id) : []);
+            }}
+          />
+          <Typography.Text>勾选非落札者負担订单</Typography.Text>
           <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
           <Typography.Text type="secondary">
-            已选择 {selectedRowKeys.length} 条；默认勾选运费为数值或無料的订单。
+            已选择 {selectedRowKeys.length} 条；每次进入页面默认不勾选订单。
           </Typography.Text>
         </Space>
       </Card>
@@ -185,9 +202,13 @@ export default function OrdersPage() {
         request={async (params: any) => {
           try {
             const data = await fetchAdminJson('/api/admin/orders?' + new URLSearchParams(params));
-            setSelectedRowKeys((data.items || []).filter((item: any) => item.can_settle && !item.settled_at).map((item: any) => item.id));
-            return { data: data.items || [], total: data.total || 0 };
+            const rows = data.items || [];
+            setCurrentRows(rows);
+            setSelectedRowKeys(autoSelectNonBidderPays ? rows.filter((item: any) => isNonBidderPaysShipping(item) && !item.settled_at).map((item: any) => item.id) : []);
+            return { data: rows, total: data.total || 0 };
           } catch {
+            setCurrentRows([]);
+            setSelectedRowKeys([]);
             return { data: [], total: 0 };
           }
         }}
@@ -196,8 +217,8 @@ export default function OrdersPage() {
           selectedRowKeys,
           onChange: keys => setSelectedRowKeys(keys),
           getCheckboxProps: (record: any) => ({
-            disabled: !record.can_settle,
-            title: record.can_settle ? undefined : '运费不是数值或無料，不能结算'
+            disabled: !isNonBidderPaysShipping(record),
+            title: isNonBidderPaysShipping(record) ? undefined : '落札者負担或运费未确认，不能结算'
           })
         }}
         search={false}

@@ -19,7 +19,7 @@ function testShippingFeeParsing() {
 function testSettleableShippingFeeDetection() {
   assert.equal(canSettleShippingFeeText('送料 無料'), true);
   assert.equal(canSettleShippingFeeText('全国一律 230円'), true);
-  assert.equal(canSettleShippingFeeText('送料 着払い'), false);
+  assert.equal(canSettleShippingFeeText('送料 着払い'), true);
   assert.equal(canSettleShippingFeeText('送料 落札者負担'), false);
   assert.equal(canSettleShippingFeeText('待定'), false);
 }

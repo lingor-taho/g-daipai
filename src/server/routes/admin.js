@@ -500,6 +500,8 @@ function calculateOrderPayable({ finalPrice, taxType, shippingFeeText, config })
 function canSettleShippingFeeText(shippingFeeText) {
   const text = String(shippingFeeText || '').trim();
   if (!text || text === '-') return false;
+  if (/落札者負担/.test(text)) return false;
+  if (/着払い/.test(text)) return true;
   if (/無料/i.test(text)) return true;
   return /(\d[\d,]*)\s*円/.test(text);
 }
