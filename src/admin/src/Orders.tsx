@@ -15,6 +15,18 @@ function formatCNY(value: number | string | null | undefined) {
   return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function renderProductTypeTag(productType: string | null | undefined) {
+  if (productType === 'store') return <Tag color="red" style={{ marginLeft: 6 }}>商</Tag>;
+  if (productType === 'normal') return <Tag color="green" style={{ marginLeft: 6 }}>普</Tag>;
+  return <span style={{ marginLeft: 6 }}>-</span>;
+}
+
+const noWrapCell = {
+  style: {
+    whiteSpace: 'nowrap'
+  }
+};
+
 async function saveFinanceConfig(values: any) {
   const res = await fetch('/api/admin/finance-config', {
     method: 'PUT',
@@ -98,32 +110,35 @@ export default function OrdersPage() {
   }
 
   const columns = [
-    { title: '用户名', dataIndex: 'username', width: 100 },
+    { title: '用户名', dataIndex: 'username', width: 90, ellipsis: true, onCell: () => noWrapCell },
     {
       title: '商品ID',
       dataIndex: 'product_id',
-      width: 120,
+      width: 170,
+      onCell: () => noWrapCell,
       render: (_: any, row: any) => {
         const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
         const url = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
-        return url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : productId || '-';
+        const idNode = url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : productId || '-';
+        return <span>{idNode}{renderProductTypeTag(row.product_type)}</span>;
       }
     },
-    { title: '运费', dataIndex: 'shipping_fee_text', width: 150 },
-    { title: '落札金额', dataIndex: 'final_price', width: 120, render: (_: any, row: any) => formatJPY(row.final_price) },
-    { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 120, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
-    { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 120, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },
+    { title: '运费', dataIndex: 'shipping_fee_text', width: 120, ellipsis: true, onCell: () => noWrapCell },
+    { title: '落札金额', dataIndex: 'final_price', width: 105, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.final_price) },
+    { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 100, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
+    { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },
     {
       title: '大金额费用',
       dataIndex: 'large_amount_fee_cny',
-      width: 120,
+      width: 100,
+      onCell: () => noWrapCell,
       render: (_: any, row: any) => row.large_amount_fee_applied ? formatCNY(row.large_amount_fee_cny) : '-'
     },
-    { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 80 },
-    { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 100, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
-    { title: '应付款', dataIndex: 'payable_cny', width: 120, render: (_: any, row: any) => formatCNY(row.payable_cny) },
-    { title: '订单状态', dataIndex: 'order_status', width: 120, render: (_: any, row: any) => row.order_status === 'pending_payment' ? <Tag color="blue">待支付</Tag> : '' },
-    { title: '追踪号', dataIndex: 'tracking_number', width: 150 }
+    { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 70, onCell: () => noWrapCell },
+    { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
+    { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
+    { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.order_status === 'pending_payment' ? <Tag color="blue">待支付</Tag> : '' },
+    { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];
 
   return (
@@ -186,6 +201,7 @@ export default function OrdersPage() {
           })
         }}
         search={false}
+        scroll={{ x: 1185 }}
       />
     </Space>
   );

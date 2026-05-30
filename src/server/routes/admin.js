@@ -54,6 +54,23 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
   return toIsoOrNull(Math.max(endMs - getStrategyLeadMs(task), nowMs));
 }
 
+function buildAdminOrdersListQuery({ pageSize, offset }) {
+  return {
+    sql: `SELECT o.*, t.product_id, t.product_url, t.shipping_fee_text, t.tax_type, t.product_type, u.id AS user_id, u.username,
+            ufo.rate_adjustment,
+            ufo.bank_fee_jpy AS user_bank_fee_jpy,
+            ufo.handling_fee_cny AS user_handling_fee_cny,
+            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN users u ON t.user_id = u.id
+     LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
+     WHERE t.status = 'success'
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC LIMIT ? OFFSET ?`,
+    params: [pageSize, offset]
+  };
+}
+
 router.get('/users', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
@@ -360,20 +377,8 @@ router.get('/tasks/stats', async (req, res) => {
 router.get('/orders', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
-  const items = await db.getAll(
-    `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, u.id AS user_id, u.username,
-            ufo.rate_adjustment,
-            ufo.bank_fee_jpy AS user_bank_fee_jpy,
-            ufo.handling_fee_cny AS user_handling_fee_cny,
-            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
-     FROM orders o
-     INNER JOIN tasks t ON o.task_id = t.id
-     LEFT JOIN users u ON t.user_id = u.id
-     LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
-     WHERE t.status = 'success'
-     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC LIMIT ? OFFSET ?`,
-    [pageSize, offset]
-  );
+  const ordersQuery = buildAdminOrdersListQuery({ pageSize, offset });
+  const items = await db.getAll(ordersQuery.sql, ordersQuery.params);
   const countResult = await db.getOne(`
     SELECT COUNT(*) as total
     FROM orders o
@@ -1051,6 +1056,7 @@ router.get('/logs', async (req, res) => {
 module.exports = router;
 module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
 module.exports.buildOrderSettlement = buildOrderSettlement;
+module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.normalizeProductType = normalizeProductType;

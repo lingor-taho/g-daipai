@@ -4,6 +4,7 @@ const {
   calculateOrderPayable,
   canSettleShippingFeeText,
   buildOrderSettlement,
+  buildAdminOrdersListQuery,
   normalizeProductType,
   parseShippingFeeToNumber
 } = require('./admin');
@@ -149,6 +150,13 @@ function testNormalizeProductTypeForBatchRefresh() {
   assert.equal(normalizeProductType(''), '');
 }
 
+function testAdminOrdersQueryIncludesProductType() {
+  const query = buildAdminOrdersListQuery({ pageSize: 10, offset: 0 });
+
+  assert.match(query.sql, /t\.product_type/);
+  assert.deepEqual(query.params, [10, 0]);
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
@@ -156,3 +164,4 @@ testStoreTaxIncludedThresholdUsesTaxIncludedPrice();
 testSpecialUserConfigOverridesOnlyConfiguredValues();
 testBuildOrderSettlementUsesSubmittedRateAndOverrides();
 testNormalizeProductTypeForBatchRefresh();
+testAdminOrdersQueryIncludesProductType();

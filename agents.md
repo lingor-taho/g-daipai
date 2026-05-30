@@ -64,8 +64,9 @@ D:/www/g-daipai/
 │   │   ├── Users.tsx
 │   │   ├── MultiBidSettings.tsx — 多次出价、入札/落札空闲同步配置
 │   │   ├── DataCleanup.tsx      — 清理 30 天无用数据
-│   │   ├── ShippingRefresh.tsx  — 按商品 ID 批量刷新运费
-│   │   └── OrdersResync.tsx     — 按商品 ID 批量刷新落札商品
+│   │   ├── ShippingRefresh.tsx      — 按商品 ID 批量刷新运费
+│   │   ├── ProductTypeRefresh.tsx   — 按商品 ID 批量刷新商品类型
+│   │   └── OrdersResync.tsx         — 按商品 ID 批量刷新落札商品
 │   ├── server/
 │   │   ├── index.js         — Express API, CORS, pending task sweep
 │   │   ├── models/index.js  — better-sqlite3 同步封装 + schema 兼容列
@@ -90,7 +91,7 @@ D:/www/g-daipai/
 
 - `users`: 用户、角色、上下级关系。
 - `yahoo_accounts`: Yahoo 账号池预留字段，目前主要依赖服务器 Chrome 登录态。
-- `tasks`: 竞拍任务，包含商品信息、当前价、即決价、税类型、最高价、用户最高价、多次出价增量、策略、状态、是否最高价入札者、结束时间。`pending_followup_max_price` 用于即时拍低价拆分场景，记录原始最高价，待商品当前价达标后自动追加 followup 任务。
+- `tasks`: 竞拍任务，包含商品信息、当前价、即決价、税类型、商品类型、最高价、用户最高价、多次出价增量、策略、状态、是否最高价入札者、结束时间。`product_type` 标记 `normal` 普通商品或 `store` 商城商品；`pending_followup_max_price` 用于即时拍低价拆分场景，记录原始最高价，待商品当前价达标后自动追加 followup 任务。
 - `bid_logs`: 出价日志。
 - `orders`: 落札订单，`final_price` 现在只使用 Yahoo 落札页抓到的该商品价格，`won_at/won_time_text` 保存 Yahoo 落札时间。
 - `bidding_items`: 插件从 Yahoo `/my/bidding` 同步的入札中商品状态，`status` 支持 `highest`、`outbid`、`stale`。
@@ -144,6 +145,13 @@ D:/www/g-daipai/
 - 插件商品快照、入札中同步、落札同步都不再更新运费。
 - 历史缺失或错误运费通过后台“运费更新”按商品 ID 批量刷新。
 - 服务端解析支持 `送料 落札者負担`、`送料 着払い`、`送料 無料`、固定 `XXX円`，以及 Yahoo shipment API 多物流方式取最小运费。
+
+商品类型规则：
+
+- 商品价格后显示 `（税0円）` 时标记为普通商品：`product_type=normal`。
+- 商品价格后显示 `（税込）` 时标记为商城商品：`product_type=store`。
+- 用户端抓取商品后会显示商品类型，并在提交任务时保存到 `tasks.product_type`。
+- 历史缺失商品类型通过后台“商品类型更新”按商品 ID 批量刷新，只更新商品类型，不更新运费。
 
 ### 插件出价
 
@@ -227,6 +235,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 系统配置 | 系 |
 | 清理数据 | 清 |
 | 运费更新 | 运 |
+| 商品类型更新 | 类 |
 | 落札商品更新 | 落 |
 | 特殊用户设置 | 特 |
 | 订单管理 | 订 |
@@ -241,7 +250,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 订单管理页面字段：
 
 - **用户名**：下单用户
-- **商品 ID**：可点击跳转 Yahoo 商品页
+- **商品 ID**：可点击跳转 Yahoo 商品页；后面显示商品类型标识，商城商品为红色 `商`，普通商品为绿色 `普`，缺失时显示 `-`
 - **运费**：支持 4 种形式（無料、着払い、落札者負担、固定金额）
 - **落札金额**：Yahoo 落札页抓取的价格
 - **银行手续费**：日元，可在页面配置
@@ -299,6 +308,9 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-05-28 | 只有即決没有普通出价的商品会走错普通出价流程 | `proxy.js` 解析 `bidButtonGroup`，仅存在“今すぐ落札”且没有普通入札按钮时返回 `buyoutOnly=true`；提交页自动勾选并锁定即決、最高出价锁定为即決价；服务端收到 `buyout_only=true` 时强制 `bid_mode=buyout`；插件测试覆盖“今すぐ落札 → 落札する”链路 |
 | 2026-05-28 | 订单管理缺少大金额费用和特殊用户单独参数 | 订单管理新增“大金额费用”，默认 0，仅税后落札金额 >= 30,000円 时计入；公式改为 `(落札金额 + 运费 + 银行手续费) * 汇率 + 手续费 + 大金额费用`。新增“特殊用户设置”页面，可按用户覆盖汇率调节、银行手续费、手续费(RMB)、大金额费用 |
 | 2026-05-29 | Yahoo 入札失败弹窗可能卡住插件队列 | `content.js` 识别 `入札に失敗しました / オークションにアクセスできませんでした` 并返回失败关闭 tab；`background.js` 增加 30 秒任务级超时，tab 长时间无响应时自动关闭并标记 failed，避免 `isRunning` 一直占住导致后续任务无法执行 |
+| 2026-05-30 | 缺少商品类型字段和历史补齐入口 | 新增 `tasks.product_type`，服务端按价格后 `（税0円）/（税込）` 判断普通/商城商品；用户端商品卡片显示商品类型；后台新增“商品类型更新”，支持按商品 ID 批量补齐 |
+| 2026-05-30 | 后台订单管理商品类型不直观，商品 ID 易换行 | 订单管理商品 ID 后增加类型标识：红色 `商`、绿色 `普`、缺失 `-`；表格启用横向滚动并设置数据不换行 |
+| 2026-05-30 | 落札商品更新说明误写会覆盖运费 | 后台“落札商品更新”说明改为“也会重新覆盖（落札价、落札时间）” |
 
 ---
 
@@ -363,6 +375,7 @@ git status --short
 - **数据库**: `D:/www/g-daipai/data/gdaipai.db`
 - **Schema**: `D:/www/g-daipai/src/db/init.sql`
 - **后台运费更新**: `D:/www/g-daipai/src/admin/src/ShippingRefresh.tsx`
+- **后台商品类型更新**: `D:/www/g-daipai/src/admin/src/ProductTypeRefresh.tsx`
 - **服务端商品/运费解析**: `D:/www/g-daipai/src/server/routes/proxy.js`
 - **插件调度/空闲同步**: `D:/www/g-daipai/yahoo-plugin/background.js`
 - **Spec**: `D:/www/g-daipai/docs/superpowers/specs/2026-05-11-yahoo-auction-proxy-v2-design.md`
