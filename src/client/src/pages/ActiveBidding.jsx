@@ -58,23 +58,31 @@ export default function ActiveBidding() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const fetchItems = useCallback(() => {
+  const fetchItems = useCallback((nextPage = page) => {
+    const requestedPage = Number.isFinite(Number(nextPage)) && Number(nextPage) > 0 ? Number(nextPage) : page;
     if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    runDeduped('ActiveBidding:getActiveBiddingTaskList', () => getActiveBiddingTaskList({ limit: 100 }))
+    runDeduped(`ActiveBidding:getActiveBiddingTaskList:${requestedPage}`, () => getActiveBiddingTaskList({ page: requestedPage, limit: pageSize }))
       .then(res => {
         setItems(res.data?.data || []);
+        setTotal(Number(res.data?.total || 0));
+        setPage(Number(res.data?.page || requestedPage));
       })
       .catch(e => {
         Toast.show({ content: e.response?.data?.error || '入札中商品加载失败' });
         setItems([]);
+        setTotal(0);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     fetchItems();
@@ -97,7 +105,7 @@ export default function ActiveBidding() {
         header={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>入札中</span>
-            <Button size="mini" fill="none" onClick={fetchItems}>刷新</Button>
+            <Button size="mini" fill="none" onClick={() => fetchItems(page)}>刷新</Button>
           </div>
         }
       >
@@ -170,6 +178,13 @@ export default function ActiveBidding() {
             </List.Item>
           );
         })}
+        {!loading && total > pageSize && (
+          <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+            <Button size="mini" disabled={page <= 1} onClick={() => fetchItems(page - 1)}>上一页</Button>
+            <span style={{ fontSize: 12, color: '#666' }}>{page} / {totalPages}</span>
+            <Button size="mini" disabled={page >= totalPages} onClick={() => fetchItems(page + 1)}>下一页</Button>
+          </div>
+        )}
       </List>
     </div>
   );

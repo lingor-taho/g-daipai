@@ -173,14 +173,12 @@ function buildTaskListInput(user, query = {}) {
 
 function buildWonTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
-  const limit = Math.min(Math.max(parseInt(query.limit || '50', 10) || 50, 1), 100);
-  return { userId: user.id, limit };
+  return { userId: user.id, ...normalizePagination(query, 10) };
 }
 
 function buildActiveBiddingTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
-  const limit = Math.min(Math.max(parseInt(query.limit || '50', 10) || 50, 1), 100);
-  return { userId: user.id, limit };
+  return { userId: user.id, ...normalizePagination(query, 10) };
 }
 
 function buildWonStatsInput(user, query = {}) {
@@ -284,8 +282,8 @@ function buildActiveBiddingTaskListQuery(input) {
          AND bi.status IN ('highest', 'outbid')
        GROUP BY bi.product_id
        ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
-       LIMIT ?`,
-    params: [input.userId, input.limit]
+       LIMIT ? OFFSET ?`,
+    params: [input.userId, input.limit, input.offset || 0]
   };
 }
 
@@ -491,6 +489,13 @@ router.get('/won', async (req, res) => {
   try {
     const input = buildWonTaskListInput(req.user, req.query);
     input.userId = req.actingUser.id;
+    const totalRow = await db.getOne(
+      `SELECT COUNT(*) AS total
+       FROM tasks
+       WHERE user_id = ?
+         AND status = 'success'`,
+      [input.userId]
+    );
     const tasks = await db.getAll(
       `SELECT
          t.id,
@@ -523,10 +528,10 @@ router.get('/won', async (req, res) => {
        WHERE t.user_id = ?
          AND t.status = 'success'
        ORDER BY datetime(COALESCE(o.won_at, t.updated_at)) DESC, t.id DESC
-       LIMIT ?`,
-      [input.userId, input.limit]
+       LIMIT ? OFFSET ?`,
+      [input.userId, input.limit, input.offset]
     );
-    res.json({ success: true, data: tasks });
+    res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -537,9 +542,17 @@ router.get('/bidding', async (req, res) => {
   try {
     const input = buildActiveBiddingTaskListInput(req.user, req.query);
     input.userId = req.actingUser.id;
+    const totalRow = await db.getOne(
+      `SELECT COUNT(DISTINCT bi.product_id) AS total
+       FROM bidding_items bi
+       INNER JOIN tasks t ON t.product_id = bi.product_id
+       WHERE t.user_id = ?
+         AND bi.status IN ('highest', 'outbid')`,
+      [input.userId]
+    );
     const query = buildActiveBiddingTaskListQuery(input);
     const tasks = await db.getAll(query.sql, query.params);
-    res.json({ success: true, data: tasks });
+    res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

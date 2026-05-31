@@ -148,16 +148,20 @@ function testTaskListUsesAuthenticatedUserId() {
 }
 
 function testWonTaskListUsesAuthenticatedUserIdAndCapsLimit() {
-  const input = buildWonTaskListInput({ id: 9 }, { limit: '999' });
+  const input = buildWonTaskListInput({ id: 9 }, { page: '3', limit: '999' });
   assert.equal(input.userId, 9);
   assert.equal(input.limit, 100);
+  assert.equal(input.page, 3);
+  assert.equal(input.offset, 200);
   assert.throws(() => buildWonTaskListInput(null, {}), /not logged in/);
 }
 
 function testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit() {
-  const input = buildActiveBiddingTaskListInput({ id: 9 }, { limit: '999' });
+  const input = buildActiveBiddingTaskListInput({ id: 9 }, { page: '2', limit: '999' });
   assert.equal(input.userId, 9);
   assert.equal(input.limit, 100);
+  assert.equal(input.page, 2);
+  assert.equal(input.offset, 100);
   assert.throws(() => buildActiveBiddingTaskListInput(null, {}), /not logged in/);
 }
 
@@ -171,7 +175,8 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
   assert.match(query.sql, /MAX\(t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.match(query.sql, /AS product_type/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
-  assert.deepEqual(query.params, [9, 100]);
+  assert.match(query.sql, /LIMIT \? OFFSET \?/);
+  assert.deepEqual(query.params, [9, 100, 0]);
 }
 
 function testProductTypeFallsBackToTaxLabel() {
