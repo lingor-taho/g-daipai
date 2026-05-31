@@ -212,10 +212,12 @@ function extractShippingFeeText(html) {
   if (!text && !shippingCharge && !shippingInput) return '';
   const structuredShippingFee = extractLowestStructuredShippingFee(nextDataItem);
   if (structuredShippingFee > 0) return `${structuredShippingFee}円`;
+  const isLaterInputShipping = /取引ナビ開始時に入力/.test(shippingInput);
   const priceMatch = text.match(/送料[^\d]{0,20}([\d,]+)\s*円/);
-  if (priceMatch) return `${priceMatch[1].replace(/,/g, '')}円`;
+  if (priceMatch && !isLaterInputShipping) return `${priceMatch[1].replace(/,/g, '')}円`;
   if (/着払い/.test(labelText)) return '着払い';
   if (/seller/i.test(shippingCharge)) return '無料';
+  if (/winner/i.test(shippingCharge)) return '落札者負担';
   if (/無料/.test(labelText)) return '無料';
   if (/落札者負担|winner/i.test(labelText)) return '落札者負担';
   return '';

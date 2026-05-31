@@ -337,6 +337,51 @@ async function testParseShippingFeeUsesLowestStructuredShippingMethod() {
   assert.equal(product.shippingFeeText, '110円');
 }
 
+async function testWinnerShippingBeatsUnrelatedFreeText() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Winner Shipping Test - Yahoo!</title></head>
+      <body>
+        <section>送料 関連キャンペーン 無料</section>
+        <script id="__NEXT_DATA__" type="application/json">
+          {"props":{"pageProps":{"initialState":{"detail":{"item":{
+            "chargeForShipping":"winner",
+            "shippingInput":"取引ナビ開始時に入力",
+            "shipping":{"methods":[
+              {"name":"定形外郵便","isFlatFee":false}
+            ]}
+          }}}}}}
+        </script>
+      </body>
+    </html>
+  `, 'c1135451955', 'https://auctions.yahoo.co.jp/jp/auction/c1135451955');
+
+  assert.equal(product.shippingFeeText, '落札者負担');
+}
+
+async function testLaterInputWinnerShippingIgnoresReferencePricesInDescription() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Later Input Shipping Test - Yahoo!</title></head>
+      <body>
+        <script id="__NEXT_DATA__" type="application/json">
+          {"props":{"pageProps":{"initialState":{"detail":{"item":{
+            "chargeForShipping":"winner",
+            "shippingInput":"取引ナビ開始時に入力",
+            "shipping":{"methods":[
+              {"name":"スマートレター","isFlatFee":false},
+              {"name":"おてがる配送ゆうパック","isFlatFee":false}
+            ]},
+            "descriptionHtml":"おてがる版ゆうパックは配送先によって送料異なります。750円以上の送料となります。"
+          }}}}}}
+        </script>
+      </body>
+    </html>
+  `, 's1113817953', 'https://auctions.yahoo.co.jp/jp/auction/s1113817953');
+
+  assert.equal(product.shippingFeeText, '落札者負担');
+}
+
 async function testParsePersonalTaxTypeFromTaxZeroLabel() {
   const product = parseProductHtml(`
     <html>
@@ -643,6 +688,8 @@ async function run() {
   await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();
   await testParseShippingFeeUsesLowestStructuredShippingMethod();
+  await testWinnerShippingBeatsUnrelatedFreeText();
+  await testLaterInputWinnerShippingIgnoresReferencePricesInDescription();
   await testParsePersonalTaxTypeFromTaxZeroLabel();
   await testParseTaxZeroWinsWhenBothTaxLabelsExist();
   await testFallsBackToPlaywrightWhenHttpFails();
