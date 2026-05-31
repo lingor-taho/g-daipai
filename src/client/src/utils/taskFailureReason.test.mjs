@@ -33,3 +33,16 @@ assert.equal(
   getTaskFailureLabel('confirm button not found'),
   '失败：系统原因'
 );
+
+assert.equal(
+  getTaskFailureLabel('?????????30??????????????????tab'),
+  getTaskFailureLabel('timeout')
+);
+assert.equal(
+  getTaskFailureLabel('Task execution timeout after 30s; task tab closed'),
+  getTaskFailureLabel('timeout')
+);
+assert.equal(
+  getTaskFailureLabel('garbled 30 seconds no response task tab'),
+  getTaskFailureLabel('timeout')
+);

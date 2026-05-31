@@ -91,7 +91,7 @@ function sleep(ms) {
 }
 
 function buildTaskTimeoutError(timeoutMs = TASK_EXECUTION_TIMEOUT_MS) {
-  const error = new Error(`任务执行超过${Math.round(timeoutMs / 1000)}秒无响应，已自动关闭任务tab`);
+  const error = new Error(`Task execution timeout after ${Math.round(timeoutMs / 1000)}s; task tab closed`);
   error.closeTab = true;
   return error;
 }

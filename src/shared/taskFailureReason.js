@@ -23,7 +23,7 @@ export function getTaskFailureLabel(errorMsg) {
     return '失败：出价后被超过';
   }
 
-  if (/timeout|timed out|超时|加载超时|响应超时|networkidle|瓒呮椂/i.test(text)) {
+  if (/Task execution timeout after|timeout|timed out|超时|加载超时|响应超时|networkidle|30.*tab|\?\?\?30\?\?\?\?\?\?|瓒呮椂/i.test(text)) {
     return '失败：响应超时';
   }
 

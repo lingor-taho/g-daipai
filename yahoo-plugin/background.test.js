@@ -70,7 +70,7 @@ async function testWithTimeoutMarksCloseTab() {
     () => api.withTimeout(new Promise(() => {}), 30000),
     error => {
       assert.equal(error.closeTab, true);
-      assert.match(error.message, /30秒/);
+      assert.match(error.message, /Task execution timeout after 30s/);
       return true;
     }
   );

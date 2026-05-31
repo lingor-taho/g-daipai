@@ -61,11 +61,15 @@ function shouldSplitDirectBidByYahooLowPriceRule({ strategy, bidMode, currentPri
 
 function getMinMultiBidIncrement(maxPrice) {
   const value = Number(maxPrice || 0);
-  return value > 0 ? Math.floor(value / 20) : 0;
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 5000) return 100;
+  if (value < 10000) return 250;
+  if (value < 50000) return 500;
+  return 1000;
 }
 
 function getDefaultMultiBidIncrement(maxPrice) {
-  return Math.max(500, getMinMultiBidIncrement(maxPrice));
+  return getMinMultiBidIncrement(maxPrice);
 }
 
 function hasDirectBiddingRecord(tasks, auctionId) {

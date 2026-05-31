@@ -146,7 +146,10 @@ async function failPricedOutPendingTasks(database = db) {
          is_highest_bidder = 0,
          error_msg = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE status = 'pending'
+     WHERE (
+         status = 'pending'
+         OR (status = 'bidding' AND strategy = 'multi_bid')
+       )
        AND current_price IS NOT NULL
        AND max_price IS NOT NULL
        AND current_price > 0

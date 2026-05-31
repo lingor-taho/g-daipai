@@ -170,13 +170,14 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
 
   assert.match(query.sql, /bi\.status IN \('highest', 'outbid'\)/);
   assert.match(query.sql, /bi\.status AS bidding_status/);
-  assert.match(query.sql, /MAX\(t\.product_title\) AS product_title/);
+  assert.match(query.sql, /ORDER BY datetime\(t2\.created_at\) DESC, t2\.id DESC/);
+  assert.match(query.sql, /t\.product_title/);
   assert.doesNotMatch(query.sql, /bi\.product_title/);
-  assert.match(query.sql, /MAX\(t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /t\.shipping_fee_text/);
   assert.match(query.sql, /AS product_type/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.match(query.sql, /LIMIT \? OFFSET \?/);
-  assert.deepEqual(query.params, [9, 100, 0]);
+  assert.deepEqual(query.params, [9, 9, 100, 0]);
 }
 
 function testProductTypeFallsBackToTaxLabel() {
@@ -262,15 +263,17 @@ function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000() {
   assert.doesNotThrow(() => validateMultiBidUserMaxPrice('direct', 1000));
 }
 
-function testMultiBidIncrementUsesOneTwentiethRule() {
-  assert.equal(getMinMultiBidIncrement(5500), 275);
-  assert.equal(getDefaultMultiBidIncrement(5500), 500);
+function testMultiBidIncrementUsesYahooBidStepRule() {
+  assert.equal(getMinMultiBidIncrement(4999), 100);
+  assert.equal(getDefaultMultiBidIncrement(4999), 100);
+  assert.equal(getMinMultiBidIncrement(5000), 250);
   assert.equal(getMinMultiBidIncrement(10000), 500);
   assert.equal(getDefaultMultiBidIncrement(10000), 500);
-  assert.equal(getMinMultiBidIncrement(15000), 750);
-  assert.equal(getDefaultMultiBidIncrement(15000), 750);
-  assert.equal(validateMultiBidIncrement('multi_bid', 5500, 275), 275);
-  assert.throws(() => validateMultiBidIncrement('multi_bid', 10000, 499), /500/);
+  assert.equal(getMinMultiBidIncrement(49999), 500);
+  assert.equal(getMinMultiBidIncrement(50000), 1000);
+  assert.equal(getDefaultMultiBidIncrement(50000), 1000);
+  assert.equal(validateMultiBidIncrement('multi_bid', 5500, 250), 250);
+  assert.throws(() => validateMultiBidIncrement('multi_bid', 5500, 249), /250/);
 }
 
 function testProductSubmissionOwnerAllowsOriginalUser() {
@@ -368,7 +371,7 @@ testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
 testStoreBuyoutPriceIsAlreadyTaxIncluded();
 testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000();
-testMultiBidIncrementUsesOneTwentiethRule();
+testMultiBidIncrementUsesYahooBidStepRule();
 testProductSubmissionOwnerAllowsOriginalUser();
 testProductSubmissionOwnerRejectsOtherUser();
 testAutomaticStrategyDetection();

@@ -101,11 +101,14 @@ function validateMultiBidUserMaxPrice(strategy, userMaxPrice, minPrice = DEFAULT
 function getMinMultiBidIncrement(userMaxPrice) {
   const value = Number(userMaxPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.floor(value / 20);
+  if (value < 5000) return 100;
+  if (value < 10000) return 250;
+  if (value < 50000) return 500;
+  return 1000;
 }
 
 function getDefaultMultiBidIncrement(userMaxPrice) {
-  return Math.max(500, getMinMultiBidIncrement(userMaxPrice));
+  return getMinMultiBidIncrement(userMaxPrice);
 }
 
 function validateMultiBidIncrement(strategy, userMaxPrice, increment) {
@@ -253,37 +256,40 @@ function buildRecentDateKeys(days, now = new Date()) {
 function buildActiveBiddingTaskListQuery(input) {
   return {
     sql: `SELECT
-         MAX(t.id) AS id,
+         t.id,
          bi.product_id,
          bi.product_url,
-         MAX(t.product_title) AS product_title,
+         t.product_title,
          bi.product_image_url,
          bi.current_price,
-         MAX(t.buyout_price) AS buyout_price,
-         COALESCE(MAX(t.tax_type), 'tax_zero') AS tax_type,
-         COALESCE(MAX(t.product_type), CASE WHEN COALESCE(MAX(t.tax_type), 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
-         MAX(t.shipping_fee_text) AS shipping_fee_text,
-         MAX(t.max_price) AS max_price,
-         MAX(t.user_max_price) AS user_max_price,
-         COALESCE(
-           MAX(CASE WHEN t.strategy = 'multi_bid' THEN t.strategy END),
-           MAX(t.strategy)
-         ) AS strategy,
-         MAX(t.bid_mode) AS bid_mode,
+         t.buyout_price,
+         COALESCE(t.tax_type, 'tax_zero') AS tax_type,
+         COALESCE(t.product_type, CASE WHEN COALESCE(t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+         t.shipping_fee_text,
+         t.max_price,
+         t.user_max_price,
+         t.strategy,
+         t.bid_mode,
          'bidding' AS status,
          bi.status AS bidding_status,
-         MAX(t.end_time) AS end_time,
+         t.end_time,
          CASE WHEN bi.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder,
-         MAX(t.last_bid_at) AS last_bid_at,
+         t.last_bid_at,
          bi.synced_at AS updated_at
        FROM bidding_items bi
-       INNER JOIN tasks t ON t.product_id = bi.product_id
+       INNER JOIN tasks t ON t.id = (
+         SELECT t2.id
+         FROM tasks t2
+         WHERE t2.user_id = ?
+           AND t2.product_id = bi.product_id
+         ORDER BY datetime(t2.created_at) DESC, t2.id DESC
+         LIMIT 1
+       )
        WHERE t.user_id = ?
          AND bi.status IN ('highest', 'outbid')
-       GROUP BY bi.product_id
        ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
        LIMIT ? OFFSET ?`,
-    params: [input.userId, input.limit, input.offset || 0]
+    params: [input.userId, input.userId, input.limit, input.offset || 0]
   };
 }
 
@@ -499,10 +505,10 @@ router.get('/won', async (req, res) => {
     const tasks = await db.getAll(
       `SELECT
          t.id,
-         t.product_id,
+         won_task.product_id,
          t.product_url,
-         t.product_title,
-         t.product_image_url,
+         COALESCE(t.product_title, won_task.product_title) AS product_title,
+         COALESCE(t.product_image_url, won_task.product_image_url) AS product_image_url,
          t.current_price,
          t.buyout_price,
          t.tax_type,
@@ -523,13 +529,21 @@ router.get('/won', async (req, res) => {
          o.jpy_to_cny_rate,
          o.order_status,
          o.tracking_number
-       FROM tasks t
-       LEFT JOIN orders o ON o.task_id = t.id
-       WHERE t.user_id = ?
-         AND t.status = 'success'
-       ORDER BY datetime(COALESCE(o.won_at, t.updated_at)) DESC, t.id DESC
+       FROM tasks won_task
+       LEFT JOIN orders o ON o.task_id = won_task.id
+       INNER JOIN tasks t ON t.id = (
+         SELECT t2.id
+         FROM tasks t2
+         WHERE t2.user_id = ?
+           AND t2.product_id = won_task.product_id
+         ORDER BY datetime(t2.created_at) DESC, t2.id DESC
+         LIMIT 1
+       )
+       WHERE won_task.user_id = ?
+         AND won_task.status = 'success'
+       ORDER BY datetime(COALESCE(o.won_at, won_task.updated_at)) DESC, won_task.id DESC
        LIMIT ? OFFSET ?`,
-      [input.userId, input.limit, input.offset]
+      [input.userId, input.userId, input.limit, input.offset]
     );
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
