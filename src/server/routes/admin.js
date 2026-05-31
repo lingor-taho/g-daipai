@@ -20,6 +20,8 @@ const {
   saveDataCleanupConfig
 } = require('../services/dataCleanup');
 
+const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
+
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
 
@@ -603,7 +605,7 @@ router.post('/orders/settle', async (req, res) => {
              tax_included_final_price = ?,
              has_user_finance_override = ?,
              total_amount_cny = ?,
-             order_status = 'pending_payment',
+             order_status = ?,
              settled_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
@@ -615,6 +617,7 @@ router.post('/orders/settle', async (req, res) => {
           settlement.taxIncludedFinalPrice,
           settlement.hasUserFinanceOverride ? 1 : 0,
           settlement.payableCny,
+          ORDER_STATUS_PENDING_SETTLEMENT,
           orderId
         ]
       );
@@ -1061,5 +1064,6 @@ module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
+module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;

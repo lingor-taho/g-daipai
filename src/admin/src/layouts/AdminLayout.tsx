@@ -12,9 +12,7 @@ const menuItemsConfig = [
   { key: '/server-accounts', fullLabel: '服务器账号', shortLabel: '服' },
   { key: '/multi-bid-settings', fullLabel: '系统配置', shortLabel: '系' },
   { key: '/data-cleanup', fullLabel: '清理数据', shortLabel: '清' },
-  { key: '/shipping-refresh', fullLabel: '运费更新', shortLabel: '运' },
-  { key: '/product-type-refresh', fullLabel: '商品类型更新', shortLabel: '类' },
-  { key: '/orders-resync', fullLabel: '落札商品更新', shortLabel: '落' },
+  { key: '/data-batch', fullLabel: '数据批处理', shortLabel: '批' },
   { key: '/special-user-settings', fullLabel: '特殊用户设置', shortLabel: '特' },
   { key: '/orders', fullLabel: '订单管理', shortLabel: '订' }
 ];

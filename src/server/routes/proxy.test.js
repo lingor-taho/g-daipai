@@ -314,6 +314,29 @@ async function testParseShippingFeeFromItemPostage() {
   assert.equal(cashOnDeliveryUnavailableDescription.shippingFeeText, '落札者負担');
 }
 
+async function testParseShippingFeeUsesLowestStructuredShippingMethod() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Shipping Methods Test - Yahoo!</title></head>
+      <body>
+        <script id="__NEXT_DATA__" type="application/json">
+          {"props":{"pageProps":{"initialState":{"detail":{"item":{
+            "chargeForShipping":"winner",
+            "shipping":{"methods":[
+              {"name":"定形郵便","isFlatFee":true,"shippingFee":110},
+              {"name":"定形郵便","isFlatFee":true,"shippingFee":210},
+              {"name":"おてがる配送ゆうパケット","isFlatFee":false}
+            ]},
+            "descriptionHtml":"発送方法 定形郵便 送料210円"
+          }}}}}}
+        </script>
+      </body>
+    </html>
+  `, 'm1114324624', 'https://auctions.yahoo.co.jp/jp/auction/m1114324624');
+
+  assert.equal(product.shippingFeeText, '110円');
+}
+
 async function testParsePersonalTaxTypeFromTaxZeroLabel() {
   const product = parseProductHtml(`
     <html>
@@ -619,6 +642,7 @@ async function run() {
   await testParseStoreTaxTypeFromTaxIncludedLabel();
   await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();
+  await testParseShippingFeeUsesLowestStructuredShippingMethod();
   await testParsePersonalTaxTypeFromTaxZeroLabel();
   await testParseTaxZeroWinsWhenBothTaxLabelsExist();
   await testFallsBackToPlaywrightWhenHttpFails();

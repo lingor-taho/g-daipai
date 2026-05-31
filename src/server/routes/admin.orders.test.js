@@ -5,6 +5,7 @@ const {
   canSettleShippingFeeText,
   buildOrderSettlement,
   buildAdminOrdersListQuery,
+  ORDER_STATUS_PENDING_SETTLEMENT,
   normalizeProductType,
   parseShippingFeeToNumber
 } = require('./admin');
@@ -157,6 +158,10 @@ function testAdminOrdersQueryIncludesProductType() {
   assert.deepEqual(query.params, [10, 0]);
 }
 
+function testSettlementStatusUsesPendingSettlement() {
+  assert.equal(ORDER_STATUS_PENDING_SETTLEMENT, 'pending_settlement');
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
@@ -165,3 +170,4 @@ testSpecialUserConfigOverridesOnlyConfiguredValues();
 testBuildOrderSettlementUsesSubmittedRateAndOverrides();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
+testSettlementStatusUsesPendingSettlement();

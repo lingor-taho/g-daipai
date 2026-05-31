@@ -188,6 +188,13 @@ function getProductTypeFromTaxType(taxType) {
   return taxType === 'tax_included' ? 'store' : 'normal';
 }
 
+function extractLowestStructuredShippingFee(item) {
+  const prices = (Array.isArray(item?.shipping?.methods) ? item.shipping.methods : [])
+    .map(method => Number(method?.shippingFee || 0))
+    .filter(amount => Number.isFinite(amount) && amount > 0);
+  return prices.length ? Math.min(...prices) : 0;
+}
+
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
   const nextDataItem = extractNextDataItem(html);
@@ -203,6 +210,8 @@ function extractShippingFeeText(html) {
   const shippingInput = String(nextDataItem?.shippingInput || '');
   const labelText = normalizeText([postageHtml, fallbackText, shippingInput, shippingCharge].filter(Boolean).join(' '));
   if (!text && !shippingCharge && !shippingInput) return '';
+  const structuredShippingFee = extractLowestStructuredShippingFee(nextDataItem);
+  if (structuredShippingFee > 0) return `${structuredShippingFee}円`;
   const priceMatch = text.match(/送料[^\d]{0,20}([\d,]+)\s*円/);
   if (priceMatch) return `${priceMatch[1].replace(/,/g, '')}円`;
   if (/着払い/.test(labelText)) return '着払い';

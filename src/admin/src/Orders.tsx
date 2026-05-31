@@ -21,6 +21,12 @@ function renderProductTypeTag(productType: string | null | undefined) {
   return <span style={{ marginLeft: 6 }}>-</span>;
 }
 
+function renderOrderStatus(status: string | null | undefined) {
+  if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
+  if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
+  return '';
+}
+
 const noWrapCell = {
   style: {
     whiteSpace: 'nowrap'
@@ -144,7 +150,7 @@ export default function OrdersPage() {
     { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 70, onCell: () => noWrapCell },
     { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
     { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
-    { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.order_status === 'pending_payment' ? <Tag color="blue">待支付</Tag> : '' },
+    { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => renderOrderStatus(row.order_status) },
     { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];
 
