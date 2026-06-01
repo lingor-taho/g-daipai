@@ -481,6 +481,67 @@ function testBidLimitAllowsPlannedPersonalBidAtUserMax() {
   assert.equal(result, null);
 }
 
+function testMultiBidCapsToMaxWhenNormalIncrementExceedsMaxButMaxIsValid() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 26000,
+    maxPrice: 30000,
+    userMaxPrice: 30000,
+    increment: 5000,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 30000);
+  assert.equal(result.cappedToMax, true);
+  assert.equal(result.minIncrement, 500);
+}
+
+function testMultiBidFailsWhenMaxPriceCannotMeetYahooMinIncrement() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 29600,
+    maxPrice: 30000,
+    userMaxPrice: 30000,
+    increment: 1000,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.currentPrice, 30600);
+  assert.equal(result.maxPrice, 30000);
+}
+
+function testMultiBidCapsToMaxWhenNextNormalBidWouldLeaveOneMinimumStep() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 28100,
+    maxPrice: 30000,
+    userMaxPrice: 30000,
+    increment: 1000,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 30000);
+  assert.equal(result.cappedToMax, true);
+}
+
+function testMultiBidDoesNotCapWhenNearCeilingEqualsMax() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 28000,
+    maxPrice: 30000,
+    userMaxPrice: 30000,
+    increment: 1000,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 29000);
+  assert.equal(result.cappedToMax, undefined);
+}
+
 function testPlainBidEntryIsNotFinalAgree() {
   const api = loadContentForTest('');
 
@@ -1111,6 +1172,10 @@ async function run() {
   testBidLimitRejectsTaxTotalAboveUserMax();
   testBidLimitRejectsPlannedStoreBidAboveUserMax();
   testBidLimitAllowsPlannedPersonalBidAtUserMax();
+  testMultiBidCapsToMaxWhenNormalIncrementExceedsMaxButMaxIsValid();
+  testMultiBidFailsWhenMaxPriceCannotMeetYahooMinIncrement();
+  testMultiBidCapsToMaxWhenNextNormalBidWouldLeaveOneMinimumStep();
+  testMultiBidDoesNotCapWhenNearCeilingEqualsMax();
   testPlainBidEntryIsNotFinalAgree();
   testExtractTaxIncludedTotal();
   testMultiBidInputPageDetection();

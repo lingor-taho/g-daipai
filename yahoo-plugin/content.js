@@ -369,6 +369,58 @@ function getTaxIncludedBidPrice(bidPrice, taxType) {
   return Math.floor(value * 1.1);
 }
 
+function getYahooMinBidIncrement(currentPrice) {
+  const value = Number(currentPrice || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 5000) return 100;
+  if (value < 10000) return 250;
+  if (value < 50000) return 500;
+  return 1000;
+}
+
+function resolveMultiBidNextBidPrice({ currentPrice, maxPrice, userMaxPrice, increment, taxType }) {
+  const current = Number(currentPrice || 0);
+  const max = Number(maxPrice || 0);
+  const userMax = Number(userMaxPrice || 0);
+  const step = Number(increment || 0);
+  if (!current || !max || !userMax || !step) {
+    return { success: false, error: 'multi bid price data missing', closeTab: true };
+  }
+
+  const minIncrement = getYahooMinBidIncrement(current);
+  const normalBidPrice = current + step;
+  const normalBidTaxIncludedPrice = getTaxIncludedBidPrice(normalBidPrice, taxType);
+  const maxBidTaxIncludedPrice = getTaxIncludedBidPrice(max, taxType);
+  const canBidAtMax = max - current >= minIncrement && maxBidTaxIncludedPrice <= userMax;
+  const shouldCapToMax = normalBidTaxIncludedPrice > userMax ||
+    current + minIncrement * 2 + step > max;
+
+  if (shouldCapToMax && canBidAtMax) {
+    return {
+      success: true,
+      bidPrice: Math.floor(max),
+      cappedToMax: true,
+      minIncrement
+    };
+  }
+
+  if (normalBidTaxIncludedPrice > userMax) {
+    return {
+      success: false,
+      error: `加价后金额 ${normalBidTaxIncludedPrice}円 已高于最高价 ${userMax}円，停止出价`,
+      currentPrice: normalBidTaxIncludedPrice,
+      maxPrice: userMax,
+      closeTab: true
+    };
+  }
+
+  return {
+    success: true,
+    bidPrice: Math.floor(normalBidPrice),
+    minIncrement
+  };
+}
+
 function isFinalAgreeButtonText(text) {
   return /\u540c\u610f.*(?:\u5165\u672d|\u843d\u672d)|\u4e0a\u8a18.*(?:\u5165\u672d|\u843d\u672d)/.test(text);
 }
@@ -642,26 +694,20 @@ async function executeBidV3(maxPrice, options = {}) {
         };
       }
       const currentTaxExcludedPrice = extractCurrentAuctionPrice() || numericCurrentPrice;
-      const nextBidPrice = currentTaxExcludedPrice + numericMultiBidIncrement;
-      const nextBidTaxIncludedPrice = getTaxIncludedBidPrice(nextBidPrice, taxType);
-      if (!currentTaxExcludedPrice || !numericMultiBidIncrement) {
-        return { success: false, error: 'multi bid price data missing', closeTab: true };
-      }
-      if (nextBidTaxIncludedPrice > numericUserMaxPrice) {
-        return {
-          success: false,
-          error: `加价后金额 ${nextBidTaxIncludedPrice}円 已高于最高价 ${numericUserMaxPrice}円，停止出价`,
-          currentPrice: nextBidTaxIncludedPrice,
-          maxPrice: numericUserMaxPrice,
-          closeTab: true
-        };
-      }
+      const nextBid = resolveMultiBidNextBidPrice({
+        currentPrice: currentTaxExcludedPrice,
+        maxPrice: numericMaxPrice,
+        userMaxPrice: numericUserMaxPrice,
+        increment: numericMultiBidIncrement,
+        taxType
+      });
+      if (!nextBid.success) return nextBid;
       const priceInput = findPriceInput();
       if (!priceInput) {
         return { success: false, error: 'price input not found' };
       }
       priceInput.focus();
-      priceInput.value = String(nextBidPrice);
+      priceInput.value = String(nextBid.bidPrice);
       priceInput.dispatchEvent(new Event('input', { bubbles: true }));
       priceInput.dispatchEvent(new Event('change', { bubbles: true }));
       const confirmBtn = await waitForClickable([/\u78ba\u8a8d\u3059\u308b/, /\u78ba\u8a8d/]);
@@ -1338,6 +1384,8 @@ window.__G_DAIPAI_TEST__ = {
   detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,
+  getYahooMinBidIncrement,
+  resolveMultiBidNextBidPrice,
   validateUserMaxBidLimit,
   executeBidV3,
   isBidInputPage: () => isBidInputPage(),
