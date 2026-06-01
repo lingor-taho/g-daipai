@@ -24,6 +24,8 @@ function renderProductTypeTag(productType: string | null | undefined) {
 function renderOrderStatus(status: string | null | undefined) {
   if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
+  if (status === 'waiting_shipping') return <Tag color="orange">等待运费</Tag>;
+  if (status === 'pending_bundle') return <Tag color="purple">待同捆</Tag>;
   return '';
 }
 
@@ -69,6 +71,7 @@ export default function OrdersPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [autoSelectNonBidderPays, setAutoSelectNonBidderPays] = useState(false);
   const [currentRows, setCurrentRows] = useState<any[]>([]);
+  const [idleFlags, setIdleFlags] = useState<any>(null);
 
   async function loadFinanceConfig() {
     const data = await fetchAdminJson('/api/admin/finance-config');
@@ -81,6 +84,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     loadFinanceConfig().catch(() => {});
+    fetchAdminJson('/api/admin/idle-flags').then(setIdleFlags).catch(() => {});
   }, []);
 
   async function handleSaveConfig() {
@@ -151,6 +155,7 @@ export default function OrdersPage() {
     { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
     { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
     { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => renderOrderStatus(row.order_status) },
+    { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 160, ellipsis: true, onCell: () => noWrapCell },
     { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];
 
@@ -199,6 +204,13 @@ export default function OrdersPage() {
           <Typography.Text type="secondary">
             已选择 {selectedRowKeys.length} 条；每次进入页面默认不勾选订单。
           </Typography.Text>
+        </Space>
+      </Card>
+
+      <Card>
+        <Space wrap size={16}>
+          <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
+          <Typography.Text>扫描flag：{idleFlags?.scanFlag ?? '-'}</Typography.Text>
         </Space>
       </Card>
 

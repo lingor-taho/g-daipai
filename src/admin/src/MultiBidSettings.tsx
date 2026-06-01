@@ -13,9 +13,31 @@ async function saveMultiBidConfig(values: any) {
   return data;
 }
 
+async function requestTransactionStart() {
+  const res = await fetch('/api/admin/transaction-start/request', {
+    method: 'POST',
+    headers: authHeaders()
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '执行失败');
+  return data;
+}
+
+async function resetTransactionStartOrders() {
+  const res = await fetch('/api/admin/transaction-start/reset-orders', {
+    method: 'POST',
+    headers: authHeaders()
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '初始化失败');
+  return data;
+}
+
 export default function MultiBidSettingsPage() {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     fetchAdminJson('/api/admin/multi-bid-config')
@@ -25,7 +47,11 @@ export default function MultiBidSettingsPage() {
           intervalMinutes: data.intervalMinutes ?? 5,
           multiBidMinPrice: data.multiBidMinPrice ?? 5000,
           idleSyncIntervalMinutes: data.idleSyncIntervalMinutes ?? 5,
-          idleBidGuardMinutes: data.idleBidGuardMinutes ?? 10
+          idleBidGuardMinutes: data.idleBidGuardMinutes ?? 15,
+          transactionStartHour: data.transactionStartHour ?? 1,
+          scanStartHour: data.scanStartHour ?? 1,
+          scanEndHour: data.scanEndHour ?? 20,
+          scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5
         });
       })
       .catch(() => {});
@@ -44,6 +70,30 @@ export default function MultiBidSettingsPage() {
     }
   }
 
+  async function handleRequestTransactionStart() {
+    setRequesting(true);
+    try {
+      await requestTransactionStart();
+      message.success('交易开始已加入空闲执行队列');
+    } catch (e: any) {
+      message.error(e.message || '执行失败');
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  async function handleResetTransactionStartOrders() {
+    setResetting(true);
+    try {
+      const data = await resetTransactionStartOrders();
+      message.success(`已初始化 ${data.reset || 0} 条订单状态`);
+    } catch (e: any) {
+      message.error(e.message || '初始化失败');
+    } finally {
+      setResetting(false);
+    }
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Form
@@ -55,7 +105,11 @@ export default function MultiBidSettingsPage() {
           intervalMinutes: 5,
           multiBidMinPrice: 5000,
           idleSyncIntervalMinutes: 5,
-          idleBidGuardMinutes: 10
+          idleBidGuardMinutes: 15,
+          transactionStartHour: 1,
+          scanStartHour: 1,
+          scanEndHour: 20,
+          scanEveryIdleRuns: 5
         }}
         style={{ maxWidth: 640 }}
       >
@@ -86,7 +140,7 @@ export default function MultiBidSettingsPage() {
           </Typography.Text>
         </Card>
 
-        <Card title="入札、落札配置" style={{ marginTop: 16 }}>
+        <Card title="入札、落札、交易开始、扫描、付款、收货配置" style={{ marginTop: 16 }}>
           <Form.Item
             name="idleSyncIntervalMinutes"
             label="空闲同步间隔"
@@ -101,8 +155,42 @@ export default function MultiBidSettingsPage() {
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item
+            name="transactionStartHour"
+            label="交易开始执行整点"
+            rules={[{ required: true, message: '请输入交易开始执行整点' }]}
+          >
+            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="手动执行交易开始">
+            <Space wrap>
+              <Button loading={requesting} onClick={handleRequestTransactionStart}>加入执行队列</Button>
+              <Button danger loading={resetting} onClick={handleResetTransactionStartOrders}>初始化订单状态</Button>
+            </Space>
+          </Form.Item>
+          <Form.Item
+            name="scanStartHour"
+            label="扫描开始整点"
+            rules={[{ required: true, message: '请输入扫描开始整点' }]}
+          >
+            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="scanEndHour"
+            label="扫描结束整点"
+            rules={[{ required: true, message: '请输入扫描结束整点' }]}
+          >
+            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="scanEveryIdleRuns"
+            label="每 X 次空闲同步执行扫描"
+            rules={[{ required: true, message: '请输入扫描间隔次数' }]}
+          >
+            <InputNumber min={1} step={1} precision={0} addonAfter="次" style={{ width: '100%' }} />
+          </Form.Item>
           <Typography.Text type="secondary">
-            插件没有可执行任务，并且保护窗口内没有即将出价的任务时，才会抓取入札中和落札商品。
+            插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会执行这些空闲操作。
           </Typography.Text>
         </Card>
 

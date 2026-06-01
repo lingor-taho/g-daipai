@@ -34,6 +34,14 @@ function parseTaskTimeMs(value) {
   return Number.isFinite(time) ? time : null;
 }
 
+function getLocalDateKey(nowMs = Date.now()) {
+  const date = new Date(nowMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function toIsoOrNull(ms) {
   return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null;
 }
@@ -405,7 +413,8 @@ router.get('/orders', async (req, res) => {
       rate_adjustment: settled ? item.rate_adjustment : null,
       has_user_finance_override: settled ? Boolean(item.has_user_finance_override) : null,
       payable_cny: settled ? item.total_amount_cny : null,
-      order_status: settled ? item.order_status : null
+      order_status: item.order_status || null,
+      transaction_start_error: item.transaction_start_error || null
     };
   });
   res.json({ items: mappedItems, total: countResult?.total || 0 });
@@ -765,7 +774,7 @@ async function saveUserFinanceOverride(body = {}) {
 
 async function getMultiBidConfig() {
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
@@ -773,7 +782,11 @@ async function getMultiBidConfig() {
     intervalMinutes: Number(values.multi_bid_interval_minutes || 5),
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5),
     idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || 10),
-    multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE)
+    multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
+    transactionStartHour: Number(values.transaction_start_hour ?? 1),
+    scanStartHour: Number(values.scan_start_hour ?? 1),
+    scanEndHour: Number(values.scan_end_hour ?? 20),
+    scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? 5)
   };
 }
 
@@ -787,6 +800,10 @@ router.put('/multi-bid-config', async (req, res) => {
   const idleSyncIntervalMinutes = Number(req.body.idleSyncIntervalMinutes ?? 5);
   const idleBidGuardMinutes = Number(req.body.idleBidGuardMinutes ?? 10);
   const multiBidMinPrice = Number(req.body.multiBidMinPrice ?? DEFAULT_MULTI_BID_MIN_PRICE);
+  const transactionStartHour = Number(req.body.transactionStartHour ?? 1);
+  const scanStartHour = Number(req.body.scanStartHour ?? 1);
+  const scanEndHour = Number(req.body.scanEndHour ?? 20);
+  const scanEveryIdleRuns = Number(req.body.scanEveryIdleRuns ?? 5);
   if (!Number.isFinite(startHours) || startHours <= 0) {
     return res.status(400).json({ error: 'valid startHours is required' });
   }
@@ -801,6 +818,18 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (!Number.isFinite(multiBidMinPrice) || multiBidMinPrice <= 0 || Math.floor(multiBidMinPrice) !== multiBidMinPrice) {
     return res.status(400).json({ error: 'valid multiBidMinPrice is required' });
+  }
+  for (const [name, value] of [
+    ['transactionStartHour', transactionStartHour],
+    ['scanStartHour', scanStartHour],
+    ['scanEndHour', scanEndHour]
+  ]) {
+    if (!Number.isFinite(value) || value < 0 || value > 23 || Math.floor(value) !== value) {
+      return res.status(400).json({ error: `valid ${name} is required` });
+    }
+  }
+  if (!Number.isFinite(scanEveryIdleRuns) || scanEveryIdleRuns <= 0 || Math.floor(scanEveryIdleRuns) !== scanEveryIdleRuns) {
+    return res.status(400).json({ error: 'valid scanEveryIdleRuns is required' });
   }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_start_hours', ?, CURRENT_TIMESTAMP)`,
@@ -822,7 +851,80 @@ router.put('/multi-bid-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_min_price', ?, CURRENT_TIMESTAMP)`,
     [String(multiBidMinPrice)]
   );
-  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice });
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_hour', ?, CURRENT_TIMESTAMP)`,
+    [String(transactionStartHour)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('scan_start_hour', ?, CURRENT_TIMESTAMP)`,
+    [String(scanStartHour)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('scan_end_hour', ?, CURRENT_TIMESTAMP)`,
+    [String(scanEndHour)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('scan_every_idle_runs', ?, CURRENT_TIMESTAMP)`,
+    [String(scanEveryIdleRuns)]
+  );
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, scanStartHour, scanEndHour, scanEveryIdleRuns });
+});
+
+router.post('/transaction-start/request', async (req, res) => {
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_requested', '1', CURRENT_TIMESTAMP)`
+  );
+  res.json({ success: true });
+});
+
+router.post('/transaction-start/reset-orders', async (req, res) => {
+  const result = await db.query(
+    `UPDATE orders
+     SET order_status = NULL,
+         bundle_group_id = NULL,
+         transaction_started_at = NULL,
+         transaction_start_error = NULL
+     WHERE settled_at IS NULL
+       AND (
+         order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle')
+         OR transaction_start_error IS NOT NULL
+         OR bundle_group_id IS NOT NULL
+         OR transaction_started_at IS NOT NULL
+       )`
+  );
+  res.json({ success: true, reset: result.rowCount || 0 });
+});
+
+router.get('/idle-flags', async (req, res) => {
+  const rows = await db.getAll(
+    `SELECT key, value FROM config
+     WHERE key IN (
+       'transaction_start_hour',
+       'transaction_start_requested',
+       'transaction_start_last_run_date',
+       'scan_every_idle_runs',
+       'scan_idle_counter'
+     )`
+  );
+  const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  const today = getLocalDateKey();
+  const nowHour = new Date().getHours();
+  const transactionStartHour = Number(values.transaction_start_hour ?? 1);
+  const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
+  const transactionStartLastRunDate = values.transaction_start_last_run_date || '';
+  const transactionStartFlag = transactionStartRequested || (nowHour >= transactionStartHour && transactionStartLastRunDate !== today) ? 1 : 0;
+  const scanEveryIdleRuns = Math.max(1, Number(values.scan_every_idle_runs || 5));
+  const scanIdleCounter = Math.max(0, Number(values.scan_idle_counter || 0));
+
+  res.json({
+    success: true,
+    transactionStartFlag,
+    transactionStartRequested: transactionStartRequested ? 1 : 0,
+    transactionStartHour,
+    transactionStartLastRunDate,
+    scanFlag: scanIdleCounter,
+    scanEveryIdleRuns
+  });
 });
 
 function parseShippingRefreshIds(value) {

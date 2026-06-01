@@ -2,6 +2,7 @@ const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
+const TRANSACTION_START_ENABLED = true;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
 
 let isRunning = false;
@@ -202,10 +203,15 @@ async function sendBidMessageV2(tabId, task) {
 }
 
 async function injectContentScript(tabId) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['content.js']
-  });
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js']
+    });
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to inject content script:', e);
+    throw e;
+  }
 }
 
 async function closeTaskTab(tabId) {
@@ -221,6 +227,20 @@ async function closeTaskTab(tabId) {
     }
   } catch (e) {
     console.warn('[Yahoo Bid] Failed to close task tab:', e);
+  }
+}
+
+async function closeTabIfExists(tabId) {
+  if (!tabId) return;
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch (e) {
+    console.warn('[Yahoo Bid] Failed to close tab:', e);
+  } finally {
+    managedTaskTabs.delete(tabId);
+    for (const [taskId, mappedTabId] of managedTaskTabsByTaskId.entries()) {
+      if (mappedTabId === tabId) managedTaskTabsByTaskId.delete(taskId);
+    }
   }
 }
 
@@ -458,6 +478,42 @@ async function syncBiddingItems(items) {
   }
 }
 
+async function fetchNextIdleAction() {
+  try {
+    const res = await apiFetch('/api/plugin/idle-action/next');
+    return await res.json();
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to fetch idle action:', e);
+    return { action: 'none' };
+  }
+}
+
+async function completeIdleAction(action) {
+  try {
+    await apiFetch('/api/plugin/idle-action/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action || 'none' })
+    });
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to complete idle action:', e);
+  }
+}
+
+async function fetchTransactionStartJobs() {
+  const res = await apiFetch('/api/plugin/transaction-start/jobs');
+  const data = await res.json();
+  return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+async function updateTransactionStartStatus(payload) {
+  await apiFetch('/api/plugin/transaction-start/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
 async function reportYahooLoginStatus(loginStatus) {
   if (!loginStatus?.status) return;
   try {
@@ -521,6 +577,435 @@ async function openBiddingPageForSync() {
   }
 }
 
+function isBidderPaysShippingText(value) {
+  return /\u843d\u672d\u8005\u8ca0\u62c5/.test(String(value || ''));
+}
+
+async function openTransactionPage(job) {
+  const createdTabIds = [];
+  if (job.transactionUrl) {
+    const tab = await chrome.tabs.create({ url: job.transactionUrl, active: false });
+    if (tab.id) createdTabIds.push(tab.id);
+    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+    await sleep(3000);
+    await injectContentScript(tab.id);
+    tab._gdaipaiCreatedTabIds = createdTabIds;
+    return tab;
+  }
+  const tab = await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/won', active: false });
+  if (tab.id) createdTabIds.push(tab.id);
+  if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+  await sleep(3000);
+  await injectContentScript(tab.id);
+  const clickResult = await chrome.tabs.sendMessage(tab.id, {
+    type: 'CLICK_TRANSACTION_CONTACT',
+    productId: job.productId
+  }).catch(error => ({ success: false, error: error.message || 'transaction contact click failed' }));
+  if (!clickResult?.success) {
+    throw new Error(clickResult?.error || 'transaction contact button not found');
+  }
+  if (clickResult.href) {
+    await chrome.tabs.update(tab.id, { url: clickResult.href, active: false });
+  } else {
+    await sleep(1500);
+    const nextTab = await switchToNewestNewTab(new Set(createdTabIds), tab);
+    for (const id of nextTab._gdaipaiCreatedTabIds || []) createdTabIds.push(id);
+    nextTab._gdaipaiCreatedTabIds = [...new Set(createdTabIds)];
+    return nextTab;
+  }
+  await waitForTabComplete(tab.id).catch(() => {});
+  await sleep(3000);
+  await injectContentScript(tab.id);
+  tab._gdaipaiCreatedTabIds = createdTabIds;
+  return tab;
+}
+
+async function getTabIds() {
+  const tabs = await chrome.tabs.query({});
+  return new Set(tabs.map(tab => tab.id).filter(Boolean));
+}
+
+async function switchToNewestNewTab(previousIds, fallbackTab) {
+  const tabs = await chrome.tabs.query({});
+  const newTabs = tabs
+    .filter(tab => tab.id && !previousIds.has(tab.id))
+    .sort((a, b) => (b.id || 0) - (a.id || 0));
+  if (!newTabs.length) return fallbackTab;
+  const nextTab = newTabs[0];
+  const created = new Set(fallbackTab?._gdaipaiCreatedTabIds || []);
+  if (nextTab.id) created.add(nextTab.id);
+  if (fallbackTab?.id && fallbackTab.id !== nextTab.id) {
+    await closeTabIfExists(fallbackTab.id);
+  }
+  if (nextTab.id) await waitForTabComplete(nextTab.id).catch(() => {});
+  await sleep(1500);
+  await injectContentScript(nextTab.id);
+  nextTab._gdaipaiCreatedTabIds = [...created];
+  return nextTab;
+}
+
+function getBundleActionPatternSource(action) {
+  const patterns = {
+    close: '\\u9589\\u3058\\u308b',
+    start: '^\\s*\\u307e\\u3068\\u3081\\u3066\\u53d6\\u5f15\\u3092(?:\\u306f\\u3058\\u3081\\u308b|\\u4f9d\\u983c\\u3059\\u308b)\\s*$',
+    decide: '\\u6c7a\\u5b9a\\u3059\\u308b'
+  };
+  return patterns[action] || '';
+}
+
+function isLikelyYahooTransactionTab(tab) {
+  const url = String(tab?.url || '');
+  return !url ||
+    /^about:blank/i.test(url) ||
+    /:\/\/(?:[^/]+\.)?auctions\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/contact\.auctions\.yahoo\.co\.jp\//i.test(url);
+}
+
+async function runMainWorldBundleActionClick(tabId, action) {
+  const pattern = getBundleActionPatternSource(action);
+  if (!pattern) return { success: false, error: 'unknown bundle action' };
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (patternStr) => {
+      const pattern = new RegExp(patternStr);
+      const getText = el => [
+        el.textContent,
+        el.value,
+        el.title,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+      const button = controls.find(el => pattern.test(getText(el)));
+      if (!button) return { success: false, error: 'button not found in MAIN world' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      button.focus?.();
+      const type = String(button.type || '').toLowerCase();
+      if (button.form && typeof button.form.requestSubmit === 'function' && (type === 'submit' || (!type && button.tagName === 'BUTTON'))) {
+        button.form.requestSubmit(button);
+        return { success: true, method: 'requestSubmit', text: getText(button) };
+      }
+      button.click();
+      return { success: true, method: 'click', text: getText(button) };
+    },
+    args: [pattern]
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'MAIN world click failed' };
+}
+
+async function getBundleActionClickPoint(tabId, action) {
+  const pattern = getBundleActionPatternSource(action);
+  if (!pattern) return { success: false, error: 'unknown bundle action' };
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (patternStr) => {
+      const pattern = new RegExp(patternStr);
+      const getText = el => [
+        el.textContent,
+        el.value,
+        el.title,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+      const button = controls.find(el => pattern.test(getText(el)));
+      if (!button) return { success: false, error: 'button not found for trusted click' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      button.focus?.();
+      const rect = button.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return { success: false, error: 'button has no clickable rect' };
+      }
+      return {
+        success: true,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        text: getText(button)
+      };
+    },
+    args: [pattern]
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'button not found for trusted click' };
+}
+
+async function dispatchTrustedBundleActionClick(tab, action) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for trusted click' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+
+  const point = await getBundleActionClickPoint(tabId, action);
+  if (!point?.success) return point;
+
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1
+    });
+    await sleep(300);
+    return { success: true, method: 'debuggerMouse', text: point.text };
+  } catch (e) {
+    return { success: false, error: e.message || 'trusted mouse click failed' };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
+async function waitForCurrentTabNavigation(tabId, previousUrl, timeoutMs = 30000) {
+  const startAt = Date.now();
+  let sawUrlChange = !previousUrl;
+  while (Date.now() - startAt < timeoutMs) {
+    const current = await chrome.tabs.get(tabId).catch(() => null);
+    if (!current) throw new Error('transaction tab closed during navigation');
+    if (current.url && current.url !== previousUrl) sawUrlChange = true;
+    if (sawUrlChange && current.status === 'complete') return current;
+    await sleep(250);
+  }
+  throw new Error('transaction page navigation timeout');
+}
+
+async function getBundleActionState(tabId) {
+  await injectContentScript(tabId).catch(() => {});
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: 'GET_BUNDLE_TRANSACTION_ACTION_STATE'
+  }).catch(() => null);
+  return response?.success ? response.state : null;
+}
+
+async function waitForBundleActionState(tabId, predicate, timeoutMs = 30000) {
+  console.log(`[Yahoo Bid] waitForBundleActionState: tabId=${tabId}, timeout=${timeoutMs}ms`);
+  const startAt = Date.now();
+  let iteration = 0;
+  while (Date.now() - startAt < timeoutMs) {
+    iteration++;
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) throw new Error('transaction tab closed while waiting for bundle state');
+
+    if (tab.status === 'complete') {
+      const state = await getBundleActionState(tabId);
+      console.log(`[Yahoo Bid] waitForBundleActionState iteration ${iteration}: status=complete, state=`, state);
+      if (state && predicate(state)) {
+        console.log(`[Yahoo Bid] waitForBundleActionState: predicate matched!`);
+        return tab;
+      }
+    } else {
+      console.log(`[Yahoo Bid] waitForBundleActionState iteration ${iteration}: status=${tab.status}`);
+    }
+    await sleep(500);
+  }
+  throw new Error('bundle next page did not appear');
+}
+
+async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, timeoutMs = 30000) {
+  const startAt = Date.now();
+  const originalTabId = tab?.id;
+  const previous = previousIds instanceof Set ? previousIds : new Set(previousIds || []);
+  const created = new Set(tab?._gdaipaiCreatedTabIds || []);
+  if (originalTabId) created.add(originalTabId);
+
+  while (Date.now() - startAt < timeoutMs) {
+    const candidates = new Map();
+    const original = originalTabId ? await chrome.tabs.get(originalTabId).catch(() => null) : null;
+    if (original?.id) candidates.set(original.id, original);
+
+    const tabs = await chrome.tabs.query({}).catch(() => []);
+    for (const candidate of tabs) {
+      if (!candidate?.id || !isLikelyYahooTransactionTab(candidate)) continue;
+      if (candidate.id === originalTabId || created.has(candidate.id) || !previous.has(candidate.id)) {
+        candidates.set(candidate.id, candidate);
+        if (!previous.has(candidate.id)) created.add(candidate.id);
+      }
+    }
+
+    const ordered = [...candidates.values()].sort((a, b) => {
+      const aNew = previous.has(a.id) ? 1 : 0;
+      const bNew = previous.has(b.id) ? 1 : 0;
+      return aNew - bNew;
+    });
+
+    for (const candidate of ordered) {
+      if (candidate.status !== 'complete') continue;
+      const state = await getBundleActionState(candidate.id);
+      if (state && predicate(state)) {
+        candidate._gdaipaiCreatedTabIds = [...created];
+        return candidate;
+      }
+    }
+    await sleep(500);
+  }
+  throw new Error('bundle next page did not appear');
+}
+
+async function clickBundleActionAndFollowTab(tab, action) {
+  console.log(`[Yahoo Bid] clickBundleActionAndFollowTab: action=${action}, tabId=${tab.id}`);
+
+  try {
+    await injectContentScript(tab.id);
+  } catch (e) {
+    console.error('[Yahoo Bid] Failed to inject content script before click:', e);
+    return { success: false, error: `content script injection failed: ${e.message}`, tab };
+  }
+
+  const previousTabIds = await getTabIds();
+  let clickResult = null;
+  try {
+    clickResult = await runMainWorldBundleActionClick(tab.id, action);
+    console.log('[Yahoo Bid] MAIN world click result:', clickResult);
+    if (!clickResult?.success) {
+      const result = await chrome.tabs.sendMessage(tab.id, {
+        type: 'CLICK_BUNDLE_TRANSACTION_ACTION',
+        action
+      }).catch(error => ({ success: false, error: error.message || `bundle ${action} failed` }));
+      console.log('[Yahoo Bid] Content script click result:', result);
+      if (!result?.success) return { success: false, error: result?.error || `bundle ${action} failed`, tab };
+      clickResult = result;
+    }
+  } catch (e) {
+    console.error('[Yahoo Bid] MAIN world execution failed:', e);
+    const result = await chrome.tabs.sendMessage(tab.id, {
+      type: 'CLICK_BUNDLE_TRANSACTION_ACTION',
+      action
+    }).catch(error => ({ success: false, error: error.message || `bundle ${action} failed` }));
+    if (!result?.success) return { success: false, error: `MAIN world click failed: ${e.message}; ${result?.error || ''}`.trim(), tab };
+    clickResult = result;
+  }
+
+  if (action === 'close') {
+    await sleep(800);
+    await injectContentScript(tab.id).catch(() => {});
+    return { success: true, tab };
+  }
+
+  const waitFor = action === 'start'
+    ? state => state.canDecide
+    : state => state.complete;
+
+  let nextTab = null;
+  try {
+    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
+  } catch (e) {
+    console.warn('[Yahoo Bid] Synthetic click did not reach next bundle state, trying trusted mouse click:', e.message || e);
+    const trustedClick = await dispatchTrustedBundleActionClick(tab, action);
+    console.log('[Yahoo Bid] Trusted mouse click result:', trustedClick);
+    if (!trustedClick?.success) {
+      return { success: false, error: trustedClick?.error || clickResult?.error || `bundle ${action} failed`, tab };
+    }
+    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+  }
+
+  console.log(`[Yahoo Bid] Bundle action state reached, nextTab.id=${nextTab.id}`);
+  nextTab._gdaipaiCreatedTabIds = nextTab._gdaipaiCreatedTabIds || tab._gdaipaiCreatedTabIds || [];
+  await injectContentScript(nextTab.id).catch(() => {});
+  return { success: true, tab: nextTab };
+}
+
+async function executeTransactionStartJob(job) {
+  let tab = null;
+  try {
+    tab = await openTransactionPage(job);
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(error => {
+      console.error('[Yahoo Bid] Failed to extract transaction start info:', error);
+      return null;
+    });
+    await reportYahooLoginStatus(response?.loginStatus);
+    if (!response?.success) {
+      await updateTransactionStartStatus({ orderId: job.orderId, error: response?.loginStatus?.message || 'transaction page extraction failed' });
+      return;
+    }
+    const info = response.info || {};
+    if (info.available) {
+      if (!info.quantityMatched) {
+        await updateTransactionStartStatus({ orderId: job.orderId, error: 'bundle quantity mismatch' });
+        return;
+      }
+      const bundleProductIds = info.productIds || [];
+      for (const action of ['close', 'start', 'decide']) {
+        const result = await clickBundleActionAndFollowTab(tab, action);
+        if (!result?.success) {
+          await updateTransactionStartStatus({
+            productIds: bundleProductIds.length ? bundleProductIds : [job.productId],
+            error: result?.error || `bundle ${action} failed`
+          });
+          return { processedProductIds: bundleProductIds.length ? bundleProductIds : [job.productId] };
+        }
+        tab = result.tab;
+      }
+      const completed = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(() => null);
+      if (!completed?.complete) {
+        await updateTransactionStartStatus({
+          productIds: bundleProductIds.length ? bundleProductIds : [job.productId],
+          error: 'bundle completion text not found'
+        });
+        return { processedProductIds: bundleProductIds.length ? bundleProductIds : [job.productId] };
+      }
+      const bundleGroupId = `bundle-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${job.productId}`;
+      await updateTransactionStartStatus({
+        productIds: bundleProductIds,
+        status: 'pending_bundle',
+        bundleGroupId
+      });
+      return { processedProductIds: bundleProductIds };
+    }
+    await updateTransactionStartStatus({
+      orderId: job.orderId,
+      status: isBidderPaysShippingText(job.shippingFeeText) ? 'waiting_shipping' : 'pending_payment'
+    });
+    return { processedProductIds: [job.productId] };
+  } catch (e) {
+    await updateTransactionStartStatus({ orderId: job.orderId, error: e.message || 'transaction start failed' }).catch(() => {});
+    return { processedProductIds: [job.productId] };
+  } finally {
+    const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
+    if (tab?.id) ids.add(tab.id);
+    for (const id of ids) {
+      await closeTabIfExists(id);
+    }
+  }
+}
+
+async function runTransactionStartJobs() {
+  const jobs = await fetchTransactionStartJobs();
+  const processedProducts = new Set();
+  for (const job of jobs) {
+    if (processedProducts.has(String(job.productId || '').toLowerCase())) continue;
+    const result = await executeTransactionStartJob(job);
+    for (const productId of result?.processedProductIds || []) {
+      processedProducts.add(String(productId || '').toLowerCase());
+    }
+  }
+}
+
 async function syncIdleYahooPages() {
   await refreshPluginConfig();
   const now = Date.now();
@@ -530,6 +1015,11 @@ async function syncIdleYahooPages() {
   lastIdleSyncAt = now;
   await openBiddingPageForSync();
   await openWonPageForSync();
+  const idleAction = await fetchNextIdleAction();
+  if (TRANSACTION_START_ENABLED && idleAction?.action === 'transaction_start') {
+    await runTransactionStartJobs();
+  }
+  await completeIdleAction(idleAction?.action || 'none');
 }
 
 async function pollAndExecute() {
@@ -628,7 +1118,11 @@ chrome.alarms.onAlarm.addListener(alarm => {
 globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   shouldKeepTaskTabOpen,
   buildTaskTimeoutError,
-  withTimeout
+  withTimeout,
+  waitForCurrentTabNavigation,
+  clickBundleActionAndFollowTab,
+  waitForBundleActionStateAcrossTabs,
+  dispatchTrustedBundleActionClick
 };
 chrome.tabs.onRemoved.addListener(tabId => {
   managedTaskTabs.delete(tabId);

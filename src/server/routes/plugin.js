@@ -8,6 +8,13 @@ const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_SYNC_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_BID_GUARD_MINUTES = 10;
 const DEFAULT_MULTI_BID_MIN_PRICE = 5000;
+const DEFAULT_TRANSACTION_START_HOUR = 1;
+const DEFAULT_SCAN_START_HOUR = 1;
+const DEFAULT_SCAN_END_HOUR = 20;
+const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
+const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
+const ORDER_STATUS_WAITING_SHIPPING = 'waiting_shipping';
+const ORDER_STATUS_PENDING_BUNDLE = 'pending_bundle';
 
 function parseTimeMs(value) {
   let input = String(value || '').trim();
@@ -183,7 +190,7 @@ async function sweepPendingTasks(database = db, nowMs = Date.now()) {
 
 async function getMultiBidConfig(database = db) {
   const rows = await database.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
@@ -191,7 +198,11 @@ async function getMultiBidConfig(database = db) {
     multiBidIntervalMinutes: Number(values.multi_bid_interval_minutes || DEFAULT_MULTI_BID_INTERVAL_MINUTES),
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || DEFAULT_IDLE_SYNC_INTERVAL_MINUTES),
     idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || DEFAULT_IDLE_BID_GUARD_MINUTES),
-    multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE)
+    multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
+    transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
+    scanStartHour: Number(values.scan_start_hour ?? DEFAULT_SCAN_START_HOUR),
+    scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
+    scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? DEFAULT_SCAN_EVERY_IDLE_RUNS)
   };
 }
 
@@ -219,6 +230,78 @@ async function setYahooLoginStatus(status, message = '') {
   );
 }
 
+function getLocalDateKey(nowMs = Date.now()) {
+  const date = new Date(nowMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function clampHour(value, fallback) {
+  const hour = Number(value);
+  if (!Number.isFinite(hour)) return fallback;
+  return Math.min(23, Math.max(0, Math.floor(hour)));
+}
+
+function getNextIdleAction(config = {}, nowMs = Date.now()) {
+  const now = new Date(nowMs);
+  const nowHour = config.nowHour ?? now.getHours();
+  const today = config.today || getLocalDateKey(nowMs);
+  const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
+  const transactionRequested = Number(config.transactionStartRequested || 0) === 1;
+  const lastRunDate = String(config.transactionStartLastRunDate || '');
+  if (transactionRequested || (Number(nowHour) >= transactionStartHour && lastRunDate !== today)) {
+    return { action: 'transaction_start', today };
+  }
+
+  const scanStartHour = clampHour(config.scanStartHour, DEFAULT_SCAN_START_HOUR);
+  const scanEndHour = clampHour(config.scanEndHour, DEFAULT_SCAN_END_HOUR);
+  const scanEvery = Math.max(1, Math.floor(Number(config.scanEveryIdleRuns || DEFAULT_SCAN_EVERY_IDLE_RUNS)));
+  const scanCounter = Math.max(0, Math.floor(Number(config.scanIdleCounter || 0)));
+  const inScanWindow = scanStartHour <= scanEndHour
+    ? Number(nowHour) >= scanStartHour && Number(nowHour) <= scanEndHour
+    : Number(nowHour) >= scanStartHour || Number(nowHour) <= scanEndHour;
+  if (inScanWindow && scanCounter >= scanEvery) {
+    return { action: 'scan', today };
+  }
+  return { action: 'none', today };
+}
+
+async function getIdleActionConfig(database = db, nowMs = Date.now()) {
+  const rows = await database.getAll(
+    `SELECT key, value FROM config
+     WHERE key IN (
+       'transaction_start_hour',
+       'transaction_start_requested',
+       'transaction_start_last_run_date',
+       'scan_start_hour',
+       'scan_end_hour',
+       'scan_every_idle_runs',
+       'scan_idle_counter'
+     )`
+  );
+  const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  return {
+    transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
+    transactionStartRequested: Number(values.transaction_start_requested || 0),
+    transactionStartLastRunDate: values.transaction_start_last_run_date || '',
+    scanStartHour: Number(values.scan_start_hour ?? DEFAULT_SCAN_START_HOUR),
+    scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
+    scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? DEFAULT_SCAN_EVERY_IDLE_RUNS),
+    scanIdleCounter: Number(values.scan_idle_counter || 0),
+    today: getLocalDateKey(nowMs),
+    nowHour: new Date(nowMs).getHours()
+  };
+}
+
+async function saveConfigValue(database, key, value) {
+  await database.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+    [key, String(value)]
+  );
+}
+
 // GET /api/plugin/task
 router.get('/task', async (req, res) => {
   const multiBidConfig = await getMultiBidConfig();
@@ -233,6 +316,25 @@ router.get('/task', async (req, res) => {
     canIdleSync,
     idleBidGuardMinutes: multiBidConfig.idleBidGuardMinutes
   });
+});
+
+router.get('/idle-action/next', async (req, res) => {
+  const config = await getIdleActionConfig();
+  res.json({ success: true, ...getNextIdleAction(config), config });
+});
+
+router.post('/idle-action/complete', async (req, res) => {
+  const action = String(req.body?.action || 'none');
+  const config = await getIdleActionConfig();
+  if (action === 'transaction_start') {
+    await saveConfigValue(db, 'transaction_start_requested', '0');
+    await saveConfigValue(db, 'transaction_start_last_run_date', config.today);
+  } else if (action === 'scan') {
+    await saveConfigValue(db, 'scan_idle_counter', '0');
+  } else {
+    await saveConfigValue(db, 'scan_idle_counter', Math.max(0, Number(config.scanIdleCounter || 0)) + 1);
+  }
+  res.json({ success: true });
 });
 
 // PATCH /api/plugin/task/:id/status
@@ -322,18 +424,22 @@ async function upsertOrderFromTask(taskId, options = {}) {
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
+  const transactionUrl = String(options.transactionUrl || '').trim() || null;
   if (existing) {
     await db.query(
       `UPDATE orders
-       SET product_title = ?, product_url = ?, final_price = ?, won_at = COALESCE(?, won_at), won_time_text = COALESCE(?, won_time_text)
+       SET product_title = ?, product_url = ?, final_price = ?,
+           won_at = COALESCE(?, won_at),
+           won_time_text = COALESCE(?, won_time_text),
+           transaction_url = COALESCE(?, transaction_url)
        WHERE task_id = ?`,
-      [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, taskId]
+      [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
     );
   } else {
     await db.query(
-      `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText]
+      `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text, transaction_url)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
     );
   }
 }
@@ -544,6 +650,128 @@ async function syncBiddingItems(items, database = db) {
   return { highest, outbid, total: highest + outbid, followup: followupCreated };
 }
 
+async function getTransactionStartJobs(database = db) {
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.transaction_url,
+            t.product_id,
+            t.product_url,
+            t.product_title,
+            t.product_type,
+            t.shipping_fee_text
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE t.status = 'success'
+       AND (o.order_status IS NULL OR o.order_status = '')
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`
+  );
+
+  const jobs = [];
+  let storeUpdated = 0;
+  let missingTransactionUrl = 0;
+  for (const row of rows) {
+    if (row.product_type === 'store') {
+      const result = await database.query(
+        `UPDATE orders
+         SET order_status = ?,
+             transaction_started_at = CURRENT_TIMESTAMP,
+             transaction_start_error = NULL
+         WHERE id = ?
+           AND (order_status IS NULL OR order_status = '')`,
+        [ORDER_STATUS_PENDING_PAYMENT, row.order_id]
+      );
+      storeUpdated += result.rowCount || 0;
+      continue;
+    }
+    jobs.push({
+      orderId: row.order_id,
+      productId: row.product_id,
+      productUrl: row.product_url,
+      productTitle: row.product_title,
+      productType: row.product_type || 'normal',
+      shippingFeeText: row.shipping_fee_text || '',
+      transactionUrl: row.transaction_url || ''
+    });
+  }
+  return { jobs, storeUpdated, missingTransactionUrl, total: rows.length };
+}
+
+function normalizeOrderStatus(value) {
+  return [
+    ORDER_STATUS_PENDING_PAYMENT,
+    ORDER_STATUS_WAITING_SHIPPING,
+    ORDER_STATUS_PENDING_BUNDLE
+  ].includes(value) ? value : null;
+}
+
+async function updateTransactionStartStatus(payload = {}, database = db) {
+  const error = String(payload.error || '').trim();
+  let ids = Array.isArray(payload.orderIds)
+    ? payload.orderIds
+    : (payload.orderId ? [payload.orderId] : []);
+  if ((!ids || !ids.length) && Array.isArray(payload.productIds) && payload.productIds.length) {
+    const productIds = payload.productIds
+      .map(id => String(id || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (productIds.length) {
+      const productPlaceholders = productIds.map(() => '?').join(',');
+      const rows = await database.getAll(
+        `SELECT o.id
+         FROM orders o
+         INNER JOIN tasks t ON o.task_id = t.id
+         WHERE t.product_id IN (${productPlaceholders})
+           AND t.status = 'success'
+           AND (o.order_status IS NULL OR o.order_status = '')`,
+        productIds
+      );
+      ids = rows.map(row => row.id);
+    }
+  }
+  const orderIds = ids.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0);
+  if (!orderIds.length) {
+    const err = new Error('orderId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const placeholders = orderIds.map(() => '?').join(',');
+  if (error) {
+    const result = await database.query(
+      `UPDATE orders
+       SET transaction_start_error = ?
+       WHERE id IN (${placeholders})
+         AND (order_status IS NULL OR order_status = '')`,
+      [error, ...orderIds]
+    );
+    return { updated: result.rowCount || 0 };
+  }
+
+  const status = normalizeOrderStatus(payload.status);
+  if (!status) {
+    const err = new Error('valid status is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const bundleGroupId = status === ORDER_STATUS_PENDING_BUNDLE
+    ? String(payload.bundleGroupId || '').trim()
+    : null;
+  if (status === ORDER_STATUS_PENDING_BUNDLE && !bundleGroupId) {
+    const err = new Error('bundleGroupId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const result = await database.query(
+    `UPDATE orders
+     SET order_status = ?,
+         bundle_group_id = COALESCE(?, bundle_group_id),
+         transaction_started_at = CURRENT_TIMESTAMP,
+         transaction_start_error = NULL
+     WHERE id IN (${placeholders})
+       AND (order_status IS NULL OR order_status = '')`,
+    [status, bundleGroupId, ...orderIds]
+  );
+  return { updated: result.rowCount || 0 };
+}
+
 router.post('/bidding/sync', async (req, res) => {
   const incomingItems = req.body?.items || req.body?.bidding || [];
   const result = await syncBiddingItems(incomingItems);
@@ -592,7 +820,11 @@ router.post('/orders/sync', async (req, res) => {
        WHERE id = ?`,
       [task.id]
     );
-    await upsertOrderFromTask(task.id, { finalPrice: order.price, wonTimeText: order.wonTimeText });
+    await upsertOrderFromTask(task.id, {
+      finalPrice: order.price,
+      wonTimeText: order.wonTimeText,
+      transactionUrl: order.transactionUrl
+    });
     if (order.trackingNumber) {
       await db.query('UPDATE orders SET tracking_number = ? WHERE task_id = ?', [order.trackingNumber, task.id]);
     }
@@ -602,6 +834,20 @@ router.post('/orders/sync', async (req, res) => {
   await setYahooLoginStatus('ok');
   const failed = 0;
   res.json({ success: true, updated, failed, skippedExisting, forcedResync });
+});
+
+router.get('/transaction-start/jobs', async (req, res) => {
+  const result = await getTransactionStartJobs();
+  res.json({ success: true, ...result });
+});
+
+router.post('/transaction-start/status', async (req, res) => {
+  try {
+    const result = await updateTransactionStartStatus(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'update failed' });
+  }
 });
 
 router.post('/yahoo-login/status', async (req, res) => {
@@ -657,7 +903,11 @@ router.get('/config', async (req, res) => {
     multiBidIntervalMinutes: multiBidConfig.multiBidIntervalMinutes,
     idleSyncIntervalMinutes: multiBidConfig.idleSyncIntervalMinutes,
     idleBidGuardMinutes: multiBidConfig.idleBidGuardMinutes,
-    multiBidMinPrice: multiBidConfig.multiBidMinPrice
+    multiBidMinPrice: multiBidConfig.multiBidMinPrice,
+    transactionStartHour: multiBidConfig.transactionStartHour,
+    scanStartHour: multiBidConfig.scanStartHour,
+    scanEndHour: multiBidConfig.scanEndHour,
+    scanEveryIdleRuns: multiBidConfig.scanEveryIdleRuns
   });
 });
 
@@ -674,6 +924,12 @@ module.exports.getNextTaskDispatchMs = getNextTaskDispatchMs;
 module.exports.hasTaskWithinIdleGuard = hasTaskWithinIdleGuard;
 module.exports.getMultiBidConfig = getMultiBidConfig;
 module.exports.DEFAULT_MULTI_BID_MIN_PRICE = DEFAULT_MULTI_BID_MIN_PRICE;
+module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
+module.exports.ORDER_STATUS_WAITING_SHIPPING = ORDER_STATUS_WAITING_SHIPPING;
+module.exports.ORDER_STATUS_PENDING_BUNDLE = ORDER_STATUS_PENDING_BUNDLE;
+module.exports.getNextIdleAction = getNextIdleAction;
+module.exports.getTransactionStartJobs = getTransactionStartJobs;
+module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;

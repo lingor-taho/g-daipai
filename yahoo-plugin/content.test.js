@@ -13,7 +13,22 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
         this.type = type;
       }
     },
+    FocusEvent: class FocusEvent {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+    KeyboardEvent: class KeyboardEvent {
+      constructor(type) {
+        this.type = type;
+      }
+    },
     MouseEvent: class MouseEvent {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+    PointerEvent: class PointerEvent {
       constructor(type) {
         this.type = type;
       }
@@ -86,6 +101,9 @@ function createTestElement(text = '') {
     scrollIntoView() {},
     click() { this.clicked = true; },
     closest() { return null; },
+    getBoundingClientRect() {
+      return { left: 10, top: 20, width: 100, height: 40 };
+    },
     parentElement: null,
     checked: false,
     getAttribute(name) {
@@ -112,12 +130,14 @@ function createTestAnchor(text, href) {
   };
 }
 
-function createOrderContainer(text, linkText, href, priceElements = []) {
+function createOrderContainer(text, linkText, href, priceElements = [], extraLinks = []) {
   const link = createTestAnchor(linkText, href);
+  const anchors = [link, ...extraLinks.map(item => createTestAnchor(item.text, item.href))];
   return {
     textContent: text,
     querySelectorAll(selector) {
       if (selector === 'a[href*="/jp/auction/"]') return [link];
+      if (selector === 'a') return anchors;
       // 模拟 DOM 叶子价格元素查找，对应 extractOrderHistory 的 findPriceElementText。
       if (/span|li|dd|td|p|strong|b/.test(selector)) {
         return priceElements.map(t => ({ textContent: t, querySelectorAll: () => [] }));
@@ -773,6 +793,29 @@ function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   assert.equal(Object.prototype.hasOwnProperty.call(orders[0], 'shippingFeeText'), false);
 }
 
+function testOrderHistoryExtractsTransactionUrl() {
+  const orderContainer = createOrderContainer(
+    '出品者に連絡してください 25円 6/1 05:08 商品ID：c1133337781',
+    'NMB48 山岸奈津美 らしくない 通常版 封入特典 生写真',
+    'https://auctions.yahoo.co.jp/jp/auction/c1133337781',
+    ['25円'],
+    [{ text: '取引連絡', href: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=c1133337781' }]
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'c1133337781');
+  assert.equal(orders[0].transactionUrl, 'https://contact.auctions.yahoo.co.jp/seller/top?aid=c1133337781');
+}
+
 function testOrderHistoryExtractsUnlabeledWonPriceLine() {
   const orderContainer = createOrderContainer(
     '支払いを完了してください\nMD ゴールデンアックス\n2,530円\nストア\n5/23 22:26\n商品ID：x1230699905',
@@ -888,6 +931,155 @@ function testBiddingItemsExtractsOutbidRebidRows() {
   assert.equal(items[0].imageUrl, 'https://example.com/item.jpg');
 }
 
+function testBundleTransactionInfoValidatesQuantity() {
+  const links = [
+    createTestAnchor('商品A', 'https://auctions.yahoo.co.jp/jp/auction/c1133337781'),
+    createTestAnchor('商品B', 'https://auctions.yahoo.co.jp/jp/auction/o1133346083')
+  ];
+  const api = loadContentForTest('まとめて取引を依頼できる商品 2件（落札数量：2）', '/seller/top', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href*="/jp/auction/"]') return links;
+      return [];
+    }
+  });
+
+  const info = api.extractBundleTransactionInfo();
+
+  assert.equal(info.available, true);
+  assert.equal(info.expectedCount, 2);
+  assert.equal(JSON.stringify(info.productIds), JSON.stringify(['c1133337781', 'o1133346083']));
+  assert.equal(info.quantityMatched, true);
+}
+
+function testBundleTransactionInfoDetectsQuantityMismatch() {
+  const links = [
+    createTestAnchor('商品A', 'https://auctions.yahoo.co.jp/jp/auction/c1133337781'),
+    createTestAnchor('商品B', 'https://auctions.yahoo.co.jp/jp/auction/o1133346083')
+  ];
+  const api = loadContentForTest('まとめて取引を依頼できる商品 3件（落札数量：3）', '/seller/top', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href*="/jp/auction/"]') return links;
+      return [];
+    }
+  });
+
+  const info = api.extractBundleTransactionInfo();
+
+  assert.equal(info.expectedCount, 3);
+  assert.equal(info.quantityMatched, false);
+}
+
+function testBundleTransactionInfoDetectsPopupBundleText() {
+  const links = [
+    createTestAnchor('商品A', 'https://auctions.yahoo.co.jp/jp/auction/m1114324624'),
+    createTestAnchor('商品B', 'https://auctions.yahoo.co.jp/jp/auction/o1133346083'),
+    createTestAnchor('商品C', 'https://auctions.yahoo.co.jp/jp/auction/c1133337781')
+  ];
+  const bodyText = '\u3053\u306e\u5546\u54c1\u306f\u3001\u307e\u3068\u3081\u3066\u53d6\u5f15\u304c\u3067\u304d\u307e\u3059\u3002 3\u4ef6\uff08\u843d\u672d\u6570\u91cf\uff1a3\uff09';
+  const api = loadContentForTest(bodyText, '/seller/top', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href*="/jp/auction/"]') return links;
+      return [];
+    }
+  });
+
+  const info = api.extractBundleTransactionInfo();
+
+  assert.equal(info.available, true);
+  assert.equal(info.expectedCount, 3);
+  assert.equal(info.quantityMatched, true);
+}
+
+function testDetectBundleRequestedComplete() {
+  const api = loadContentForTest('まとめて取引を依頼中です。 出品者からの連絡をお待ちください。', '/seller/top');
+
+  assert.equal(api.detectBundleRequestedComplete(), true);
+}
+
+function testClickTransactionContactForProduct() {
+  const contact = createTestAnchor('取引連絡', 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m1114324624');
+  const auction = createTestAnchor('商品', 'https://auctions.yahoo.co.jp/jp/auction/m1114324624');
+  const container = {
+    textContent: '商品ID：m1114324624',
+    querySelectorAll(selector) {
+      if (selector === 'a[href*="/jp/auction/"]') return [auction];
+      if (selector === 'a, button, input[type="button"], input[type="submit"]') return [contact];
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [container];
+      return [];
+    }
+  });
+
+  const result = api.clickTransactionContactForProduct('m1114324624');
+
+  assert.equal(result.success, true);
+  assert.equal(result.href, 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m1114324624');
+  assert.equal(contact.clicked, false);
+}
+
+function testClickBundleTransactionActionFindsRequestButton() {
+  const requestButton = createTestElement('\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092\u4f9d\u983c\u3059\u308b');
+  requestButton.tagName = 'BUTTON';
+  const api = loadContentForTest('', '/seller/top', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'button, a, input[type="button"], input[type="submit"]') return [requestButton];
+      if (selector === '*') return [requestButton];
+      return [];
+    }
+  });
+
+  const result = api.clickBundleTransactionAction('start');
+
+  assert.equal(result.success, true);
+}
+
+function testClickBundleTransactionActionIgnoresInstructionText() {
+  const heading = createTestElement('\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092\u4f9d\u983c\u3059\u308b\u305f\u3081\u306b\u3001\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308b\u90fd\u9053\u5e9c\u770c\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044');
+  heading.tagName = 'DIV';
+  const requestButton = createTestElement('\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092\u4f9d\u983c\u3059\u308b');
+  requestButton.tagName = 'BUTTON';
+  const api = loadContentForTest('', '/seller/top', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'button, a, input[type="button"], input[type="submit"]') return [requestButton];
+      if (selector === '*') return [heading, requestButton];
+      return [];
+    }
+  });
+
+  const result = api.clickBundleTransactionAction('start');
+
+  assert.equal(result.success, true);
+  assert.equal(requestButton.clicked, true);
+}
+
+function testBundleTransactionActionStateDetectsDecideButton() {
+  const decideButton = createTestElement('\u6c7a\u5b9a\u3059\u308b');
+  decideButton.tagName = 'BUTTON';
+  const api = loadContentForTest('', '/seller/confirm', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'button, a, input[type="button"], input[type="submit"]') return [decideButton];
+      if (selector === '*') return [decideButton];
+      return [];
+    }
+  });
+
+  const state = api.getBundleTransactionActionState();
+
+  assert.equal(state.canDecide, true);
+  assert.equal(state.complete, false);
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -932,11 +1124,20 @@ async function run() {
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
+  testOrderHistoryExtractsTransactionUrl();
   testOrderHistoryExtractsUnlabeledWonPriceLine();
   testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened();
   testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice();
   testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
   testBiddingItemsExtractsOutbidRebidRows();
+  testBundleTransactionInfoValidatesQuantity();
+  testBundleTransactionInfoDetectsQuantityMismatch();
+  testBundleTransactionInfoDetectsPopupBundleText();
+  testDetectBundleRequestedComplete();
+  testClickTransactionContactForProduct();
+  testClickBundleTransactionActionFindsRequestButton();
+  testClickBundleTransactionActionIgnoresInstructionText();
+  testBundleTransactionActionStateDetectsDecideButton();
 }
 
 run().catch(err => {

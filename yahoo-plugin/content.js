@@ -17,6 +17,10 @@ const CLIENT_ORIGINS = new Set([
   'http://43.165.177.49:3035'
 ]);
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function cleanupProductTitle(title, auctionId = '') {
   const cleaned = String(title || '')
     .replace(/^Yahoo![^-\n]*\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\s*-\s*/i, '')
@@ -812,6 +816,10 @@ async function executeBidV3(maxPrice, options = {}) {
 }
 
 function extractOrderHistory() {
+  function normalizeVisibleText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
   // Yahoo 落札页的 DOM 结构：标题（含尾部商品代码 F26171）和价格 23,100円 分属不同元素，
   // 用 item.textContent 会把它们拼成 "...F2617123,100円"，正则吃错。
   // 这个函数从容器内部直接找"叶子价格元素"（只含数字+円），返回干净文本。
@@ -888,6 +896,8 @@ function extractOrderHistory() {
     if (seen.has(productId)) continue;
     seen.add(productId);
     const text = item.textContent || '';
+    const contactLink = [...item.querySelectorAll('a')]
+      .find(a => /取引連絡/.test(normalizeVisibleText(a.textContent)));
     const trackingMatch = text.match(/(?:\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u53d7\u4ed8\u756a\u53f7|\u4f1d\u7968\u756a\u53f7|tracking)[^\dA-Z]{0,20}([A-Z0-9-]{8,})/i);
     orders.push({
       productId,
@@ -895,6 +905,7 @@ function extractOrderHistory() {
       price: extractOrderPrice(text, item),
       wonTimeText: extractWonTimeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+      transactionUrl: contactLink?.href || '',
       trackingNumber: trackingMatch?.[1] || ''
     });
   }
@@ -985,6 +996,233 @@ function extractBiddingItems() {
   return items;
 }
 
+function extractBundleTransactionInfo() {
+  const bodyText = document.body?.textContent || '';
+  const quantityMatch = bodyText.match(/(\d+)\s*\u4ef6\s*[\uff08(]\s*\u843d\u672d\u6570\u91cf\s*[:\uff1a]\s*(\d+)\s*[\uff09)]/);
+  const expectedCount = quantityMatch
+    ? Math.max(Number(quantityMatch[1] || 0), Number(quantityMatch[2] || 0))
+    : 0;
+  const productIds = [];
+  const seen = new Set();
+  for (const link of [...document.querySelectorAll('a[href*="/jp/auction/"]')]) {
+    const match = String(link.href || '').match(/[a-zA-Z]?\d{8,10}/);
+    if (!match) continue;
+    const productId = match[0].toLowerCase();
+    if (seen.has(productId)) continue;
+    seen.add(productId);
+    productIds.push(productId);
+  }
+  const hasBundleText = /\u307e\u3068\u3081\u3066\u53d6\u5f15/.test(bodyText);
+  const available = hasBundleText && (expectedCount > 1 || productIds.length > 1);
+  return {
+    available,
+    expectedCount,
+    productIds,
+    quantityMatched: expectedCount > 0 && productIds.length === expectedCount
+  };
+}
+
+function detectBundleAvailable() {
+  return extractBundleTransactionInfo().available;
+}
+
+function detectBundleRequestedComplete() {
+  return /\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092\u4f9d\u983c\u4e2d\u3067\u3059\u3002?\s*\u51fa\u54c1\u8005\u304b\u3089\u306e\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002?/.test(document.body?.textContent || '');
+}
+
+function findTransactionContactForProduct(productId) {
+  const target = String(productId || '').toLowerCase();
+  if (!target) return null;
+  const candidates = [...document.querySelectorAll('li, article, tr, div')]
+    .filter(item => {
+      const text = item.textContent || '';
+      return text.toLowerCase().includes(target) ||
+        [...item.querySelectorAll('a[href*="/jp/auction/"]')]
+          .some(a => String(a.href || '').toLowerCase().includes(target));
+    })
+    .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
+  for (const item of candidates) {
+    const text = item.textContent || '';
+    const textHasProduct = text.toLowerCase().includes(target);
+    const linkHasProduct = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
+      .some(a => String(a.href || '').toLowerCase().includes(target));
+    if (!textHasProduct && !linkHasProduct) continue;
+    const contact = [...item.querySelectorAll('a, button, input[type="button"], input[type="submit"]')]
+      .find(el => /\u53d6\u5f15\u9023\u7d61/.test(`${el.textContent || ''} ${el.value || ''}`.replace(/\s+/g, ' ').trim()));
+    if (contact) return contact;
+  }
+  return null;
+}
+
+function clickTransactionContactForProduct(productId) {
+  const contact = findTransactionContactForProduct(productId);
+  if (!contact) return { success: false, error: 'transaction contact button not found' };
+  const href = contact.href || contact.getAttribute?.('href') || '';
+  if (!href) contact.click();
+  return { success: true, href, clicked: !href };
+}
+
+function getClickableText(el) {
+  return [
+    el.textContent,
+    el.value,
+    el.title,
+    el.getAttribute?.('aria-label')
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function resolveClickableElement(el) {
+  return el.closest?.('button, a, input[type="button"], input[type="submit"]') || el;
+}
+
+function isElementClickable(el) {
+  const target = resolveClickableElement(el);
+  if (!target || target.disabled) return false;
+  const style = window.getComputedStyle ? window.getComputedStyle(target) : null;
+  return !(style && (style.display === 'none' || style.visibility === 'hidden'));
+}
+
+function isNativeClickableElement(el) {
+  return /^(BUTTON|A|INPUT)$/i.test(el?.tagName || '');
+}
+
+function clickElement(el) {
+  const target = resolveClickableElement(el);
+  target.scrollIntoView?.({ block: 'center', inline: 'center' });
+  
+  // 方法1: 尝试通过焦点 + Enter 键触发（模拟键盘操作）
+  try {
+    // 先让元素获得焦点
+    target.focus();
+    
+    // 触发 focusin 事件
+    target.dispatchEvent(new FocusEvent('focusin', { bubbles: true, cancelable: true }));
+    
+    // 模拟按下 Enter 键
+    const enterKeyDown = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    
+    const enterKeyPress = new KeyboardEvent('keypress', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    
+    const enterKeyUp = new KeyboardEvent('keyup', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    
+    target.dispatchEvent(enterKeyDown);
+    target.dispatchEvent(enterKeyPress);
+    target.dispatchEvent(enterKeyUp);
+    
+    console.log('[Yahoo Bid] Keyboard Enter simulation completed');
+  } catch (e) {
+    console.warn('[Yahoo Bid] Keyboard simulation failed:', e);
+  }
+  
+  // 方法2: 如果是 submit 按钮，尝试直接提交表单
+  if (target.type === 'submit') {
+    const form = target.closest('form');
+    if (form) {
+      try {
+        if (form.requestSubmit) {
+          form.requestSubmit(target);
+          return;
+        } else {
+          form.submit();
+          return;
+        }
+      } catch (e) {
+        console.warn('[Yahoo Bid] Form submit failed:', e);
+      }
+    }
+  }
+  
+  // 方法3: 鼠标事件序列
+  const rect = target.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+  
+  const eventOptions = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: x,
+    clientY: y,
+    screenX: x,
+    screenY: y,
+    button: 0,
+    buttons: 1
+  };
+  
+  target.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+  target.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+  target.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+  target.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+  target.dispatchEvent(new MouseEvent('click', eventOptions));
+  
+  // 方法4: 原生 click
+  target.click();
+}
+
+function findClickableByText(pattern, options = {}) {
+  const priority = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+  const broad = [...document.querySelectorAll('*')];
+  const candidates = [...priority, ...broad]
+    .filter(el => pattern.test(getClickableText(el)) && isElementClickable(el))
+    .filter(el => {
+      const target = resolveClickableElement(el);
+      if (isNativeClickableElement(target)) return true;
+      if (options.nativeOnly) return false;
+      return typeof target.onclick === 'function' || target.getAttribute?.('role') === 'button';
+    })
+    .sort((a, b) => {
+      const aNative = isNativeClickableElement(resolveClickableElement(a)) ? 0 : 1;
+      const bNative = isNativeClickableElement(resolveClickableElement(b)) ? 0 : 1;
+      if (aNative !== bNative) return aNative - bNative;
+      return getClickableText(a).length - getClickableText(b).length;
+    });
+  return candidates[0] || null;
+}
+
+function clickBundleTransactionAction(action) {
+  const patterns = {
+    close: /\u9589\u3058\u308b/,
+    start: /^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/,
+    decide: /\u6c7a\u5b9a\u3059\u308b/
+  };
+  const pattern = patterns[action];
+  if (!pattern) return { success: false, error: 'unknown bundle action' };
+  const button = findClickableByText(pattern);
+  if (!button) return { success: false, error: `bundle ${action} button not found` };
+  clickElement(button);
+  return { success: true };
+}
+
+function getBundleTransactionActionState() {
+  return {
+    canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
+    canDecide: !!findClickableByText(/\u6c7a\u5b9a\u3059\u308b/),
+    complete: detectBundleRequestedComplete(),
+    url: window.location.href
+  };
+}
+
 // Main: read task from storage and execute
 if (!CLIENT_ORIGINS.has(window.location.origin)) {
 getTaskData().then(taskData => {
@@ -1042,6 +1280,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'EXTRACT_TRANSACTION_START_INFO') {
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      info: loginStatus.status === 'ok' ? extractBundleTransactionInfo() : null,
+      complete: loginStatus.status === 'ok' ? detectBundleRequestedComplete() : false,
+      loginStatus
+    });
+    return true;
+  }
+
+  if (msg.type === 'CLICK_TRANSACTION_CONTACT') {
+    sendResponse(clickTransactionContactForProduct(msg.productId));
+    return true;
+  }
+
+  if (msg.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+    sendResponse(clickBundleTransactionAction(msg.action));
+    return true;
+  }
+
+  if (msg.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+    sendResponse({ success: true, state: getBundleTransactionActionState() });
+    return true;
+  }
+
   if (msg.type !== 'EXECUTE_BID') return;
   const pageProductData = extractProductData();
   if (!msg.auctionId || (pageProductData.auctionId && pageProductData.auctionId !== msg.auctionId)) {
@@ -1065,6 +1329,12 @@ window.__G_DAIPAI_TEST__ = {
   extractProductData: () => extractProductData(),
   extractCurrentAuctionPrice: () => extractCurrentAuctionPrice(),
   extractBiddingItems,
+  extractBundleTransactionInfo,
+  detectBundleAvailable,
+  detectBundleRequestedComplete,
+  clickTransactionContactForProduct,
+  clickBundleTransactionAction,
+  getBundleTransactionActionState,
   detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,

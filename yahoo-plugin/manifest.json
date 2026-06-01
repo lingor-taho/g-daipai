@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Yahoo Auto Bid Agent",
   "version": "1.0.0",
-  "permissions": ["alarms", "storage", "tabs", "scripting"],
+  "permissions": ["alarms", "storage", "tabs", "scripting", "debugger"],
   "host_permissions": [
     "http://127.0.0.1:3034/*",
     "http://localhost:3034/*",

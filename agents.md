@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-05-29
+**最后更新**: 2026-06-01
 
 ---
 
@@ -64,6 +64,7 @@ D:/www/g-daipai/
 │   │   ├── Users.tsx
 │   │   ├── MultiBidSettings.tsx — 多次出价、入札/落札空闲同步配置
 │   │   ├── DataCleanup.tsx      — 清理 30 天无用数据
+│   │   ├── DataBatch.tsx        — 数据批处理顶部 Tabs 容器
 │   │   ├── ShippingRefresh.tsx      — 按商品 ID 批量刷新运费
 │   │   ├── ProductTypeRefresh.tsx   — 按商品 ID 批量刷新商品类型
 │   │   └── OrdersResync.tsx         — 按商品 ID 批量刷新落札商品
@@ -137,7 +138,7 @@ D:/www/g-daipai/
 - 非即決出价时，最高出价的税前价必须 >= 商品当前税前价（支持起拍价出价）。
 - 店铺含税商品会按税后可比较价格校验。
 - 多次出价最高价不得低于后台“多次出价配置”的最低价，默认 `5000円`。
-- 多次出价每次加价额度不得低于最高价的 `1/20`。
+- 多次出价每次加价额度按 Yahoo 阶梯校验：最高价 `<5000円` 最低 `100円`，`5000-9999円` 最低 `250円`，`10000-49999円` 最低 `500円`，`>=50000円` 最低 `1000円`。
 
 运费规则：
 
@@ -165,7 +166,9 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 出价前插件会打开商品页并刷新商品快照；若未进入策略窗口，会回写最新结束时间并把任务恢复为 `pending`。
 
-插件单个任务执行增加 30 秒总超时保护：如果商品 tab 打开、页面注入、确认页或出价消息长时间无响应，会自动关闭任务 tab、将任务标记为 failed，并释放队列继续执行后续任务。Yahoo 页面出现 `入札に失敗しました / オークションにアクセスできませんでした` 弹窗时，也会识别为终止失败并关闭 tab。
+插件单个任务执行增加 30 秒总超时保护：如果商品 tab 打开、页面注入、确认页或出价消息长时间无响应，会自动关闭任务 tab、将任务标记为 failed，并释放队列继续执行后续任务。超时错误写入稳定英文 `Task execution timeout after 30s; task tab closed`，前后端统一归类为“失败：响应超时”。Yahoo 页面出现 `入札に失敗しました / オークションにアクセスできませんでした` 弹窗时，也会识别为终止失败并关闭 tab。
+
+多次出价任务在已出价后仍会继续按间隔执行；如果后续同步发现 `current_price > max_price`，或再次执行时下一口加价后金额超过用户最高价，会标记为 failed，不再一直停留在“已出价”。
 
 `/api/plugin/task` 会同时返回 `canIdleSync`。插件只有在没有可执行任务，并且后台配置的“出价保护窗口”（默认 10 分钟）内没有即将出价的任务时，才会执行入札中/落札空闲同步。
 
@@ -178,7 +181,7 @@ background.js 每 10 秒轮询 /api/plugin/task
   └─ 高値更新 + 再入札する → status=outbid
 ```
 
-入札中同步只写入商品 ID、链接、标题、图片、当前价、入札状态、同步时间；页面显示的运费、策略、最高价等来自本系统 `tasks` 表。
+入札中同步只写入商品 ID、链接、标题、图片、当前价、入札状态、同步时间；页面显示的运费、策略、最高价等来自本系统 `tasks` 表。同一商品多次提交时，用户端“入札中”按商品 ID 聚合，策略、最高价、运费等展示字段取最后提交的任务。
 
 用户端 `入札中` 页面现在显示全部状态：
 
@@ -196,7 +199,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 重要规则：`orders.final_price` 只使用 Yahoo 落札页该商品展示的 `XXX円` 价格。不得再用用户最高价、当前价或任务最高价兜底为落札价。客户端落札商品页也不再 fallback 到最高价。
 
-落札同步不再更新运费。用户端落札商品和后台订单排序都按 `won_at` 优先，缺失时再按系统时间兜底。
+落札同步不再更新运费。用户端落札商品和后台订单排序都按 `won_at` 优先，缺失时再按系统时间兜底。同一商品多次提交时，用户端“落札商品”的落札价、落札时间仍取实际落札订单，策略、最高价、运费等展示字段取最后提交的任务。
 
 ### 用户端统计页面
 
@@ -234,9 +237,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 服务器账号 | 服 |
 | 系统配置 | 系 |
 | 清理数据 | 清 |
-| 运费更新 | 运 |
-| 商品类型更新 | 类 |
-| 落札商品更新 | 落 |
+| 数据批处理 | 批 |
 | 特殊用户设置 | 特 |
 | 订单管理 | 订 |
 
@@ -311,6 +312,12 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-05-30 | 缺少商品类型字段和历史补齐入口 | 新增 `tasks.product_type`，服务端按价格后 `（税0円）/（税込）` 判断普通/商城商品；用户端商品卡片显示商品类型；后台新增“商品类型更新”，支持按商品 ID 批量补齐 |
 | 2026-05-30 | 后台订单管理商品类型不直观，商品 ID 易换行 | 订单管理商品 ID 后增加类型标识：红色 `商`、绿色 `普`、缺失 `-`；表格启用横向滚动并设置数据不换行 |
 | 2026-05-30 | 落札商品更新说明误写会覆盖运费 | 后台“落札商品更新”说明改为“也会重新覆盖（落札价、落札时间）” |
+| 2026-05-31 | 后台批处理菜单分散 | “运费更新 / 商品类型更新 / 落札商品更新”合并为“数据批处理”，页面顶部 Tabs 切换 3 个功能 |
+| 2026-05-31 | 订单结算状态文案混用 | 订单管理勾选后点击“结算”改为 `pending_settlement`，显示“待结算”；`pending_payment` 继续保留为“待支付”供其他流程使用 |
+| 2026-05-31 | 用户端列表分页和同商品多任务展示混乱 | 用户端“入札中”“落札商品”改为每页 10 条；同商品多次提交时，策略、最高价、运费等展示字段取最后提交的任务 |
+| 2026-05-31 | 多次出价超最高价可能停留在已出价 | `current_price > max_price` 自动失败规则扩展到 `bidding + multi_bid`，避免已出价多次出价任务卡住 |
+| 2026-05-31 | 多次出价最低加价规则不符合 Yahoo 阶梯 | 最低加价改为 Yahoo 阶梯：`<5000=100`、`5000-9999=250`、`10000-49999=500`、`>=50000=1000` |
+| 2026-05-31 | 30 秒超时错误乱码导致显示系统原因 | 插件超时错误改为英文 `Task execution timeout after 30s; task tab closed`；旧乱码超时也归类为“失败：响应超时” |
 
 ---
 
@@ -374,8 +381,10 @@ git status --short
 - **API 服务**: `D:/www/g-daipai/src/server/index.js`
 - **数据库**: `D:/www/g-daipai/data/gdaipai.db`
 - **Schema**: `D:/www/g-daipai/src/db/init.sql`
-- **后台运费更新**: `D:/www/g-daipai/src/admin/src/ShippingRefresh.tsx`
-- **后台商品类型更新**: `D:/www/g-daipai/src/admin/src/ProductTypeRefresh.tsx`
+- **后台数据批处理**: `D:/www/g-daipai/src/admin/src/DataBatch.tsx`
+- **后台运费更新 Tab**: `D:/www/g-daipai/src/admin/src/ShippingRefresh.tsx`
+- **后台商品类型更新 Tab**: `D:/www/g-daipai/src/admin/src/ProductTypeRefresh.tsx`
+- **后台落札商品更新 Tab**: `D:/www/g-daipai/src/admin/src/OrdersResync.tsx`
 - **服务端商品/运费解析**: `D:/www/g-daipai/src/server/routes/proxy.js`
 - **插件调度/空闲同步**: `D:/www/g-daipai/yahoo-plugin/background.js`
 - **Spec**: `D:/www/g-daipai/docs/superpowers/specs/2026-05-11-yahoo-auction-proxy-v2-design.md`
@@ -389,3 +398,82 @@ git status --short
 - ✅ `docs/superpowers/plans/2026-05-11-yahoo-auction-proxy-plan.md` — 已删除
 - ✅ `docs/superpowers/specs/2026-05-11-yahoo-auction-proxy-design.md` — 已删除
 - ✅ `src/worker/` — 已删除
+
+---
+
+## 2026-06-01 交易开始功能当前进度
+
+> 注意：本节为后续接手排查用。当前 `agents.md` 文件在终端中可能显示为乱码，但本节内容以当前需求为准。
+
+### 当前状态
+
+- 分支：`codex/transaction-start`。
+- 已新增交易开始相关设计文档：`docs/superpowers/specs/2026-06-01-yahoo-transaction-start-design.md`。
+- 已新增实施计划：`docs/superpowers/plans/2026-06-01-yahoo-transaction-start-plan.md`。
+- 交易开始目前已临时停用：`yahoo-plugin/background.js` 中 `TRANSACTION_START_ENABLED = false`。
+- 已在本地数据库把当天自动交易开始标记关闭：`transaction_start_requested=0`，`transaction_start_last_run_date=当天`。
+- 停用原因：真实 Yahoo 页面测试时交易开始流程仍存在 tab 跟踪和按钮点击问题，继续运行会反复打开 Yahoo tab。
+
+### 已实现内容
+
+- `orders` 新增兼容字段：`transaction_url`、`bundle_group_id`、`transaction_started_at`、`transaction_start_error`。
+- `/my/won` 落札同步尝试抽取每个商品的 `取引連絡` 链接，保存到 `orders.transaction_url`。
+- 后台配置页已改为“入札、落札、交易开始、扫描、付款、收货配置”。
+- 后台新增“手动执行交易开始”按钮：`POST /api/admin/transaction-start/request`。
+- 后台新增“初始化订单状态”按钮：`POST /api/admin/transaction-start/reset-orders`。
+- 后台订单管理页新增 `交易开始flag`、`扫描flag`、`交易开始错误`，并显示新状态 `等待运费`、`待同捆`。
+- 插件空闲同步流程已预留交易开始、扫描、付款、确认收货；扫描/付款/确认收货尚未实现。
+
+### 业务规则确认
+
+- “初操作”和“交易开始”是同一个业务名称，后续统一使用“交易开始”。
+- 交易开始只处理 `orders.order_status` 为空的落札订单。
+- 商城商品：不用打开 Yahoo 取引页，直接 `pending_payment`（待支付）。
+- 普通商品：必须先进入 `取引連絡` 页面判断是否同捆。
+- 普通商品如果没有同捆：
+  - 运费不是 `落札者負担`：订单状态改为 `pending_payment`（待支付），关闭 tab。
+  - 运费是 `落札者負担`：订单状态改为 `waiting_shipping`（等待运费），关闭 tab。
+- 普通商品如果有同捆：
+  - 关闭 Yahoo 同捆提示弹窗。
+  - 抽取同捆列表商品 ID。
+  - 用页面 `X件（落札数量：X）` 校验抽取数量。
+  - 点击 `まとめて取引を依頼する` 或 `まとめて取引をはじめる`。
+  - 到确认页点击 `決定する`。
+  - 看到完成文案后，把同组所有订单标为 `pending_bundle`（待同捆）并写同一个 `bundle_group_id`。
+  - 标记待同捆应发生在完成文案确认后、关闭 tab 前。
+
+### 当前真实测试问题
+
+真实 Yahoo 页面上仍有未解决问题：
+
+1. 普通未同捆商品进入 `取引連絡` 后，状态能变化但 tab 没有可靠关闭。
+2. 同捆商品页面点击 `閉じる` 后停在“まとめて取引”图1页面。
+3. `まとめて取引を依頼する` 按钮页面 HTML 中存在类似 `まとめて取引を依頼する</button>`，但插件点击逻辑仍没有稳定触发跳转。
+4. 曾出现重复开 tab；目前已尝试通过记录新增 tab 和关闭本次流程 tab 缓解，但未在真实页面确认完全可靠。
+5. 曾出现 `bundle decide button not found`，原因推测是 `まとめて取引を依頼する` 点击后 Yahoo 新开/切到确认页 tab，而 background 仍在旧 tab 找 `決定する`。
+6. `/my/won` 按商品 ID 找 `取引連絡` 时需要避免匹配到外层大容器，否则可能点错商品。
+
+### 下一步计划
+
+交易开始重新启用前，建议先做诊断版，不要继续盲改点击逻辑：
+
+1. 保持 `TRANSACTION_START_ENABLED = false`，避免继续自动开 tab。
+2. 增加单商品诊断接口/按钮，只对指定商品 ID 执行一次交易开始，且不循环处理全部订单。
+3. 在 `content.js` 的图1页面输出诊断信息：候选按钮数量、`tagName`、`textContent`、`value`、`disabled`、`href`、`onclick`、`role`、`getBoundingClientRect()`、点击前后 URL、点击前后 tab 数量。
+4. 点击 `まとめて取引を依頼する` 后，background 必须确认当前 tab URL 是否变化、是否新开 tab、新 tab 是否为确认页、确认页是否存在 `決定する`。
+5. 普通非同捆商品状态更新后，必须关闭本次流程创建或打开的所有 Yahoo 交易相关 tab。
+6. 同捆流程失败时，应把同组商品加入本轮 processed 集合，避免同一组反复打开。
+7. 真实页面确认稳定后，再把 `TRANSACTION_START_ENABLED` 改回 `true`。
+
+### 最近验证命令
+
+以下命令在当前改动过程中曾通过：
+
+```powershell
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+Set-Location src\admin
+npm run build
+```

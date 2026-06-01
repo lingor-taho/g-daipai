@@ -34,6 +34,10 @@ ensureColumn('orders', 'large_amount_fee_applied', 'INTEGER');
 ensureColumn('orders', 'tax_included_final_price', 'INTEGER');
 ensureColumn('orders', 'has_user_finance_override', 'INTEGER');
 ensureColumn('orders', 'settled_at', 'DATETIME');
+ensureColumn('orders', 'transaction_url', 'TEXT');
+ensureColumn('orders', 'bundle_group_id', 'VARCHAR(64)');
+ensureColumn('orders', 'transaction_started_at', 'DATETIME');
+ensureColumn('orders', 'transaction_start_error', 'TEXT');
 ensureColumn('users', 'user_level', 'INTEGER DEFAULT 1');
 ensureColumn('users', 'parent_user_id', 'INTEGER');
 
