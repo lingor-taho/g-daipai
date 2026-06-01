@@ -2,6 +2,7 @@ import { Tabs } from 'antd';
 import ShippingRefreshPage from './ShippingRefresh';
 import ProductTypeRefreshPage from './ProductTypeRefresh';
 import OrdersResyncPage from './OrdersResync';
+import OrderStatusRefreshPage from './OrderStatusRefresh';
 
 export default function DataBatchPage() {
   return (
@@ -22,6 +23,11 @@ export default function DataBatchPage() {
           key: 'ordersResync',
           label: '落札商品更新',
           children: <OrdersResyncPage />
+        },
+        {
+          key: 'orderStatus',
+          label: '订单状态更新',
+          children: <OrderStatusRefreshPage />
         }
       ]}
     />

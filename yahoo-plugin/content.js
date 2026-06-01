@@ -296,7 +296,7 @@ function detectYahooLoginStatus() {
   const text = getBodyText();
   const href = window.location.href;
   const isLoginUrl = /login\.yahoo\.co\.jp|account\.edit\.yahoo\.co\.jp/i.test(href);
-  const hasLoginPrompt = /\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044|ログイン.*必要|ログインしてください|Yahoo! JAPAN ID/i.test(text);
+  const hasLoginPrompt = /\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044|ログイン.*必要|ログインしてください/i.test(text);
   if (isLoginUrl || hasLoginPrompt) {
     return { status: 'failed', message: '需要登录 Yahoo' };
   }

@@ -1060,6 +1060,18 @@ function testDetectBundleRequestedComplete() {
   assert.equal(api.detectBundleRequestedComplete(), true);
 }
 
+function testTransactionPageYahooIdTextDoesNotMeanLoggedOut() {
+  const api = loadContentForTest('Yahoo! JAPAN ID ????? ????', '/seller/top?aid=u1231519486');
+
+  assert.equal(api.detectYahooLoginStatus().status, 'ok');
+}
+
+function testLoginUrlStillMeansLoggedOut() {
+  const api = loadContentForTest('Yahoo! JAPAN ID ??????????', '/login');
+
+  assert.equal(api.detectYahooLoginStatus().status, 'failed');
+}
+
 function testClickTransactionContactForProduct() {
   const contact = createTestAnchor('取引連絡', 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m1114324624');
   const auction = createTestAnchor('商品', 'https://auctions.yahoo.co.jp/jp/auction/m1114324624');

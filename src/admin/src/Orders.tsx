@@ -26,6 +26,7 @@ function renderOrderStatus(status: string | null | undefined) {
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
   if (status === 'waiting_shipping') return <Tag color="orange">等待运费</Tag>;
   if (status === 'pending_bundle') return <Tag color="purple">待同捆</Tag>;
+  if (status === 'completed') return <Tag color="success">完了</Tag>;
   return '';
 }
 

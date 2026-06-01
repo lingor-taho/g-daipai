@@ -6,6 +6,7 @@ const {
   buildOrderSettlement,
   buildAdminOrdersListQuery,
   ORDER_STATUS_PENDING_SETTLEMENT,
+  ORDER_STATUS_COMPLETED,
   normalizeProductType,
   parseShippingFeeToNumber
 } = require('./admin');
@@ -162,6 +163,10 @@ function testSettlementStatusUsesPendingSettlement() {
   assert.equal(ORDER_STATUS_PENDING_SETTLEMENT, 'pending_settlement');
 }
 
+function testCompletedOrderStatusConstant() {
+  assert.equal(ORDER_STATUS_COMPLETED, 'completed');
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
@@ -171,3 +176,4 @@ testBuildOrderSettlementUsesSubmittedRateAndOverrides();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
 testSettlementStatusUsesPendingSettlement();
+testCompletedOrderStatusConstant();

@@ -21,6 +21,7 @@ const {
 } = require('../services/dataCleanup');
 
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
+const ORDER_STATUS_COMPLETED = 'completed';
 
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
@@ -1095,6 +1096,53 @@ router.post('/orders-resync/run', async (req, res) => {
   });
 });
 
+router.post('/order-status-refresh/run', async (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: 'productIds is required' });
+  }
+
+  const results = [];
+  for (const productId of productIds) {
+    const orders = await db.getAll(
+      `SELECT o.id AS order_id, o.order_status, t.id AS task_id
+       FROM orders o
+       INNER JOIN tasks t ON o.task_id = t.id
+       WHERE t.product_id = ?
+       ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC`,
+      [productId]
+    );
+    if (!orders.length) {
+      results.push({ productId, success: false, error: '系统中没有这个商品订单' });
+      continue;
+    }
+
+    const updateResult = await db.query(
+      `UPDATE orders
+       SET order_status = ?
+       WHERE id IN (${orders.map(() => '?').join(',')})`,
+      [ORDER_STATUS_COMPLETED, ...orders.map(order => order.order_id)]
+    );
+    results.push({
+      productId,
+      success: true,
+      orderIds: orders.map(order => order.order_id),
+      updatedCount: updateResult.rowCount || 0,
+      orderStatus: ORDER_STATUS_COMPLETED,
+      orderStatusText: '完了'
+    });
+  }
+
+  res.json({
+    success: true,
+    results,
+    updated: results.filter(item => item.success).length,
+    failed: results.filter(item => !item.success).length
+  });
+});
+
 router.get('/data-cleanup/config', async (req, res) => {
   res.json(await getDataCleanupConfig(db));
 });
@@ -1167,5 +1215,6 @@ module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;
+module.exports.ORDER_STATUS_COMPLETED = ORDER_STATUS_COMPLETED;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
