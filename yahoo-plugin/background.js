@@ -500,8 +500,11 @@ async function completeIdleAction(action) {
   }
 }
 
-async function fetchTransactionStartJobs() {
-  const res = await apiFetch('/api/plugin/transaction-start/jobs');
+async function fetchTransactionStartJobs(options = {}) {
+  const params = new URLSearchParams();
+  if (options.includeAfterCutoff) params.set('includeAfterCutoff', '1');
+  const query = params.toString();
+  const res = await apiFetch(`/api/plugin/transaction-start/jobs${query ? `?${query}` : ''}`);
   const data = await res.json();
   return Array.isArray(data.jobs) ? data.jobs : [];
 }
@@ -648,7 +651,8 @@ function getBundleActionPatternSource(action) {
   const patterns = {
     close: '\\u9589\\u3058\\u308b',
     start: '^\\s*\\u307e\\u3068\\u3081\\u3066\\u53d6\\u5f15\\u3092(?:\\u306f\\u3058\\u3081\\u308b|\\u4f9d\\u983c\\u3059\\u308b)\\s*$',
-    decide: '\\u6c7a\\u5b9a\\u3059\\u308b'
+    decide: '\\u6c7a\\u5b9a\\u3059\\u308b',
+    confirm: '\\u78ba\\u5b9a\\u3059\\u308b'
   };
   return patterns[action] || '';
 }
@@ -867,7 +871,7 @@ async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, t
   throw new Error('bundle next page did not appear');
 }
 
-async function clickBundleActionAndFollowTab(tab, action) {
+async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null) {
   console.log(`[Yahoo Bid] clickBundleActionAndFollowTab: action=${action}, tabId=${tab.id}`);
 
   try {
@@ -907,9 +911,9 @@ async function clickBundleActionAndFollowTab(tab, action) {
     return { success: true, tab };
   }
 
-  const waitFor = action === 'start'
+  const waitFor = waitForOverride || (action === 'start'
     ? state => state.canDecide
-    : state => state.complete;
+    : state => state.complete);
 
   let nextTab = null;
   try {
@@ -928,6 +932,26 @@ async function clickBundleActionAndFollowTab(tab, action) {
   nextTab._gdaipaiCreatedTabIds = nextTab._gdaipaiCreatedTabIds || tab._gdaipaiCreatedTabIds || [];
   await injectContentScript(nextTab.id).catch(() => {});
   return { success: true, tab: nextTab };
+}
+
+async function completeBidderPaysShippingTransaction(tab) {
+  let state = await getBundleActionState(tab.id);
+  if (state?.waitingShipping) {
+    return { success: true, tab };
+  }
+
+  let result = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.waitingShipping);
+  if (!result?.success) return result;
+  tab = result.tab;
+
+  state = await getBundleActionState(tab.id);
+  if (state?.waitingShipping) {
+    return { success: true, tab };
+  }
+
+  result = await clickBundleActionAndFollowTab(tab, 'confirm', state => state.waitingShipping);
+  if (!result?.success) return result;
+  return { success: true, tab: result.tab };
 }
 
 async function executeTransactionStartJob(job) {
@@ -977,10 +1001,17 @@ async function executeTransactionStartJob(job) {
       });
       return { processedProductIds: bundleProductIds };
     }
-    await updateTransactionStartStatus({
-      orderId: job.orderId,
-      status: isBidderPaysShippingText(job.shippingFeeText) ? 'waiting_shipping' : 'pending_payment'
-    });
+    if (isBidderPaysShippingText(job.shippingFeeText)) {
+      const result = await completeBidderPaysShippingTransaction(tab);
+      if (!result?.success) {
+        await updateTransactionStartStatus({ orderId: job.orderId, error: result?.error || 'bidder pays shipping confirmation failed' });
+        return { processedProductIds: [job.productId] };
+      }
+      tab = result.tab;
+      await updateTransactionStartStatus({ orderId: job.orderId, status: 'waiting_shipping' });
+    } else {
+      await updateTransactionStartStatus({ orderId: job.orderId, status: 'pending_payment' });
+    }
     return { processedProductIds: [job.productId] };
   } catch (e) {
     await updateTransactionStartStatus({ orderId: job.orderId, error: e.message || 'transaction start failed' }).catch(() => {});
@@ -994,8 +1025,8 @@ async function executeTransactionStartJob(job) {
   }
 }
 
-async function runTransactionStartJobs() {
-  const jobs = await fetchTransactionStartJobs();
+async function runTransactionStartJobs(options = {}) {
+  const jobs = await fetchTransactionStartJobs(options);
   const processedProducts = new Set();
   for (const job of jobs) {
     if (processedProducts.has(String(job.productId || '').toLowerCase())) continue;
@@ -1017,7 +1048,9 @@ async function syncIdleYahooPages() {
   await openWonPageForSync();
   const idleAction = await fetchNextIdleAction();
   if (TRANSACTION_START_ENABLED && idleAction?.action === 'transaction_start') {
-    await runTransactionStartJobs();
+    await runTransactionStartJobs({
+      includeAfterCutoff: Number(idleAction?.config?.transactionStartRequested || 0) === 1
+    });
   }
   await completeIdleAction(idleAction?.action || 'none');
 }
@@ -1121,6 +1154,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   withTimeout,
   waitForCurrentTabNavigation,
   clickBundleActionAndFollowTab,
+  completeBidderPaysShippingTransaction,
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick
 };

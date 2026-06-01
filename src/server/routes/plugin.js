@@ -650,7 +650,10 @@ async function syncBiddingItems(items, database = db) {
   return { highest, outbid, total: highest + outbid, followup: followupCreated };
 }
 
-async function getTransactionStartJobs(database = db) {
+async function getTransactionStartJobs(database = db, options = {}) {
+  const includeAfterCutoff = options.includeAfterCutoff ? 1 : 0;
+  const cutoffHour = clampHour(options.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
+  const cutoffModifier = `start of day,+${cutoffHour} hours`;
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
             o.transaction_url,
@@ -663,7 +666,10 @@ async function getTransactionStartJobs(database = db) {
      INNER JOIN tasks t ON o.task_id = t.id
      WHERE t.status = 'success'
        AND (o.order_status IS NULL OR o.order_status = '')
+       AND (? = 1 OR datetime(COALESCE(o.won_at, o.created_at)) < datetime('now', ?))
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`
+    ,
+    [includeAfterCutoff, cutoffModifier]
   );
 
   const jobs = [];
@@ -837,7 +843,11 @@ router.post('/orders/sync', async (req, res) => {
 });
 
 router.get('/transaction-start/jobs', async (req, res) => {
-  const result = await getTransactionStartJobs();
+  const config = await getIdleActionConfig();
+  const result = await getTransactionStartJobs(db, {
+    includeAfterCutoff: req.query?.includeAfterCutoff === '1',
+    transactionStartHour: config.transactionStartHour
+  });
   res.json({ success: true, ...result });
 });
 

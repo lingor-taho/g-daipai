@@ -235,6 +235,83 @@ async function testTrustedBundleClickDispatchesMouseThroughDebugger() {
   assert.equal(commands[1].params.y, 55);
 }
 
+async function testBidderPaysShippingTransactionClicksDecideAndConfirm() {
+  const clickedActions = [];
+  let statePhase = 'decide';
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=n1', status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 3);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          statePhase = message.action === 'decide' ? 'confirm' : 'waiting_shipping';
+          return { success: true };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canConfirm: statePhase === 'confirm',
+              waitingShipping: statePhase === 'waiting_shipping',
+              complete: false
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    }
+  });
+
+  const result = await api.completeBidderPaysShippingTransaction({ id: 3 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(clickedActions, ['decide', 'confirm']);
+}
+
+async function testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage() {
+  const clickedActions = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=n1', status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 4);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          return { success: true };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              waitingShipping: true,
+              complete: false
+            }
+          };
+        }
+        return { success: true };
+      }
+    }
+  });
+
+  const result = await api.completeBidderPaysShippingTransaction({ id: 4 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(clickedActions, []);
+}
+
 async function run() {
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
@@ -242,6 +319,8 @@ async function run() {
   await testBundleStartWaitsForDecideButtonState();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
+  await testBidderPaysShippingTransactionClicksDecideAndConfirm();
+  await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
 }
 
 run().catch(err => {

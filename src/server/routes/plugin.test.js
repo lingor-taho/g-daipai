@@ -571,7 +571,8 @@ async function testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThr
 async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   const queries = [];
   const fakeDb = {
-    async getAll() {
+    async getAll(sql, params) {
+      queries.push({ sql, params, type: 'getAll' });
       return [
         { order_id: 1, product_id: 's1', product_type: 'store', transaction_url: '', shipping_fee_text: '\u7121\u6599' },
         { order_id: 2, product_id: 'n1', product_type: 'normal', transaction_url: '', shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5' },
@@ -594,7 +595,25 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.equal(result.jobs[0].transactionUrl, '');
   assert.equal(result.jobs[1].productId, 'n2');
   assert.equal(result.jobs[2].productId, 'n3');
-  assert.equal(queries[0].params[0], ORDER_STATUS_PENDING_PAYMENT);
+  assert.match(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', \?\)/);
+  assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
+  assert.deepEqual(queries[0].params, [0, 'start of day,+1 hours']);
+  assert.equal(queries[1].params[0], ORDER_STATUS_PENDING_PAYMENT);
+}
+
+async function testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      return [];
+    }
+  };
+
+  const result = await getTransactionStartJobs(fakeDb, { includeAfterCutoff: true, transactionStartHour: 3 });
+
+  assert.equal(result.total, 0);
+  assert.deepEqual(calls[0].params, [1, 'start of day,+3 hours']);
 }
 async function testUpdateTransactionStartStatusUpdatesBundleByProductIds() {
   const calls = [];
@@ -652,6 +671,7 @@ Promise.all([
   testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup(),
   testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThreshold(),
   testGetTransactionStartJobsHandlesStoreAndMissingUrl(),
+  testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds()
 ]).catch(err => {
   console.error(err);

@@ -1250,7 +1250,8 @@ function clickBundleTransactionAction(action) {
   const patterns = {
     close: /\u9589\u3058\u308b/,
     start: /^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/,
-    decide: /\u6c7a\u5b9a\u3059\u308b/
+    decide: /\u6c7a\u5b9a\u3059\u308b/,
+    confirm: /\u78ba\u5b9a\u3059\u308b/
   };
   const pattern = patterns[action];
   if (!pattern) return { success: false, error: 'unknown bundle action' };
@@ -1260,10 +1261,16 @@ function clickBundleTransactionAction(action) {
   return { success: true };
 }
 
+function detectWaitingShippingPaymentAmount(text = getBodyText()) {
+  return /\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,80}\u9001\u6599\u6c7a\u5b9a\u5f8c[\s\S]{0,20}\u78ba\u5b9a\u3057\u307e\u3059/.test(String(text || ''));
+}
+
 function getBundleTransactionActionState() {
   return {
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
     canDecide: !!findClickableByText(/\u6c7a\u5b9a\u3059\u308b/),
+    canConfirm: !!findClickableByText(/\u78ba\u5b9a\u3059\u308b/),
+    waitingShipping: detectWaitingShippingPaymentAmount(),
     complete: detectBundleRequestedComplete(),
     url: window.location.href
   };
@@ -1381,6 +1388,7 @@ window.__G_DAIPAI_TEST__ = {
   clickTransactionContactForProduct,
   clickBundleTransactionAction,
   getBundleTransactionActionState,
+  detectWaitingShippingPaymentAmount,
   detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,

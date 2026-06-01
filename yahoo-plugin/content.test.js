@@ -1141,6 +1141,14 @@ function testBundleTransactionActionStateDetectsDecideButton() {
   assert.equal(state.complete, false);
 }
 
+function testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount() {
+  const api = loadContentForTest('\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a \u9001\u6599\u6c7a\u5b9a\u5f8c\u3001\u78ba\u5b9a\u3057\u307e\u3059\u3002', '/seller/top');
+  const state = api.getBundleTransactionActionState();
+
+  assert.equal(api.detectWaitingShippingPaymentAmount(), true);
+  assert.equal(state.waitingShipping, true);
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -1203,6 +1211,7 @@ async function run() {
   testClickBundleTransactionActionFindsRequestButton();
   testClickBundleTransactionActionIgnoresInstructionText();
   testBundleTransactionActionStateDetectsDecideButton();
+  testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
 }
 
 run().catch(err => {
