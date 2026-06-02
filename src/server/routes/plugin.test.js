@@ -27,7 +27,8 @@ const {
   updateScanStatus,
   ORDER_STATUS_PENDING_PAYMENT,
   ORDER_STATUS_WAITING_SHIPPING,
-  ORDER_STATUS_PENDING_BUNDLE
+  ORDER_STATUS_PENDING_BUNDLE,
+  ORDER_STATUS_BUNDLE_COMPLETED
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -653,6 +654,7 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
         product_id: 'm111111111',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/m111111111',
         product_title: 'sample',
+        order_status: ORDER_STATUS_WAITING_SHIPPING,
         shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5'
       }];
     }
@@ -660,12 +662,14 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
 
   const result = await getScanJobs(fakeDb);
 
-  assert.match(calls[0].sql, /o\.order_status = \?/);
+  assert.match(calls[0].sql, /o\.order_status IN/);
   assert.equal(calls[0].params[0], ORDER_STATUS_WAITING_SHIPPING);
+  assert.equal(calls[0].params[1], ORDER_STATUS_PENDING_BUNDLE);
   assert.equal(result.total, 1);
   assert.equal(result.jobs.length, 1);
   assert.equal(result.jobs[0].orderId, 11);
   assert.equal(result.jobs[0].productId, 'm111111111');
+  assert.equal(result.jobs[0].orderStatus, ORDER_STATUS_WAITING_SHIPPING);
   assert.equal(result.jobs[0].transactionUrl, 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m111111111');
 }
 
@@ -711,6 +715,49 @@ async function testUpdateScanStatusKeepsWaitingShippingWhenShippingPending() {
   assert.equal(queries[0].params[1], 12);
 }
 
+async function testUpdateScanStatusCompletesBundleGroupWithShippingFee() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 3 };
+    }
+  };
+
+  const result = await updateScanStatus({ orderId: 20, bundleShippingFeeText: '1,620\u5186' }, fakeDb);
+
+  assert.equal(result.updated, 3);
+  assert.equal(result.bundleShippingFeeText, '1620\u5186');
+  assert.match(queries[0].sql, /bundle_shipping_fee_text/);
+  assert.match(queries[0].sql, /bundle_group_id =/);
+  assert.equal(queries[0].params[0], 20);
+  assert.equal(queries[0].params[1], '1620\u5186');
+  assert.equal(queries[0].params[2], '0\u5186');
+  assert.equal(queries[0].params[3], 20);
+  assert.equal(queries[0].params[4], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(queries[0].params[5], ORDER_STATUS_BUNDLE_COMPLETED);
+  assert.equal(queries[0].params[6], 20);
+}
+
+async function testUpdateScanStatusRejectsBundleGroupToEmptyStatus() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 2 };
+    }
+  };
+
+  const result = await updateScanStatus({ orderId: 21, bundleRejected: true }, fakeDb);
+
+  assert.equal(result.updated, 2);
+  assert.equal(result.bundleRejected, true);
+  assert.match(queries[0].sql, /order_status = NULL/);
+  assert.match(queries[0].sql, /bundle_group_id = NULL/);
+  assert.match(queries[0].sql, /bundle_shipping_fee_text = NULL/);
+  assert.equal(queries[0].params[0], 21);
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -746,7 +793,9 @@ Promise.all([
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusWritesShippingAndPendingPayment(),
-  testUpdateScanStatusKeepsWaitingShippingWhenShippingPending()
+  testUpdateScanStatusKeepsWaitingShippingWhenShippingPending(),
+  testUpdateScanStatusCompletesBundleGroupWithShippingFee(),
+  testUpdateScanStatusRejectsBundleGroupToEmptyStatus()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

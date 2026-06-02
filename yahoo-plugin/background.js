@@ -665,6 +665,7 @@ function getBundleActionPatternSource(action) {
   const patterns = {
     close: '\\u9589\\u3058\\u308b',
     start: '^\\s*\\u307e\\u3068\\u3081\\u3066\\u53d6\\u5f15\\u3092(?:\\u306f\\u3058\\u3081\\u308b|\\u4f9d\\u983c\\u3059\\u308b)\\s*$',
+    input: '\\u53d6\\u5f15\\u60c5\\u5831\\u3092\\u5165\\u529b\\u3059\\u308b',
     decide: '\\u6c7a\\u5b9a\\u3059\\u308b',
     confirm: '\\u78ba\\u5b9a\\u3059\\u308b'
   };
@@ -1051,9 +1052,37 @@ async function runTransactionStartJobs(options = {}) {
   }
 }
 
+async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
+  const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
+  if (tab?.id) ids.add(tab.id);
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  for (const candidate of tabs) {
+    if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
+    if (isLikelyYahooTransactionTab(candidate)) ids.add(candidate.id);
+  }
+  for (const id of ids) {
+    await closeTabIfExists(id);
+  }
+}
+
 function buildScanStatusPayload(job) {
   const result = job?.result || {};
   if (!job?.orderId) return null;
+  if (job.orderStatus === 'pending_bundle') {
+    if (result.type === 'bundle_rejected') {
+      return {
+        orderId: job.orderId,
+        bundleRejected: true
+      };
+    }
+    if (result.type === 'shipping_ready' && result.bundleShippingFeeText) {
+      return {
+        orderId: job.orderId,
+        bundleShippingFeeText: result.bundleShippingFeeText
+      };
+    }
+    return null;
+  }
   if (result.pending) {
     return {
       orderId: job.orderId,
@@ -1093,10 +1122,89 @@ async function executeWaitingShippingScanJob(job) {
   }
 }
 
+async function extractBundleScanResult(tab) {
+  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BUNDLE_SCAN' }).catch(error => {
+    console.error('[Yahoo Bid] Failed to extract bundle scan:', error);
+    return null;
+  });
+  await reportYahooLoginStatus(response?.loginStatus);
+  if (response?.loginStatus?.status === 'failed') return { stop: true, result: null };
+  return { stop: false, result: response?.success ? response.result : null };
+}
+
+async function executePendingBundleScanJob(job) {
+  let tab = null;
+  const beforeTabIds = await getTabIds();
+  try {
+    tab = await openTransactionPage(job);
+    let extracted = await extractBundleScanResult(tab);
+    if (extracted.stop) return { stop: true };
+    let result = extracted.result;
+
+    if (result?.type === 'main_agreed') {
+      const closeResult = await clickBundleActionAndFollowTab(tab, 'close');
+      if (!closeResult?.success) return { stop: false };
+      tab = closeResult.tab;
+      extracted = await extractBundleScanResult(tab);
+      if (extracted.stop) return { stop: true };
+      result = extracted.result;
+    }
+
+    if (result?.type === 'shipping_ready' || result?.type === 'bundle_rejected') {
+      const payload = buildScanStatusPayload({ ...job, result });
+      if (payload) await updateScanStatus(payload);
+      return { stop: false, processedBundleGroupId: job.bundleGroupId || null };
+    }
+
+    if (result?.type === 'unknown') {
+      let state = await getBundleActionState(tab.id);
+      if (state?.canInputTransaction) {
+        let clickResult = await clickBundleActionAndFollowTab(tab, 'input', state => state.canDecide || state.waitingShipping);
+        if (!clickResult?.success) return { stop: false };
+        tab = clickResult.tab;
+        state = await getBundleActionState(tab.id);
+        if (!state?.waitingShipping) {
+          clickResult = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.waitingShipping);
+          if (!clickResult?.success) return { stop: false };
+          tab = clickResult.tab;
+          state = await getBundleActionState(tab.id);
+        }
+        if (!state?.waitingShipping) {
+          clickResult = await clickBundleActionAndFollowTab(tab, 'confirm', state => state.waitingShipping);
+          if (!clickResult?.success) return { stop: false };
+          tab = clickResult.tab;
+        }
+
+        extracted = await extractBundleScanResult(tab);
+        if (extracted.stop) return { stop: true };
+        result = extracted.result;
+        const payload = buildScanStatusPayload({ ...job, result });
+        if (payload) await updateScanStatus(payload);
+        if (payload?.bundleShippingFeeText || payload?.bundleRejected) {
+          return { stop: false, processedBundleGroupId: job.bundleGroupId || null };
+        }
+      }
+    }
+    return { stop: false };
+  } catch (e) {
+    console.warn('[Yahoo Bid] Pending bundle scan job failed:', e.message || e);
+    return { stop: false };
+  } finally {
+    await closeTabsForScanFlow(tab, beforeTabIds);
+  }
+}
+
 async function runScanJobs() {
   const jobs = await fetchScanJobs();
+  const processedBundleGroups = new Set();
   for (const job of jobs) {
-    const result = await executeWaitingShippingScanJob(job);
+    if (job.bundleGroupId && processedBundleGroups.has(job.bundleGroupId)) continue;
+    const result = job.orderStatus === 'pending_bundle'
+      ? await executePendingBundleScanJob(job)
+      : await executeWaitingShippingScanJob(job);
+    if (result?.processedBundleGroupId) {
+      processedBundleGroups.add(result.processedBundleGroupId);
+    }
     if (result?.stop) break;
   }
 }

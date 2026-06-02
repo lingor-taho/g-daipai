@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS orders (
   has_user_finance_override INTEGER,
   total_amount_cny DECIMAL(10,2),
   order_status VARCHAR(32),
+  bundle_shipping_fee_text VARCHAR(64),
   transaction_url TEXT,
   bundle_group_id VARCHAR(64),
   transaction_started_at DATETIME,

@@ -26,6 +26,7 @@ function renderOrderStatus(status: string | null | undefined) {
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
   if (status === 'waiting_shipping') return <Tag color="orange">等待运费</Tag>;
   if (status === 'pending_bundle') return <Tag color="purple">待同捆</Tag>;
+  if (status === 'bundle_completed') return <Tag color="cyan">同捆完了</Tag>;
   if (status === 'completed') return <Tag color="success">完了</Tag>;
   return '';
 }
@@ -142,6 +143,7 @@ export default function OrdersPage() {
       }
     },
     { title: '运费', dataIndex: 'shipping_fee_text', width: 120, ellipsis: true, onCell: () => noWrapCell },
+    { title: '同捆运费', dataIndex: 'bundle_shipping_fee_text', width: 100, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => row.bundle_shipping_fee_text || '-' },
     { title: '落札金额', dataIndex: 'final_price', width: 105, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.final_price) },
     { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 100, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
     { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },

@@ -1206,6 +1206,50 @@ function testExtractWaitingShippingScanResultPendingBeatsOtherShippingText() {
   assert.equal(result.pending, true);
 }
 
+function testExtractBundleScanResultDetectsWaitingForSellerAgreement() {
+  const api = loadContentForTest('\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092\u4f9d\u983c\u4e2d\u3067\u3059\u3002\u51fa\u54c1\u8005\u304b\u3089\u306e\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'waiting_agreement');
+}
+
+function testExtractBundleScanResultDetectsChildAgreementPopup() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\u304c\u3001\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f\u3002 \u53d6\u5f15\u5185\u5bb9\u3092\u3054\u78ba\u8a8d\u304f\u3060\u3055\u3044\u3002', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'child_agreed');
+}
+
+function testExtractBundleScanResultDetectsMainAgreementPopup() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f\u3002\u51fa\u54c1\u8005\u304b\u3089\u914d\u9001\u65b9\u6cd5\u306e\u9023\u7d61\u304c\u5c4a\u3044\u3066\u3044\u307e\u3059\u3002\u78ba\u8a8d\u3057\u53d6\u5f15\u60c5\u5831\u306e\u5165\u529b\u3078\u9032\u3093\u3067\u304f\u3060\u3055\u3044\u3002', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'main_agreed');
+}
+
+function testExtractBundleScanResultExtractsDeliveryMethodShippingFee() {
+  const api = loadContentForTest('\u307e\u3068\u3081\u3066\u53d6\u5f15\u306e\u914d\u9001\u65b9\u6cd5 \u914d\u9001\u65b9\u6cd5 \uff1a \u5b9a\u5f62\u90f5\u4fbf \uff08110\u5186\uff09', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'shipping_ready');
+  assert.equal(result.bundleShippingFeeText, '110\u5186');
+}
+
+function testExtractBundleScanResultExtractsPaymentShippingFee() {
+  const api = loadContentForTest('\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d\uff1a87,620\u5186\uff08\u843d\u672d\u4fa1\u683c\uff1a86,000\u5186 \u6570\u91cf\uff1a1\u500b \u9001\u6599\uff1a1,620\u5186\uff09', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'shipping_ready');
+  assert.equal(result.bundleShippingFeeText, '1620\u5186');
+}
+
+function testExtractBundleScanResultDetectsBundleRejected() {
+  const api = loadContentForTest('\u53d6\u5f15\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002 \u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f\u305f\u3081\u3001\u5546\u54c1\u3054\u3068\u306b\u53d6\u5f15\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'bundle_rejected');
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -1273,6 +1317,12 @@ async function run() {
   testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
   testExtractWaitingShippingScanResultDetectsPendingShipping();
   testExtractWaitingShippingScanResultPendingBeatsOtherShippingText();
+  testExtractBundleScanResultDetectsWaitingForSellerAgreement();
+  testExtractBundleScanResultDetectsChildAgreementPopup();
+  testExtractBundleScanResultDetectsMainAgreementPopup();
+  testExtractBundleScanResultExtractsDeliveryMethodShippingFee();
+  testExtractBundleScanResultExtractsPaymentShippingFee();
+  testExtractBundleScanResultDetectsBundleRejected();
 }
 
 run().catch(err => {

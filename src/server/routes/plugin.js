@@ -15,6 +15,7 @@ const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
 const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
 const ORDER_STATUS_WAITING_SHIPPING = 'waiting_shipping';
 const ORDER_STATUS_PENDING_BUNDLE = 'pending_bundle';
+const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
 
 function parseTimeMs(value) {
   let input = String(value || '').trim();
@@ -786,25 +787,29 @@ function normalizeShippingFeeText(value) {
 async function getScanJobs(database = db) {
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
+            o.order_status,
             o.transaction_url,
+            o.bundle_group_id,
             t.product_id,
             t.product_url,
             t.product_title,
             t.shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
-     WHERE o.order_status = ?
+     WHERE o.order_status IN (?, ?)
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
-    [ORDER_STATUS_WAITING_SHIPPING]
+    [ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE]
   );
   return {
     jobs: rows.map(row => ({
       orderId: row.order_id,
+      orderStatus: row.order_status,
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
       shippingFeeText: row.shipping_fee_text || '',
+      bundleGroupId: row.bundle_group_id || '',
       transactionUrl: row.transaction_url || ''
     })),
     total: rows.length
@@ -814,10 +819,49 @@ async function getScanJobs(database = db) {
 async function updateScanStatus(payload = {}, database = db) {
   const orderId = Number(payload.orderId || 0);
   const shippingFeeText = normalizeShippingFeeText(payload.shippingFeeText);
+  const bundleShippingFeeText = normalizeShippingFeeText(payload.bundleShippingFeeText);
   if (!Number.isInteger(orderId) || orderId <= 0) {
     const err = new Error('orderId is required');
     err.statusCode = 400;
     throw err;
+  }
+  if (payload.bundleRejected === true) {
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = NULL,
+           bundle_group_id = NULL,
+           bundle_shipping_fee_text = NULL,
+           transaction_start_error = NULL
+       WHERE bundle_group_id = (
+         SELECT bundle_group_id FROM orders WHERE id = ?
+       )
+         AND bundle_group_id IS NOT NULL`,
+      [orderId]
+    );
+    return { updated: result.rowCount || 0, bundleRejected: true };
+  }
+  if (bundleShippingFeeText) {
+    const result = await database.query(
+      `UPDATE orders
+       SET bundle_shipping_fee_text = CASE WHEN id = ? THEN ? ELSE ? END,
+           order_status = CASE WHEN id = ? THEN ? ELSE ? END
+       WHERE bundle_group_id = (
+         SELECT bundle_group_id FROM orders WHERE id = ?
+       )
+         AND bundle_group_id IS NOT NULL
+         AND order_status = ?`,
+      [
+        orderId,
+        bundleShippingFeeText,
+        '0円',
+        orderId,
+        ORDER_STATUS_PENDING_PAYMENT,
+        ORDER_STATUS_BUNDLE_COMPLETED,
+        orderId,
+        ORDER_STATUS_PENDING_BUNDLE
+      ]
+    );
+    return { updated: result.rowCount || 0, bundleShippingFeeText };
   }
   if (payload.pending === true) {
     const result = await database.query(
@@ -1030,6 +1074,7 @@ module.exports.DEFAULT_MULTI_BID_MIN_PRICE = DEFAULT_MULTI_BID_MIN_PRICE;
 module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
 module.exports.ORDER_STATUS_WAITING_SHIPPING = ORDER_STATUS_WAITING_SHIPPING;
 module.exports.ORDER_STATUS_PENDING_BUNDLE = ORDER_STATUS_PENDING_BUNDLE;
+module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;

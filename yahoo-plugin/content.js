@@ -1250,6 +1250,7 @@ function clickBundleTransactionAction(action) {
   const patterns = {
     close: /\u9589\u3058\u308b/,
     start: /^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/,
+    input: /\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/,
     decide: /\u6c7a\u5b9a\u3059\u308b/,
     confirm: /\u78ba\u5b9a\u3059\u308b/
   };
@@ -1287,9 +1288,44 @@ function extractWaitingShippingScanResult(text = getBodyText()) {
   };
 }
 
+function extractBundleShippingFeeText(text = getBodyText()) {
+  const source = String(text || '');
+  const paymentMatch = source.match(/\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,240}\u9001\u6599\s*[:\uff1a]\s*([\d,]+)\s*\u5186/);
+  if (paymentMatch) return normalizeYenText(paymentMatch[1]);
+  const deliveryMatch = source.match(/\u914d\u9001\u65b9\u6cd5[\s\S]{0,160}[\uff08(]\s*([\d,]+)\s*\u5186\s*[\uff09)]/);
+  if (deliveryMatch) return normalizeYenText(deliveryMatch[1]);
+  return '';
+}
+
+function extractBundleScanResult(text = getBodyText()) {
+  const source = String(text || '');
+  const bundleShippingFeeText = extractBundleShippingFeeText(source);
+  if (bundleShippingFeeText) {
+    return { type: 'shipping_ready', bundleShippingFeeText };
+  }
+  if (/\u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f/.test(source)) {
+    return { type: 'bundle_rejected' };
+  }
+  if (/\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source)) {
+    return { type: 'child_agreed' };
+  }
+  if (/\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source) &&
+      /\u914d\u9001\u65b9\u6cd5\u306e\u9023\u7d61\u304c\u5c4a\u3044\u3066\u3044\u307e\u3059/.test(source)) {
+    return { type: 'main_agreed' };
+  }
+  if (detectBundleRequestedComplete()) {
+    return { type: 'waiting_agreement' };
+  }
+  if (detectWaitingShippingPaymentAmount(source)) {
+    return { type: 'shipping_pending' };
+  }
+  return { type: 'unknown' };
+}
+
 function getBundleTransactionActionState() {
   return {
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
+    canInputTransaction: !!findClickableByText(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
     canDecide: !!findClickableByText(/\u6c7a\u5b9a\u3059\u308b/),
     canConfirm: !!findClickableByText(/\u78ba\u5b9a\u3059\u308b/),
     waitingShipping: detectWaitingShippingPaymentAmount(),
@@ -1376,6 +1412,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'EXTRACT_BUNDLE_SCAN') {
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      result: loginStatus.status === 'ok' ? extractBundleScanResult() : null,
+      loginStatus
+    });
+    return true;
+  }
+
   if (msg.type === 'CLICK_TRANSACTION_CONTACT') {
     sendResponse(clickTransactionContactForProduct(msg.productId));
     return true;
@@ -1422,6 +1468,7 @@ window.__G_DAIPAI_TEST__ = {
   getBundleTransactionActionState,
   detectWaitingShippingPaymentAmount,
   extractWaitingShippingScanResult,
+  extractBundleScanResult,
   detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,

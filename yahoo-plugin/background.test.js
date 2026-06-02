@@ -334,6 +334,30 @@ function testBuildScanStatusPayloadSkipsPendingShipping() {
   assert.equal(payload.pending, true);
 }
 
+function testBuildScanStatusPayloadHandlesBundleShippingFee() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 22,
+    orderStatus: 'pending_bundle',
+    result: { type: 'shipping_ready', bundleShippingFeeText: '110\u5186' }
+  });
+
+  assert.equal(payload.orderId, 22);
+  assert.equal(payload.bundleShippingFeeText, '110\u5186');
+}
+
+function testBuildScanStatusPayloadHandlesBundleRejected() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 23,
+    orderStatus: 'pending_bundle',
+    result: { type: 'bundle_rejected' }
+  });
+
+  assert.equal(payload.orderId, 23);
+  assert.equal(payload.bundleRejected, true);
+}
+
 async function run() {
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
@@ -345,6 +369,8 @@ async function run() {
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
   testBuildScanStatusPayloadSkipsPendingShipping();
+  testBuildScanStatusPayloadHandlesBundleShippingFee();
+  testBuildScanStatusPayloadHandlesBundleRejected();
 }
 
 run().catch(err => {
