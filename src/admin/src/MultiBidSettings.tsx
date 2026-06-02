@@ -23,6 +23,16 @@ async function requestTransactionStart() {
   return data;
 }
 
+async function requestScan() {
+  const res = await fetch('/api/admin/scan/request', {
+    method: 'POST',
+    headers: authHeaders()
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '执行失败');
+  return data;
+}
+
 async function resetTransactionStartOrders() {
   const res = await fetch('/api/admin/transaction-start/reset-orders', {
     method: 'POST',
@@ -37,6 +47,7 @@ export default function MultiBidSettingsPage() {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [requestingScan, setRequestingScan] = useState(false);
   const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
@@ -79,6 +90,18 @@ export default function MultiBidSettingsPage() {
       message.error(e.message || '执行失败');
     } finally {
       setRequesting(false);
+    }
+  }
+
+  async function handleRequestScan() {
+    setRequestingScan(true);
+    try {
+      await requestScan();
+      message.success('扫描已加入空闲执行队列');
+    } catch (e: any) {
+      message.error(e.message || '执行失败');
+    } finally {
+      setRequestingScan(false);
     }
   }
 
@@ -188,6 +211,9 @@ export default function MultiBidSettingsPage() {
             rules={[{ required: true, message: '请输入扫描间隔次数' }]}
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="次" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="手动执行扫描">
+            <Button loading={requestingScan} onClick={handleRequestScan}>加入执行队列</Button>
           </Form.Item>
           <Typography.Text type="secondary">
             插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会执行这些空闲操作。

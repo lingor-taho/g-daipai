@@ -1265,6 +1265,28 @@ function detectWaitingShippingPaymentAmount(text = getBodyText()) {
   return /\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,80}\u9001\u6599\u6c7a\u5b9a\u5f8c[\s\S]{0,20}\u78ba\u5b9a\u3057\u307e\u3059/.test(String(text || ''));
 }
 
+function normalizeYenText(value) {
+  const amount = String(value || '').replace(/[^\d]/g, '');
+  return amount ? `${amount}\u5186` : '';
+}
+
+function extractWaitingShippingScanResult(text = getBodyText()) {
+  const source = String(text || '');
+  const shippingMatch = source.match(/\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,200}\u9001\u6599\s*[:\uff1a]\s*([\d,]+)\s*\u5186/);
+  if (shippingMatch) {
+    return {
+      hasShippingFee: true,
+      shippingFeeText: normalizeYenText(shippingMatch[1]),
+      pending: false
+    };
+  }
+  return {
+    hasShippingFee: false,
+    shippingFeeText: '',
+    pending: detectWaitingShippingPaymentAmount(source)
+  };
+}
+
 function getBundleTransactionActionState() {
   return {
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
@@ -1344,6 +1366,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'EXTRACT_WAITING_SHIPPING_SCAN') {
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      result: loginStatus.status === 'ok' ? extractWaitingShippingScanResult() : null,
+      loginStatus
+    });
+    return true;
+  }
+
   if (msg.type === 'CLICK_TRANSACTION_CONTACT') {
     sendResponse(clickTransactionContactForProduct(msg.productId));
     return true;
@@ -1389,6 +1421,7 @@ window.__G_DAIPAI_TEST__ = {
   clickBundleTransactionAction,
   getBundleTransactionActionState,
   detectWaitingShippingPaymentAmount,
+  extractWaitingShippingScanResult,
   detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,

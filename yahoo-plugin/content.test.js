@@ -1161,6 +1161,51 @@ function testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount() {
   assert.equal(state.waitingShipping, true);
 }
 
+function testExtractWaitingShippingScanResultFindsShippingFee() {
+  const api = loadContentForTest(
+    '\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 2,560\u5186\uff08\u843d\u672d\u4fa1\u683c\uff1a1,500\u5186 \u6570\u91cf\uff1a1\u500b \u9001\u6599\uff1a1,060\u5186\uff09 \u652f\u6255\u3044\u671f\u9650',
+    '/seller/top'
+  );
+  const result = api.extractWaitingShippingScanResult();
+
+  assert.equal(result.hasShippingFee, true);
+  assert.equal(result.shippingFeeText, '1060\u5186');
+  assert.equal(result.pending, false);
+}
+
+function testExtractWaitingShippingScanResultDoesNotUseTotalPayment() {
+  const api = loadContentForTest(
+    '\u652f\u6255\u3044\u91d1\u984d \uff1a 2,560\u5186\uff08\u843d\u672d\u4fa1\u683c\uff1a1,500\u5186 \u6570\u91cf\uff1a1\u500b \u9001\u6599\uff1a1,060\u5186\uff09',
+    '/seller/top'
+  );
+
+  assert.notEqual(api.extractWaitingShippingScanResult().shippingFeeText, '2560\u5186');
+}
+
+function testExtractWaitingShippingScanResultDetectsPendingShipping() {
+  const api = loadContentForTest(
+    '\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a \u9001\u6599\u6c7a\u5b9a\u5f8c\u3001\u78ba\u5b9a\u3057\u307e\u3059\u3002 \u652f\u6255\u3044\u671f\u9650',
+    '/seller/top'
+  );
+  const result = api.extractWaitingShippingScanResult();
+
+  assert.equal(result.hasShippingFee, false);
+  assert.equal(result.shippingFeeText, '');
+  assert.equal(result.pending, true);
+}
+
+function testExtractWaitingShippingScanResultPendingBeatsOtherShippingText() {
+  const api = loadContentForTest(
+    '\u5546\u54c1\u540d \u9001\u6599\uff1a1,060\u5186 \u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a \u9001\u6599\u6c7a\u5b9a\u5f8c\u3001\u78ba\u5b9a\u3057\u307e\u3059\u3002 \u652f\u6255\u3044\u671f\u9650',
+    '/seller/top'
+  );
+  const result = api.extractWaitingShippingScanResult();
+
+  assert.equal(result.hasShippingFee, false);
+  assert.equal(result.shippingFeeText, '');
+  assert.equal(result.pending, true);
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -1224,6 +1269,10 @@ async function run() {
   testClickBundleTransactionActionIgnoresInstructionText();
   testBundleTransactionActionStateDetectsDecideButton();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
+  testExtractWaitingShippingScanResultFindsShippingFee();
+  testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
+  testExtractWaitingShippingScanResultDetectsPendingShipping();
+  testExtractWaitingShippingScanResultPendingBeatsOtherShippingText();
 }
 
 run().catch(err => {

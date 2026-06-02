@@ -23,6 +23,8 @@ const {
   getNextIdleAction,
   getTransactionStartJobs,
   updateTransactionStartStatus,
+  getScanJobs,
+  updateScanStatus,
   ORDER_STATUS_PENDING_PAYMENT,
   ORDER_STATUS_WAITING_SHIPPING,
   ORDER_STATUS_PENDING_BUNDLE
@@ -640,6 +642,75 @@ async function testUpdateTransactionStartStatusUpdatesBundleByProductIds() {
   assert.equal(calls[1].params[1], 'bundle-20260601-c1133337781');
 }
 
+async function testGetScanJobsReturnsWaitingShippingOnly() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      return [{
+        order_id: 11,
+        transaction_url: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m111111111',
+        product_id: 'm111111111',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/m111111111',
+        product_title: 'sample',
+        shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5'
+      }];
+    }
+  };
+
+  const result = await getScanJobs(fakeDb);
+
+  assert.match(calls[0].sql, /o\.order_status = \?/);
+  assert.equal(calls[0].params[0], ORDER_STATUS_WAITING_SHIPPING);
+  assert.equal(result.total, 1);
+  assert.equal(result.jobs.length, 1);
+  assert.equal(result.jobs[0].orderId, 11);
+  assert.equal(result.jobs[0].productId, 'm111111111');
+  assert.equal(result.jobs[0].transactionUrl, 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m111111111');
+}
+
+async function testUpdateScanStatusWritesShippingAndPendingPayment() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updateScanStatus({ orderId: 11, shippingFeeText: '1,060\u5186' }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  assert.equal(result.shippingFeeText, '1060\u5186');
+  assert.match(queries[0].sql, /UPDATE tasks/);
+  assert.match(queries[0].sql, /product_id = \(/);
+  assert.equal(queries[0].params[0], '1060\u5186');
+  assert.equal(queries[0].params[1], 11);
+  assert.match(queries[1].sql, /UPDATE orders/);
+  assert.equal(queries[1].params[0], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(queries[1].params[1], 11);
+  assert.equal(queries[1].params[2], ORDER_STATUS_WAITING_SHIPPING);
+}
+
+async function testUpdateScanStatusKeepsWaitingShippingWhenShippingPending() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updateScanStatus({ orderId: 12, pending: true }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  assert.equal(result.pending, true);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /UPDATE orders/);
+  assert.equal(queries[0].params[0], ORDER_STATUS_WAITING_SHIPPING);
+  assert.equal(queries[0].params[1], 12);
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -672,7 +743,10 @@ Promise.all([
   testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThreshold(),
   testGetTransactionStartJobsHandlesStoreAndMissingUrl(),
   testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun(),
-  testUpdateTransactionStartStatusUpdatesBundleByProductIds()
+  testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
+  testGetScanJobsReturnsWaitingShippingOnly(),
+  testUpdateScanStatusWritesShippingAndPendingPayment(),
+  testUpdateScanStatusKeepsWaitingShippingWhenShippingPending()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

@@ -8,7 +8,8 @@ const {
   ORDER_STATUS_PENDING_SETTLEMENT,
   ORDER_STATUS_COMPLETED,
   normalizeProductType,
-  parseShippingFeeToNumber
+  parseShippingFeeToNumber,
+  requestScan
 } = require('./admin');
 
 function testShippingFeeParsing() {
@@ -167,6 +168,26 @@ function testCompletedOrderStatusConstant() {
   assert.equal(ORDER_STATUS_COMPLETED, 'completed');
 }
 
+async function testRequestScanSetsCounterToConfiguredEveryRuns() {
+  const queries = [];
+  const fakeDb = {
+    async getOne(sql) {
+      assert.match(sql, /scan_every_idle_runs/);
+      return { value: '7' };
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await requestScan(fakeDb);
+
+  assert.equal(result.scanIdleCounter, 7);
+  assert.match(queries[0].sql, /scan_idle_counter/);
+  assert.equal(queries[0].params[0], '7');
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
@@ -177,3 +198,8 @@ testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
+
+testRequestScanSetsCounterToConfiguredEveryRuns().catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});

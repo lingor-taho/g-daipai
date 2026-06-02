@@ -878,6 +878,24 @@ router.post('/transaction-start/request', async (req, res) => {
   res.json({ success: true });
 });
 
+async function requestScan(database = db) {
+  const row = await database.getOne(
+    `SELECT value FROM config WHERE key = 'scan_every_idle_runs'`
+  );
+  const scanEveryIdleRuns = Math.max(1, Math.floor(Number(row?.value || 5) || 5));
+  await database.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES ('scan_idle_counter', ?, CURRENT_TIMESTAMP)`,
+    [String(scanEveryIdleRuns)]
+  );
+  return { scanIdleCounter: scanEveryIdleRuns };
+}
+
+router.post('/scan/request', async (req, res) => {
+  const result = await requestScan(db);
+  res.json({ success: true, ...result });
+});
+
 router.post('/transaction-start/reset-orders', async (req, res) => {
   const result = await db.query(
     `UPDATE orders
@@ -1218,3 +1236,4 @@ module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT
 module.exports.ORDER_STATUS_COMPLETED = ORDER_STATUS_COMPLETED;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
+module.exports.requestScan = requestScan;

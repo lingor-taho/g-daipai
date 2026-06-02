@@ -312,6 +312,28 @@ async function testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPag
   assert.deepEqual(clickedActions, []);
 }
 
+function testBuildScanStatusPayloadUsesShippingFeeOnly() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 11,
+    result: { hasShippingFee: true, shippingFeeText: '1060\u5186', pending: false }
+  });
+
+  assert.equal(payload.orderId, 11);
+  assert.equal(payload.shippingFeeText, '1060\u5186');
+}
+
+function testBuildScanStatusPayloadSkipsPendingShipping() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 11,
+    result: { hasShippingFee: false, shippingFeeText: '', pending: true }
+  });
+
+  assert.equal(payload.orderId, 11);
+  assert.equal(payload.pending, true);
+}
+
 async function run() {
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
@@ -321,6 +343,8 @@ async function run() {
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testBidderPaysShippingTransactionClicksDecideAndConfirm();
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
+  testBuildScanStatusPayloadUsesShippingFeeOnly();
+  testBuildScanStatusPayloadSkipsPendingShipping();
 }
 
 run().catch(err => {

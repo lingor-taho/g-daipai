@@ -517,6 +517,20 @@ async function updateTransactionStartStatus(payload) {
   });
 }
 
+async function fetchScanJobs() {
+  const res = await apiFetch('/api/plugin/scan/jobs');
+  const data = await res.json();
+  return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+async function updateScanStatus(payload) {
+  await apiFetch('/api/plugin/scan/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
 async function reportYahooLoginStatus(loginStatus) {
   if (!loginStatus?.status) return;
   try {
@@ -1037,6 +1051,56 @@ async function runTransactionStartJobs(options = {}) {
   }
 }
 
+function buildScanStatusPayload(job) {
+  const result = job?.result || {};
+  if (!job?.orderId) return null;
+  if (result.pending) {
+    return {
+      orderId: job.orderId,
+      pending: true
+    };
+  }
+  if (!result.hasShippingFee || !result.shippingFeeText) return null;
+  return {
+    orderId: job.orderId,
+    shippingFeeText: result.shippingFeeText
+  };
+}
+
+async function executeWaitingShippingScanJob(job) {
+  let tab = null;
+  try {
+    tab = await openTransactionPage(job);
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_WAITING_SHIPPING_SCAN' }).catch(error => {
+      console.error('[Yahoo Bid] Failed to extract waiting shipping scan:', error);
+      return null;
+    });
+    await reportYahooLoginStatus(response?.loginStatus);
+    if (response?.loginStatus?.status === 'failed') return { stop: true };
+    if (!response?.success) return { stop: false };
+    const payload = buildScanStatusPayload({ ...job, result: response.result });
+    if (payload) await updateScanStatus(payload);
+    return { stop: false };
+  } catch (e) {
+    console.warn('[Yahoo Bid] Waiting shipping scan job failed:', e.message || e);
+    return { stop: false };
+  } finally {
+    const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
+    if (tab?.id) ids.add(tab.id);
+    for (const id of ids) {
+      await closeTabIfExists(id);
+    }
+  }
+}
+
+async function runScanJobs() {
+  const jobs = await fetchScanJobs();
+  for (const job of jobs) {
+    const result = await executeWaitingShippingScanJob(job);
+    if (result?.stop) break;
+  }
+}
+
 async function syncIdleYahooPages() {
   await refreshPluginConfig();
   const now = Date.now();
@@ -1051,6 +1115,8 @@ async function syncIdleYahooPages() {
     await runTransactionStartJobs({
       includeAfterCutoff: Number(idleAction?.config?.transactionStartRequested || 0) === 1
     });
+  } else if (idleAction?.action === 'scan') {
+    await runScanJobs();
   }
   await completeIdleAction(idleAction?.action || 'none');
 }
@@ -1156,7 +1222,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   clickBundleActionAndFollowTab,
   completeBidderPaysShippingTransaction,
   waitForBundleActionStateAcrossTabs,
-  dispatchTrustedBundleActionClick
+  dispatchTrustedBundleActionClick,
+  buildScanStatusPayload
 };
 chrome.tabs.onRemoved.addListener(tabId => {
   managedTaskTabs.delete(tabId);

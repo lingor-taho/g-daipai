@@ -778,6 +778,85 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
   return { updated: result.rowCount || 0 };
 }
 
+function normalizeShippingFeeText(value) {
+  const amount = String(value || '').replace(/[^\d]/g, '');
+  return amount ? `${amount}円` : '';
+}
+
+async function getScanJobs(database = db) {
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.transaction_url,
+            t.product_id,
+            t.product_url,
+            t.product_title,
+            t.shipping_fee_text
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE o.order_status = ?
+       AND t.status = 'success'
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
+    [ORDER_STATUS_WAITING_SHIPPING]
+  );
+  return {
+    jobs: rows.map(row => ({
+      orderId: row.order_id,
+      productId: row.product_id,
+      productUrl: row.product_url,
+      productTitle: row.product_title,
+      shippingFeeText: row.shipping_fee_text || '',
+      transactionUrl: row.transaction_url || ''
+    })),
+    total: rows.length
+  };
+}
+
+async function updateScanStatus(payload = {}, database = db) {
+  const orderId = Number(payload.orderId || 0);
+  const shippingFeeText = normalizeShippingFeeText(payload.shippingFeeText);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    const err = new Error('orderId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (payload.pending === true) {
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?
+       WHERE id = ?`,
+      [ORDER_STATUS_WAITING_SHIPPING, orderId]
+    );
+    return { updated: result.rowCount || 0, pending: true };
+  }
+  if (!shippingFeeText) {
+    const err = new Error('valid shippingFeeText is required');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await database.query(
+    `UPDATE tasks
+     SET shipping_fee_text = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE product_id = (
+       SELECT t.product_id
+       FROM orders o
+       INNER JOIN tasks t ON o.task_id = t.id
+       WHERE o.id = ?
+         AND o.order_status = ?
+     )`,
+    [shippingFeeText, orderId, ORDER_STATUS_WAITING_SHIPPING]
+  );
+  const result = await database.query(
+    `UPDATE orders
+     SET order_status = ?
+     WHERE id = ?
+       AND order_status = ?`,
+    [ORDER_STATUS_PENDING_PAYMENT, orderId, ORDER_STATUS_WAITING_SHIPPING]
+  );
+  return { updated: result.rowCount || 0, shippingFeeText };
+}
+
 router.post('/bidding/sync', async (req, res) => {
   const incomingItems = req.body?.items || req.body?.bidding || [];
   const result = await syncBiddingItems(incomingItems);
@@ -857,6 +936,20 @@ router.post('/transaction-start/status', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'update failed' });
+  }
+});
+
+router.get('/scan/jobs', async (req, res) => {
+  const result = await getScanJobs(db);
+  res.json({ success: true, ...result });
+});
+
+router.post('/scan/status', async (req, res) => {
+  try {
+    const result = await updateScanStatus(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'scan update failed' });
   }
 });
 
@@ -940,6 +1033,8 @@ module.exports.ORDER_STATUS_PENDING_BUNDLE = ORDER_STATUS_PENDING_BUNDLE;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
+module.exports.getScanJobs = getScanJobs;
+module.exports.updateScanStatus = updateScanStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
