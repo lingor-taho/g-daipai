@@ -846,7 +846,8 @@ async function testUpdatePaymentStatusSuccessAndEmptyQueue() {
   assert.equal(success.updated, 1);
   assert.match(calls[0].sql, /pending_shipment/);
   assert.equal(empty.paymentRequested, 0);
-  assert.match(calls[1].sql, /payment_requested/);
+  assert.match(calls[1].sql, /INSERT OR REPLACE INTO config/);
+  assert.equal(calls[1].params[0], 'payment_requested');
   assert.equal(calls[1].params[1], '0');
 }
 
@@ -862,11 +863,41 @@ async function testUpdatePaymentStatusFailureWritesAlertAndClearsFlag() {
   const result = await updatePaymentStatus({ orderId: 6, productId: 'p6', error: 'button not found' }, fakeDb);
 
   assert.equal(result.paymentRequested, 0);
-  assert.match(calls[0].sql, /payment_requested/);
+  assert.match(calls[0].sql, /INSERT OR REPLACE INTO config/);
+  assert.equal(calls[0].params[0], 'payment_requested');
   assert.equal(calls[0].params[1], '0');
-  assert.match(calls[1].sql, /payment_alert_message/);
+  assert.match(calls[1].sql, /INSERT OR REPLACE INTO config/);
+  assert.equal(calls[1].params[0], 'payment_alert_message');
   assert.match(calls[1].params[1], /p6/);
   assert.match(calls[1].params[1], /button not found/);
+}
+
+async function testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await assert.rejects(
+    () => updatePaymentStatus({ orderId: 5 }, fakeDb),
+    error => {
+      assert.equal(error.message, 'valid payment status is required');
+      assert.equal(error.statusCode, 400);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () => updatePaymentStatus({ orderId: 5, status: 'failed' }, fakeDb),
+    error => {
+      assert.equal(error.message, 'valid payment status is required');
+      assert.equal(error.statusCode, 400);
+      return true;
+    }
+  );
+  assert.equal(calls.length, 0);
 }
 
 testDirectTaskIsReadyImmediately();
@@ -910,7 +941,8 @@ Promise.all([
   testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
-  testUpdatePaymentStatusFailureWritesAlertAndClearsFlag()
+  testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
+  testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

@@ -975,7 +975,7 @@ async function getPaymentJobs(database = db) {
 async function savePaymentConfigValue(database, key, value) {
   await database.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at)
-     VALUES (?, ?, CURRENT_TIMESTAMP) -- ${key}`,
+     VALUES (?, ?, CURRENT_TIMESTAMP)`,
     [key, String(value)]
   );
 }
@@ -997,6 +997,15 @@ async function updatePaymentStatus(payload = {}, database = db) {
   const orderId = Number(payload.orderId || 0);
   if (!Number.isInteger(orderId) || orderId <= 0) {
     const err = new Error('orderId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const paymentStatus = String(payload.status || '').trim();
+  const isSuccessfulPayment = paymentStatus === 'success'
+    || paymentStatus === 'already_paid'
+    || payload.alreadyPaid === true;
+  if (!isSuccessfulPayment) {
+    const err = new Error('valid payment status is required');
     err.statusCode = 400;
     throw err;
   }
