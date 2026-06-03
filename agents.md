@@ -535,3 +535,25 @@ npm run build
 Set-Location ..\client
 npm run build
 ```
+
+---
+
+## 2026-06-03 付款功能当前进度
+
+### 当前状态
+
+- 分支：`codex/payment-automation`。
+- 已实现付款框架：后台结算/支付入口、全局付款 flag、付款提醒栏、付款配置、服务端付款队列、插件空闲调度付款分支。
+- Yahoo 付款页面具体点击和成功/已结款 DOM 判断处于安全暂停状态，等待真实页面图片和 HTML 后补充。
+
+### 已实现规则
+
+- 结算自动勾选 `pending_payment` 和 `bundle_completed`。
+- `pending_payment` 结算后进入 `pending_settlement`。
+- `bundle_completed` 结算后保持 `bundle_completed`，不进入付款流程。
+- 结算金额优先使用 `bundle_shipping_fee_text`，否则使用 `shipping_fee_text`。
+- 特殊用户费用覆盖逻辑保持不变。
+- 支付按钮只允许 `pending_settlement` 且应付款不为空的订单。
+- `payment_requested=1` 时插件才执行付款队列。
+- 本批成功后 flag 保持 1；直到没有剩余 `pending_settlement` 且应付款不为空的订单时才清 0。
+- 付款失败时只显示全局提醒并暂停 flag，订单保持 `pending_settlement`。
