@@ -276,6 +276,14 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   return { action: 'none', today };
 }
 
+function getNextScanIdleCounter(action, config = {}) {
+  const scanEvery = Math.max(1, Math.floor(Number(config.scanEveryIdleRuns || DEFAULT_SCAN_EVERY_IDLE_RUNS)));
+  const scanCounter = Math.max(0, Math.floor(Number(config.scanIdleCounter || 0)));
+  if (action === 'scan') return 0;
+  if (scanCounter >= scanEvery) return 0;
+  return scanCounter + 1;
+}
+
 async function getIdleActionConfig(database = db, nowMs = Date.now()) {
   const rows = await database.getAll(
     `SELECT key, value FROM config
@@ -396,7 +404,7 @@ router.post('/idle-action/complete', async (req, res) => {
   } else if (action === 'scan') {
     await saveConfigValue(db, 'scan_idle_counter', '0');
   } else {
-    await saveConfigValue(db, 'scan_idle_counter', Math.max(0, Number(config.scanIdleCounter || 0)) + 1);
+    await saveConfigValue(db, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   }
   res.json({ success: true });
 });
@@ -1299,6 +1307,7 @@ module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;
 module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.getNextIdleAction = getNextIdleAction;
+module.exports.getNextScanIdleCounter = getNextScanIdleCounter;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;

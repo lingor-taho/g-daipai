@@ -21,6 +21,7 @@ const {
   isFollowupTaskReady,
   processPendingFollowupTasks,
   getNextIdleAction,
+  getNextScanIdleCounter,
   getTransactionStartJobs,
   saveTransactionStartRunLog,
   updateTransactionStartStatus,
@@ -429,6 +430,13 @@ function testPaymentIdleActionUsesFlagAfterScanPriority() {
     nowHour: 10,
     today: '2026-06-03'
   }).action, 'scan');
+}
+
+function testScanCounterClearsAfterThresholdWhenScanDoesNotRun() {
+  assert.equal(getNextScanIdleCounter('scan', { scanIdleCounter: 13, scanEveryIdleRuns: 5 }), 0);
+  assert.equal(getNextScanIdleCounter('none', { scanIdleCounter: 13, scanEveryIdleRuns: 5 }), 0);
+  assert.equal(getNextScanIdleCounter('none', { scanIdleCounter: 4, scanEveryIdleRuns: 5 }), 5);
+  assert.equal(getNextScanIdleCounter('none', { scanIdleCounter: 5, scanEveryIdleRuns: 5 }), 0);
 }
 
 function testIsFollowupTaskReady() {
@@ -953,6 +961,7 @@ testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIdleActionChoosesTransactionStartBeforeScan();
 testPaymentIdleActionUsesFlagAfterScanPriority();
+testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
 Promise.all([
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
