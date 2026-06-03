@@ -258,7 +258,7 @@ async function testRequestPaymentSetsFlag() {
 
   const result = await requestPayment(fakeDb, [1, 2]);
 
-  assert.equal(result.requested, 2);
+  assert.equal(result.requested, 1);
   assert.match(queries[0].sql, /order_status = \?/);
   assert.equal(queries[0].params[0], 'pending_settlement');
   assert.match(queries[1].sql, /payment_requested/);

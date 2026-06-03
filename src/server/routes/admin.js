@@ -929,7 +929,7 @@ async function requestPayment(database = db, orderIds = []) {
     throw error;
   }
   const placeholders = ids.map(() => '?').join(',');
-  await database.query(
+  const result = await database.query(
     `UPDATE orders
      SET order_status = ?,
          updated_at = CURRENT_TIMESTAMP
@@ -939,7 +939,7 @@ async function requestPayment(database = db, orderIds = []) {
     [ORDER_STATUS_PENDING_SETTLEMENT, ...ids, ORDER_STATUS_PENDING_SETTLEMENT]
   );
   await saveConfigValue(database, 'payment_requested', '1');
-  return { requested: ids.length };
+  return { requested: result.rowCount || 0 };
 }
 
 async function clearPaymentAlertAndContinue(database = db) {
