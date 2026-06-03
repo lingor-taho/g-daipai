@@ -413,6 +413,35 @@ function testBuildPaymentFailurePayloadIncludesProductId() {
   assert.equal(payload.error, 'payment page detail phase disabled');
 }
 
+function testYahooLoginPageCountsAsTransactionTab() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.isLikelyYahooTransactionTab({ url: 'https://login.yahoo.co.jp/config/login?.src=auc' }), true);
+  assert.equal(api.isLikelyYahooTransactionTab({ url: 'https://account.edit.yahoo.co.jp/verify' }), true);
+}
+
+async function testTransactionCleanupClosesNewYahooLoginTabs() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [
+          { id: 1, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' },
+          { id: 2, url: 'https://login.yahoo.co.jp/config/login?.src=auc' },
+          { id: 3, url: 'https://example.com/' }
+        ];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+
+  await api.closeTabsForTransactionFlow(null, new Set([1]));
+
+  assert.deepEqual(removed, [2]);
+}
+
 async function run() {
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
@@ -429,6 +458,8 @@ async function run() {
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunPaymentJobsReportsDeferredPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
+  testYahooLoginPageCountsAsTransactionTab();
+  await testTransactionCleanupClosesNewYahooLoginTabs();
 }
 
 run().catch(err => {

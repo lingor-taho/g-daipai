@@ -702,7 +702,9 @@ function isLikelyYahooTransactionTab(tab) {
   return !url ||
     /^about:blank/i.test(url) ||
     /:\/\/(?:[^/]+\.)?auctions\.yahoo\.co\.jp\//i.test(url) ||
-    /:\/\/contact\.auctions\.yahoo\.co\.jp\//i.test(url);
+    /:\/\/contact\.auctions\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/login\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/account\.edit\.yahoo\.co\.jp\//i.test(url);
 }
 
 async function runMainWorldBundleActionClick(tabId, action) {
@@ -996,6 +998,7 @@ async function completeBidderPaysShippingTransaction(tab) {
 
 async function executeTransactionStartJob(job) {
   let tab = null;
+  const beforeTabIds = await getTabIds();
   try {
     tab = await openTransactionPage(job);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(error => {
@@ -1005,6 +1008,9 @@ async function executeTransactionStartJob(job) {
     await reportYahooLoginStatus(response?.loginStatus);
     if (!response?.success) {
       await updateTransactionStartStatus({ orderId: job.orderId, error: response?.loginStatus?.message || 'transaction page extraction failed' });
+      if (response?.loginStatus?.status === 'failed') {
+        return { stop: true, processedProductIds: [job.productId] };
+      }
       return;
     }
     const info = response.info || {};
@@ -1057,11 +1063,7 @@ async function executeTransactionStartJob(job) {
     await updateTransactionStartStatus({ orderId: job.orderId, error: e.message || 'transaction start failed' }).catch(() => {});
     return { processedProductIds: [job.productId] };
   } finally {
-    const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
-    if (tab?.id) ids.add(tab.id);
-    for (const id of ids) {
-      await closeTabIfExists(id);
-    }
+    await closeTabsForTransactionFlow(tab, beforeTabIds);
   }
 }
 
@@ -1074,6 +1076,20 @@ async function runTransactionStartJobs(options = {}) {
     for (const productId of result?.processedProductIds || []) {
       processedProducts.add(String(productId || '').toLowerCase());
     }
+    if (result?.stop) break;
+  }
+}
+
+async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
+  const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
+  if (tab?.id) ids.add(tab.id);
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  for (const candidate of tabs) {
+    if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
+    if (isLikelyYahooTransactionTab(candidate)) ids.add(candidate.id);
+  }
+  for (const id of ids) {
+    await closeTabIfExists(id);
   }
 }
 
@@ -1384,6 +1400,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   completeBidderPaysShippingTransaction,
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
+  isLikelyYahooTransactionTab,
+  closeTabsForTransactionFlow,
   buildScanStatusPayload,
   runPaymentJobs,
   buildPaymentFailurePayload
