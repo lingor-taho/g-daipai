@@ -1021,6 +1021,7 @@ router.get('/idle-flags', async (req, res) => {
        'transaction_start_hour',
        'transaction_start_requested',
        'transaction_start_last_run_date',
+       'transaction_start_last_run_log',
        'scan_every_idle_runs',
        'scan_idle_counter',
        'payment_requested',
@@ -1033,6 +1034,14 @@ router.get('/idle-flags', async (req, res) => {
   const transactionStartHour = Number(values.transaction_start_hour ?? 1);
   const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
   const transactionStartLastRunDate = values.transaction_start_last_run_date || '';
+  let transactionStartLastRunLog = null;
+  try {
+    transactionStartLastRunLog = values.transaction_start_last_run_log
+      ? JSON.parse(values.transaction_start_last_run_log)
+      : null;
+  } catch {
+    transactionStartLastRunLog = null;
+  }
   const transactionStartFlag = transactionStartRequested || (nowHour >= transactionStartHour && transactionStartLastRunDate !== today) ? 1 : 0;
   const scanEveryIdleRuns = Math.max(1, Number(values.scan_every_idle_runs || 5));
   const scanIdleCounter = Math.max(0, Number(values.scan_idle_counter || 0));
@@ -1043,6 +1052,7 @@ router.get('/idle-flags', async (req, res) => {
     transactionStartRequested: transactionStartRequested ? 1 : 0,
     transactionStartHour,
     transactionStartLastRunDate,
+    transactionStartLastRunLog,
     scanFlag: scanIdleCounter,
     scanEveryIdleRuns,
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,

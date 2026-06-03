@@ -34,6 +34,17 @@ function formatDateTime(value: string | null | undefined) {
   return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second}`;
 }
 
+function renderTransactionStartLastRun(log: any) {
+  if (!log) return '最近执行：-';
+  const source = log.source === 'manual' ? '手动' : '自动';
+  const time = formatDateTime(log.createdAt);
+  const total = Number(log.total || 0);
+  const storeUpdated = Number(log.storeUpdated || 0);
+  const jobs = Array.isArray(log.jobs) ? log.jobs.length : 0;
+  const results = Array.isArray(log.results) ? log.results.length : 0;
+  return `最近执行：${source} ${time}，取到 ${total} 单，商城直接待支付 ${storeUpdated} 单，插件任务 ${jobs} 单，回写 ${results} 次`;
+}
+
 function renderProductTypeTag(productType: string | null | undefined) {
   if (productType === 'store') return <Tag color="red" style={{ marginLeft: 6 }}>商</Tag>;
   if (productType === 'normal') return <Tag color="green" style={{ marginLeft: 6 }}>普</Tag>;
@@ -289,6 +300,7 @@ export default function OrdersPage() {
           <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
           <Typography.Text>扫描flag：{idleFlags?.scanFlag ?? '-'}</Typography.Text>
           <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
+          <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
         </Space>
       </Card>
 

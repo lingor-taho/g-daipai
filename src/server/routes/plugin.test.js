@@ -22,6 +22,7 @@ const {
   processPendingFollowupTasks,
   getNextIdleAction,
   getTransactionStartJobs,
+  saveTransactionStartRunLog,
   updateTransactionStartStatus,
   getScanJobs,
   updateScanStatus,
@@ -634,9 +635,9 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.equal(result.jobs[0].transactionUrl, '');
   assert.equal(result.jobs[1].productId, 'n2');
   assert.equal(result.jobs[2].productId, 'n3');
-  assert.match(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', \?\)/);
+  assert.match(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
   assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
-  assert.deepEqual(queries[0].params, [0, 'start of day,+1 hours']);
+  assert.deepEqual(queries[0].params, [0, '+1 hours']);
   assert.equal(queries[1].params[0], ORDER_STATUS_PENDING_PAYMENT);
 }
 
@@ -652,7 +653,35 @@ async function testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun() {
   const result = await getTransactionStartJobs(fakeDb, { includeAfterCutoff: true, transactionStartHour: 3 });
 
   assert.equal(result.total, 0);
-  assert.deepEqual(calls[0].params, [1, 'start of day,+3 hours']);
+  assert.deepEqual(calls[0].params, [1, '+3 hours']);
+}
+
+async function testSaveTransactionStartRunLogWritesJsonConfig() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await saveTransactionStartRunLog(fakeDb, {
+    source: 'manual',
+    includeAfterCutoff: true,
+    total: 2,
+    storeUpdated: 1,
+    jobs: [{ productId: 'm1231277495', orderId: 7 }]
+  });
+
+  assert.match(calls[0].sql, /INSERT OR REPLACE INTO config/);
+  assert.equal(calls[0].params[0], 'transaction_start_last_run_log');
+  const log = JSON.parse(calls[0].params[1]);
+  assert.equal(log.source, 'manual');
+  assert.equal(log.includeAfterCutoff, true);
+  assert.equal(log.total, 2);
+  assert.equal(log.storeUpdated, 1);
+  assert.equal(log.jobs[0].productId, 'm1231277495');
+  assert.match(log.createdAt, /^\d{4}-\d{2}-\d{2}T/);
 }
 async function testUpdateTransactionStartStatusUpdatesBundleByProductIds() {
   const calls = [];
@@ -933,6 +962,7 @@ Promise.all([
   testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThreshold(),
   testGetTransactionStartJobsHandlesStoreAndMissingUrl(),
   testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun(),
+  testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusWritesShippingAndPendingPayment(),

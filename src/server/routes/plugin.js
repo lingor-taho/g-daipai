@@ -316,6 +316,56 @@ async function saveConfigValue(database, key, value) {
   );
 }
 
+function normalizeTransactionStartLogJob(job = {}) {
+  return {
+    orderId: job.orderId ?? job.order_id ?? null,
+    productId: job.productId ?? job.product_id ?? '',
+    productType: job.productType ?? job.product_type ?? '',
+    shippingFeeText: job.shippingFeeText ?? job.shipping_fee_text ?? '',
+    status: job.status || 'queued'
+  };
+}
+
+async function saveTransactionStartRunLog(database, payload = {}) {
+  const log = {
+    createdAt: new Date().toISOString(),
+    source: payload.source || (payload.includeAfterCutoff ? 'manual' : 'auto'),
+    includeAfterCutoff: !!payload.includeAfterCutoff,
+    total: Number(payload.total || 0),
+    storeUpdated: Number(payload.storeUpdated || 0),
+    missingTransactionUrl: Number(payload.missingTransactionUrl || 0),
+    jobs: Array.isArray(payload.jobs) ? payload.jobs.map(normalizeTransactionStartLogJob) : [],
+    results: Array.isArray(payload.results) ? payload.results : []
+  };
+  await saveConfigValue(database, 'transaction_start_last_run_log', JSON.stringify(log));
+  return log;
+}
+
+async function appendTransactionStartRunLogResult(database, result = {}) {
+  if (!database || typeof database.getOne !== 'function') return null;
+  const row = await database.getOne("SELECT value FROM config WHERE key = 'transaction_start_last_run_log'");
+  let log = null;
+  try {
+    log = row?.value ? JSON.parse(row.value) : null;
+  } catch {
+    log = null;
+  }
+  if (!log || typeof log !== 'object') return null;
+  const nextResult = {
+    at: new Date().toISOString(),
+    orderIds: Array.isArray(result.orderIds) ? result.orderIds : [],
+    productIds: Array.isArray(result.productIds) ? result.productIds : [],
+    status: result.status || null,
+    error: result.error || null,
+    updated: Number(result.updated || 0)
+  };
+  log.results = Array.isArray(log.results) ? log.results : [];
+  log.results.push(nextResult);
+  log.results = log.results.slice(-100);
+  await saveConfigValue(database, 'transaction_start_last_run_log', JSON.stringify(log));
+  return log;
+}
+
 // GET /api/plugin/task
 router.get('/task', async (req, res) => {
   const multiBidConfig = await getMultiBidConfig();
@@ -668,7 +718,7 @@ async function syncBiddingItems(items, database = db) {
 async function getTransactionStartJobs(database = db, options = {}) {
   const includeAfterCutoff = options.includeAfterCutoff ? 1 : 0;
   const cutoffHour = clampHour(options.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
-  const cutoffModifier = `start of day,+${cutoffHour} hours`;
+  const cutoffModifier = `+${cutoffHour} hours`;
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
             o.transaction_url,
@@ -681,13 +731,14 @@ async function getTransactionStartJobs(database = db, options = {}) {
      INNER JOIN tasks t ON o.task_id = t.id
      WHERE t.status = 'success'
        AND (o.order_status IS NULL OR o.order_status = '')
-       AND (? = 1 OR datetime(COALESCE(o.won_at, o.created_at)) < datetime('now', ?))
+       AND (? = 1 OR datetime(COALESCE(o.won_at, o.created_at)) < datetime('now', 'start of day', ?))
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`
     ,
     [includeAfterCutoff, cutoffModifier]
   );
 
   const jobs = [];
+  const logJobs = [];
   let storeUpdated = 0;
   let missingTransactionUrl = 0;
   for (const row of rows) {
@@ -703,9 +754,16 @@ async function getTransactionStartJobs(database = db, options = {}) {
         [ORDER_STATUS_PENDING_PAYMENT, row.order_id]
       );
       storeUpdated += result.rowCount || 0;
+      logJobs.push({
+        orderId: row.order_id,
+        productId: row.product_id,
+        productType: row.product_type || 'store',
+        shippingFeeText: row.shipping_fee_text || '',
+        status: ORDER_STATUS_PENDING_PAYMENT
+      });
       continue;
     }
-    jobs.push({
+    const job = {
       orderId: row.order_id,
       productId: row.product_id,
       productUrl: row.product_url,
@@ -713,9 +771,11 @@ async function getTransactionStartJobs(database = db, options = {}) {
       productType: row.product_type || 'normal',
       shippingFeeText: row.shipping_fee_text || '',
       transactionUrl: row.transaction_url || ''
-    });
+    };
+    jobs.push(job);
+    logJobs.push(job);
   }
-  return { jobs, storeUpdated, missingTransactionUrl, total: rows.length };
+  return { jobs, logJobs, storeUpdated, missingTransactionUrl, total: rows.length };
 }
 
 function normalizeOrderStatus(value) {
@@ -765,6 +825,12 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
          AND (order_status IS NULL OR order_status = '')`,
       [error, ...orderIds]
     );
+    await appendTransactionStartRunLogResult(database, {
+      orderIds,
+      productIds: Array.isArray(payload.productIds) ? payload.productIds : [],
+      error,
+      updated: result.rowCount || 0
+    }).catch(() => null);
     return { updated: result.rowCount || 0 };
   }
 
@@ -793,6 +859,12 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
        AND (order_status IS NULL OR order_status = '')`,
     [status, bundleGroupId, ...orderIds]
   );
+  await appendTransactionStartRunLogResult(database, {
+    orderIds,
+    productIds: Array.isArray(payload.productIds) ? payload.productIds : [],
+    status,
+    updated: result.rowCount || 0
+  }).catch(() => null);
   return { updated: result.rowCount || 0 };
 }
 
@@ -1086,10 +1158,19 @@ router.post('/orders/sync', async (req, res) => {
 
 router.get('/transaction-start/jobs', async (req, res) => {
   const config = await getIdleActionConfig();
+  const includeAfterCutoff = req.query?.includeAfterCutoff === '1';
   const result = await getTransactionStartJobs(db, {
-    includeAfterCutoff: req.query?.includeAfterCutoff === '1',
+    includeAfterCutoff,
     transactionStartHour: config.transactionStartHour
   });
+  await saveTransactionStartRunLog(db, {
+    source: includeAfterCutoff ? 'manual' : 'auto',
+    includeAfterCutoff,
+    total: result.total,
+    storeUpdated: result.storeUpdated,
+    missingTransactionUrl: result.missingTransactionUrl,
+    jobs: result.logJobs || result.jobs
+  }).catch(() => null);
   res.json({ success: true, ...result });
 });
 
@@ -1219,6 +1300,7 @@ module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT
 module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
+module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
