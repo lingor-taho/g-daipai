@@ -56,7 +56,8 @@ function renderStatusChangeSource(row: any) {
     payment_status: '付款',
     admin_settle: '后台结算',
     admin_transaction_start_reset: '后台初始化',
-    admin_order_status_refresh: '后台状态刷新'
+    admin_order_status_refresh: '后台状态刷新',
+    unlogged_existing_status: '未记录状态'
   };
   const source = row.latest_status_change_source;
   if (!source) return '-';
@@ -293,7 +294,21 @@ export default function OrdersPage() {
     { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => renderOrderStatus(row.order_status) },
     { title: '最后操作时间', dataIndex: 'updated_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.updated_at || row.created_at) },
     { title: '状态来源', dataIndex: 'latest_status_change_source', width: 360, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderStatusChangeSource(row) },
-    { title: '状态日志', dataIndex: 'status_log', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => <Button size="small" onClick={() => showStatusLogs(row.id)}>查看</Button> },
+    {
+      title: '状态日志',
+      dataIndex: 'status_log',
+      width: 90,
+      onCell: () => noWrapCell,
+      render: (_: any, row: any) => (
+        <Button
+          size="small"
+          disabled={!row.latest_status_change_source}
+          onClick={() => showStatusLogs(row.id)}
+        >
+          查看
+        </Button>
+      )
+    },
     { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 160, ellipsis: true, onCell: () => noWrapCell },
     { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];

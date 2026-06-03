@@ -1,7 +1,8 @@
 const assert = require('assert/strict');
 const {
   getOrderStatusAuditRows,
-  writeOrderStatusAuditLogs
+  writeOrderStatusAuditLogs,
+  backfillMissingOrderStatusAuditLogs
 } = require('./orderStatusAudit');
 
 async function testGetOrderStatusAuditRowsDedupesIds() {
@@ -91,10 +92,43 @@ async function testWriteOrderStatusAuditLogsSupportsPerOrderStatus() {
   assert.equal(calls[1].params[3], 'bundle_completed');
 }
 
+async function testBackfillMissingOrderStatusAuditLogsRecordsDetectedStatus() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params, type: 'getAll' });
+      return [{
+        order_id: 20,
+        product_id: 't1176079020',
+        old_status: null,
+        detected_status: 'pending_payment',
+        product_type: 'normal',
+        shipping_fee_text: 'bidder pays'
+      }];
+    },
+    async query(sql, params) {
+      calls.push({ sql, params, type: 'query' });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await backfillMissingOrderStatusAuditLogs(fakeDb, 10);
+
+  assert.equal(result.inserted, 1);
+  assert.match(calls[0].sql, /NOT EXISTS/);
+  assert.equal(calls[0].params[0], 10);
+  assert.equal(calls[1].params[3], 'pending_payment');
+  assert.equal(calls[1].params[4], 'unlogged_existing_status');
+  const metadata = JSON.parse(calls[1].params[5]);
+  assert.equal(metadata.auditSnapshot.productId, 't1176079020');
+  assert.equal(metadata.auditSnapshot.shippingFeeText, 'bidder pays');
+}
+
 Promise.all([
   testGetOrderStatusAuditRowsDedupesIds(),
   testWriteOrderStatusAuditLogsRecordsOnlyChangesWithSnapshot(),
-  testWriteOrderStatusAuditLogsSupportsPerOrderStatus()
+  testWriteOrderStatusAuditLogsSupportsPerOrderStatus(),
+  testBackfillMissingOrderStatusAuditLogsRecordsDetectedStatus()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

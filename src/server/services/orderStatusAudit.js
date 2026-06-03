@@ -93,7 +93,47 @@ async function writeOrderStatusAuditLogs(database, beforeRows = [], options = {}
   return { inserted };
 }
 
+async function backfillMissingOrderStatusAuditLogs(database, limit = 50) {
+  if (!database || typeof database.getAll !== 'function' || typeof database.query !== 'function') {
+    return { inserted: 0 };
+  }
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            NULL AS old_status,
+            o.order_status AS detected_status,
+            o.updated_at AS old_updated_at,
+            o.final_price,
+            o.won_at,
+            o.won_time_text,
+            o.bundle_shipping_fee_text,
+            o.bundle_group_id,
+            o.transaction_start_error,
+            t.product_id,
+            t.product_type,
+            t.shipping_fee_text,
+            t.tax_type
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE o.order_status IS NOT NULL
+       AND o.order_status <> ''
+       AND NOT EXISTS (
+         SELECT 1 FROM order_status_change_logs l WHERE l.order_id = o.id
+       )
+     ORDER BY datetime(COALESCE(o.updated_at, o.created_at)) DESC, o.id DESC
+     LIMIT ?`,
+    [Math.max(1, Math.min(Number(limit) || 50, 200))]
+  );
+  return writeOrderStatusAuditLogs(database, rows, {
+    statusesByOrderId: Object.fromEntries(rows.map(row => [row.order_id, row.detected_status])),
+    source: 'unlogged_existing_status',
+    metadata: {
+      reason: 'order had status but no audit log when admin orders list was loaded'
+    }
+  });
+}
+
 module.exports = {
   getOrderStatusAuditRows,
-  writeOrderStatusAuditLogs
+  writeOrderStatusAuditLogs,
+  backfillMissingOrderStatusAuditLogs
 };

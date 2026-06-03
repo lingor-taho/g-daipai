@@ -21,7 +21,8 @@ const {
 } = require('../services/dataCleanup');
 const {
   getOrderStatusAuditRows,
-  writeOrderStatusAuditLogs
+  writeOrderStatusAuditLogs,
+  backfillMissingOrderStatusAuditLogs
 } = require('../services/orderStatusAudit');
 
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
@@ -469,6 +470,7 @@ router.get('/tasks/stats', async (req, res) => {
 router.get('/orders', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
+  await backfillMissingOrderStatusAuditLogs(db, 100).catch(() => null);
   const ordersQuery = buildAdminOrdersListQuery({ pageSize, offset });
   const items = await db.getAll(ordersQuery.sql, ordersQuery.params);
   const countResult = await db.getOne(`
@@ -495,6 +497,48 @@ router.get('/orders/:id/status-logs', async (req, res) => {
     [orderId]
   );
   res.json({ items });
+});
+
+router.get('/orders/status-debug/:productId', async (req, res) => {
+  const productId = extractAuctionId(req.params.productId || req.query.productId || '');
+  if (!productId) {
+    return res.status(400).json({ error: 'valid product id is required' });
+  }
+  const tasks = await db.getAll(
+    `SELECT id, product_id, status, strategy, product_type, shipping_fee_text,
+            created_at, updated_at, last_bid_at
+     FROM tasks
+     WHERE product_id = ?
+     ORDER BY id DESC`,
+    [productId]
+  );
+  const orders = await db.getAll(
+    `SELECT o.id, o.task_id, o.order_status, o.final_price, o.won_at, o.won_time_text,
+            o.created_at, o.updated_at, o.transaction_started_at, o.transaction_start_error,
+            o.bundle_group_id, o.bundle_shipping_fee_text,
+            t.product_id, t.product_type, t.shipping_fee_text
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE t.product_id = ?
+     ORDER BY o.id DESC`,
+    [productId]
+  );
+  const logs = await db.getAll(
+    `SELECT l.*
+     FROM order_status_change_logs l
+     WHERE l.product_id = ?
+        OR l.order_id IN (
+          SELECT o.id FROM orders o INNER JOIN tasks t ON o.task_id = t.id WHERE t.product_id = ?
+        )
+     ORDER BY datetime(l.created_at) DESC, l.id DESC
+     LIMIT 50`,
+    [productId, productId]
+  );
+  const tableInfo = db.raw.prepare('PRAGMA table_info(orders)').all();
+  const triggers = db.raw.prepare(
+    "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'orders'"
+  ).all();
+  res.json({ productId, tasks, orders, logs, ordersTableInfo: tableInfo, orderTriggers: triggers });
 });
 
 // 财务统计

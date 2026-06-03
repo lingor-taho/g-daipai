@@ -120,5 +120,6 @@ module.exports = {
   async getAll(text, params) {
     const stmt = db.prepare(text);
     return params ? stmt.all(...params) : stmt.all();
-  }
+  },
+  raw: db
 };
