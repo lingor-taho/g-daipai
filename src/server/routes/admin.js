@@ -25,6 +25,17 @@ const ORDER_STATUS_COMPLETED = 'completed';
 const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
 const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
 
+function normalizeOrderStatusRefreshTarget(value) {
+  const normalized = String(value || 'completed').trim();
+  if (normalized === 'blank') return null;
+  if (normalized === ORDER_STATUS_COMPLETED) return ORDER_STATUS_COMPLETED;
+  throw new Error('invalid orderStatus');
+}
+
+function getOrderStatusRefreshText(orderStatus) {
+  return orderStatus === null ? '为空' : '完了';
+}
+
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
 
@@ -1208,6 +1219,13 @@ router.post('/orders-resync/run', async (req, res) => {
 });
 
 router.post('/order-status-refresh/run', async (req, res) => {
+  let targetOrderStatus;
+  try {
+    targetOrderStatus = normalizeOrderStatusRefreshTarget(req.body?.orderStatus);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
   const productIds = Array.isArray(req.body?.productIds)
     ? parseShippingRefreshIds(req.body.productIds.join('\n'))
     : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
@@ -1235,15 +1253,15 @@ router.post('/order-status-refresh/run', async (req, res) => {
        SET order_status = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id IN (${orders.map(() => '?').join(',')})`,
-      [ORDER_STATUS_COMPLETED, ...orders.map(order => order.order_id)]
+      [targetOrderStatus, ...orders.map(order => order.order_id)]
     );
     results.push({
       productId,
       success: true,
       orderIds: orders.map(order => order.order_id),
       updatedCount: updateResult.rowCount || 0,
-      orderStatus: ORDER_STATUS_COMPLETED,
-      orderStatusText: '完了'
+      orderStatus: targetOrderStatus,
+      orderStatusText: getOrderStatusRefreshText(targetOrderStatus)
     });
   }
 
@@ -1333,6 +1351,7 @@ module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
 module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
 module.exports.getEffectiveShippingFeeText = getEffectiveShippingFeeText;
 module.exports.resolveSettlementOrderStatus = resolveSettlementOrderStatus;
+module.exports.normalizeOrderStatusRefreshTarget = normalizeOrderStatusRefreshTarget;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.requestScan = requestScan;

@@ -14,6 +14,7 @@ const {
   requestScan,
   requestPayment,
   clearPaymentAlertAndContinue,
+  normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig
 } = require('./admin');
 
@@ -228,6 +229,15 @@ function testCompletedOrderStatusConstant() {
   assert.equal(ORDER_STATUS_COMPLETED, 'completed');
 }
 
+function testNormalizeOrderStatusRefreshTargetSupportsBlankAndCompleted() {
+  assert.equal(normalizeOrderStatusRefreshTarget('blank'), null);
+  assert.equal(normalizeOrderStatusRefreshTarget('completed'), ORDER_STATUS_COMPLETED);
+}
+
+function testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus() {
+  assert.throws(() => normalizeOrderStatusRefreshTarget('pending_payment'), /invalid orderStatus/);
+}
+
 function testNormalizePositiveIntegerConfig() {
   assert.equal(normalizePositiveIntegerConfig('4', 3), 4);
   assert.equal(normalizePositiveIntegerConfig('0', 3), 3);
@@ -303,6 +313,8 @@ testAdminOrdersQueryIncludesProductType();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
+testNormalizeOrderStatusRefreshTargetSupportsBlankAndCompleted();
+testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
 
 Promise.all([

@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Button, Card, Form, Input, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Form, Input, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { authHeaders } from './utils/auth';
+
+type OrderStatusRefreshTarget = 'blank' | 'completed';
 
 type RefreshResult = {
   productId: string;
@@ -11,11 +13,11 @@ type RefreshResult = {
   error?: string;
 };
 
-async function runOrderStatusRefresh(productIdsText: string) {
+async function runOrderStatusRefresh(productIdsText: string, orderStatus: OrderStatusRefreshTarget) {
   const res = await fetch('/api/admin/order-status-refresh/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ productIdsText })
+    body: JSON.stringify({ productIdsText, orderStatus })
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || '订单状态更新失败');
@@ -31,7 +33,7 @@ export default function OrderStatusRefreshPage() {
     const values = await form.validateFields();
     setLoading(true);
     try {
-      const data = await runOrderStatusRefresh(values.productIdsText);
+      const data = await runOrderStatusRefresh(values.productIdsText, values.orderStatus);
       setResults(data.results || []);
       message.success(`更新完成：成功 ${data.updated || 0} 个，失败 ${data.failed || 0} 个`);
     } catch (e: any) {
@@ -44,7 +46,25 @@ export default function OrderStatusRefreshPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card title="订单状态更新">
-        <Form form={form} layout="vertical" onFinish={handleRun} style={{ maxWidth: 720 }}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleRun}
+          initialValues={{ orderStatus: 'completed' }}
+          style={{ maxWidth: 720 }}
+        >
+          <Form.Item
+            name="orderStatus"
+            label="订单状态"
+            rules={[{ required: true, message: '请选择订单状态' }]}
+          >
+            <Select
+              options={[
+                { value: 'blank', label: '为空' },
+                { value: 'completed', label: '完了' }
+              ]}
+            />
+          </Form.Item>
           <Form.Item
             name="productIdsText"
             label="商品 ID"
@@ -56,7 +76,7 @@ export default function OrderStatusRefreshPage() {
             />
           </Form.Item>
           <Typography.Paragraph type="secondary">
-            将输入商品 ID 对应的订单状态批量更新为“完了”。
+            将输入商品 ID 对应的订单状态批量更新为所选状态。
           </Typography.Paragraph>
           <Button type="primary" htmlType="submit" loading={loading}>批量更新</Button>
         </Form>
