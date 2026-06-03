@@ -15,7 +15,7 @@ function loadBackgroundForTest(overrides = {}) {
     setInterval() {},
     setTimeout(fn) { fn(); },
     clearTimeout() {},
-    fetch: async () => ({ async json() { return { task: null }; } }),
+    fetch: overrides.fetch || (async () => ({ async json() { return { task: null }; } })),
     chrome: {
       alarms: {
         create() {},
@@ -358,6 +358,61 @@ function testBuildScanStatusPayloadHandlesBundleRejected() {
   assert.equal(payload.bundleRejected, true);
 }
 
+async function testRunPaymentJobsReportsEmptyQueue() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, jobs: [] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(calls[0], { empty: true });
+}
+
+async function testRunPaymentJobsReportsDeferredPageFailure() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, jobs: [{ orderId: 8, productId: 'p8' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].orderId, 8);
+  assert.equal(calls[0].productId, 'p8');
+  assert.equal(calls[0].error, 'payment page detail phase disabled');
+}
+
+function testBuildPaymentFailurePayloadIncludesProductId() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildPaymentFailurePayload({
+    orderId: 7,
+    productId: 'p7'
+  }, new Error('payment page detail phase disabled'));
+
+  assert.equal(payload.orderId, 7);
+  assert.equal(payload.productId, 'p7');
+  assert.equal(payload.error, 'payment page detail phase disabled');
+}
+
 async function run() {
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
@@ -371,6 +426,9 @@ async function run() {
   testBuildScanStatusPayloadSkipsPendingShipping();
   testBuildScanStatusPayloadHandlesBundleShippingFee();
   testBuildScanStatusPayloadHandlesBundleRejected();
+  await testRunPaymentJobsReportsEmptyQueue();
+  await testRunPaymentJobsReportsDeferredPageFailure();
+  testBuildPaymentFailurePayloadIncludesProductId();
 }
 
 run().catch(err => {

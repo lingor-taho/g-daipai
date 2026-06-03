@@ -531,6 +531,31 @@ async function updateScanStatus(payload) {
   });
 }
 
+async function fetchPaymentJobs() {
+  const res = await apiFetch('/api/plugin/payment/jobs');
+  const data = await res.json();
+  return {
+    jobs: Array.isArray(data.jobs) ? data.jobs : [],
+    paymentPageStaySeconds: Number(data.paymentPageStaySeconds || 3)
+  };
+}
+
+async function updatePaymentStatus(payload) {
+  await apiFetch('/api/plugin/payment/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+function buildPaymentFailurePayload(job, error) {
+  return {
+    orderId: job?.orderId,
+    productId: job?.productId,
+    error: error?.message || String(error || 'payment failed')
+  };
+}
+
 async function reportYahooLoginStatus(loginStatus) {
   if (!loginStatus?.status) return;
   try {
@@ -1209,6 +1234,32 @@ async function runScanJobs() {
   }
 }
 
+async function executePaymentJob(job) {
+  throw new Error('payment page detail phase disabled');
+}
+
+async function runPaymentJobs() {
+  const result = await fetchPaymentJobs();
+  const jobs = Array.isArray(result?.jobs) ? result.jobs : [];
+  if (!jobs.length) {
+    await updatePaymentStatus({ empty: true });
+    return;
+  }
+  for (const job of jobs) {
+    try {
+      const paymentResult = await executePaymentJob(job, result);
+      if (paymentResult?.alreadyPaid || paymentResult?.success) {
+        await updatePaymentStatus({ orderId: job.orderId, productId: job.productId, status: 'success' });
+        continue;
+      }
+      throw new Error(paymentResult?.error || 'payment failed');
+    } catch (error) {
+      await updatePaymentStatus(buildPaymentFailurePayload(job, error));
+      break;
+    }
+  }
+}
+
 async function syncIdleYahooPages() {
   await refreshPluginConfig();
   const now = Date.now();
@@ -1225,6 +1276,8 @@ async function syncIdleYahooPages() {
     });
   } else if (idleAction?.action === 'scan') {
     await runScanJobs();
+  } else if (idleAction?.action === 'payment') {
+    await runPaymentJobs();
   }
   await completeIdleAction(idleAction?.action || 'none');
 }
@@ -1331,7 +1384,9 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   completeBidderPaysShippingTransaction,
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
-  buildScanStatusPayload
+  buildScanStatusPayload,
+  runPaymentJobs,
+  buildPaymentFailurePayload
 };
 chrome.tabs.onRemoved.addListener(tabId => {
   managedTaskTabs.delete(tabId);
