@@ -13,7 +13,8 @@ const {
   parseShippingFeeToNumber,
   requestScan,
   requestPayment,
-  clearPaymentAlertAndContinue
+  clearPaymentAlertAndContinue,
+  normalizePositiveIntegerConfig
 } = require('./admin');
 
 function testShippingFeeParsing() {
@@ -227,6 +228,12 @@ function testCompletedOrderStatusConstant() {
   assert.equal(ORDER_STATUS_COMPLETED, 'completed');
 }
 
+function testNormalizePositiveIntegerConfig() {
+  assert.equal(normalizePositiveIntegerConfig('4', 3), 4);
+  assert.equal(normalizePositiveIntegerConfig('0', 3), 3);
+  assert.equal(normalizePositiveIntegerConfig('abc', 3), 3);
+}
+
 async function testRequestScanSetsCounterToConfiguredEveryRuns() {
   const queries = [];
   const fakeDb = {
@@ -296,6 +303,7 @@ testAdminOrdersQueryIncludesProductType();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
+testNormalizePositiveIntegerConfig();
 
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),

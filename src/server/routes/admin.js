@@ -794,7 +794,7 @@ async function saveUserFinanceOverride(body = {}) {
 
 async function getMultiBidConfig() {
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_page_stay_seconds')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
@@ -806,8 +806,15 @@ async function getMultiBidConfig() {
     transactionStartHour: Number(values.transaction_start_hour ?? 1),
     scanStartHour: Number(values.scan_start_hour ?? 1),
     scanEndHour: Number(values.scan_end_hour ?? 20),
-    scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? 5)
+    scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? 5),
+    paymentJobLimit: normalizePositiveIntegerConfig(values.payment_job_limit, 3),
+    paymentPageStaySeconds: normalizePositiveIntegerConfig(values.payment_page_stay_seconds, 3)
   };
+}
+
+function normalizePositiveIntegerConfig(value, fallback) {
+  const number = Math.floor(Number(value));
+  return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
 router.get('/multi-bid-config', async (req, res) => {
@@ -824,6 +831,8 @@ router.put('/multi-bid-config', async (req, res) => {
   const scanStartHour = Number(req.body.scanStartHour ?? 1);
   const scanEndHour = Number(req.body.scanEndHour ?? 20);
   const scanEveryIdleRuns = Number(req.body.scanEveryIdleRuns ?? 5);
+  const paymentJobLimit = normalizePositiveIntegerConfig(req.body.paymentJobLimit ?? 3, 3);
+  const paymentPageStaySeconds = normalizePositiveIntegerConfig(req.body.paymentPageStaySeconds ?? 3, 3);
   if (!Number.isFinite(startHours) || startHours <= 0) {
     return res.status(400).json({ error: 'valid startHours is required' });
   }
@@ -887,7 +896,15 @@ router.put('/multi-bid-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('scan_every_idle_runs', ?, CURRENT_TIMESTAMP)`,
     [String(scanEveryIdleRuns)]
   );
-  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, scanStartHour, scanEndHour, scanEveryIdleRuns });
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('payment_job_limit', ?, CURRENT_TIMESTAMP)`,
+    [String(paymentJobLimit)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('payment_page_stay_seconds', ?, CURRENT_TIMESTAMP)`,
+    [String(paymentPageStaySeconds)]
+  );
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit, paymentPageStaySeconds });
 });
 
 router.post('/transaction-start/request', async (req, res) => {
@@ -1321,3 +1338,4 @@ module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
+module.exports.normalizePositiveIntegerConfig = normalizePositiveIntegerConfig;
