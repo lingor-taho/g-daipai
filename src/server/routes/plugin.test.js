@@ -32,7 +32,9 @@ const {
   ORDER_STATUS_PENDING_BUNDLE,
   ORDER_STATUS_BUNDLE_COMPLETED,
   ORDER_STATUS_PENDING_SETTLEMENT,
-  ORDER_STATUS_PENDING_SHIPMENT
+  ORDER_STATUS_PENDING_SHIPMENT,
+  DEFAULT_PAYMENT_JOB_LIMIT,
+  DEFAULT_PAYMENT_PAGE_STAY_SECONDS
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -399,6 +401,8 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
 }
 
 function testPaymentIdleActionUsesFlagAfterScanPriority() {
+  assert.equal(DEFAULT_PAYMENT_JOB_LIMIT, 3);
+  assert.equal(DEFAULT_PAYMENT_PAGE_STAY_SECONDS, 3);
   assert.equal(ORDER_STATUS_PENDING_SETTLEMENT, 'pending_settlement');
   assert.equal(ORDER_STATUS_PENDING_SHIPMENT, 'pending_shipment');
   assert.equal(getNextIdleAction({
