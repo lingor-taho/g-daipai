@@ -157,6 +157,7 @@ function testAdminOrdersQueryIncludesProductType() {
   const query = buildAdminOrdersListQuery({ pageSize: 10, offset: 0 });
 
   assert.match(query.sql, /t\.product_type/);
+  assert.match(query.sql, /ORDER BY datetime\(COALESCE\(o\.won_at, t\.updated_at\)\) DESC, t\.id DESC/);
   assert.deepEqual(query.params, [10, 0]);
 }
 

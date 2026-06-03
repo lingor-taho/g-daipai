@@ -432,7 +432,8 @@ async function upsertOrderFromTask(taskId, options = {}) {
        SET product_title = ?, product_url = ?, final_price = ?,
            won_at = COALESCE(?, won_at),
            won_time_text = COALESCE(?, won_time_text),
-           transaction_url = COALESCE(?, transaction_url)
+           transaction_url = COALESCE(?, transaction_url),
+           updated_at = CURRENT_TIMESTAMP
        WHERE task_id = ?`,
       [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
     );
@@ -682,7 +683,8 @@ async function getTransactionStartJobs(database = db, options = {}) {
         `UPDATE orders
          SET order_status = ?,
              transaction_started_at = CURRENT_TIMESTAMP,
-             transaction_start_error = NULL
+             transaction_start_error = NULL,
+             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
            AND (order_status IS NULL OR order_status = '')`,
         [ORDER_STATUS_PENDING_PAYMENT, row.order_id]
@@ -744,7 +746,8 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
   if (error) {
     const result = await database.query(
       `UPDATE orders
-       SET transaction_start_error = ?
+       SET transaction_start_error = ?,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id IN (${placeholders})
          AND (order_status IS NULL OR order_status = '')`,
       [error, ...orderIds]
@@ -771,7 +774,8 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
      SET order_status = ?,
          bundle_group_id = COALESCE(?, bundle_group_id),
          transaction_started_at = CURRENT_TIMESTAMP,
-         transaction_start_error = NULL
+         transaction_start_error = NULL,
+         updated_at = CURRENT_TIMESTAMP
      WHERE id IN (${placeholders})
        AND (order_status IS NULL OR order_status = '')`,
     [status, bundleGroupId, ...orderIds]
@@ -831,7 +835,8 @@ async function updateScanStatus(payload = {}, database = db) {
        SET order_status = NULL,
            bundle_group_id = NULL,
            bundle_shipping_fee_text = NULL,
-           transaction_start_error = NULL
+           transaction_start_error = NULL,
+           updated_at = CURRENT_TIMESTAMP
        WHERE bundle_group_id = (
          SELECT bundle_group_id FROM orders WHERE id = ?
        )
@@ -844,7 +849,8 @@ async function updateScanStatus(payload = {}, database = db) {
     const result = await database.query(
       `UPDATE orders
        SET bundle_shipping_fee_text = CASE WHEN id = ? THEN ? ELSE ? END,
-           order_status = CASE WHEN id = ? THEN ? ELSE ? END
+           order_status = CASE WHEN id = ? THEN ? ELSE ? END,
+           updated_at = CURRENT_TIMESTAMP
        WHERE bundle_group_id = (
          SELECT bundle_group_id FROM orders WHERE id = ?
        )
@@ -866,7 +872,8 @@ async function updateScanStatus(payload = {}, database = db) {
   if (payload.pending === true) {
     const result = await database.query(
       `UPDATE orders
-       SET order_status = ?
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [ORDER_STATUS_WAITING_SHIPPING, orderId]
     );
@@ -882,18 +889,18 @@ async function updateScanStatus(payload = {}, database = db) {
     `UPDATE tasks
      SET shipping_fee_text = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE product_id = (
-       SELECT t.product_id
-       FROM orders o
-       INNER JOIN tasks t ON o.task_id = t.id
-       WHERE o.id = ?
-         AND o.order_status = ?
+     WHERE id = (
+       SELECT task_id
+       FROM orders
+       WHERE id = ?
+         AND order_status = ?
      )`,
     [shippingFeeText, orderId, ORDER_STATUS_WAITING_SHIPPING]
   );
   const result = await database.query(
     `UPDATE orders
-     SET order_status = ?
+     SET order_status = ?,
+         updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
        AND order_status = ?`,
     [ORDER_STATUS_PENDING_PAYMENT, orderId, ORDER_STATUS_WAITING_SHIPPING]
@@ -955,7 +962,7 @@ router.post('/orders/sync', async (req, res) => {
       transactionUrl: order.transactionUrl
     });
     if (order.trackingNumber) {
-      await db.query('UPDATE orders SET tracking_number = ? WHERE task_id = ?', [order.trackingNumber, task.id]);
+      await db.query('UPDATE orders SET tracking_number = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?', [order.trackingNumber, task.id]);
     }
     if (isForced) forcedResync += 1;
     updated += 1;

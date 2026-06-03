@@ -687,7 +687,9 @@ async function testUpdateScanStatusWritesShippingAndPendingPayment() {
   assert.equal(result.updated, 1);
   assert.equal(result.shippingFeeText, '1060\u5186');
   assert.match(queries[0].sql, /UPDATE tasks/);
-  assert.match(queries[0].sql, /product_id = \(/);
+  assert.match(queries[0].sql, /WHERE id = \(/);
+  assert.doesNotMatch(queries[0].sql, /product_id = \(/);
+  assert.match(queries[0].sql, /SELECT task_id/);
   assert.equal(queries[0].params[0], '1060\u5186');
   assert.equal(queries[0].params[1], 11);
   assert.match(queries[1].sql, /UPDATE orders/);

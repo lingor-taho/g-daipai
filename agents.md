@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-01
+**最后更新**: 2026-06-02
 
 ---
 
@@ -475,5 +475,63 @@ node src\server\routes\admin.orders.test.js
 node yahoo-plugin\content.test.js
 node yahoo-plugin\background.test.js
 Set-Location src\admin
+npm run build
+```
+
+---
+
+## 2026-06-02 扫描功能当前进度
+
+### 当前状态
+
+- 分支：直接在 `master` 开发；之前临时分支已清理，只保留 `master` / `origin/master`。
+- 扫描任务复用现有空闲调度 `action: 'scan'`，后台“手动执行扫描”只把扫描 flag 更新为 5，不改变原调度架构。
+- 不再新增或修改计划文件；后续功能直接按确认后的业务规则实现代码。
+
+### 已实现内容
+
+- `orders` 新增兼容字段：`bundle_shipping_fee_text`，用于同捆运费。
+- 后台订单管理新增“同捆运费”列，仅后台展示；用户端和其他费用计算仍使用原 `shipping_fee_text`。
+- 后台订单状态新增显示：
+  - `waiting_shipping`：等待运费
+  - `pending_bundle`：待同捆
+  - `bundle_completed`：同捆完了
+- `scan` 任务现在会获取：
+  - `waiting_shipping`（等待运费）
+  - `pending_bundle`（待同捆）
+- `waiting_shipping` 扫描规则：
+  - 只从 `支払い金額` 的括号内容里提取 `送料：xxx円`，不能取括号前总金额。
+  - 有真实送料时，更新订单运费并改为 `pending_payment`。
+  - 如果页面仍显示 `送料決定後、確定します。`，保持 `waiting_shipping` 不变。
+- `pending_bundle` 扫描规则：
+  - 页面显示 `まとめて取引を依頼中です。出品者からの連絡をお待ちください。`：不更新，关闭 tab。
+  - 子商品弹窗 `出品者が、この商品を含めたまとめて取引に同意しました。取引内容をご確認ください。`：不更新，关闭 tab。
+  - 主商品弹窗 `出品者がまとめて取引に同意しました。出品者から配送方法の連絡が届いています。確認し取引情報の入力へ進んでください。`：先点 `閉じる` 后继续判断。
+  - 如果页面显示配送方法金额，如 `配送方法 定形郵便（110円）`：主商品 `bundle_shipping_fee_text=110円` 且 `order_status=pending_payment`；同组其他商品 `bundle_shipping_fee_text=0円` 且 `order_status=bundle_completed`。
+  - 如果取引ナビ付款信息显示 `支払い金額 ... 送料：1,620円`：按同捆主商品处理，提取 `送料` 的金额，不取总金额。
+  - 如果没有具体运费，会点击 `取引情報を入力する` -> `決定する` -> `確定する`；最终仍是 `送料決定後、確定します。` 时，保持 `pending_bundle` 不变。
+  - 如果弹窗显示卖家希望单品交易：同组所有订单清空 `order_status`、`bundle_group_id`、`bundle_shipping_fee_text`，让后续交易开始按单品重新处理。
+
+### 最近修复
+
+- 同捆主商品成功后 tab 残留的根因不是完全没写关闭，而是原关闭范围只包含当前 `tab.id` 和已记录的 `_gdaipaiCreatedTabIds`；Yahoo 流程中新开/切换但未被记录的交易页可能漏关。
+- 已新增扫描专用清理：扫描开始前记录已有 tab，结束时关闭本次扫描中新出现的 Yahoo 交易相关 tab。
+- 主商品成功或同捆失败后，本轮扫描会跳过同一个 `bundle_group_id` 的剩余旧 job，避免同组子商品在本轮继续打开页面。
+
+### 最近验证命令
+
+以下命令在当前扫描改动过程中通过：
+
+```powershell
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node src\server\routes\task.test.js
+node src\server\routes\proxy.test.js
+node src\client\src\utils\bidPrice.test.mjs
+Set-Location src\admin
+npm run build
+Set-Location ..\client
 npm run build
 ```

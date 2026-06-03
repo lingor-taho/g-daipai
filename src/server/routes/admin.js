@@ -77,7 +77,7 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
      LEFT JOIN users u ON t.user_id = u.id
      LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE t.status = 'success'
-     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC LIMIT ? OFFSET ?`,
+     ORDER BY datetime(COALESCE(o.won_at, t.updated_at)) DESC, t.id DESC LIMIT ? OFFSET ?`,
     params: [pageSize, offset]
   };
 }
@@ -616,7 +616,8 @@ router.post('/orders/settle', async (req, res) => {
              has_user_finance_override = ?,
              total_amount_cny = ?,
              order_status = ?,
-             settled_at = CURRENT_TIMESTAMP
+             settled_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
           settlement.jpyToCnyRate,
@@ -902,7 +903,8 @@ router.post('/transaction-start/reset-orders', async (req, res) => {
      SET order_status = NULL,
          bundle_group_id = NULL,
          transaction_started_at = NULL,
-         transaction_start_error = NULL
+         transaction_start_error = NULL,
+         updated_at = CURRENT_TIMESTAMP
      WHERE settled_at IS NULL
        AND (
          order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle')
@@ -1139,7 +1141,8 @@ router.post('/order-status-refresh/run', async (req, res) => {
 
     const updateResult = await db.query(
       `UPDATE orders
-       SET order_status = ?
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id IN (${orders.map(() => '?').join(',')})`,
       [ORDER_STATUS_COMPLETED, ...orders.map(order => order.order_id)]
     );
