@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Button, Layout, Menu, Space, Typography } from 'antd';
+import { Alert, Button, Layout, Menu, Space, Typography, message } from 'antd';
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
 
@@ -23,6 +23,7 @@ export default function AdminLayout() {
   const selectedKey = menuItemsConfig.find(item => location.pathname.startsWith(item.key))?.key || '/tasks';
   const username = localStorage.getItem('username') || 'admin';
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
+  const [paymentAlert, setPaymentAlert] = useState('');
   const [collapsed, setCollapsed] = useState(false);
 
   // 根据折叠状态生成菜单项
@@ -42,6 +43,12 @@ export default function AdminLayout() {
       } catch {
         if (active) setYahooLogin({ status: 'unknown', message: '' });
       }
+      try {
+        const flags = await fetchAdminJson('/api/admin/idle-flags');
+        if (active) setPaymentAlert(flags.paymentAlertMessage || '');
+      } catch {
+        if (active) setPaymentAlert('');
+      }
     }
 
     fetchYahooLoginStatus();
@@ -57,6 +64,16 @@ export default function AdminLayout() {
     localStorage.removeItem('username');
     localStorage.removeItem('role');
     navigate('/login');
+  }
+
+  async function clearPaymentAlertAndContinue() {
+    try {
+      await fetchAdminJson('/api/admin/payment/continue', { method: 'POST' });
+      setPaymentAlert('');
+      message.success('付款任务已继续');
+    } catch (e: any) {
+      message.error(e.message || '继续付款任务失败');
+    }
   }
 
   return (
@@ -124,6 +141,19 @@ export default function AdminLayout() {
         </Sider>
         <Layout style={{ marginLeft: collapsed ? 50 : 210, transition: 'margin-left 0.2s' }}>
           <Content style={{ padding: 20, background: '#f5f5f5', minHeight: 'calc(100vh - 64px)' }}>
+            {paymentAlert ? (
+              <Alert
+                type="error"
+                showIcon
+                message={
+                  <Space wrap>
+                    <Typography.Text style={{ color: '#cf1322' }}>{paymentAlert}</Typography.Text>
+                    <Button size="small" danger onClick={clearPaymentAlertAndContinue}>清除并继续任务</Button>
+                  </Space>
+                }
+                style={{ marginBottom: 12 }}
+              />
+            ) : null}
             <Outlet />
           </Content>
         </Layout>

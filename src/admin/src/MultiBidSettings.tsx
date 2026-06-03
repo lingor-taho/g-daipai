@@ -62,7 +62,9 @@ export default function MultiBidSettingsPage() {
           transactionStartHour: data.transactionStartHour ?? 1,
           scanStartHour: data.scanStartHour ?? 1,
           scanEndHour: data.scanEndHour ?? 20,
-          scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5
+          scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5,
+          paymentJobLimit: data.paymentJobLimit ?? 3,
+          paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3
         });
       })
       .catch(() => {});
@@ -132,7 +134,9 @@ export default function MultiBidSettingsPage() {
           transactionStartHour: 1,
           scanStartHour: 1,
           scanEndHour: 20,
-          scanEveryIdleRuns: 5
+          scanEveryIdleRuns: 5,
+          paymentJobLimit: 3,
+          paymentPageStaySeconds: 3
         }}
         style={{ maxWidth: 640 }}
       >
@@ -214,6 +218,20 @@ export default function MultiBidSettingsPage() {
           </Form.Item>
           <Form.Item label="手动执行扫描">
             <Button loading={requestingScan} onClick={handleRequestScan}>加入执行队列</Button>
+          </Form.Item>
+          <Form.Item
+            name="paymentJobLimit"
+            label="付款流程执行任务数"
+            rules={[{ required: true, message: '请输入付款流程执行任务数' }]}
+          >
+            <InputNumber min={1} step={1} precision={0} addonAfter="件" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="paymentPageStaySeconds"
+            label="付款页面停留时间(秒)"
+            rules={[{ required: true, message: '请输入付款页面停留时间' }]}
+          >
+            <InputNumber min={1} step={1} precision={0} addonAfter="秒" style={{ width: '100%' }} />
           </Form.Item>
           <Typography.Text type="secondary">
             插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会执行这些空闲操作。

@@ -43,6 +43,7 @@ function renderProductTypeTag(productType: string | null | undefined) {
 function renderOrderStatus(status: string | null | undefined) {
   if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
+  if (status === 'pending_shipment') return <Tag color="lime">待发货</Tag>;
   if (status === 'waiting_shipping') return <Tag color="orange">等待运费</Tag>;
   if (status === 'pending_bundle') return <Tag color="purple">待同捆</Tag>;
   if (status === 'bundle_completed') return <Tag color="cyan">同捆完了</Tag>;
@@ -56,9 +57,21 @@ const noWrapCell = {
   }
 };
 
-function isNonBidderPaysShipping(item: any) {
-  const text = String(item?.shipping_fee_text || '').trim();
-  return Boolean(item?.can_settle && text && text !== '-' && !text.includes('落札者負担'));
+function canAutoSettle(item: any) {
+  return Boolean(
+    item?.can_settle &&
+    !item?.settled_at &&
+    (item?.order_status === 'pending_payment' || item?.order_status === 'bundle_completed')
+  );
+}
+
+function canRequestPayment(item: any) {
+  return Boolean(
+    item?.order_status === 'pending_settlement' &&
+    item?.payable_cny !== null &&
+    item?.payable_cny !== undefined &&
+    item?.payable_cny !== ''
+  );
 }
 
 async function saveFinanceConfig(values: any) {
@@ -83,11 +96,23 @@ async function settleOrders(values: { orderIds: Key[]; rate: number }) {
   return data;
 }
 
+async function requestPayment(orderIds: Key[]) {
+  const res = await fetch('/api/admin/payment/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ orderIds })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '支付任务提交失败');
+  return data;
+}
+
 export default function OrdersPage() {
   const [form] = Form.useForm();
   const [reloadKey, setReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [settling, setSettling] = useState(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [settlementRate, setSettlementRate] = useState<number | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [autoSelectNonBidderPays, setAutoSelectNonBidderPays] = useState(false);
@@ -131,6 +156,11 @@ export default function OrdersPage() {
       message.error('请选择要结算的订单');
       return;
     }
+    const selectedRows = currentRows.filter(item => selectedRowKeys.includes(item.id));
+    if (selectedRows.some(item => !canAutoSettle(item))) {
+      message.error('只能选择待支付或同捆完了的订单进行结算');
+      return;
+    }
     setSettling(true);
     try {
       const data = await settleOrders({ orderIds: selectedRowKeys, rate: settlementRate });
@@ -144,6 +174,29 @@ export default function OrdersPage() {
       message.error(e.message || '结算失败');
     } finally {
       setSettling(false);
+    }
+  }
+
+  async function handlePaymentRequest() {
+    if (selectedRowKeys.length === 0) {
+      message.error('请选择要支付的订单');
+      return;
+    }
+    const selectedRows = currentRows.filter(item => selectedRowKeys.includes(item.id));
+    if (selectedRows.some(item => !canRequestPayment(item))) {
+      message.error('只能选择待结算且应付款不为空的订单');
+      return;
+    }
+    setPaymentSubmitting(true);
+    try {
+      const data = await requestPayment(selectedRowKeys);
+      message.success(`支付任务已加入队列 ${data.requested ?? selectedRowKeys.length} 条`);
+      setReloadKey(key => key + 1);
+      fetchAdminJson('/api/admin/idle-flags').then(setIdleFlags).catch(() => {});
+    } catch (e: any) {
+      message.error(e.message || '支付任务提交失败');
+    } finally {
+      setPaymentSubmitting(false);
     }
   }
 
@@ -219,11 +272,12 @@ export default function OrdersPage() {
             unCheckedChildren="未勾选"
             onChange={checked => {
               setAutoSelectNonBidderPays(checked);
-              setSelectedRowKeys(checked ? currentRows.filter(item => isNonBidderPaysShipping(item) && !item.settled_at).map(item => item.id) : []);
+              setSelectedRowKeys(checked ? currentRows.filter(item => canAutoSettle(item)).map(item => item.id) : []);
             }}
           />
-          <Typography.Text>勾选非落札者負担订单</Typography.Text>
+          <Typography.Text>勾选待支付/同捆完了订单</Typography.Text>
           <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
+          <Button loading={paymentSubmitting} onClick={handlePaymentRequest}>支付</Button>
           <Typography.Text type="secondary">
             已选择 {selectedRowKeys.length} 条；每次进入页面默认不勾选订单。
           </Typography.Text>
@@ -234,6 +288,7 @@ export default function OrdersPage() {
         <Space wrap size={16}>
           <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
           <Typography.Text>扫描flag：{idleFlags?.scanFlag ?? '-'}</Typography.Text>
+          <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
         </Space>
       </Card>
 
@@ -245,7 +300,7 @@ export default function OrdersPage() {
             const data = await fetchAdminJson('/api/admin/orders?' + new URLSearchParams(params));
             const rows = data.items || [];
             setCurrentRows(rows);
-            setSelectedRowKeys(autoSelectNonBidderPays ? rows.filter((item: any) => isNonBidderPaysShipping(item) && !item.settled_at).map((item: any) => item.id) : []);
+            setSelectedRowKeys(autoSelectNonBidderPays ? rows.filter((item: any) => canAutoSettle(item)).map((item: any) => item.id) : []);
             return { data: rows, total: data.total || 0 };
           } catch {
             setCurrentRows([]);
@@ -257,10 +312,13 @@ export default function OrdersPage() {
         rowSelection={{
           selectedRowKeys,
           onChange: keys => setSelectedRowKeys(keys),
-          getCheckboxProps: (record: any) => ({
-            disabled: !isNonBidderPaysShipping(record),
-            title: isNonBidderPaysShipping(record) ? undefined : '落札者負担或运费未确认，不能结算'
-          })
+          getCheckboxProps: (record: any) => {
+            const enabled = canAutoSettle(record) || canRequestPayment(record);
+            return {
+              disabled: !enabled,
+              title: enabled ? undefined : '只能勾选待支付/同捆完了用于结算，或待结算且有应付款用于支付'
+            };
+          }
         }}
         search={false}
         scroll={{ x: 1185 }}
