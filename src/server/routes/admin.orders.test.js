@@ -5,6 +5,7 @@ const {
   canSettleShippingFeeText,
   buildOrderSettlement,
   buildAdminOrdersListQuery,
+  resolveSettlementOrderStatus,
   ORDER_STATUS_PENDING_SETTLEMENT,
   ORDER_STATUS_COMPLETED,
   normalizeProductType,
@@ -145,6 +146,32 @@ function testBuildOrderSettlementUsesSubmittedRateAndOverrides() {
   });
 }
 
+function testBuildOrderSettlementPrefersBundleShippingFee() {
+  const result = buildOrderSettlement({
+    order: {
+      final_price: 10000,
+      tax_type: 'tax_zero',
+      shipping_fee_text: '送料 1,000円',
+      bundle_shipping_fee_text: '0円'
+    },
+    baseConfig: {
+      rate: 0.05,
+      bankFeeJpy: 500,
+      handlingFeeCny: 15,
+      largeAmountFeeCny: 20
+    },
+    userFinanceOverride: null
+  });
+
+  assert.equal(result.shippingFeeJpy, 0);
+  assert.equal(result.payableCny, 540);
+}
+
+function testResolveSettlementStatusKeepsBundleCompleted() {
+  assert.equal(resolveSettlementOrderStatus('pending_payment'), 'pending_settlement');
+  assert.equal(resolveSettlementOrderStatus('bundle_completed'), 'bundle_completed');
+}
+
 function testNormalizeProductTypeForBatchRefresh() {
   assert.equal(normalizeProductType('normal'), 'normal');
   assert.equal(normalizeProductType('store'), 'store');
@@ -195,6 +222,8 @@ testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
 testStoreTaxIncludedThresholdUsesTaxIncludedPrice();
 testSpecialUserConfigOverridesOnlyConfiguredValues();
 testBuildOrderSettlementUsesSubmittedRateAndOverrides();
+testBuildOrderSettlementPrefersBundleShippingFee();
+testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
 testSettlementStatusUsesPendingSettlement();

@@ -22,6 +22,8 @@ const {
 
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_COMPLETED = 'completed';
+const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
+const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
 
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
@@ -518,8 +520,21 @@ function canSettleShippingFeeText(shippingFeeText) {
   return /(\d[\d,]*)\s*円/.test(text);
 }
 
+function getEffectiveShippingFeeText(order = {}) {
+  const bundleText = String(order.bundle_shipping_fee_text || '').trim();
+  if (bundleText) return bundleText;
+  return String(order.shipping_fee_text || '').trim();
+}
+
+function resolveSettlementOrderStatus(currentStatus) {
+  return currentStatus === ORDER_STATUS_BUNDLE_COMPLETED
+    ? ORDER_STATUS_BUNDLE_COMPLETED
+    : ORDER_STATUS_PENDING_SETTLEMENT;
+}
+
 function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
-  if (!canSettleShippingFeeText(order?.shipping_fee_text)) {
+  const effectiveShippingFeeText = getEffectiveShippingFeeText(order);
+  if (!canSettleShippingFeeText(effectiveShippingFeeText)) {
     const error = new Error('该订单运费无法确认，不能结算');
     error.statusCode = 400;
     throw error;
@@ -528,7 +543,7 @@ function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
   const payable = calculateOrderPayable({
     finalPrice: order.final_price,
     taxType: order.tax_type,
-    shippingFeeText: order.shipping_fee_text,
+    shippingFeeText: effectiveShippingFeeText,
     config: effectiveConfig
   });
 
@@ -628,7 +643,7 @@ router.post('/orders/settle', async (req, res) => {
           settlement.taxIncludedFinalPrice,
           settlement.hasUserFinanceOverride ? 1 : 0,
           settlement.payableCny,
-          ORDER_STATUS_PENDING_SETTLEMENT,
+          resolveSettlementOrderStatus(order.order_status),
           orderId
         ]
       );
@@ -1237,6 +1252,10 @@ module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;
 module.exports.ORDER_STATUS_COMPLETED = ORDER_STATUS_COMPLETED;
+module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
+module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
+module.exports.getEffectiveShippingFeeText = getEffectiveShippingFeeText;
+module.exports.resolveSettlementOrderStatus = resolveSettlementOrderStatus;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.requestScan = requestScan;
