@@ -11,7 +11,9 @@ const {
   ORDER_STATUS_COMPLETED,
   normalizeProductType,
   parseShippingFeeToNumber,
-  requestScan
+  requestScan,
+  requestPayment,
+  clearPaymentAlertAndContinue
 } = require('./admin');
 
 function testShippingFeeParsing() {
@@ -245,6 +247,42 @@ async function testRequestScanSetsCounterToConfiguredEveryRuns() {
   assert.equal(queries[0].params[0], '7');
 }
 
+async function testRequestPaymentSetsFlag() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await requestPayment(fakeDb, [1, 2]);
+
+  assert.equal(result.requested, 2);
+  assert.match(queries[0].sql, /order_status = \?/);
+  assert.equal(queries[0].params[0], 'pending_settlement');
+  assert.match(queries[1].sql, /payment_requested/);
+  assert.equal(queries[1].params[0], '1');
+}
+
+async function testClearPaymentAlertAndContinueClearsMessageAndSetsFlag() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await clearPaymentAlertAndContinue(fakeDb);
+
+  assert.equal(result.success, true);
+  assert.match(queries[0].sql, /payment_alert_message/);
+  assert.equal(queries[0].params[0], '');
+  assert.match(queries[1].sql, /payment_requested/);
+  assert.equal(queries[1].params[0], '1');
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
@@ -259,7 +297,11 @@ testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
 
-testRequestScanSetsCounterToConfiguredEveryRuns().catch(err => {
+Promise.all([
+  testRequestScanSetsCounterToConfiguredEveryRuns(),
+  testRequestPaymentSetsFlag(),
+  testClearPaymentAlertAndContinueClearsMessageAndSetsFlag()
+]).catch(err => {
   console.error(err);
   process.exitCode = 1;
 });

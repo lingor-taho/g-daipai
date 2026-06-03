@@ -910,9 +910,61 @@ async function requestScan(database = db) {
   return { scanIdleCounter: scanEveryIdleRuns };
 }
 
+async function saveConfigValue(database, key, value) {
+  const allowedKeys = new Set(['payment_requested', 'payment_alert_message']);
+  if (!allowedKeys.has(key)) {
+    throw new Error('invalid config key');
+  }
+  await database.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('${key}', ?, CURRENT_TIMESTAMP)`,
+    [String(value)]
+  );
+}
+
+async function requestPayment(database = db, orderIds = []) {
+  const ids = Array.isArray(orderIds) ? orderIds.map(Number).filter(id => Number.isInteger(id) && id > 0) : [];
+  if (!ids.length) {
+    const error = new Error('orderIds is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  await database.query(
+    `UPDATE orders
+     SET order_status = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (${placeholders})
+       AND order_status = ?
+       AND total_amount_cny IS NOT NULL`,
+    [ORDER_STATUS_PENDING_SETTLEMENT, ...ids, ORDER_STATUS_PENDING_SETTLEMENT]
+  );
+  await saveConfigValue(database, 'payment_requested', '1');
+  return { requested: ids.length };
+}
+
+async function clearPaymentAlertAndContinue(database = db) {
+  await saveConfigValue(database, 'payment_alert_message', '');
+  await saveConfigValue(database, 'payment_requested', '1');
+  return { success: true };
+}
+
 router.post('/scan/request', async (req, res) => {
   const result = await requestScan(db);
   res.json({ success: true, ...result });
+});
+
+router.post('/payment/request', async (req, res) => {
+  try {
+    const result = await requestPayment(db, req.body?.orderIds || []);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'payment request failed' });
+  }
+});
+
+router.post('/payment/continue', async (req, res) => {
+  const result = await clearPaymentAlertAndContinue(db);
+  res.json(result);
 });
 
 router.post('/transaction-start/reset-orders', async (req, res) => {
@@ -942,7 +994,9 @@ router.get('/idle-flags', async (req, res) => {
        'transaction_start_requested',
        'transaction_start_last_run_date',
        'scan_every_idle_runs',
-       'scan_idle_counter'
+       'scan_idle_counter',
+       'payment_requested',
+       'payment_alert_message'
      )`
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -962,7 +1016,9 @@ router.get('/idle-flags', async (req, res) => {
     transactionStartHour,
     transactionStartLastRunDate,
     scanFlag: scanIdleCounter,
-    scanEveryIdleRuns
+    scanEveryIdleRuns,
+    paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
+    paymentAlertMessage: values.payment_alert_message || ''
   });
 });
 
@@ -1263,3 +1319,5 @@ module.exports.resolveSettlementOrderStatus = resolveSettlementOrderStatus;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.requestScan = requestScan;
+module.exports.requestPayment = requestPayment;
+module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
