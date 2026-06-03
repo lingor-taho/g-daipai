@@ -84,6 +84,30 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
   };
 }
 
+function mapAdminOrderListItem(item) {
+  const settled = Boolean(item.settled_at);
+  const effectiveShippingFeeText = getEffectiveShippingFeeText(item);
+  return {
+    ...item,
+    username: item.username || '-',
+    product_id: item.product_id || extractAuctionId(item.product_url) || '',
+    shipping_fee_text: effectiveShippingFeeText || '-',
+    can_settle: canSettleShippingFeeText(effectiveShippingFeeText),
+    shipping_fee_jpy: settled ? parseShippingFeeToNumber(effectiveShippingFeeText) : null,
+    bank_fee_jpy: settled ? item.bank_fee_jpy : null,
+    handling_fee_cny: settled ? item.handling_fee_cny : null,
+    large_amount_fee_cny: settled ? item.large_amount_fee_cny : null,
+    large_amount_fee_applied: settled ? Boolean(item.large_amount_fee_applied) : null,
+    tax_included_final_price: settled ? item.tax_included_final_price : null,
+    jpy_to_cny_rate: settled ? item.jpy_to_cny_rate : null,
+    rate_adjustment: settled ? item.rate_adjustment : null,
+    has_user_finance_override: settled ? Boolean(item.has_user_finance_override) : null,
+    payable_cny: settled ? item.total_amount_cny : null,
+    order_status: item.order_status || null,
+    transaction_start_error: item.transaction_start_error || null
+  };
+}
+
 router.get('/users', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
@@ -398,28 +422,7 @@ router.get('/orders', async (req, res) => {
     INNER JOIN tasks t ON o.task_id = t.id
     WHERE t.status = 'success'
   `);
-  const mappedItems = items.map(item => {
-    const settled = Boolean(item.settled_at);
-    return {
-      ...item,
-      username: item.username || '-',
-      product_id: item.product_id || extractAuctionId(item.product_url) || '',
-      shipping_fee_text: item.shipping_fee_text || '-',
-      can_settle: canSettleShippingFeeText(item.shipping_fee_text),
-      shipping_fee_jpy: settled ? parseShippingFeeToNumber(item.shipping_fee_text) : null,
-      bank_fee_jpy: settled ? item.bank_fee_jpy : null,
-      handling_fee_cny: settled ? item.handling_fee_cny : null,
-      large_amount_fee_cny: settled ? item.large_amount_fee_cny : null,
-      large_amount_fee_applied: settled ? Boolean(item.large_amount_fee_applied) : null,
-      tax_included_final_price: settled ? item.tax_included_final_price : null,
-      jpy_to_cny_rate: settled ? item.jpy_to_cny_rate : null,
-      rate_adjustment: settled ? item.rate_adjustment : null,
-      has_user_finance_override: settled ? Boolean(item.has_user_finance_override) : null,
-      payable_cny: settled ? item.total_amount_cny : null,
-      order_status: item.order_status || null,
-      transaction_start_error: item.transaction_start_error || null
-    };
-  });
+  const mappedItems = items.map(mapAdminOrderListItem);
   res.json({ items: mappedItems, total: countResult?.total || 0 });
 });
 
@@ -1248,6 +1251,7 @@ module.exports = router;
 module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
 module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
+module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;

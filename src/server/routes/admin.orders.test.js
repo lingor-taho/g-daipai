@@ -5,6 +5,7 @@ const {
   canSettleShippingFeeText,
   buildOrderSettlement,
   buildAdminOrdersListQuery,
+  mapAdminOrderListItem,
   resolveSettlementOrderStatus,
   ORDER_STATUS_PENDING_SETTLEMENT,
   ORDER_STATUS_COMPLETED,
@@ -188,6 +189,34 @@ function testAdminOrdersQueryIncludesProductType() {
   assert.deepEqual(query.params, [10, 0]);
 }
 
+function testMapAdminOrderListItemUsesEffectiveBundleShipping() {
+  const item = {
+    product_id: 'x123456789',
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/x123456789',
+    shipping_fee_text: '\u9001\u6599 \u843d\u672d\u8005\u8ca0\u62c5',
+    bundle_shipping_fee_text: '110\u5186',
+    settled_at: '2026-06-03T00:00:00.000Z',
+    bank_fee_jpy: 500,
+    handling_fee_cny: 15,
+    large_amount_fee_cny: 0,
+    large_amount_fee_applied: 0,
+    tax_included_final_price: 10000,
+    jpy_to_cny_rate: 0.05,
+    rate_adjustment: 0,
+    has_user_finance_override: 0,
+    total_amount_cny: 545,
+    order_status: 'pending_settlement',
+    transaction_start_error: null
+  };
+
+  const mapped = mapAdminOrderListItem(item);
+
+  assert.equal(mapped.shipping_fee_text, '110\u5186');
+  assert.equal(mapped.can_settle, true);
+  assert.equal(mapped.shipping_fee_jpy, 110);
+  assert.equal(mapped.bundle_shipping_fee_text, '110\u5186');
+}
+
 function testSettlementStatusUsesPendingSettlement() {
   assert.equal(ORDER_STATUS_PENDING_SETTLEMENT, 'pending_settlement');
 }
@@ -226,6 +255,7 @@ testBuildOrderSettlementPrefersBundleShippingFee();
 testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
+testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
 
