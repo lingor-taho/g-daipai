@@ -19,6 +19,10 @@ const {
   getDataCleanupConfig,
   saveDataCleanupConfig
 } = require('../services/dataCleanup');
+const {
+  getOrderStatusAuditRows,
+  writeOrderStatusAuditLogs
+} = require('../services/orderStatusAudit');
 
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_COMPLETED = 'completed';
@@ -84,7 +88,42 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
             ufo.rate_adjustment,
             ufo.bank_fee_jpy AS user_bank_fee_jpy,
             ufo.handling_fee_cny AS user_handling_fee_cny,
-            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+            ufo.large_amount_fee_cny AS user_large_amount_fee_cny,
+            (
+              SELECT l.source
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id
+              ORDER BY datetime(l.created_at) DESC, l.id DESC
+              LIMIT 1
+            ) AS latest_status_change_source,
+            (
+              SELECT l.created_at
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id
+              ORDER BY datetime(l.created_at) DESC, l.id DESC
+              LIMIT 1
+            ) AS latest_status_change_at,
+            (
+              SELECT l.old_status
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id
+              ORDER BY datetime(l.created_at) DESC, l.id DESC
+              LIMIT 1
+            ) AS latest_status_old_status,
+            (
+              SELECT l.new_status
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id
+              ORDER BY datetime(l.created_at) DESC, l.id DESC
+              LIMIT 1
+            ) AS latest_status_new_status,
+            (
+              SELECT l.metadata
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id
+              ORDER BY datetime(l.created_at) DESC, l.id DESC
+              LIMIT 1
+            ) AS latest_status_change_metadata
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN users u ON t.user_id = u.id
@@ -115,7 +154,12 @@ function mapAdminOrderListItem(item) {
     has_user_finance_override: settled ? Boolean(item.has_user_finance_override) : null,
     payable_cny: settled ? item.total_amount_cny : null,
     order_status: item.order_status || null,
-    transaction_start_error: item.transaction_start_error || null
+    transaction_start_error: item.transaction_start_error || null,
+    latest_status_change_source: item.latest_status_change_source || null,
+    latest_status_change_at: item.latest_status_change_at || null,
+    latest_status_old_status: item.latest_status_old_status || null,
+    latest_status_new_status: item.latest_status_new_status || null,
+    latest_status_change_metadata: item.latest_status_change_metadata || null
   };
 }
 
@@ -437,6 +481,22 @@ router.get('/orders', async (req, res) => {
   res.json({ items: mappedItems, total: countResult?.total || 0 });
 });
 
+router.get('/orders/:id/status-logs', async (req, res) => {
+  const orderId = Number(req.params.id || 0);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    return res.status(400).json({ error: 'valid order id is required' });
+  }
+  const items = await db.getAll(
+    `SELECT id, order_id, product_id, old_status, new_status, source, metadata, created_at
+     FROM order_status_change_logs
+     WHERE order_id = ?
+     ORDER BY datetime(created_at) DESC, id DESC
+     LIMIT 20`,
+    [orderId]
+  );
+  res.json({ items });
+});
+
 // 财务统计
 router.get('/orders/stats', async (req, res) => {
   const stats = await db.getOne(`
@@ -633,6 +693,8 @@ router.post('/orders/settle', async (req, res) => {
           large_amount_fee_cny: order.user_large_amount_fee_cny
         }
       });
+      const nextOrderStatus = resolveSettlementOrderStatus(order.order_status);
+      const beforeRows = await getOrderStatusAuditRows(db, [orderId]);
 
       await db.query(
         `UPDATE orders
@@ -657,10 +719,18 @@ router.post('/orders/settle', async (req, res) => {
           settlement.taxIncludedFinalPrice,
           settlement.hasUserFinanceOverride ? 1 : 0,
           settlement.payableCny,
-          resolveSettlementOrderStatus(order.order_status),
+          nextOrderStatus,
           orderId
         ]
       );
+      await writeOrderStatusAuditLogs(db, beforeRows, {
+        status: nextOrderStatus,
+        source: 'admin_settle',
+        metadata: {
+          rate,
+          payableCny: settlement.payableCny
+        }
+      }).catch(() => null);
 
       results.push({ orderId, success: true, payableCny: settlement.payableCny });
     } catch (error) {
@@ -996,6 +1066,18 @@ router.post('/payment/continue', async (req, res) => {
 });
 
 router.post('/transaction-start/reset-orders', async (req, res) => {
+  const beforeRows = await db.getAll(
+    `SELECT o.id AS order_id, o.order_status AS old_status, t.product_id
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE o.settled_at IS NULL
+       AND (
+         o.order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle')
+         OR o.transaction_start_error IS NOT NULL
+         OR o.bundle_group_id IS NOT NULL
+         OR o.transaction_started_at IS NOT NULL
+       )`
+  );
   const result = await db.query(
     `UPDATE orders
      SET order_status = NULL,
@@ -1011,6 +1093,13 @@ router.post('/transaction-start/reset-orders', async (req, res) => {
          OR transaction_started_at IS NOT NULL
        )`
   );
+  if (result.rowCount) {
+    await writeOrderStatusAuditLogs(db, beforeRows, {
+      status: null,
+      source: 'admin_transaction_start_reset',
+      metadata: { reset: result.rowCount || 0 }
+    }).catch(() => null);
+  }
   res.json({ success: true, reset: result.rowCount || 0 });
 });
 
@@ -1258,17 +1347,26 @@ router.post('/order-status-refresh/run', async (req, res) => {
       continue;
     }
 
+    const orderIds = orders.map(order => order.order_id);
+    const beforeRows = await getOrderStatusAuditRows(db, orderIds);
     const updateResult = await db.query(
       `UPDATE orders
        SET order_status = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id IN (${orders.map(() => '?').join(',')})`,
-      [targetOrderStatus, ...orders.map(order => order.order_id)]
+      [targetOrderStatus, ...orderIds]
     );
+    if (updateResult.rowCount) {
+      await writeOrderStatusAuditLogs(db, beforeRows, {
+        status: targetOrderStatus,
+        source: 'admin_order_status_refresh',
+        metadata: { productId, orderStatus: req.body?.orderStatus || '' }
+      }).catch(() => null);
+    }
     results.push({
       productId,
       success: true,
-      orderIds: orders.map(order => order.order_id),
+      orderIds,
       updatedCount: updateResult.rowCount || 0,
       orderStatus: targetOrderStatus,
       orderStatusText: getOrderStatusRefreshText(targetOrderStatus)

@@ -646,7 +646,8 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.match(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
   assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
   assert.deepEqual(queries[0].params, [0, '+1 hours']);
-  assert.equal(queries[1].params[0], ORDER_STATUS_PENDING_PAYMENT);
+  const storeUpdate = queries.find(call => /UPDATE orders/.test(call.sql));
+  assert.equal(storeUpdate.params[0], ORDER_STATUS_PENDING_PAYMENT);
 }
 
 async function testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun() {
@@ -712,8 +713,9 @@ async function testUpdateTransactionStartStatusUpdatesBundleByProductIds() {
 
   assert.equal(result.updated, 3);
   assert.match(calls[0].sql, /t\.product_id IN/);
-  assert.equal(calls[1].params[0], ORDER_STATUS_PENDING_BUNDLE);
-  assert.equal(calls[1].params[1], 'bundle-20260601-c1133337781');
+  const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql) && /SET order_status/.test(call.sql));
+  assert.equal(statusUpdate.params[0], ORDER_STATUS_PENDING_BUNDLE);
+  assert.equal(statusUpdate.params[1], 'bundle-20260601-c1133337781');
 }
 
 async function testGetScanJobsReturnsWaitingShippingOnly() {

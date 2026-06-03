@@ -2,6 +2,10 @@
 const router = express.Router();
 const db = require('../models');
 const { isYahooLoginError } = require('../services/yahooLoginStatus');
+const {
+  getOrderStatusAuditRows,
+  writeOrderStatusAuditLogs
+} = require('../services/orderStatusAudit');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
@@ -751,6 +755,7 @@ async function getTransactionStartJobs(database = db, options = {}) {
   let missingTransactionUrl = 0;
   for (const row of rows) {
     if (row.product_type === 'store') {
+      const beforeRows = await getOrderStatusAuditRows(database, [row.order_id]);
       const result = await database.query(
         `UPDATE orders
          SET order_status = ?,
@@ -762,6 +767,18 @@ async function getTransactionStartJobs(database = db, options = {}) {
         [ORDER_STATUS_PENDING_PAYMENT, row.order_id]
       );
       storeUpdated += result.rowCount || 0;
+      if (result.rowCount) {
+        await writeOrderStatusAuditLogs(database, beforeRows, {
+          status: ORDER_STATUS_PENDING_PAYMENT,
+          source: 'transaction_start_jobs_store',
+          metadata: {
+            productId: row.product_id,
+            productType: row.product_type,
+            shippingFeeText: row.shipping_fee_text || '',
+            includeAfterCutoff: !!includeAfterCutoff
+          }
+        }).catch(() => null);
+      }
       logJobs.push({
         orderId: row.order_id,
         productId: row.product_id,
@@ -856,6 +873,7 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
     err.statusCode = 400;
     throw err;
   }
+  const beforeRows = await getOrderStatusAuditRows(database, orderIds);
   const result = await database.query(
     `UPDATE orders
      SET order_status = ?,
@@ -867,6 +885,17 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
        AND (order_status IS NULL OR order_status = '')`,
     [status, bundleGroupId, ...orderIds]
   );
+  if (result.rowCount) {
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status,
+      source: 'transaction_start_status',
+      metadata: {
+        productIds: Array.isArray(payload.productIds) ? payload.productIds : [],
+        bundleGroupId,
+        payloadStatus: payload.status || ''
+      }
+    }).catch(() => null);
+  }
   await appendTransactionStartRunLogResult(database, {
     orderIds,
     productIds: Array.isArray(payload.productIds) ? payload.productIds : [],
@@ -923,6 +952,18 @@ async function updateScanStatus(payload = {}, database = db) {
     throw err;
   }
   if (payload.bundleRejected === true) {
+    const beforeRows = typeof database.getAll === 'function'
+      ? await database.getAll(
+        `SELECT o.id AS order_id, o.order_status AS old_status, t.product_id
+         FROM orders o
+         INNER JOIN tasks t ON o.task_id = t.id
+         WHERE o.bundle_group_id = (
+           SELECT bundle_group_id FROM orders WHERE id = ?
+         )
+           AND o.bundle_group_id IS NOT NULL`,
+        [orderId]
+      )
+      : [];
     const result = await database.query(
       `UPDATE orders
        SET order_status = NULL,
@@ -936,9 +977,29 @@ async function updateScanStatus(payload = {}, database = db) {
          AND bundle_group_id IS NOT NULL`,
       [orderId]
     );
+    if (result.rowCount) {
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: null,
+        source: 'scan_bundle_rejected',
+        metadata: { orderId }
+      }).catch(() => null);
+    }
     return { updated: result.rowCount || 0, bundleRejected: true };
   }
   if (bundleShippingFeeText) {
+    const beforeRows = typeof database.getAll === 'function'
+      ? await database.getAll(
+        `SELECT o.id AS order_id, o.order_status AS old_status, t.product_id
+         FROM orders o
+         INNER JOIN tasks t ON o.task_id = t.id
+         WHERE o.bundle_group_id = (
+           SELECT bundle_group_id FROM orders WHERE id = ?
+         )
+           AND o.bundle_group_id IS NOT NULL
+           AND o.order_status = ?`,
+        [orderId, ORDER_STATUS_PENDING_BUNDLE]
+      )
+      : [];
     const result = await database.query(
       `UPDATE orders
        SET bundle_shipping_fee_text = CASE WHEN id = ? THEN ? ELSE ? END,
@@ -960,9 +1021,23 @@ async function updateScanStatus(payload = {}, database = db) {
         ORDER_STATUS_PENDING_BUNDLE
       ]
     );
+    if (result.rowCount) {
+      const statusesByOrderId = Object.fromEntries(
+        beforeRows.map(row => [
+          row.order_id,
+          Number(row.order_id) === orderId ? ORDER_STATUS_PENDING_PAYMENT : ORDER_STATUS_BUNDLE_COMPLETED
+        ])
+      );
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        statusesByOrderId,
+        source: 'scan_bundle_shipping',
+        metadata: { orderId, bundleShippingFeeText }
+      }).catch(() => null);
+    }
     return { updated: result.rowCount || 0, bundleShippingFeeText };
   }
   if (payload.pending === true) {
+    const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
     const result = await database.query(
       `UPDATE orders
        SET order_status = ?,
@@ -970,6 +1045,13 @@ async function updateScanStatus(payload = {}, database = db) {
        WHERE id = ?`,
       [ORDER_STATUS_WAITING_SHIPPING, orderId]
     );
+    if (result.rowCount) {
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: ORDER_STATUS_WAITING_SHIPPING,
+        source: 'scan_waiting_shipping_pending',
+        metadata: { orderId }
+      }).catch(() => null);
+    }
     return { updated: result.rowCount || 0, pending: true };
   }
   if (!shippingFeeText) {
@@ -990,6 +1072,7 @@ async function updateScanStatus(payload = {}, database = db) {
      )`,
     [shippingFeeText, orderId, ORDER_STATUS_WAITING_SHIPPING]
   );
+  const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
   const result = await database.query(
     `UPDATE orders
      SET order_status = ?,
@@ -998,6 +1081,13 @@ async function updateScanStatus(payload = {}, database = db) {
        AND order_status = ?`,
     [ORDER_STATUS_PENDING_PAYMENT, orderId, ORDER_STATUS_WAITING_SHIPPING]
   );
+  if (result.rowCount) {
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status: ORDER_STATUS_PENDING_PAYMENT,
+      source: 'scan_waiting_shipping_resolved',
+      metadata: { orderId, shippingFeeText }
+    }).catch(() => null);
+  }
   return { updated: result.rowCount || 0, shippingFeeText };
 }
 
@@ -1089,6 +1179,7 @@ async function updatePaymentStatus(payload = {}, database = db) {
     err.statusCode = 400;
     throw err;
   }
+  const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
   const result = await database.query(
     `UPDATE orders
      SET order_status = 'pending_shipment',
@@ -1097,6 +1188,16 @@ async function updatePaymentStatus(payload = {}, database = db) {
        AND order_status = 'pending_settlement'`,
     [orderId]
   );
+  if (result.rowCount) {
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status: ORDER_STATUS_PENDING_SHIPMENT,
+      source: 'payment_status',
+      metadata: {
+        paymentStatus,
+        alreadyPaid: payload.alreadyPaid === true
+      }
+    }).catch(() => null);
+  }
   return { updated: result.rowCount || 0 };
 }
 

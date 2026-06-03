@@ -152,3 +152,18 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_end_time ON tasks(end_time);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
+
+CREATE TABLE IF NOT EXISTS order_status_change_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL,
+  product_id VARCHAR(32),
+  old_status VARCHAR(32),
+  new_status VARCHAR(32),
+  source VARCHAR(64) NOT NULL,
+  metadata TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_status_change_logs_order
+ON order_status_change_logs(order_id, created_at);

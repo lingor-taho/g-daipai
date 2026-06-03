@@ -1,7 +1,7 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, InputNumber, Space, Switch, Tag, Typography, message } from 'antd';
+import { Button, Card, Form, InputNumber, Modal, Space, Switch, Tag, Typography, message } from 'antd';
 import { Link } from 'react-router-dom';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
@@ -43,6 +43,44 @@ function renderTransactionStartLastRun(log: any) {
   const jobs = Array.isArray(log.jobs) ? log.jobs.length : 0;
   const results = Array.isArray(log.results) ? log.results.length : 0;
   return `最近执行：${source} ${time}，取到 ${total} 单，商城直接待支付 ${storeUpdated} 单，插件任务 ${jobs} 单，回写 ${results} 次`;
+}
+
+function renderStatusChangeSource(row: any) {
+  const sourceMap: Record<string, string> = {
+    transaction_start_jobs_store: '交易开始-商城',
+    transaction_start_status: '交易开始',
+    scan_bundle_rejected: '扫描-同捆拒绝',
+    scan_bundle_shipping: '扫描-同捆运费',
+    scan_waiting_shipping_pending: '扫描-等待运费',
+    scan_waiting_shipping_resolved: '扫描-运费确认',
+    payment_status: '付款',
+    admin_settle: '后台结算',
+    admin_transaction_start_reset: '后台初始化',
+    admin_order_status_refresh: '后台状态刷新'
+  };
+  const source = row.latest_status_change_source;
+  if (!source) return '-';
+  let metadata: any = {};
+  try {
+    metadata = row.latest_status_change_metadata ? JSON.parse(row.latest_status_change_metadata) : {};
+  } catch {
+    metadata = {};
+  }
+  const snapshot = metadata.auditSnapshot || {};
+  const label = sourceMap[source] || source;
+  const time = row.latest_status_change_at ? formatDateTime(row.latest_status_change_at) : '';
+  const oldStatus = row.latest_status_old_status || '空';
+  const newStatus = row.latest_status_new_status || '空';
+  const details = [
+    snapshot.productType ? `类型:${snapshot.productType}` : '',
+    snapshot.shippingFeeText ? `运费:${snapshot.shippingFeeText}` : '',
+    snapshot.bundleShippingFeeText ? `同捆:${snapshot.bundleShippingFeeText}` : '',
+    metadata.payloadStatus ? `payload:${metadata.payloadStatus}` : '',
+    metadata.includeAfterCutoff !== undefined ? `afterCutoff:${metadata.includeAfterCutoff ? '1' : '0'}` : '',
+    metadata.shippingFeeText ? `确认运费:${metadata.shippingFeeText}` : '',
+    metadata.bundleShippingFeeText ? `确认同捆:${metadata.bundleShippingFeeText}` : ''
+  ].filter(Boolean).join('，');
+  return `${label}${time ? ` ${time}` : ''}；${oldStatus}->${newStatus}${details ? `；${details}` : ''}`;
 }
 
 function renderProductTypeTag(productType: string | null | undefined) {
@@ -129,6 +167,8 @@ export default function OrdersPage() {
   const [autoSelectNonBidderPays, setAutoSelectNonBidderPays] = useState(false);
   const [currentRows, setCurrentRows] = useState<any[]>([]);
   const [idleFlags, setIdleFlags] = useState<any>(null);
+  const [statusLogOpen, setStatusLogOpen] = useState(false);
+  const [statusLogRows, setStatusLogRows] = useState<any[]>([]);
 
   async function loadFinanceConfig() {
     const data = await fetchAdminJson('/api/admin/finance-config');
@@ -211,6 +251,16 @@ export default function OrdersPage() {
     }
   }
 
+  async function showStatusLogs(orderId: number) {
+    try {
+      const data = await fetchAdminJson(`/api/admin/orders/${orderId}/status-logs`);
+      setStatusLogRows(data.items || []);
+      setStatusLogOpen(true);
+    } catch (e: any) {
+      message.error(e.message || '读取状态日志失败');
+    }
+  }
+
   const columns = [
     { title: '用户名', dataIndex: 'username', width: 90, ellipsis: true, onCell: () => noWrapCell },
     {
@@ -242,6 +292,8 @@ export default function OrdersPage() {
     { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
     { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => renderOrderStatus(row.order_status) },
     { title: '最后操作时间', dataIndex: 'updated_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.updated_at || row.created_at) },
+    { title: '状态来源', dataIndex: 'latest_status_change_source', width: 360, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderStatusChangeSource(row) },
+    { title: '状态日志', dataIndex: 'status_log', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => <Button size="small" onClick={() => showStatusLogs(row.id)}>查看</Button> },
     { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 160, ellipsis: true, onCell: () => noWrapCell },
     { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];
@@ -303,6 +355,35 @@ export default function OrdersPage() {
           <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
         </Space>
       </Card>
+
+      <Modal
+        open={statusLogOpen}
+        title="订单状态日志"
+        footer={null}
+        width={900}
+        onCancel={() => setStatusLogOpen(false)}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          {statusLogRows.length ? statusLogRows.map(row => {
+            let metadataText = '-';
+            try {
+              metadataText = row.metadata ? JSON.stringify(JSON.parse(row.metadata), null, 2) : '-';
+            } catch {
+              metadataText = row.metadata || '-';
+            }
+            return (
+              <div key={row.id} style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: 8 }}>
+                <Typography.Text strong>
+                  {formatDateTime(row.created_at)} {row.source}：{row.old_status || '空'} -&gt; {row.new_status || '空'}
+                </Typography.Text>
+                <pre style={{ whiteSpace: 'pre-wrap', margin: '6px 0 0', fontSize: 12 }}>
+                  {metadataText}
+                </pre>
+              </div>
+            );
+          }) : <Typography.Text type="secondary">暂无状态日志</Typography.Text>}
+        </Space>
+      </Modal>
 
       <ProTable
         key={reloadKey}

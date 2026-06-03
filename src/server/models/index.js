@@ -87,6 +87,25 @@ db.prepare(`
   )
 `).run();
 
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS order_status_change_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    product_id VARCHAR(32),
+    old_status VARCHAR(32),
+    new_status VARCHAR(32),
+    source VARCHAR(64) NOT NULL,
+    metadata TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+  )
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_order_status_change_logs_order
+  ON order_status_change_logs(order_id, created_at)
+`).run();
+
 module.exports = {
   db,
   async query(text, params) {
