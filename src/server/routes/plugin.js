@@ -12,10 +12,14 @@ const DEFAULT_TRANSACTION_START_HOUR = 1;
 const DEFAULT_SCAN_START_HOUR = 1;
 const DEFAULT_SCAN_END_HOUR = 20;
 const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
+const DEFAULT_PAYMENT_JOB_LIMIT = 3;
+const DEFAULT_PAYMENT_PAGE_STAY_SECONDS = 3;
 const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
 const ORDER_STATUS_WAITING_SHIPPING = 'waiting_shipping';
 const ORDER_STATUS_PENDING_BUNDLE = 'pending_bundle';
 const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
+const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
+const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
 
 function parseTimeMs(value) {
   let input = String(value || '').trim();
@@ -266,6 +270,9 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   if (inScanWindow && scanCounter >= scanEvery) {
     return { action: 'scan', today };
   }
+  if (Number(config.paymentRequested || 0) === 1) {
+    return { action: 'payment', today };
+  }
   return { action: 'none', today };
 }
 
@@ -279,7 +286,10 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
        'scan_start_hour',
        'scan_end_hour',
        'scan_every_idle_runs',
-       'scan_idle_counter'
+       'scan_idle_counter',
+       'payment_requested',
+       'payment_job_limit',
+       'payment_page_stay_seconds'
      )`
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -291,6 +301,9 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
     scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
     scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? DEFAULT_SCAN_EVERY_IDLE_RUNS),
     scanIdleCounter: Number(values.scan_idle_counter || 0),
+    paymentRequested: Number(values.payment_requested || 0),
+    paymentJobLimit: parsePositiveInt(values.payment_job_limit, DEFAULT_PAYMENT_JOB_LIMIT),
+    paymentPageStaySeconds: parsePositiveInt(values.payment_page_stay_seconds, DEFAULT_PAYMENT_PAGE_STAY_SECONDS),
     today: getLocalDateKey(nowMs),
     nowHour: new Date(nowMs).getHours()
   };
@@ -908,6 +921,96 @@ async function updateScanStatus(payload = {}, database = db) {
   return { updated: result.rowCount || 0, shippingFeeText };
 }
 
+function parsePositiveInt(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const intValue = Math.floor(parsed);
+  return intValue > 0 ? intValue : fallback;
+}
+
+async function getPaymentJobs(database = db) {
+  const config = await database.getOne(
+    "SELECT value FROM config WHERE key = 'payment_job_limit'"
+  );
+  const limit = parsePositiveInt(config?.value, DEFAULT_PAYMENT_JOB_LIMIT);
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.transaction_url,
+            o.total_amount_cny,
+            o.final_price,
+            o.bundle_shipping_fee_text,
+            o.bundle_group_id,
+            t.product_id,
+            t.product_url,
+            t.product_title,
+            t.product_type,
+            t.shipping_fee_text
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE o.order_status = ?
+       AND o.total_amount_cny IS NOT NULL
+       AND t.status = 'success'
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC
+     LIMIT ?`,
+    [ORDER_STATUS_PENDING_SETTLEMENT, limit]
+  );
+  return {
+    jobs: rows.map(row => ({
+      orderId: row.order_id,
+      productId: row.product_id,
+      productUrl: row.product_url,
+      productTitle: row.product_title,
+      productType: row.product_type || 'normal',
+      transactionUrl: row.transaction_url || '',
+      payableCny: row.total_amount_cny,
+      finalPrice: row.final_price,
+      effectiveShippingFeeText: row.bundle_shipping_fee_text || row.shipping_fee_text || '',
+      bundleGroupId: row.bundle_group_id || ''
+    })),
+    total: rows.length,
+    limit
+  };
+}
+
+async function savePaymentConfigValue(database, key, value) {
+  await database.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP) -- ${key}`,
+    [key, String(value)]
+  );
+}
+
+async function updatePaymentStatus(payload = {}, database = db) {
+  if (payload.empty === true) {
+    await savePaymentConfigValue(database, 'payment_requested', '0');
+    return { paymentRequested: 0 };
+  }
+
+  const error = String(payload.error || '').trim();
+  if (error) {
+    const productId = String(payload.productId || '').trim() || '-';
+    await savePaymentConfigValue(database, 'payment_requested', '0');
+    await savePaymentConfigValue(database, 'payment_alert_message', `付款失败：商品ID ${productId}，原因：${error}`);
+    return { paymentRequested: 0 };
+  }
+
+  const orderId = Number(payload.orderId || 0);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    const err = new Error('orderId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const result = await database.query(
+    `UPDATE orders
+     SET order_status = 'pending_shipment',
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND order_status = 'pending_settlement'`,
+    [orderId]
+  );
+  return { updated: result.rowCount || 0 };
+}
+
 router.post('/bidding/sync', async (req, res) => {
   const incomingItems = req.body?.items || req.body?.bidding || [];
   const result = await syncBiddingItems(incomingItems);
@@ -1004,6 +1107,25 @@ router.post('/scan/status', async (req, res) => {
   }
 });
 
+router.get('/payment/jobs', async (req, res) => {
+  const config = await getIdleActionConfig();
+  const result = await getPaymentJobs(db);
+  res.json({
+    success: true,
+    paymentPageStaySeconds: config.paymentPageStaySeconds,
+    ...result
+  });
+});
+
+router.post('/payment/status', async (req, res) => {
+  try {
+    const result = await updatePaymentStatus(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'payment update failed' });
+  }
+});
+
 router.post('/yahoo-login/status', async (req, res) => {
   const status = req.body?.status === 'ok' ? 'ok' : 'failed';
   const message = req.body?.message || (status === 'ok' ? '' : '需要登录 Yahoo');
@@ -1082,11 +1204,15 @@ module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
 module.exports.ORDER_STATUS_WAITING_SHIPPING = ORDER_STATUS_WAITING_SHIPPING;
 module.exports.ORDER_STATUS_PENDING_BUNDLE = ORDER_STATUS_PENDING_BUNDLE;
 module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
+module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;
+module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
+module.exports.getPaymentJobs = getPaymentJobs;
+module.exports.updatePaymentStatus = updatePaymentStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;

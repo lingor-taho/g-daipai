@@ -25,10 +25,14 @@ const {
   updateTransactionStartStatus,
   getScanJobs,
   updateScanStatus,
+  getPaymentJobs,
+  updatePaymentStatus,
   ORDER_STATUS_PENDING_PAYMENT,
   ORDER_STATUS_WAITING_SHIPPING,
   ORDER_STATUS_PENDING_BUNDLE,
-  ORDER_STATUS_BUNDLE_COMPLETED
+  ORDER_STATUS_BUNDLE_COMPLETED,
+  ORDER_STATUS_PENDING_SETTLEMENT,
+  ORDER_STATUS_PENDING_SHIPMENT
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
@@ -391,6 +395,34 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
     scanEndHour: 20,
     nowHour: 10,
     today: '2026-06-01'
+  }).action, 'scan');
+}
+
+function testPaymentIdleActionUsesFlagAfterScanPriority() {
+  assert.equal(ORDER_STATUS_PENDING_SETTLEMENT, 'pending_settlement');
+  assert.equal(ORDER_STATUS_PENDING_SHIPMENT, 'pending_shipment');
+  assert.equal(getNextIdleAction({
+    transactionStartHour: 1,
+    transactionStartLastRunDate: '2026-06-03',
+    scanIdleCounter: 0,
+    scanEveryIdleRuns: 5,
+    scanStartHour: 1,
+    scanEndHour: 20,
+    paymentRequested: 1,
+    nowHour: 10,
+    today: '2026-06-03'
+  }).action, 'payment');
+
+  assert.equal(getNextIdleAction({
+    transactionStartHour: 1,
+    transactionStartLastRunDate: '2026-06-03',
+    scanIdleCounter: 5,
+    scanEveryIdleRuns: 5,
+    scanStartHour: 1,
+    scanEndHour: 20,
+    paymentRequested: 1,
+    nowHour: 10,
+    today: '2026-06-03'
   }).action, 'scan');
 }
 
@@ -760,6 +792,79 @@ async function testUpdateScanStatusRejectsBundleGroupToEmptyStatus() {
   assert.equal(queries[0].params[0], 21);
 }
 
+async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
+  const fakeDb = {
+    async getOne(sql) {
+      assert.match(sql, /payment_job_limit/);
+      return { value: '2' };
+    },
+    async getAll(sql, params) {
+      assert.match(sql, /o\.order_status = \?/);
+      assert.match(sql, /o\.total_amount_cny IS NOT NULL/);
+      assert.match(sql, /ORDER BY datetime\(COALESCE\(o\.won_at, o\.created_at\)\) ASC, o\.id ASC/);
+      assert.equal(params[0], 'pending_settlement');
+      assert.equal(params[1], 2);
+      return [{
+        order_id: 9,
+        product_id: 'x1',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/x1',
+        product_title: 'Item',
+        product_type: 'normal',
+        transaction_url: 'https://contact.example/x1',
+        total_amount_cny: 123.45,
+        final_price: 2000,
+        shipping_fee_text: '送料 500円',
+        bundle_shipping_fee_text: '',
+        bundle_group_id: ''
+      }];
+    }
+  };
+
+  const result = await getPaymentJobs(fakeDb);
+
+  assert.equal(result.jobs.length, 1);
+  assert.equal(result.jobs[0].orderId, 9);
+  assert.equal(result.jobs[0].effectiveShippingFeeText, '送料 500円');
+}
+
+async function testUpdatePaymentStatusSuccessAndEmptyQueue() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const success = await updatePaymentStatus({ orderId: 5, status: 'success' }, fakeDb);
+  const empty = await updatePaymentStatus({ empty: true }, fakeDb);
+
+  assert.equal(success.updated, 1);
+  assert.match(calls[0].sql, /pending_shipment/);
+  assert.equal(empty.paymentRequested, 0);
+  assert.match(calls[1].sql, /payment_requested/);
+  assert.equal(calls[1].params[1], '0');
+}
+
+async function testUpdatePaymentStatusFailureWritesAlertAndClearsFlag() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updatePaymentStatus({ orderId: 6, productId: 'p6', error: 'button not found' }, fakeDb);
+
+  assert.equal(result.paymentRequested, 0);
+  assert.match(calls[0].sql, /payment_requested/);
+  assert.equal(calls[0].params[1], '0');
+  assert.match(calls[1].sql, /payment_alert_message/);
+  assert.match(calls[1].params[1], /p6/);
+  assert.match(calls[1].params[1], /button not found/);
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -783,6 +888,7 @@ testNormalizeYahooWonTimeTextInfersCurrentYear();
 testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIdleActionChoosesTransactionStartBeforeScan();
+testPaymentIdleActionUsesFlagAfterScanPriority();
 testIsFollowupTaskReady();
 Promise.all([
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
@@ -797,7 +903,10 @@ Promise.all([
   testUpdateScanStatusWritesShippingAndPendingPayment(),
   testUpdateScanStatusKeepsWaitingShippingWhenShippingPending(),
   testUpdateScanStatusCompletesBundleGroupWithShippingFee(),
-  testUpdateScanStatusRejectsBundleGroupToEmptyStatus()
+  testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
+  testGetPaymentJobsReturnsPendingSettlementWithPayable(),
+  testUpdatePaymentStatusSuccessAndEmptyQueue(),
+  testUpdatePaymentStatusFailureWritesAlertAndClearsFlag()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;
