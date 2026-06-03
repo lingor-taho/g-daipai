@@ -140,7 +140,9 @@ Idle action priority becomes:
 
 - `payment_requested=1`
 
-When the payment queue is empty, the plugin reports an empty payment result to `POST /api/plugin/payment/status`, and the server clears `payment_requested=0`. This allows later receipt automation to run.
+The payment flag is not cleared just because one batch finishes. After a successful batch, `payment_requested` stays `1` so a later idle cycle can fetch the next batch.
+
+When a later payment job fetch finds no remaining orders matching `order_status='pending_settlement'` and `total_amount_cny IS NOT NULL`, the plugin reports an empty payment result to `POST /api/plugin/payment/status`, and the server clears `payment_requested=0`. This allows later receipt automation to run.
 
 ## Payment Job API
 
@@ -178,7 +180,7 @@ Job payload includes:
 
 - success/already-paid: update the order to `pending_shipment` and set `updated_at`;
 - failure: set `payment_requested=0`, write `payment_alert_message`, and leave all current and remaining orders in `pending_settlement`;
-- empty queue: set `payment_requested=0`.
+- empty queue: set `payment_requested=0` only when no remaining `pending_settlement` orders with payable amount exist.
 
 ## Plugin Payment Runner
 
@@ -224,7 +226,7 @@ Server tests:
 - payment jobs sort by won time ascending;
 - payment success changes status to `pending_shipment`;
 - payment failure clears flag and writes reminder;
-- empty payment queue clears flag.
+- empty payment queue clears flag only when no remaining `pending_settlement` orders with payable amount exist.
 
 Admin tests/build:
 
