@@ -209,19 +209,11 @@ function buildWonStatsInput(user, query = {}) {
   return { userId: user.id, days };
 }
 
-function getWonTaxIncludedAmountExpression() {
-  return `CASE
-           WHEN t.tax_type = 'tax_included' AND o.final_price >= 10 THEN CAST(o.final_price * 1.1 AS INTEGER)
-           ELSE COALESCE(o.final_price, 0)
-         END`;
-}
-
 function buildWonStatsSummaryQuery(input) {
-  const amountExpression = getWonTaxIncludedAmountExpression();
   return {
     sql: `SELECT
          date(COALESCE(o.won_at, t.updated_at), 'localtime') AS won_date,
-         SUM(${amountExpression}) AS total_amount,
+         SUM(COALESCE(o.final_price, 0)) AS total_amount,
          COUNT(*) AS item_count
        FROM tasks t
        INNER JOIN orders o ON o.task_id = t.id

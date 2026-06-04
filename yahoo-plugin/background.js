@@ -2,7 +2,7 @@ const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
-const TRANSACTION_START_ENABLED = true;
+const TRANSACTION_START_ENABLED = false;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
 
 let isRunning = false;
@@ -308,7 +308,7 @@ async function ensureTaskReadyByCurrentEndTime(tab, task) {
   if (actualEndMs && actualEndMs <= Date.now()) {
     await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'failed');
     await closeTaskTab(tab.id);
-    throw new Error('��Ʒ�Ѿ�����');
+    throw new Error('Auction ended according to product page snapshot');
   }
 
   if (isDirectTask(task)) {

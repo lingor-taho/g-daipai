@@ -203,7 +203,8 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
   const exportQuery = buildWonStatsExportQuery(input);
 
   assert.match(summary.sql, /date\(COALESCE\(o\.won_at, t\.updated_at\), 'localtime'\) AS won_date/);
-  assert.match(summary.sql, /SUM\(CASE\s+WHEN t\.tax_type = 'tax_included'/);
+  assert.match(summary.sql, /SUM\(COALESCE\(o\.final_price, 0\)\) AS total_amount/);
+  assert.doesNotMatch(summary.sql, /tax_included|final_price \* 1\.1/);
   assert.match(summary.sql, /COUNT\(\*\) AS item_count/);
   assert.deepEqual(summary.params, [9, 30]);
 

@@ -164,18 +164,20 @@ function extractProductData() {
     const timeEl = document.querySelector('time[datetime]');
     if (timeEl?.dateTime) return timeEl.dateTime.trim();
 
+    const dataEndEl = document.querySelector('[data-end-time]');
+    const dataEndTime = dataEndEl?.getAttribute('data-end-time');
+    if (dataEndTime) return dataEndTime.trim();
+
     const el = document.querySelector('[class*="endedTime"]') ||
                document.querySelector('[class*="endTime"]') ||
                document.querySelector('[class*="countdown"]') ||
-               document.querySelector('[data-end-time]') ||
                document.querySelector('[class*="closeTime"]');
-    if (el) {
-      return el.textContent.trim() || el.getAttribute('data-end-time') || '';
+    const text = el?.textContent?.trim() || '';
+    const dateMatch = text.match(/\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\s*[\d:]+/);
+    if (dateMatch) {
+      return dateMatch[0];
     }
-    // Fallback: look for date patterns
-    const bodyText = document.body.textContent;
-    const m = bodyText.match(/\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\s*[\d:]+/);
-    return m ? m[0] : '';
+    return '';
   }
 
   function getImage() {

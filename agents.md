@@ -654,3 +654,85 @@ npm run build
 Set-Location ..\client
 npm run build
 ```
+
+---
+
+## 2026-06-04 即时拍误判商品已结束排查
+
+### 问题现象
+
+- 生产服务器出现同一商品两条即时拍任务：
+  - 较早提交任务显示 `失败：商品已结束`。
+  - 稍后重新提交的同商品任务正常进入 `已出价`。
+- 本地没有该生产数据，无法直接查询原始 `tasks.error_msg/end_time`。
+
+### 排查结论
+
+- 前台 `失败：商品已结束` 有两个来源：
+  - 服务端 `expireOverduePendingTasks()` 写入 `Auction ended before plugin execution`。
+  - 插件打开商品页后，`ensureTaskReadyByCurrentEndTime()` 根据商品页快照 `snapshot.endTime` 判断已结束。
+- 同商品后续即时拍可以再次提交是当前规则允许的：`direct` 即时拍不属于“禁止重复提交”的自动策略；失败任务不会阻止后续重新提交。
+- 本次代码中发现一个可导致误判的风险：`content.js` 的商品快照结束时间提取最后会从整页 body 文本抓第一个日期。Yahoo 页面若先出现出品日期、广告日期或其他非结束日期，插件可能把该日期当作结束时间，从而把任务标记为商品已结束。
+
+### 已修复内容
+
+- `yahoo-plugin/content.js`：
+  - 商品快照 `endTime` 只接受明确结束时间来源：`endDate` meta、JSON-LD `priceValidUntil`、`time[datetime]`、`data-end-time`、结束时间相关节点里的完整日期。
+  - 删除整页 body 第一个日期兜底，避免把非结束日期当成结束时间。
+- `yahoo-plugin/background.js`：
+  - 插件根据商品页快照判定已结束时，错误信息改为稳定英文 `Auction ended according to product page snapshot`，便于后续和服务端过期扫描区分。
+  - 按前置要求保持 `TRANSACTION_START_ENABLED = false`。
+- `yahoo-plugin/content.test.js`：
+  - 新增测试：body 中普通日期不得作为 `endTime`。
+  - 新增测试：明确 meta 结束时间仍可正常提取。
+
+### 生产排查建议
+
+如需确认截图中那条失败任务的真实来源，在生产服务器执行：
+
+```powershell
+Set-Location C:\www\g-daipai
+@'
+const db = require('./src/server/models');
+const rows = db.db.prepare(`
+  SELECT id, user_id, product_id, current_price, max_price, strategy, status,
+         error_msg, end_time, created_at, updated_at
+  FROM tasks
+  WHERE product_id = 'r1232049114'
+  ORDER BY id ASC
+`).all();
+console.log(JSON.stringify(rows, null, 2));
+'@ | node
+```
+
+### 最近验证命令
+
+以下命令在当前修复中通过：
+
+```powershell
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
+```
+
+---
+
+## 2026-06-04 统计页面金额口径修正
+
+### 当前规则
+
+- 用户端“统计页面”的近 30 天合计金额和每日柱状图金额，直接汇总 `orders.final_price`。
+- `orders.final_price` 是 Yahoo 落札页抓取的最终落札金额；商城商品落札金额已是最终金额，不再按 `tax_included` 额外乘 `1.1`。
+- 统计金额不包含运费、银行手续费、手续费 RMB、大金额费用，也不使用订单管理页的应付款。
+
+### 已修复内容
+
+- `/api/task/won-stats` 每日金额 SQL 从按 `t.tax_type = 'tax_included'` 额外乘 `1.1`，改为 `SUM(COALESCE(o.final_price, 0))`。
+- 更新 `src/server/routes/task.test.js`，明确统计 SQL 不应包含 `tax_included` 或 `final_price * 1.1`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\task.test.js
+node src\client\src\utils\wonStats.test.mjs
+```

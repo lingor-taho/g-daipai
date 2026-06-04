@@ -448,6 +448,27 @@ function testProductDataPrefersTaxZeroWhenBothTaxLabelsExist() {
   assert.equal(product.taxType, 'tax_zero');
 }
 
+function testProductDataDoesNotUseBodyDateAsEndTime() {
+  const api = loadContentForTest('出品日時 2026-06-04 18:00:00 現在 1,300円', '/jp/auction/r1232049114');
+  const product = api.extractProductData();
+
+  assert.equal(product.endTime, '');
+}
+
+function testProductDataExtractsExplicitEndTime() {
+  const api = loadContentForTest('', '/jp/auction/r1232049114', {
+    querySelector(selector) {
+      if (selector === '[itemprop="endDate"][content], meta[property="product:expiration_time"][content]') {
+        return { content: '2026-06-04T22:00:00+09:00' };
+      }
+      return null;
+    }
+  });
+  const product = api.extractProductData();
+
+  assert.equal(product.endTime, '2026-06-04T22:00:00+09:00');
+}
+
 function testTaxIncludedBidPriceForMultiBidIncrement() {
   const api = loadContentForTest('');
 
@@ -1277,6 +1298,8 @@ async function run() {
   testProductDataDoesNotUseRecommendationFreeShippingForBidderPays();
   testProductDataDoesNotUseUnavailableCashOnDeliveryDescription();
   testProductDataPrefersTaxZeroWhenBothTaxLabelsExist();
+  testProductDataDoesNotUseBodyDateAsEndTime();
+  testProductDataExtractsExplicitEndTime();
   testTaxIncludedBidPriceForMultiBidIncrement();
   testBidLimitRejectsTaxTotalAboveUserMax();
   testBidLimitRejectsPlannedStoreBidAboveUserMax();
