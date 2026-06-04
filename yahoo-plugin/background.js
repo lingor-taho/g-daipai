@@ -556,6 +556,169 @@ function buildPaymentFailurePayload(job, error) {
   };
 }
 
+function parseYenAmount(value) {
+  const text = String(value || '').replace(/\s+/g, '');
+  if (!text || /\u7121\u6599/.test(text)) return 0;
+  const match = text.match(/([\d,]+)\s*\u5186/);
+  if (!match) return null;
+  return Number(match[1].replace(/,/g, '')) || 0;
+}
+
+function getExpectedPaymentAmountJpy(job = {}) {
+  const finalPrice = Number(job.finalPrice ?? job.final_price ?? 0);
+  const shipping = parseYenAmount(job.effectiveShippingFeeText || job.shippingFeeText || '');
+  if (!Number.isFinite(finalPrice) || finalPrice <= 0 || shipping === null) return null;
+  return finalPrice + shipping;
+}
+
+function getPaymentActionPatternSource(action) {
+  const patterns = {
+    easyPayment: '\\u0059\\u0061\\u0068\\u006f\\u006f\\u0021\\u304b\\u3093\\u305f\\u3093\\u6c7a\\u6e08\\u3067\\u652f\\u6255\\u3046',
+    purchaseProcedure: '\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
+    review: '^\\s*\\u78ba\\u8a8d\\u3059\\u308b\\s*$',
+    finalize: '\\u8cfc\\u5165\\u3092\\u78ba\\u5b9a\\u3059\\u308b'
+  };
+  return patterns[action] || '';
+}
+
+async function getPaymentPageState(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el.textContent,
+        el.value,
+        el.title,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const bodyText = normalize(document.body?.textContent || '');
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')]
+        .map(el => getText(el))
+        .filter(Boolean);
+      const hasControl = pattern => controls.some(text => pattern.test(text));
+      const yenMatches = [...bodyText.matchAll(/([\d,]+)\s*\u5186/g)]
+        .map(match => Number(match[1].replace(/,/g, '')) || 0)
+        .filter(amount => amount > 0);
+      const paymentAmountMatch = bodyText.match(/\u304a\u652f\u6255\u3044\u91d1\u984d[^\d]{0,40}([\d,]+)\s*\u5186/);
+      const paymentAmountJpy = paymentAmountMatch
+        ? Number(paymentAmountMatch[1].replace(/,/g, '')) || 0
+        : (yenMatches.length ? Math.max(...yenMatches) : 0);
+      return {
+        success: true,
+        state: {
+          url: location.href,
+          title: document.title || '',
+          textSample: bodyText.slice(0, 500),
+          paymentAmountJpy,
+          alreadyPaid: /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText)
+            && /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText),
+          complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText)
+            && /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText),
+          processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
+          hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
+          hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
+          hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
+          hasFinalizeButton: hasControl(/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/)
+        }
+      };
+    }
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result.state : null;
+}
+
+async function runMainWorldPaymentActionClick(tabId, action) {
+  const pattern = getPaymentActionPatternSource(action);
+  if (!pattern) return { success: false, error: 'unknown payment action' };
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (patternStr) => {
+      const pattern = new RegExp(patternStr);
+      const getText = el => [
+        el.textContent,
+        el.value,
+        el.title,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+      const button = controls.find(el => pattern.test(getText(el)));
+      if (!button) return { success: false, error: 'payment button not found' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      button.focus?.();
+      const type = String(button.type || '').toLowerCase();
+      if (button.form && typeof button.form.requestSubmit === 'function' && (type === 'submit' || (!type && button.tagName === 'BUTTON'))) {
+        button.form.requestSubmit(button);
+        return { success: true, method: 'requestSubmit', text: getText(button) };
+      }
+      button.click();
+      return { success: true, method: 'click', text: getText(button) };
+    },
+    args: [pattern]
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'payment click failed' };
+}
+
+async function waitForPaymentStateAcrossTabs(tab, predicate, previousIds, timeoutMs = 30000) {
+  const startAt = Date.now();
+  const originalTabId = tab?.id;
+  const previous = previousIds instanceof Set ? previousIds : new Set(previousIds || []);
+  const created = new Set(tab?._gdaipaiCreatedTabIds || []);
+  if (originalTabId) created.add(originalTabId);
+
+  while (Date.now() - startAt < timeoutMs) {
+    const candidates = new Map();
+    const original = originalTabId ? await chrome.tabs.get(originalTabId).catch(() => null) : null;
+    if (original?.id) candidates.set(original.id, original);
+
+    const tabs = await chrome.tabs.query({}).catch(() => []);
+    for (const candidate of tabs) {
+      if (!candidate?.id || !isLikelyYahooTransactionTab(candidate)) continue;
+      if (candidate.id === originalTabId || created.has(candidate.id) || !previous.has(candidate.id)) {
+        candidates.set(candidate.id, candidate);
+        if (!previous.has(candidate.id)) created.add(candidate.id);
+      }
+    }
+
+    for (const candidate of candidates.values()) {
+      if (candidate.status !== 'complete') continue;
+      const state = await getPaymentPageState(candidate.id).catch(() => null);
+      if (state && predicate(state)) {
+        candidate._gdaipaiCreatedTabIds = [...created];
+        candidate._gdaipaiPaymentState = state;
+        return candidate;
+      }
+    }
+    await sleep(500);
+  }
+  throw new Error('payment next page did not appear');
+}
+
+function assertPaymentAmountMatches(job, state) {
+  const expected = getExpectedPaymentAmountJpy(job);
+  const actual = Number(state?.paymentAmountJpy || 0);
+  if (expected === null) {
+    throw new Error('payment expected amount unavailable');
+  }
+  if (actual > 0 && actual !== expected) {
+    throw new Error(`payment amount mismatch: expected ${expected}\u5186, found ${actual}\u5186`);
+  }
+}
+
+async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
+  const previousTabIds = await getTabIds();
+  const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
+  if (!clickResult?.success) {
+    return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };
+  }
+  const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+  await injectContentScript(nextTab.id).catch(() => {});
+  return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+}
+
 async function reportYahooLoginStatus(loginStatus) {
   if (!loginStatus?.status) return;
   try {
@@ -1250,8 +1413,73 @@ async function runScanJobs() {
   }
 }
 
-async function executePaymentJob(job) {
-  throw new Error('payment page detail phase disabled');
+async function executePaymentJob(job, paymentBatch = {}) {
+  let tab = null;
+  const beforeTabIds = await getTabIds();
+  const pageStaySeconds = Math.max(1, Number(paymentBatch.paymentPageStaySeconds || job.paymentPageStaySeconds || 3));
+  try {
+    if (String(job.productType || '').toLowerCase() === 'store') {
+      throw new Error('store payment page detail phase disabled');
+    }
+
+    tab = await openTransactionPage(job);
+    let state = await getPaymentPageState(tab.id);
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
+
+    if (state?.hasEasyPaymentButton) {
+      const result = await clickPaymentActionAndFollowTab(tab, 'easyPayment', nextState =>
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton
+      );
+      if (!result?.success) throw new Error(result?.error || 'easy payment button click failed');
+      tab = result.tab;
+      state = result.state;
+    } else if (state?.hasPurchaseProcedureButton) {
+      const result = await clickPaymentActionAndFollowTab(tab, 'purchaseProcedure', nextState =>
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton
+      );
+      if (!result?.success) throw new Error(result?.error || 'purchase procedure button click failed');
+      tab = result.tab;
+      state = result.state;
+    } else {
+      throw new Error('payment entry button not found');
+    }
+
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
+    if (!state?.hasReviewButton) throw new Error('payment review button not found');
+    assertPaymentAmountMatches(job, state);
+
+    let result = await clickPaymentActionAndFollowTab(tab, 'review', nextState =>
+      nextState.alreadyPaid || nextState.complete || nextState.hasFinalizeButton
+    );
+    if (!result?.success) throw new Error(result?.error || 'payment review click failed');
+    tab = result.tab;
+    state = result.state;
+
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
+    if (!state?.hasFinalizeButton) throw new Error('payment finalize button not found');
+    assertPaymentAmountMatches(job, state);
+
+    const previousTabIds = await getTabIds();
+    const finalClick = await runMainWorldPaymentActionClick(tab.id, 'finalize');
+    if (!finalClick?.success) throw new Error(finalClick?.error || 'payment finalize click failed');
+    await sleep(pageStaySeconds * 1000);
+
+    tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
+      nextState.alreadyPaid || nextState.complete || nextState.processing || nextState.hasFinalizeButton,
+      previousTabIds,
+      30000
+    );
+    state = tab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
+    if (state?.processing) throw new Error('payment still processing after configured wait');
+    throw new Error('payment completion text not found');
+  } finally {
+    await closeTabsForTransactionFlow(tab, beforeTabIds);
+  }
 }
 
 async function runPaymentJobs() {
@@ -1404,7 +1632,9 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
   runPaymentJobs,
-  buildPaymentFailurePayload
+  buildPaymentFailurePayload,
+  getExpectedPaymentAmountJpy,
+  parseYenAmount
 };
 chrome.tabs.onRemoved.addListener(tabId => {
   managedTaskTabs.delete(tabId);

@@ -1,6 +1,21 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-02
+**最后更新**: 2026-06-04
+
+---
+
+## 项目进度与接手信息维护约定
+
+本文件用于记录继续本项目所需的进度、业务规则、架构状态、真实页面结论、部署注意事项和验证结果。后续每次出现重要改动、阶段规划或关键业务确认时，必须同步更新本文件，方便后续接手时直接了解当前状态。
+
+更新原则：
+
+- 代码实现完成后，补充“已实现内容 / 最近修复 / 最近验证命令”。
+- 新阶段开始前，补充“当前状态 / 业务规则确认 / 下一步计划”。
+- 真实页面测试发现问题时，补充“当前真实测试问题”和建议排查方向。
+- 如果功能被临时停用，必须记录停用开关、原因、恢复条件和生产注意事项。
+- 更新内容优先追加到对应日期小节；没有合适小节时，新建 `YYYY-MM-DD 功能名当前进度` 小节。
+- 同步更新顶部 `最后更新` 日期。
 
 ---
 
@@ -557,3 +572,41 @@ npm run build
 - `payment_requested=1` 时插件才执行付款队列。
 - 本批成功后 flag 保持 1；直到没有剩余 `pending_settlement` 且应付款不为空的订单时才清 0。
 - 付款失败时只显示全局提醒并暂停 flag，订单保持 `pending_settlement`。
+
+---
+
+## 2026-06-04 普通商品付款细节当前进度
+
+### 当前状态
+
+- 已按真实页面截图补充普通商品付款点击流程。
+- 本阶段只处理普通商品；商城商品付款细节仍等待后续截图/HTML 后补充。
+- 插件代码更新后，生产服务器 Chrome 扩展必须手动重载 `yahoo-plugin/` 才会生效。
+
+### 已实现规则
+
+- 打开订单 `transaction_url` 后先判断是否已支付。
+- 页面出现 `出品者に支払い完了の連絡をしました。商品の発送連絡をお待ちください。` 时，按已支付处理，订单状态改为 `pending_shipment`（待发货），关闭 tab。
+- 普通商品入口支持两种按钮：
+  - `Yahoo!かんたん決済で支払う`
+  - `購入手続きする`
+- 进入购买手续页后，点击右侧订单金额下方 `確認する`。
+- 点击前会校验页面显示支付金额是否等于 `final_price + effectiveShippingFeeText`；不一致则失败，不继续付款。
+- 进入确认页后，点击 `上記に同意のうえ 購入を確定する` / `購入を確定する`。
+- 点击最终确认后，按后台 `payment_page_stay_seconds` 等待。
+- 完成页出现 `購入が完了しました！` 且出现 `商品の発送連絡をお待ちください` 时，订单状态改为 `pending_shipment`，关闭 tab。
+- 出现任何未知页面、金额不一致、仍在处理中、按钮缺失或商城商品付款，均按失败处理：写付款提醒栏、`payment_requested=0`、关闭 tab。
+
+### 最近验证命令
+
+以下命令在当前普通商品付款改动过程中通过：
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\content.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node src\server\routes\task.test.js
+node src\server\routes\proxy.test.js
+node src\client\src\utils\bidPrice.test.mjs
+```

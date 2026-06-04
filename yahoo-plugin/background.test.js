@@ -378,12 +378,33 @@ async function testRunPaymentJobsReportsEmptyQueue() {
   assert.deepEqual(calls[0], { empty: true });
 }
 
-async function testRunPaymentJobsReportsDeferredPageFailure() {
+async function testRunPaymentJobsCompletesNormalItemPayment() {
   const calls = [];
+  let removedTabId = null;
+  const states = [
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top', hasEasyPaymentButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', hasReviewButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } }
+  ];
   const api = loadBackgroundForTest({
+    tabs: {
+      async create() { return { id: 9, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 9, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; },
+      async remove(id) { removedTabId = id; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) return [{ result: { success: true, text: 'clicked' } }];
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, jobs: [{ orderId: 8, productId: 'p8' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 8, productId: 'p8', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -398,7 +419,76 @@ async function testRunPaymentJobsReportsDeferredPageFailure() {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].orderId, 8);
   assert.equal(calls[0].productId, 'p8');
-  assert.equal(calls[0].error, 'payment page detail phase disabled');
+  assert.equal(calls[0].status, 'success');
+  assert.equal(removedTabId, 9);
+}
+
+async function testRunPaymentJobsMarksAlreadyPaidAsSuccess() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() { return { id: 10, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 10, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        return [{ result: { success: true, state: { alreadyPaid: true, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, jobs: [{ orderId: 9, productId: 'p9', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(calls[0].orderId, 9);
+  assert.equal(calls[0].productId, 'p9');
+  assert.equal(calls[0].status, 'success');
+}
+
+async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() { return { id: 11, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 11, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top' } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, jobs: [{ orderId: 10, productId: 'p10', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(calls[0].orderId, 10);
+  assert.equal(calls[0].productId, 'p10');
+  assert.equal(calls[0].error, 'payment entry button not found');
 }
 
 function testBuildPaymentFailurePayloadIncludesProductId() {
@@ -456,7 +546,9 @@ async function run() {
   testBuildScanStatusPayloadHandlesBundleShippingFee();
   testBuildScanStatusPayloadHandlesBundleRejected();
   await testRunPaymentJobsReportsEmptyQueue();
-  await testRunPaymentJobsReportsDeferredPageFailure();
+  await testRunPaymentJobsCompletesNormalItemPayment();
+  await testRunPaymentJobsMarksAlreadyPaidAsSuccess();
+  await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
