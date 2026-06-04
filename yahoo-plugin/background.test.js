@@ -11,10 +11,13 @@ function loadBackgroundForTest(overrides = {}) {
   const windows = overrides.windows || {};
   const sandbox = {
     console,
-    globalThis: {},
+    globalThis: {
+      __G_DAIPAI_TRANSACTION_START_ENABLED__: overrides.transactionStartEnabled
+    },
     setInterval() {},
     setTimeout(fn) { fn(); },
     clearTimeout() {},
+    URLSearchParams,
     fetch: overrides.fetch || (async () => ({ async json() { return { task: null }; } })),
     chrome: {
       alarms: {
@@ -378,6 +381,115 @@ async function testRunPaymentJobsReportsEmptyQueue() {
   assert.deepEqual(calls[0], { empty: true });
 }
 
+async function testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders() {
+  const requestedUrls = [];
+  let createdTab = false;
+  let statusUpdated = false;
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() {
+        createdTab = true;
+        return { id: 77, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' };
+      }
+    },
+    fetch: async (url, options = {}) => {
+      requestedUrls.push(String(url));
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              storeUpdated: 3,
+              jobs: [{
+                orderId: 9,
+                productId: 'n9',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=n9',
+                shippingFeeText: '800\u5186'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/status')) {
+        statusUpdated = true;
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runTransactionStartJobs({ processNormalJobs: false });
+
+  assert.equal(requestedUrls.some(url => url.includes('/api/plugin/transaction-start/jobs')), true);
+  assert.equal(createdTab, false);
+  assert.equal(statusUpdated, false);
+}
+
+async function testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled() {
+  const requestedUrls = [];
+  const completedActions = [];
+  let createdTransactionTab = false;
+  const api = loadBackgroundForTest({
+    transactionStartEnabled: false,
+    tabs: {
+      async create(urlOrOptions) {
+        const url = typeof urlOrOptions === 'string' ? urlOrOptions : urlOrOptions?.url;
+        if (String(url || '').includes('contact.auctions.yahoo.co.jp')) {
+          createdTransactionTab = true;
+        }
+        return { id: 31, url, status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        if (message.type === 'BIDDING_ITEMS') return { success: true, items: [] };
+        if (message.type === 'ORDER_HISTORY') return { success: true, orders: [] };
+        return { success: true, items: [], orders: [] };
+      }
+    },
+    fetch: async (url, options = {}) => {
+      requestedUrls.push(String(url));
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 0 }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              action: 'transaction_start',
+              config: { transactionStartRequested: 0 }
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              storeUpdated: 3,
+              jobs: [{
+                orderId: 9,
+                productId: 'n9',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=n9',
+                shippingFeeText: '800\u5186'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/idle-action/complete')) {
+        completedActions.push(JSON.parse(options.body || '{}').action);
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.equal(requestedUrls.some(url => url.includes('/api/plugin/transaction-start/jobs')), true);
+  assert.deepEqual(completedActions, ['transaction_start']);
+  assert.equal(createdTransactionTab, false);
+}
+
 async function testRunPaymentJobsCompletesNormalItemPayment() {
   const calls = [];
   let removedTabId = null;
@@ -595,6 +707,8 @@ async function run() {
   testBuildScanStatusPayloadHandlesBundleShippingFee();
   testBuildScanStatusPayloadHandlesBundleRejected();
   await testRunPaymentJobsReportsEmptyQueue();
+  await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
+  await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunPaymentJobsCompletesNormalItemPayment();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsMarksAlreadyPaidAsSuccess();

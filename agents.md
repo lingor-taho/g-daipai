@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-04
+**最后更新**: 2026-06-05
 
 ---
 
@@ -425,7 +425,7 @@ git status --short
 - 分支：`codex/transaction-start`。
 - 已新增交易开始相关设计文档：`docs/superpowers/specs/2026-06-01-yahoo-transaction-start-design.md`。
 - 已新增实施计划：`docs/superpowers/plans/2026-06-01-yahoo-transaction-start-plan.md`。
-- 交易开始目前已临时停用：`yahoo-plugin/background.js` 中 `TRANSACTION_START_ENABLED = false`。
+- 交易开始已按 2026-06-05 业务确认重新开启：`yahoo-plugin/background.js` 中 `TRANSACTION_START_ENABLED` 生产默认开启。
 - 已在本地数据库把当天自动交易开始标记关闭：`transaction_start_requested=0`，`transaction_start_last_run_date=当天`。
 - 停用原因：真实 Yahoo 页面测试时交易开始流程仍存在 tab 跟踪和按钮点击问题，继续运行会反复打开 Yahoo tab。
 
@@ -472,13 +472,13 @@ git status --short
 
 交易开始重新启用前，建议先做诊断版，不要继续盲改点击逻辑：
 
-1. 保持 `TRANSACTION_START_ENABLED = false`，避免继续自动开 tab。
+1. 旧计划要求保持 `TRANSACTION_START_ENABLED = false`；2026-06-05 已按最新业务确认改为生产默认开启，后续如再遇到真实页面异常再临时熔断。
 2. 增加单商品诊断接口/按钮，只对指定商品 ID 执行一次交易开始，且不循环处理全部订单。
 3. 在 `content.js` 的图1页面输出诊断信息：候选按钮数量、`tagName`、`textContent`、`value`、`disabled`、`href`、`onclick`、`role`、`getBoundingClientRect()`、点击前后 URL、点击前后 tab 数量。
 4. 点击 `まとめて取引を依頼する` 后，background 必须确认当前 tab URL 是否变化、是否新开 tab、新 tab 是否为确认页、确认页是否存在 `決定する`。
 5. 普通非同捆商品状态更新后，必须关闭本次流程创建或打开的所有 Yahoo 交易相关 tab。
 6. 同捆流程失败时，应把同组商品加入本轮 processed 集合，避免同一组反复打开。
-7. 真实页面确认稳定后，再把 `TRANSACTION_START_ENABLED` 改回 `true`。
+7. 2026-06-05 已把 `TRANSACTION_START_ENABLED` 恢复为生产默认开启。
 
 ### 最近验证命令
 
@@ -681,7 +681,7 @@ npm run build
   - 删除整页 body 第一个日期兜底，避免把非结束日期当成结束时间。
 - `yahoo-plugin/background.js`：
   - 插件根据商品页快照判定已结束时，错误信息改为稳定英文 `Auction ended according to product page snapshot`，便于后续和服务端过期扫描区分。
-  - 按前置要求保持 `TRANSACTION_START_ENABLED = false`。
+  - 当时按前置要求保持 `TRANSACTION_START_ENABLED = false`；2026-06-05 已按最新业务确认恢复为生产默认开启。
 - `yahoo-plugin/content.test.js`：
   - 新增测试：body 中普通日期不得作为 `endTime`。
   - 新增测试：明确 meta 结束时间仍可正常提取。
@@ -735,4 +735,43 @@ node src\server\routes\plugin.test.js
 ```powershell
 node src\server\routes\task.test.js
 node src\client\src\utils\wonStats.test.mjs
+```
+
+---
+
+## 2026-06-05 商城订单空状态排查与修复
+
+### 问题现象
+
+- 生产截图显示后台订单中有 3 个商城商品（商品 ID 后红色 `商`），但 `订单状态` 为空，没有自动变成 `待支付`。
+- 顶部状态显示：`交易开始flag: 0`，`扫描计数: 4 / 5`，`最近执行：自动 2026-06-04 00:00:45，取到 2 单，商城直接待支付 0 单，插件任务 2 单`。
+- 表格里的 `最后操作时间` 是订单落札同步/更新订单的时间，不等于交易开始执行时间。
+
+### 根因结论
+
+- 商城商品变为 `pending_payment` 的逻辑在服务端 `/api/plugin/transaction-start/jobs` 内执行。
+- 之前 `yahoo-plugin/background.js` 中 `TRANSACTION_START_ENABLED = false` 时，插件遇到 `idleAction.action === 'transaction_start'` 会完全跳过交易开始 jobs 接口。
+- 这会导致普通商品真实 Yahoo 交易开始被安全停用的同时，商城商品的“服务端直接待支付”也被一起跳过。
+- 扫描任务只处理 `waiting_shipping` 和 `pending_bundle`，不会处理 `order_status` 为空的商城订单，所以扫描计数到 5 也不会让这些商城订单变状态。
+
+### 已修复内容
+
+- 按最新业务确认，`TRANSACTION_START_ENABLED` 生产默认已改为开启：普通商品交易开始和商城商品直达待支付都会执行。
+- 当空闲 action 为 `transaction_start` 时，插件会调用 `/api/plugin/transaction-start/jobs`；商城订单由服务端直接更新为 `pending_payment`，普通商品 jobs 由插件打开 Yahoo 取引页执行。
+- 保留测试注入关闭普通交易开始的能力：`runTransactionStartJobs({ processNormalJobs: false })` 只刷新服务端商城状态，不打开普通商品交易 tab，用于以后需要临时熔断普通交易开始时保护商城订单。
+- 新增插件回归测试：
+  - `runTransactionStartJobs({ processNormalJobs: false })` 会请求 jobs 接口，但不会打开交易 tab。
+  - 空闲调度遇到 `transaction_start` 且普通交易开始关闭时，仍会请求 jobs 接口并完成该 idle action。
+
+### 生产处理注意事项
+
+- 部署本次插件代码后，必须在服务器 Chrome 扩展页手动重载 `yahoo-plugin/`。
+- 重载后可点击后台“手动执行交易开始”的“加入执行队列”，下一次插件空闲同步会处理空状态订单：商城直接改为 `待支付`，普通商品进入 Yahoo 交易开始流程。
+- 自动执行也会在次日交易开始整点后处理前一天晚于上次交易开始同步到 `orders` 的订单。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
 ```

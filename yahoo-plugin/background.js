@@ -2,7 +2,7 @@ const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
-const TRANSACTION_START_ENABLED = false;
+const TRANSACTION_START_ENABLED = globalThis.__G_DAIPAI_TRANSACTION_START_ENABLED__ !== false;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
 
 let isRunning = false;
@@ -1279,6 +1279,9 @@ async function executeTransactionStartJob(job) {
 
 async function runTransactionStartJobs(options = {}) {
   const jobs = await fetchTransactionStartJobs(options);
+  if (options.processNormalJobs === false) {
+    return;
+  }
   const processedProducts = new Set();
   for (const job of jobs) {
     if (processedProducts.has(String(job.productId || '').toLowerCase())) continue;
@@ -1571,9 +1574,10 @@ async function syncIdleYahooPages() {
   await openBiddingPageForSync();
   await openWonPageForSync();
   const idleAction = await fetchNextIdleAction();
-  if (TRANSACTION_START_ENABLED && idleAction?.action === 'transaction_start') {
+  if (idleAction?.action === 'transaction_start') {
     await runTransactionStartJobs({
-      includeAfterCutoff: Number(idleAction?.config?.transactionStartRequested || 0) === 1
+      includeAfterCutoff: Number(idleAction?.config?.transactionStartRequested || 0) === 1,
+      processNormalJobs: TRANSACTION_START_ENABLED
     });
   } else if (idleAction?.action === 'scan') {
     await runScanJobs();
@@ -1688,6 +1692,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
+  syncIdleYahooPages,
+  runTransactionStartJobs,
   runPaymentJobs,
   buildPaymentFailurePayload,
   getExpectedPaymentAmountJpy,
