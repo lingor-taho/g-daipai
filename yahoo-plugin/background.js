@@ -575,6 +575,9 @@ function getPaymentActionPatternSource(action) {
   const patterns = {
     easyPayment: '\\u0059\\u0061\\u0068\\u006f\\u006f\\u0021\\u304b\\u3093\\u305f\\u3093\\u6c7a\\u6e08\\u3067\\u652f\\u6255\\u3046',
     purchaseProcedure: '\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
+    transactionInfoInput: '\\u53d6\\u5f15\\u60c5\\u5831\\u3092\\u5165\\u529b\\u3059\\u308b',
+    transactionDecide: '^\\s*\\u6c7a\\u5b9a\\u3059\\u308b\\s*$',
+    transactionConfirm: '^\\s*\\u78ba\\u5b9a\\u3059\\u308b\\s*$',
     review: '^\\s*\\u78ba\\u8a8d\\u3059\\u308b\\s*$',
     finalize: '\\u8cfc\\u5165\\u3092\\u78ba\\u5b9a\\u3059\\u308b'
   };
@@ -619,6 +622,9 @@ async function getPaymentPageState(tabId) {
           processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
           hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
           hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
+          hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
+          hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
+          hasTransactionConfirmButton: hasControl(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
           hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
           hasFinalizeButton: hasControl(/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/)
         }
@@ -635,7 +641,7 @@ async function runMainWorldPaymentActionClick(tabId, action) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (patternStr) => {
+    func: (patternStr, actionName) => {
       const pattern = new RegExp(patternStr);
       const getText = el => [
         el.textContent,
@@ -651,12 +657,12 @@ async function runMainWorldPaymentActionClick(tabId, action) {
       const type = String(button.type || '').toLowerCase();
       if (button.form && typeof button.form.requestSubmit === 'function' && (type === 'submit' || (!type && button.tagName === 'BUTTON'))) {
         button.form.requestSubmit(button);
-        return { success: true, method: 'requestSubmit', text: getText(button) };
+        return { success: true, method: 'requestSubmit', action: actionName, text: getText(button) };
       }
       button.click();
-      return { success: true, method: 'click', text: getText(button) };
+      return { success: true, method: 'click', action: actionName, text: getText(button) };
     },
-    args: [pattern]
+    args: [pattern, action]
   });
   const result = injectionResult?.[0]?.result;
   return result?.success ? result : { success: false, error: result?.error || 'payment click failed' };
@@ -717,6 +723,47 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
   await injectContentScript(nextTab.id).catch(() => {});
   return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+}
+
+async function completePaymentTransactionInfoInput(tab, initialState = null) {
+  let state = initialState || await getPaymentPageState(tab.id);
+  if (!state?.hasTransactionInfoInputButton) {
+    return { success: true, tab, state };
+  }
+
+  let result = await clickPaymentActionAndFollowTab(tab, 'transactionInfoInput', nextState =>
+    nextState.alreadyPaid || nextState.complete || nextState.hasTransactionDecideButton
+  );
+  if (!result?.success) return result;
+  tab = result.tab;
+  state = result.state;
+
+  if (state?.alreadyPaid || state?.complete) return { success: true, tab, state };
+  if (!state?.hasTransactionDecideButton) {
+    return { success: false, error: 'transaction info decide button not found', tab };
+  }
+
+  result = await clickPaymentActionAndFollowTab(tab, 'transactionDecide', nextState =>
+    nextState.alreadyPaid || nextState.complete || nextState.hasTransactionConfirmButton
+  );
+  if (!result?.success) return result;
+  tab = result.tab;
+  state = result.state;
+
+  if (state?.alreadyPaid || state?.complete) return { success: true, tab, state };
+  if (!state?.hasTransactionConfirmButton) {
+    return { success: false, error: 'transaction info confirm button not found', tab };
+  }
+
+  result = await clickPaymentActionAndFollowTab(tab, 'transactionConfirm', nextState =>
+    nextState.alreadyPaid ||
+    nextState.complete ||
+    nextState.hasEasyPaymentButton ||
+    nextState.hasPurchaseProcedureButton ||
+    nextState.hasReviewButton
+  );
+  if (!result?.success) return result;
+  return { success: true, tab: result.tab, state: result.state };
 }
 
 async function reportYahooLoginStatus(loginStatus) {
@@ -1424,6 +1471,16 @@ async function executePaymentJob(job, paymentBatch = {}) {
 
     tab = await openTransactionPage(job);
     let state = await getPaymentPageState(tab.id);
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
+
+    if (state?.hasTransactionInfoInputButton) {
+      const result = await completePaymentTransactionInfoInput(tab, state);
+      if (!result?.success) throw new Error(result?.error || 'transaction info input flow failed');
+      tab = result.tab;
+      state = result.state;
+    }
+
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
 

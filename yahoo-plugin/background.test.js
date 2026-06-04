@@ -423,6 +423,55 @@ async function testRunPaymentJobsCompletesNormalItemPayment() {
   assert.equal(removedTabId, 9);
 }
 
+async function testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput() {
+  const calls = [];
+  const actions = [];
+  const states = [
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top', hasTransactionInfoInputButton: true } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/input', hasTransactionDecideButton: true } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/input', hasTransactionConfirmButton: true } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top', hasEasyPaymentButton: true, paymentAmountJpy: 185 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', hasReviewButton: true, paymentAmountJpy: 185 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 185 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() { return { id: 12, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 12, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 12, productId: 'p12', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 75, effectiveShippingFeeText: '110\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['transactionInfoInput', 'transactionDecide', 'transactionConfirm', 'easyPayment', 'review', 'finalize']);
+  assert.equal(calls[0].orderId, 12);
+  assert.equal(calls[0].productId, 'p12');
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsMarksAlreadyPaidAsSuccess() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -547,6 +596,7 @@ async function run() {
   testBuildScanStatusPayloadHandlesBundleRejected();
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunPaymentJobsCompletesNormalItemPayment();
+  await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsMarksAlreadyPaidAsSuccess();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
