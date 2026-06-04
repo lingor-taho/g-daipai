@@ -21,7 +21,9 @@ const {
   isActiveAutomaticStrategy,
   canCancelTask,
   assertNoActiveAutomaticStrategy,
-  findTaskByClientRequestId
+  findTaskByClientRequestId,
+  normalizeBidStrategyScope,
+  assertBidStrategyAllowed
 } = require('./task');
 
 function testSubmitUsesAuthenticatedUserId() {
@@ -325,6 +327,27 @@ function testActiveAutomaticStrategyBlocksNewSubmission() {
   assert.doesNotThrow(() => assertNoActiveAutomaticStrategy({ strategy: '2min', status: 'cancelled' }));
 }
 
+function testBidStrategyScopeDefaultsToAll() {
+  assert.equal(normalizeBidStrategyScope('direct_only'), 'direct_only');
+  assert.equal(normalizeBidStrategyScope('all'), 'all');
+  assert.equal(normalizeBidStrategyScope(''), 'all');
+  assert.equal(normalizeBidStrategyScope(null), 'all');
+  assert.equal(normalizeBidStrategyScope('bad'), 'all');
+}
+
+function testDirectOnlyUserAllowsOnlyDirectStrategy() {
+  assert.doesNotThrow(() => assertBidStrategyAllowed({ bid_strategy_scope: 'direct_only' }, 'direct'));
+  assert.throws(
+    () => assertBidStrategyAllowed({ bid_strategy_scope: 'direct_only' }, 'multi_bid'),
+    /该用户只能使用即时拍策略/
+  );
+  assert.throws(
+    () => assertBidStrategyAllowed({ bid_strategy_scope: 'direct_only' }, '5min'),
+    /该用户只能使用即时拍策略/
+  );
+  assert.doesNotThrow(() => assertBidStrategyAllowed({ bid_strategy_scope: 'all' }, 'multi_bid'));
+}
+
 async function testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope() {
   const calls = [];
   const fakeDb = {
@@ -378,6 +401,8 @@ testAutomaticStrategyDetection();
 testActiveAutomaticStrategyDetection();
 testCancelOnlyActiveAutomaticTasks();
 testActiveAutomaticStrategyBlocksNewSubmission();
+testBidStrategyScopeDefaultsToAll();
+testDirectOnlyUserAllowsOnlyDirectStrategy();
 Promise.all([
   testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope(),
   testFindTaskByClientRequestIdSkipsEmptyId()

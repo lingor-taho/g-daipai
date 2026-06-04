@@ -10,8 +10,17 @@ const USER_LEVELS = [
   { value: 3, label: '管理员', color: 'purple' }
 ];
 
+const BID_STRATEGY_SCOPES = [
+  { value: 'all', label: '全部都可以拍', color: 'green' },
+  { value: 'direct_only', label: '只能即时拍', color: 'orange' }
+];
+
 function getLevelMeta(level: number) {
   return USER_LEVELS.find(item => item.value === Number(level)) || USER_LEVELS[0];
+}
+
+function getBidStrategyScopeMeta(scope: string) {
+  return BID_STRATEGY_SCOPES.find(item => item.value === scope) || BID_STRATEGY_SCOPES[0];
 }
 
 async function saveUser(values: any, id?: number) {
@@ -73,7 +82,7 @@ export default function UsersPage() {
 
   function openCreate() {
     setEditing(null);
-    form.setFieldsValue({ username: '', password: '', user_level: 1, parent_user_id: null });
+    form.setFieldsValue({ username: '', password: '', user_level: 1, parent_user_id: null, bid_strategy_scope: 'all' });
     loadUserOptions();
     setModalOpen(true);
   }
@@ -84,7 +93,8 @@ export default function UsersPage() {
       username: row.username,
       password: '',
       user_level: Number(row.user_level || 1),
-      parent_user_id: row.parent_user_id || null
+      parent_user_id: row.parent_user_id || null,
+      bid_strategy_scope: row.bid_strategy_scope || 'all'
     });
     loadUserOptions();
     setModalOpen(true);
@@ -122,6 +132,14 @@ export default function UsersPage() {
       title: '上级归属',
       dataIndex: 'parent_username',
       render: (_: any, row: any) => row.parent_username || '-'
+    },
+    {
+      title: '可用策略',
+      dataIndex: 'bid_strategy_scope',
+      render: (_: any, row: any) => {
+        const scope = getBidStrategyScopeMeta(row.bid_strategy_scope);
+        return <Tag color={scope.color}>{scope.label}</Tag>;
+      }
     },
     { title: '类型', dataIndex: 'role', render: () => <Tag>用户端</Tag> },
     { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime' },
@@ -201,6 +219,9 @@ export default function UsersPage() {
               placeholder={parentOptions.length ? '请选择上级用户' : '当前等级暂无可选上级'}
               options={parentOptions}
             />
+          </Form.Item>
+          <Form.Item name="bid_strategy_scope" label="可用出价策略" rules={[{ required: true, message: '请选择可用出价策略' }]}>
+            <Select options={BID_STRATEGY_SCOPES.map(({ value, label }) => ({ value, label }))} />
           </Form.Item>
         </Form>
       </Modal>

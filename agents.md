@@ -611,3 +611,45 @@ node src\server\routes\task.test.js
 node src\server\routes\proxy.test.js
 node src\client\src\utils\bidPrice.test.mjs
 ```
+
+---
+
+## 2026-06-04 用户策略权限当前进度
+
+### 当前状态
+
+- 后台“用户账号管理”新增“可用出价策略”选项。
+- 用户端提交任务页会按当前操作账号权限限制策略选择。
+- 服务端 `/api/task/submit` 增加兜底校验，防止绕过前端直接提交不允许的策略。
+
+### 已实现规则
+
+- `users.bid_strategy_scope` 新增兼容字段，默认 `all`。
+- 后台可选：
+  - `全部都可以拍`：允许即时拍、多次出价、结束前 1/2/5/10 分钟。
+  - `只能即时拍`：仅允许 `direct` 即时拍；即決模式也按即时拍处理。
+- `/api/auth/acting-users` 返回当前可操作账号的 `bid_strategy_scope`。
+- 用户端账号切换时保存当前账号策略权限。
+- 用户端提交页：
+  - `只能即时拍` 用户只显示 `即时拍（立即）`。
+  - 如果当前策略已是其他策略，会自动切回 `direct`。
+  - 提交时再次检查，避免旧状态提交。
+- 服务端提交页：
+  - `direct_only` 用户提交 `multi_bid` 或结束前策略会返回 `403` 和 `该用户只能使用即时拍策略`。
+
+### 最近验证命令
+
+以下命令在当前策略权限改动过程中通过：
+
+```powershell
+node src\server\routes\task.test.js
+node src\server\routes\admin.orders.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\proxy.test.js
+node yahoo-plugin\background.test.js
+node yahoo-plugin\content.test.js
+Set-Location src\admin
+npm run build
+Set-Location ..\client
+npm run build
+```

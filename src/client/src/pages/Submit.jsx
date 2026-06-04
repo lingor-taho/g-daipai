@@ -25,6 +25,12 @@ const STRATEGY_OPTIONS = [
   ]
 ];
 
+const DIRECT_ONLY_STRATEGY_OPTIONS = [
+  [
+    { label: '即时拍（立即）', value: 'direct' }
+  ]
+];
+
 function getDisplayPrice(price, taxType) {
   const value = Number(price || 0);
   if (taxType !== 'tax_included' || value < 10) return value;
@@ -91,6 +97,7 @@ export default function Submit() {
   const [multiBidIncrement, setMultiBidIncrement] = useState('');
   const [buyoutSelected, setBuyoutSelected] = useState(false);
   const [strategyPickerVisible, setStrategyPickerVisible] = useState(false);
+  const [bidStrategyScope, setBidStrategyScope] = useState(localStorage.getItem('actingUserBidStrategyScope') || 'all');
   const [fetching, setFetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [storeBidPriceMode, setStoreBidPriceMode] = useState('tax_before');
@@ -102,6 +109,8 @@ export default function Submit() {
     minPrice: 5000
   });
   const buyoutOnly = isBuyoutOnlyProduct(product);
+  const isDirectOnlyUser = bidStrategyScope === 'direct_only';
+  const availableStrategyOptions = isDirectOnlyUser ? DIRECT_ONLY_STRATEGY_OPTIONS : STRATEGY_OPTIONS;
 
   useEffect(() => {
     runDeduped('Submit:getPluginConfig', getPluginConfig)
@@ -123,7 +132,9 @@ export default function Submit() {
   }, []);
 
   useEffect(() => {
-    function handleActingUserChange() {
+    function handleActingUserChange(event) {
+      const nextScope = event?.detail?.bid_strategy_scope || localStorage.getItem('actingUserBidStrategyScope') || 'all';
+      setBidStrategyScope(nextScope);
       setUrl('');
       setProduct(null);
       setMaxPrice('');
@@ -137,6 +148,13 @@ export default function Submit() {
     window.addEventListener('acting-user-change', handleActingUserChange);
     return () => window.removeEventListener('acting-user-change', handleActingUserChange);
   }, []);
+
+  useEffect(() => {
+    if (isDirectOnlyUser && strategy !== 'direct') {
+      setStrategy('direct');
+      setMultiBidIncrement('');
+    }
+  }, [isDirectOnlyUser, strategy]);
 
   async function handleFetch(targetUrl = url, options = {}) {
     const normalizedInput = String(targetUrl || '').trim();
@@ -224,6 +242,11 @@ export default function Submit() {
       return;
     }
     const selectedStrategy = (buyoutSelected || buyoutOnly) ? 'direct' : (strategy || 'direct');
+    if (isDirectOnlyUser && selectedStrategy !== 'direct') {
+      Toast.show({ content: '当前账号只能使用即时拍策略' });
+      setStrategy('direct');
+      return;
+    }
     if (selectedStrategy === 'multi_bid' && effectiveMaxPrice < multiBidConfig.minPrice) {
       Toast.show({ content: `多次出价最高价不能低于${multiBidConfig.minPrice}円` });
       return;
@@ -441,7 +464,7 @@ export default function Submit() {
             <List.Item
               prefix="出价策略"
               clickable={!buyoutSelected && !buyoutOnly}
-              extra={STRATEGY_OPTIONS[0].find(item => item.value === strategy)?.label || '即时拍（立即）'}
+              extra={availableStrategyOptions[0].find(item => item.value === strategy)?.label || '即时拍（立即）'}
               onClick={() => {
                 if (!buyoutSelected && !buyoutOnly) setStrategyPickerVisible(true);
               }}
@@ -449,7 +472,7 @@ export default function Submit() {
             />
           </List>
           <Picker
-            columns={STRATEGY_OPTIONS}
+            columns={availableStrategyOptions}
             visible={strategyPickerVisible}
             value={[strategy]}
             onClose={() => setStrategyPickerVisible(false)}

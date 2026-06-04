@@ -8,7 +8,7 @@ function normalizeLevel(value) {
 async function getClientUser(userId, database = db) {
   if (!userId) return null;
   return database.getOne(
-    `SELECT id, username, role, COALESCE(user_level, 1) AS user_level, parent_user_id
+    `SELECT id, username, role, COALESCE(user_level, 1) AS user_level, parent_user_id, COALESCE(bid_strategy_scope, 'all') AS bid_strategy_scope
      FROM users
      WHERE id = ? AND role = 'user'`,
     [userId]
@@ -23,6 +23,7 @@ async function getAllowedActingUsers(userId, database = db) {
   if (level >= 3) {
     return database.getAll(
       `SELECT id, username, role, COALESCE(user_level, 1) AS user_level, parent_user_id
+              , COALESCE(bid_strategy_scope, 'all') AS bid_strategy_scope
        FROM users
        WHERE role = 'user' AND COALESCE(user_level, 1) < 3
        ORDER BY username ASC`
@@ -31,7 +32,7 @@ async function getAllowedActingUsers(userId, database = db) {
 
   if (level >= 2) {
     return database.getAll(
-      `SELECT id, username, role, COALESCE(user_level, 1) AS user_level, parent_user_id
+      `SELECT id, username, role, COALESCE(user_level, 1) AS user_level, parent_user_id, COALESCE(bid_strategy_scope, 'all') AS bid_strategy_scope
        FROM users
        WHERE role = 'user'
          AND (id = ? OR parent_user_id = ?)

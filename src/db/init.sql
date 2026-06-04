@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   role VARCHAR(32) DEFAULT 'user',
   user_level INTEGER DEFAULT 1,
   parent_user_id INTEGER REFERENCES users(id),
+  bid_strategy_scope VARCHAR(32) DEFAULT 'all',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

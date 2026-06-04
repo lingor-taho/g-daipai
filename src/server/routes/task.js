@@ -127,6 +127,18 @@ function isAutomaticStrategy(strategy) {
   return Boolean(strategy && strategy !== 'direct' && strategy !== 'buyout');
 }
 
+function normalizeBidStrategyScope(value) {
+  return value === 'direct_only' ? 'direct_only' : 'all';
+}
+
+function assertBidStrategyAllowed(user, strategy) {
+  if (normalizeBidStrategyScope(user?.bid_strategy_scope) !== 'direct_only') return;
+  if ((strategy || 'direct') === 'direct') return;
+  const error = new Error('该用户只能使用即时拍策略');
+  error.statusCode = 403;
+  throw error;
+}
+
 function isActiveAutomaticStrategy(task) {
   if (!task || !isAutomaticStrategy(task.strategy)) return false;
   if (task.status === 'pending' || task.status === 'processing') return true;
@@ -348,9 +360,11 @@ router.post('/submit', async (req, res) => {
     const bidMaxPrice = input.bidMode === 'buyout'
       ? buyoutPrices.bidMaxPrice
       : calculateBidMaxPrice(userMaxPrice, resolvedTaxType);
+    const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
+    assertBidStrategyAllowed(req.actingUser, incomingStrategy);
     const multiBidMinPrice = await getMultiBidMinPrice();
-    validateMultiBidUserMaxPrice(strategy || 'direct', userMaxPrice, multiBidMinPrice);
-    const multiBidIncrement = validateMultiBidIncrement(strategy || 'direct', userMaxPrice, multi_bid_increment);
+    validateMultiBidUserMaxPrice(incomingStrategy, userMaxPrice, multiBidMinPrice);
+    const multiBidIncrement = validateMultiBidIncrement(incomingStrategy, userMaxPrice, multi_bid_increment);
     if (input.bidMode === 'buyout' && buyoutPrices.buyoutPrice <= 0) {
       const error = new Error('出价失败：该商品没有即決价格');
       error.statusCode = 400;
@@ -369,7 +383,6 @@ router.post('/submit', async (req, res) => {
     let finalUserMaxPrice = userMaxPrice;
     let finalBidMaxPrice = bidMaxPrice;
     const productCurrentPrice = Number(current_price || productInfo?.currentPrice || 0);
-    const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
     if (
       !followupMaxPrice &&
       shouldSplitDirectBidByYahooLowPriceRule({
@@ -653,3 +666,5 @@ module.exports.isActiveAutomaticStrategy = isActiveAutomaticStrategy;
 module.exports.canCancelTask = canCancelTask;
 module.exports.assertNoActiveAutomaticStrategy = assertNoActiveAutomaticStrategy;
 module.exports.findTaskByClientRequestId = findTaskByClientRequestId;
+module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;
+module.exports.assertBidStrategyAllowed = assertBidStrategyAllowed;

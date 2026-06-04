@@ -30,6 +30,10 @@ const ORDER_STATUS_COMPLETED = 'completed';
 const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
 const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
 
+function normalizeBidStrategyScope(value) {
+  return value === 'direct_only' ? 'direct_only' : 'all';
+}
+
 function normalizeOrderStatusRefreshTarget(value) {
   const normalized = String(value || 'completed').trim();
   if (normalized === 'blank') return null;
@@ -173,6 +177,7 @@ router.get('/users', async (req, res) => {
             u.role,
             COALESCE(u.user_level, 1) AS user_level,
             u.parent_user_id,
+            COALESCE(u.bid_strategy_scope, 'all') AS bid_strategy_scope,
             p.username AS parent_username,
             COALESCE(p.user_level, 1) AS parent_user_level,
             u.created_at
@@ -189,7 +194,7 @@ router.get('/users', async (req, res) => {
 
 router.get('/users/options', async (req, res) => {
   const items = await db.getAll(
-    `SELECT id, username, COALESCE(user_level, 1) AS user_level, parent_user_id
+    `SELECT id, username, COALESCE(user_level, 1) AS user_level, parent_user_id, COALESCE(bid_strategy_scope, 'all') AS bid_strategy_scope
      FROM users
      WHERE role = 'user'
      ORDER BY user_level DESC, username ASC`
@@ -245,6 +250,7 @@ async function normalizeClientUserHierarchy(userLevel, parentUserId, selfId = nu
 
 router.post('/users', async (req, res) => {
   const { username, password, user_level, parent_user_id } = req.body;
+  const bidStrategyScope = normalizeBidStrategyScope(req.body?.bid_strategy_scope);
   if (!username || !password) {
     return res.status(400).json({ error: 'username and password are required' });
   }
@@ -258,8 +264,8 @@ router.post('/users', async (req, res) => {
   }
   const hash = await bcrypt.hash(password, 10);
   await db.query(
-    'INSERT INTO users (username, password_hash, role, user_level, parent_user_id) VALUES (?, ?, ?, ?, ?)',
-    [username, hash, 'user', hierarchy.userLevel, hierarchy.parentUserId]
+    'INSERT INTO users (username, password_hash, role, user_level, parent_user_id, bid_strategy_scope) VALUES (?, ?, ?, ?, ?, ?)',
+    [username, hash, 'user', hierarchy.userLevel, hierarchy.parentUserId, bidStrategyScope]
   );
   const inserted = await db.getOne('SELECT last_insert_rowid() as id');
   res.json({ success: true, id: inserted.id });
@@ -267,6 +273,7 @@ router.post('/users', async (req, res) => {
 
 router.put('/users/:id', async (req, res) => {
   const { username, password, user_level, parent_user_id } = req.body;
+  const bidStrategyScope = normalizeBidStrategyScope(req.body?.bid_strategy_scope);
   if (!username) return res.status(400).json({ error: 'username is required' });
   const existing = await db.getOne('SELECT id FROM users WHERE username = ? AND id != ?', [username, req.params.id]);
   if (existing) return res.status(409).json({ error: 'username already exists' });
@@ -279,13 +286,13 @@ router.put('/users/:id', async (req, res) => {
   if (password) {
     const hash = await bcrypt.hash(password, 10);
     await db.query(
-      "UPDATE users SET username = ?, password_hash = ?, role = 'user', user_level = ?, parent_user_id = ? WHERE id = ? AND role = 'user'",
-      [username, hash, hierarchy.userLevel, hierarchy.parentUserId, req.params.id]
+      "UPDATE users SET username = ?, password_hash = ?, role = 'user', user_level = ?, parent_user_id = ?, bid_strategy_scope = ? WHERE id = ? AND role = 'user'",
+      [username, hash, hierarchy.userLevel, hierarchy.parentUserId, bidStrategyScope, req.params.id]
     );
   } else {
     await db.query(
-      "UPDATE users SET username = ?, role = 'user', user_level = ?, parent_user_id = ? WHERE id = ? AND role = 'user'",
-      [username, hierarchy.userLevel, hierarchy.parentUserId, req.params.id]
+      "UPDATE users SET username = ?, role = 'user', user_level = ?, parent_user_id = ?, bid_strategy_scope = ? WHERE id = ? AND role = 'user'",
+      [username, hierarchy.userLevel, hierarchy.parentUserId, bidStrategyScope, req.params.id]
     );
   }
   res.json({ success: true });
@@ -1510,3 +1517,4 @@ module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
 module.exports.normalizePositiveIntegerConfig = normalizePositiveIntegerConfig;
+module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;

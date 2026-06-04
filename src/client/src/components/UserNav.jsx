@@ -21,6 +21,12 @@ function emitActingUserChange(user) {
   window.dispatchEvent(new CustomEvent('acting-user-change', { detail: user }));
 }
 
+function saveActingUser(user) {
+  localStorage.setItem('actingUserId', String(user.id));
+  localStorage.setItem('actingUsername', user.username);
+  localStorage.setItem('actingUserBidStrategyScope', user.bid_strategy_scope || 'all');
+}
+
 export default function UserNav() {
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
@@ -36,8 +42,7 @@ export default function UserNav() {
 
       const savedId = localStorage.getItem('actingUserId');
       const selected = list.find(user => String(user.id) === String(savedId)) || list[0];
-      localStorage.setItem('actingUserId', String(selected.id));
-      localStorage.setItem('actingUsername', selected.username);
+      saveActingUser(selected);
       setSelectedId(String(selected.id));
       emitActingUserChange(selected);
     } catch (e) {
@@ -61,8 +66,7 @@ export default function UserNav() {
   function selectUser(nextId) {
     const user = users.find(item => String(item.id) === String(nextId));
     if (!user) return;
-    localStorage.setItem('actingUserId', String(user.id));
-    localStorage.setItem('actingUsername', user.username);
+    saveActingUser(user);
     setSelectedId(String(user.id));
     emitActingUserChange(user);
   }
@@ -73,6 +77,7 @@ export default function UserNav() {
     localStorage.removeItem('userLevel');
     localStorage.removeItem('actingUserId');
     localStorage.removeItem('actingUsername');
+    localStorage.removeItem('actingUserBidStrategyScope');
     navigate('/login', { replace: true });
   }
 
