@@ -336,16 +336,23 @@ function testBidStrategyScopeDefaultsToAll() {
 }
 
 function testDirectOnlyUserAllowsOnlyDirectStrategy() {
-  assert.doesNotThrow(() => assertBidStrategyAllowed({ bid_strategy_scope: 'direct_only' }, 'direct'));
+  assert.doesNotThrow(() => assertBidStrategyAllowed({ actingUser: { bid_strategy_scope: 'direct_only' } }, 'direct'));
   assert.throws(
-    () => assertBidStrategyAllowed({ bid_strategy_scope: 'direct_only' }, 'multi_bid'),
+    () => assertBidStrategyAllowed({ actingUser: { bid_strategy_scope: 'direct_only' } }, 'multi_bid'),
     /该用户只能使用即时拍策略/
   );
   assert.throws(
-    () => assertBidStrategyAllowed({ bid_strategy_scope: 'direct_only' }, '5min'),
+    () => assertBidStrategyAllowed({ actingUser: { bid_strategy_scope: 'direct_only' } }, '5min'),
     /该用户只能使用即时拍策略/
   );
-  assert.doesNotThrow(() => assertBidStrategyAllowed({ bid_strategy_scope: 'all' }, 'multi_bid'));
+  assert.doesNotThrow(() => assertBidStrategyAllowed({ actingUser: { bid_strategy_scope: 'all' } }, 'multi_bid'));
+}
+
+function testClientAdminBypassesActingUserBidStrategyScope() {
+  assert.doesNotThrow(() => assertBidStrategyAllowed({
+    loginUser: { user_level: 3 },
+    actingUser: { bid_strategy_scope: 'direct_only' }
+  }, 'multi_bid'));
 }
 
 async function testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope() {
@@ -403,6 +410,7 @@ testCancelOnlyActiveAutomaticTasks();
 testActiveAutomaticStrategyBlocksNewSubmission();
 testBidStrategyScopeDefaultsToAll();
 testDirectOnlyUserAllowsOnlyDirectStrategy();
+testClientAdminBypassesActingUserBidStrategyScope();
 Promise.all([
   testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope(),
   testFindTaskByClientRequestIdSkipsEmptyId()

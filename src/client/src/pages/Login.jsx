@@ -17,6 +17,7 @@ export default function Login() {
       localStorage.setItem('userLevel', String(res.data.userLevel || 1));
       localStorage.removeItem('actingUserId');
       localStorage.removeItem('actingUsername');
+      localStorage.removeItem('actingUserBidStrategyScope');
       navigate('/submit');
     } catch (e) {
       Toast.show({ content: e.response?.data?.error || '登录失败' });

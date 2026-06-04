@@ -109,7 +109,8 @@ export default function Submit() {
     minPrice: 5000
   });
   const buyoutOnly = isBuyoutOnlyProduct(product);
-  const isDirectOnlyUser = bidStrategyScope === 'direct_only';
+  const isLoginClientAdmin = Number(localStorage.getItem('userLevel') || 1) >= 3;
+  const isDirectOnlyUser = !isLoginClientAdmin && bidStrategyScope === 'direct_only';
   const availableStrategyOptions = isDirectOnlyUser ? DIRECT_ONLY_STRATEGY_OPTIONS : STRATEGY_OPTIONS;
 
   useEffect(() => {

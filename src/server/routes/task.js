@@ -131,8 +131,15 @@ function normalizeBidStrategyScope(value) {
   return value === 'direct_only' ? 'direct_only' : 'all';
 }
 
-function assertBidStrategyAllowed(user, strategy) {
-  if (normalizeBidStrategyScope(user?.bid_strategy_scope) !== 'direct_only') return;
+function isClientAdminUser(user) {
+  return Number(user?.user_level || 1) >= 3;
+}
+
+function assertBidStrategyAllowed(context, strategy) {
+  const loginUser = context?.loginUser || null;
+  const actingUser = context?.actingUser || context;
+  if (isClientAdminUser(loginUser)) return;
+  if (normalizeBidStrategyScope(actingUser?.bid_strategy_scope) !== 'direct_only') return;
   if ((strategy || 'direct') === 'direct') return;
   const error = new Error('该用户只能使用即时拍策略');
   error.statusCode = 403;
@@ -361,7 +368,7 @@ router.post('/submit', async (req, res) => {
       ? buyoutPrices.bidMaxPrice
       : calculateBidMaxPrice(userMaxPrice, resolvedTaxType);
     const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
-    assertBidStrategyAllowed(req.actingUser, incomingStrategy);
+    assertBidStrategyAllowed({ loginUser: req.user, actingUser: req.actingUser }, incomingStrategy);
     const multiBidMinPrice = await getMultiBidMinPrice();
     validateMultiBidUserMaxPrice(incomingStrategy, userMaxPrice, multiBidMinPrice);
     const multiBidIncrement = validateMultiBidIncrement(incomingStrategy, userMaxPrice, multi_bid_increment);
