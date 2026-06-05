@@ -901,3 +901,25 @@ node src\server\routes\plugin.test.js
 ```powershell
 node yahoo-plugin\background.test.js
 ```
+
+---
+
+## 2026-06-05 付款红色按钮点击增强
+
+### 问题现象
+
+- 付款任务进入 `購入手続き` 页面后，右侧红色 `確認する` 已经显示，但插件普通 JS click 后页面没有进入下一步，随后等待超时、关闭 tab 并标记付款失败。
+- 推测原因是 Yahoo 前端按钮可能使用伪按钮 / React 事件 / 特定鼠标事件，单纯 `button.click()` 或 `form.requestSubmit()` 在真实页面上不稳定。
+
+### 已修复内容
+
+- 付款按钮识别范围扩展到 `[role="button"]`，避免 Yahoo 使用伪按钮时漏识别。
+- 普通付款点击会先补发 `pointerdown/mousedown/pointerup/mouseup/click` 事件。
+- 如果点击 `確認する` 后 5 秒内没有进入下一付款状态，插件会使用 Chrome debugger 的 `Input.dispatchMouseEvent` 对按钮中心点再发送一次真实鼠标点击。
+- 最终确认页 `購入を確定する` 也加入同样真实鼠标点击兜底。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+```

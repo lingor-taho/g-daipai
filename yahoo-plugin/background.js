@@ -646,7 +646,7 @@ async function getPaymentPageState(tabId) {
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' '));
       const bodyText = normalize(document.body?.textContent || '');
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')]
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
         .map(el => getText(el))
         .filter(Boolean);
       return {
@@ -680,7 +680,7 @@ async function runMainWorldPaymentActionClick(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
       const button = controls.find(el => pattern.test(getText(el)));
       if (!button) return { success: false, error: 'payment button not found' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
@@ -690,6 +690,15 @@ async function runMainWorldPaymentActionClick(tabId, action) {
         button.form.requestSubmit(button);
         return { success: true, method: 'requestSubmit', action: actionName, text: getText(button) };
       }
+      const eventOptions = { bubbles: true, cancelable: true, view: window };
+      if (typeof PointerEvent !== 'undefined') {
+        button.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+      }
+      button.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+      if (typeof PointerEvent !== 'undefined') {
+        button.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+      }
+      button.dispatchEvent(new MouseEvent('mouseup', eventOptions));
       button.click();
       return { success: true, method: 'click', action: actionName, text: getText(button) };
     },
@@ -697,6 +706,93 @@ async function runMainWorldPaymentActionClick(tabId, action) {
   });
   const result = injectionResult?.[0]?.result;
   return result?.success ? result : { success: false, error: result?.error || 'payment click failed' };
+}
+
+async function getPaymentActionClickPoint(tabId, action) {
+  const pattern = getPaymentActionPatternSource(action);
+  if (!pattern) return { success: false, error: 'unknown payment action' };
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (patternStr) => {
+      const pattern = new RegExp(patternStr);
+      const getText = el => [
+        el.textContent,
+        el.value,
+        el.title,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
+      const button = controls.find(el => pattern.test(getText(el)));
+      if (!button) return { success: false, error: 'payment button not found for trusted click' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      const rect = button.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return { success: false, error: 'payment button has no clickable rect' };
+      }
+      return {
+        success: true,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        text: getText(button)
+      };
+    },
+    args: [pattern]
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'payment button not found for trusted click' };
+}
+
+async function dispatchTrustedPaymentActionClick(tab, action) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for trusted payment click' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+
+  const point = await getPaymentActionClickPoint(tabId, action);
+  if (!point?.success) return point;
+
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1
+    });
+    await sleep(300);
+    return { success: true, method: 'debuggerMouse', text: point.text };
+  } catch (e) {
+    return { success: false, error: e.message || 'trusted payment mouse click failed' };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
 }
 
 async function waitForPaymentStateAcrossTabs(tab, predicate, previousIds, timeoutMs = 30000) {
@@ -768,9 +864,21 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   if (!clickResult?.success) {
     return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };
   }
-  const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
-  await injectContentScript(nextTab.id).catch(() => {});
-  return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+  try {
+    const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
+    await injectContentScript(nextTab.id).catch(() => {});
+    return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+  } catch (e) {
+    console.warn('[Yahoo Bid] Payment synthetic click did not reach next state, trying trusted mouse click:', e.message || e);
+    const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
+    console.log('[Yahoo Bid] Trusted payment mouse click result:', trustedClick);
+    if (!trustedClick?.success) {
+      return { success: false, error: trustedClick?.error || clickResult?.error || `payment ${action} click failed`, tab };
+    }
+    const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+    await injectContentScript(nextTab.id).catch(() => {});
+    return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+  }
 }
 
 async function completePaymentTransactionInfoInput(tab, initialState = null) {
@@ -1599,11 +1707,23 @@ async function executePaymentJob(job, paymentBatch = {}) {
     const finalClick = await runMainWorldPaymentActionClick(tab.id, 'finalize');
     if (!finalClick?.success) throw new Error(finalClick?.error || 'payment finalize click failed');
 
-    tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
-      nextState.alreadyPaid || nextState.complete,
-      previousTabIds,
-      30000
-    );
+    try {
+      tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
+        nextState.alreadyPaid || nextState.complete,
+        previousTabIds,
+        5000
+      );
+    } catch (e) {
+      console.warn('[Yahoo Bid] Payment finalize synthetic click did not complete, trying trusted mouse click:', e.message || e);
+      const trustedClick = await dispatchTrustedPaymentActionClick(tab, 'finalize');
+      console.log('[Yahoo Bid] Trusted payment finalize mouse click result:', trustedClick);
+      if (!trustedClick?.success) throw new Error(trustedClick?.error || finalClick?.error || 'payment finalize click failed');
+      tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
+        nextState.alreadyPaid || nextState.complete,
+        previousTabIds,
+        30000
+      );
+    }
     state = tab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
@@ -1760,6 +1880,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   completeBidderPaysShippingTransaction,
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
+  dispatchTrustedPaymentActionClick,
+  getPaymentActionClickPoint,
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,

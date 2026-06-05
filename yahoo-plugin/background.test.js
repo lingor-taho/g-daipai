@@ -842,6 +842,44 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
   assert.equal(calls[0].status, 'success');
 }
 
+async function testPaymentTrustedClickPointFindsRoleButton() {
+  const fakeButton = {
+    textContent: '確認する',
+    value: '',
+    title: '',
+    getAttribute(name) {
+      return name === 'aria-label' ? '' : null;
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 100, top: 200, width: 240, height: 48 };
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            querySelectorAll(selector) {
+              assert.match(selector, /\[role="button"\]/);
+              return [fakeButton];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const point = await api.getPaymentActionClickPoint(99, 'review');
+
+  assert.equal(point.success, true);
+  assert.equal(point.text, '確認する');
+  assert.equal(point.x, 220);
+  assert.equal(point.y, 224);
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -943,6 +981,7 @@ async function run() {
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
+  await testPaymentTrustedClickPointFindsRoleButton();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testYahooLoginPageCountsAsTransactionTab();
