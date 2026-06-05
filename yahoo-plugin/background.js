@@ -584,6 +584,39 @@ function getPaymentActionPatternSource(action) {
   return patterns[action] || '';
 }
 
+function buildPaymentPageStateFromSnapshot(snapshot = {}) {
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const bodyText = normalize(snapshot.bodyText || '');
+  const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(normalize).filter(Boolean) : [];
+  const hasControl = pattern => controls.some(text => pattern.test(text));
+  const yenMatches = [...bodyText.matchAll(/([\d,]+)\s*\u5186/g)]
+    .map(match => Number(match[1].replace(/,/g, '')) || 0)
+    .filter(amount => amount > 0);
+  const paymentAmountMatch = bodyText.match(/\u304a\u652f\u6255\u3044\u91d1\u984d[^\d]{0,40}([\d,]+)\s*\u5186/);
+  const paymentAmountJpy = paymentAmountMatch
+    ? Number(paymentAmountMatch[1].replace(/,/g, '')) || 0
+    : (yenMatches.length ? Math.max(...yenMatches) : 0);
+  const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
+  const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
+    || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
+  return {
+    url: snapshot.url || '',
+    title: snapshot.title || '',
+    textSample: bodyText.slice(0, 500),
+    paymentAmountJpy,
+    alreadyPaid,
+    complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText),
+    processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
+    hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
+    hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
+    hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
+    hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
+    hasTransactionConfirmButton: hasControl(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
+    hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
+    hasFinalizeButton: hasControl(/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/)
+  };
+}
+
 async function getPaymentPageState(tabId) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
@@ -600,39 +633,21 @@ async function getPaymentPageState(tabId) {
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')]
         .map(el => getText(el))
         .filter(Boolean);
-      const hasControl = pattern => controls.some(text => pattern.test(text));
-      const yenMatches = [...bodyText.matchAll(/([\d,]+)\s*\u5186/g)]
-        .map(match => Number(match[1].replace(/,/g, '')) || 0)
-        .filter(amount => amount > 0);
-      const paymentAmountMatch = bodyText.match(/\u304a\u652f\u6255\u3044\u91d1\u984d[^\d]{0,40}([\d,]+)\s*\u5186/);
-      const paymentAmountJpy = paymentAmountMatch
-        ? Number(paymentAmountMatch[1].replace(/,/g, '')) || 0
-        : (yenMatches.length ? Math.max(...yenMatches) : 0);
       return {
         success: true,
-        state: {
+        snapshot: {
           url: location.href,
           title: document.title || '',
-          textSample: bodyText.slice(0, 500),
-          paymentAmountJpy,
-          alreadyPaid: /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText)
-            && /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText),
-          complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText)
-            && /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText),
-          processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
-          hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
-          hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
-          hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
-          hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
-          hasTransactionConfirmButton: hasControl(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
-          hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
-          hasFinalizeButton: hasControl(/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/)
+          bodyText,
+          controls
         }
       };
     }
   });
   const result = injectionResult?.[0]?.result;
-  return result?.success ? result.state : null;
+  if (!result?.success) return null;
+  if (result.state) return result.state;
+  return buildPaymentPageStateFromSnapshot(result.snapshot || {});
 }
 
 async function runMainWorldPaymentActionClick(tabId, action) {
@@ -1468,10 +1483,6 @@ async function executePaymentJob(job, paymentBatch = {}) {
   const beforeTabIds = await getTabIds();
   const pageStaySeconds = Math.max(1, Number(paymentBatch.paymentPageStaySeconds || job.paymentPageStaySeconds || 3));
   try {
-    if (String(job.productType || '').toLowerCase() === 'store') {
-      throw new Error('store payment page detail phase disabled');
-    }
-
     tab = await openTransactionPage(job);
     let state = await getPaymentPageState(tab.id);
     if (state?.alreadyPaid) return { alreadyPaid: true };
@@ -1487,21 +1498,27 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
 
-    if (state?.hasEasyPaymentButton) {
-      const result = await clickPaymentActionAndFollowTab(tab, 'easyPayment', nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton
-      );
-      if (!result?.success) throw new Error(result?.error || 'easy payment button click failed');
+    let entryClicks = 0;
+    while (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton && entryClicks < 3) {
+      let result = null;
+      if (state?.hasEasyPaymentButton) {
+        result = await clickPaymentActionAndFollowTab(tab, 'easyPayment', nextState =>
+          nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton
+        );
+        if (!result?.success) throw new Error(result?.error || 'easy payment button click failed');
+      } else if (state?.hasPurchaseProcedureButton) {
+        result = await clickPaymentActionAndFollowTab(tab, 'purchaseProcedure', nextState =>
+          nextState.alreadyPaid || nextState.complete || nextState.hasEasyPaymentButton || nextState.hasReviewButton
+        );
+        if (!result?.success) throw new Error(result?.error || 'purchase procedure button click failed');
+      } else {
+        break;
+      }
+      entryClicks += 1;
       tab = result.tab;
       state = result.state;
-    } else if (state?.hasPurchaseProcedureButton) {
-      const result = await clickPaymentActionAndFollowTab(tab, 'purchaseProcedure', nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton
-      );
-      if (!result?.success) throw new Error(result?.error || 'purchase procedure button click failed');
-      tab = result.tab;
-      state = result.state;
-    } else {
+    }
+    if (!entryClicks && !state?.hasReviewButton && !state?.alreadyPaid && !state?.complete) {
       throw new Error('payment entry button not found');
     }
 
@@ -1692,6 +1709,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
+  buildPaymentPageStateFromSnapshot,
   syncIdleYahooPages,
   runTransactionStartJobs,
   runPaymentJobs,
