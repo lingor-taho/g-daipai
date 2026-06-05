@@ -16,6 +16,8 @@ const {
   getMinMultiBidIncrement,
   getDefaultMultiBidIncrement,
   validateMultiBidIncrement,
+  getRequiredBidMaxPrice,
+  validateSubmitMeetsMinimumBidPrice,
   assertProductSubmissionOwner,
   isAutomaticStrategy,
   isActiveAutomaticStrategy,
@@ -279,6 +281,51 @@ function testMultiBidIncrementUsesYahooBidStepRule() {
   assert.throws(() => validateMultiBidIncrement('multi_bid', 5500, 249), /250/);
 }
 
+function testSubmitMinimumBidPriceUsesBidCount() {
+  assert.equal(getRequiredBidMaxPrice(5500, 0), 5500);
+  assert.equal(getRequiredBidMaxPrice(5500, 1), 5750);
+  assert.equal(getRequiredBidMaxPrice(9999, 3), 10249);
+  assert.doesNotThrow(() => validateSubmitMeetsMinimumBidPrice({
+    bidMode: 'bid',
+    bidMaxPrice: 5500,
+    currentPrice: 5500,
+    bidCount: 0
+  }));
+  assert.throws(() => validateSubmitMeetsMinimumBidPrice({
+    bidMode: 'bid',
+    bidMaxPrice: 5600,
+    currentPrice: 5500,
+    bidCount: 1
+  }), /最低加价250円/);
+  assert.doesNotThrow(() => validateSubmitMeetsMinimumBidPrice({
+    bidMode: 'bid',
+    bidMaxPrice: 5750,
+    currentPrice: 5500,
+    bidCount: 1
+  }));
+  assert.doesNotThrow(() => validateSubmitMeetsMinimumBidPrice({
+    bidMode: 'buyout',
+    bidMaxPrice: 5500,
+    currentPrice: 5500,
+    bidCount: 1
+  }));
+}
+
+function testStoreSubmitMinimumBidPriceUsesTaxExcludedBidMax() {
+  assert.throws(() => validateSubmitMeetsMinimumBidPrice({
+    bidMode: 'bid',
+    bidMaxPrice: 5600,
+    currentPrice: 5500,
+    bidCount: 1
+  }), /最低需出到5750円/);
+  assert.doesNotThrow(() => validateSubmitMeetsMinimumBidPrice({
+    bidMode: 'bid',
+    bidMaxPrice: 5750,
+    currentPrice: 5500,
+    bidCount: 1
+  }));
+}
+
 function testProductSubmissionOwnerAllowsOriginalUser() {
   assert.doesNotThrow(() => assertProductSubmissionOwner({ user_id: 7 }, 7));
   assert.doesNotThrow(() => assertProductSubmissionOwner(null, 7));
@@ -403,6 +450,8 @@ testStoreCurrentPriceDisplaysAsTaxIncluded();
 testStoreBuyoutPriceIsAlreadyTaxIncluded();
 testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000();
 testMultiBidIncrementUsesYahooBidStepRule();
+testSubmitMinimumBidPriceUsesBidCount();
+testStoreSubmitMinimumBidPriceUsesTaxExcludedBidMax();
 testProductSubmissionOwnerAllowsOriginalUser();
 testProductSubmissionOwnerRejectsOtherUser();
 testAutomaticStrategyDetection();

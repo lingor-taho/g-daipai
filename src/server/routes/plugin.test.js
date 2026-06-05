@@ -7,6 +7,7 @@ const {
   expireOverduePendingTasks,
   failPricedOutPendingTasks,
   resetStaleProcessingTasks,
+  claimTaskForProcessing,
   sweepPendingTasks,
   getMultiBidStartMs,
   getMultiBidIntervalMs,
@@ -226,6 +227,25 @@ async function testResetStaleProcessingTasksReturnsOldProcessingToPending() {
   assert.match(calls[0].sql, /WHERE status = 'processing'/);
   assert.match(calls[0].sql, /datetime\(updated_at\) <= datetime\(\?\)/);
   assert.equal(calls[0].params[0], new Date(now - 60 * 1000).toISOString());
+}
+
+async function testClaimTaskForProcessingOnlyClaimsPendingTask() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await claimTaskForProcessing(42, fakeDb);
+
+  assert.equal(result.success, true);
+  assert.match(calls[0].sql, /SET status = 'processing'/);
+  assert.match(calls[0].sql, /WHERE id = \?/);
+  assert.match(calls[0].sql, /status = 'pending'/);
+  assert.match(calls[0].sql, /status = 'bidding' AND strategy = 'multi_bid'/);
+  assert.deepEqual(calls[0].params, [42]);
 }
 
 async function testSweepPendingTasksIncludesProcessingResets() {
@@ -970,6 +990,7 @@ testIdleGuardBlocksNearFutureBidTasks();
 testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
+testClaimTaskForProcessingOnlyClaimsPendingTask();
 testSweepPendingTasksIncludesProcessingResets();
 testSyncBiddingItemsMarksHighestAndOutbidTasks();
 testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice();

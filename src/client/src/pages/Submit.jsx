@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getBuyoutPrice, getBuyoutSubmitPrice, getComparableCurrentPrice, getSubmitMaxPrice, getSubmitTaxType, isBuyoutOnlyProduct, isStoreProduct, isSubmitMaxPriceAboveCurrentPrice } from '../utils/bidPrice';
+import { getActualBidPrice, getBuyoutPrice, getBuyoutSubmitPrice, getComparableCurrentPrice, getRequiredTaxExcludedBidPrice, getSubmitMaxPrice, getSubmitTaxType, getYahooMinimumBidIncrement, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -236,11 +236,17 @@ export default function Submit() {
       Toast.show({ content: '请输入最高出价' });
       return;
     }
-    // 修改校验：最高价的税前价 >= 商品目前的税前价即可提交（支持起拍价出价）
+    // 拍卖次数为 0 可按当前价提交；已有入札时必须满足 Yahoo 最低加价。
     const submitTaxExcludedPrice = toTaxExcludedYen(effectiveMaxPrice, submitTaxType);
     const currentTaxExcludedPrice = Number(product?.currentPrice || 0);
-    if (!buyoutSelected && !buyoutOnly && submitTaxExcludedPrice < currentTaxExcludedPrice) {
-      Toast.show({ content: `最高出价不能低于当前价格（当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円）` });
+    const requiredTaxExcludedPrice = getRequiredTaxExcludedBidPrice(product);
+    if (!buyoutSelected && !buyoutOnly && submitTaxExcludedPrice < requiredTaxExcludedPrice) {
+      const bidCount = Number(product?.bidCount ?? product?.bid_count ?? 0);
+      const minIncrement = bidCount > 0 ? getYahooMinimumBidIncrement(currentTaxExcludedPrice) : 0;
+      const reason = minIncrement > 0
+        ? `当前价 ${currentTaxExcludedPrice.toLocaleString('ja-JP')}円 + 最低加价 ${minIncrement.toLocaleString('ja-JP')}円`
+        : `当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円`;
+      Toast.show({ content: `最高出价不能低于最低可出价（${reason}，最低 ${requiredTaxExcludedPrice.toLocaleString('ja-JP')}円）` });
       return;
     }
     const selectedStrategy = (buyoutSelected || buyoutOnly) ? 'direct' : (strategy || 'direct');

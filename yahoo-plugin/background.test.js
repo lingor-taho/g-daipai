@@ -880,6 +880,62 @@ async function testPaymentTrustedClickPointFindsRoleButton() {
   assert.equal(point.y, 224);
 }
 
+async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
+  const hiddenButton = {
+    tagName: 'A',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    getAttribute(name) {
+      if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:0;';
+      return '';
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 0, height: 0 };
+    }
+  };
+  const visibleButton = {
+    tagName: 'A',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    getAttribute(name) {
+      if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:1;';
+      return '';
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 1036, top: 526, width: 284, height: 46 };
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            querySelectorAll() {
+              return [hiddenButton, visibleButton];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const point = await api.getPaymentActionClickPoint(99, 'review');
+
+  assert.equal(point.success, true);
+  assert.equal(point.text, '確認する');
+  assert.equal(point.x, 1178);
+  assert.equal(point.y, 549);
+  assert.equal(point.rect.width, 284);
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -982,6 +1038,7 @@ async function run() {
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
+  await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testYahooLoginPageCountsAsTransactionTab();

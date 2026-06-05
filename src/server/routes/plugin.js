@@ -190,6 +190,22 @@ async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
   return result.rowCount || 0;
 }
 
+async function claimTaskForProcessing(taskId, database = db) {
+  const result = await database.query(
+    `UPDATE tasks
+     SET status = 'processing',
+         error_msg = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND (
+         status = 'pending'
+         OR (status = 'bidding' AND strategy = 'multi_bid')
+       )`,
+    [taskId]
+  );
+  return { success: (result.rowCount || 0) > 0 };
+}
+
 async function sweepPendingTasks(database = db, nowMs = Date.now()) {
   const overdue = await expireOverduePendingTasks(database, nowMs);
   const pricedOut = await failPricedOutPendingTasks(database);
@@ -416,6 +432,11 @@ router.post('/idle-action/complete', async (req, res) => {
 // PATCH /api/plugin/task/:id/status
 router.patch('/task/:id/status', async (req, res) => {
   const { status, error_msg, bid_price, no_bid, not_highest } = req.body;
+  if (status === 'processing') {
+    const result = await claimTaskForProcessing(req.params.id);
+    return res.json(result);
+  }
+
   if (isYahooLoginError(error_msg)) {
     await setYahooLoginStatus('failed', error_msg);
   } else if (status === 'bidding') {
@@ -1445,6 +1466,7 @@ module.exports.updatePaymentStatus = updatePaymentStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
+module.exports.claimTaskForProcessing = claimTaskForProcessing;
 module.exports.sweepPendingTasks = sweepPendingTasks;
 module.exports.isYahooLoginError = isYahooLoginError;
 module.exports.syncBiddingItems = syncBiddingItems;

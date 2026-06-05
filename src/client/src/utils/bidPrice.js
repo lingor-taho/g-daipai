@@ -55,6 +55,31 @@ export function getComparableCurrentPrice(product) {
   return Math.floor(value * 1.1);
 }
 
+export function getYahooMinimumBidIncrement(currentTaxExcludedPrice) {
+  const value = Number(currentTaxExcludedPrice || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 5000) return 100;
+  if (value < 10000) return 250;
+  if (value < 50000) return 500;
+  return 1000;
+}
+
+export function getRequiredTaxExcludedBidPrice(product) {
+  const currentPrice = Number(product?.currentPrice ?? product?.current_price ?? 0);
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return 0;
+  const bidCount = Number(product?.bidCount ?? product?.bid_count ?? 0);
+  const increment = Number.isFinite(bidCount) && bidCount > 0
+    ? getYahooMinimumBidIncrement(currentPrice)
+    : 0;
+  return Math.floor(currentPrice + increment);
+}
+
+export function isSubmitTaxExcludedPriceAtLeastRequiredBid(submitTaxExcludedPrice, product) {
+  const required = getRequiredTaxExcludedBidPrice(product);
+  if (required <= 0) return true;
+  return Number(submitTaxExcludedPrice || 0) >= required;
+}
+
 export function isSubmitMaxPriceAboveCurrentPrice(submitMaxPrice, product) {
   const currentPrice = getComparableCurrentPrice(product);
   if (currentPrice <= 0) return true;

@@ -788,12 +788,19 @@ node src\server\routes\plugin.test.js
 - `/api/proxy/fetch` 返回 `bidCount`。
 - 提交任务页商品卡片在“当前合计金额”下一行显示小锤子图标 + `拍卖次数：X件`，0 次也会正常显示。
 - `/api/task/submit` 保存 `bid_count` 到 `tasks.bid_count`；历史数据库启动时会自动补齐该列。
+- 用户端提交最高价校验已按拍卖次数更新：
+  - `bid_count=0`：最高价的税前价只需 `>= 当前税前价`，支持无人出价商品按起拍价提交。
+  - `bid_count>0`：最高价的税前价必须 `>= 当前税前价 + Yahoo 最低加价`。
+  - Yahoo 最低加价阶梯：`<5000=100`、`5000-9999=250`、`10000-49999=500`、`>=50000=1000`。
+  - 示例：当前税前 `5500円` 且已有出价时，最低加价 `250円`，最低提交最高价为 `5750円`。
+- 服务端 `/api/task/submit` 也增加同样兜底校验，防止绕过前端直接提交低于 Yahoo 最低加价的价格。
 
 ### 最近验证命令
 
 ```powershell
 node src\server\routes\proxy.test.js
 node src\server\routes\task.test.js
+node src\client\src\utils\bidPrice.test.mjs
 Set-Location src\client
 npm run build
 ```
@@ -904,6 +911,39 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-05 入札确认误点推荐商品修复
+
+### 问题现象
+
+- 服务器 Chrome 插件在 Yahoo 入札弹窗里已填入金额后，停在红色 `確認する` 弹窗，没有进入下一步确认页。
+- 同时页面下方 `この商品も注目されています` 推荐区的多个商品被打开，表现为 1 秒内出现多个非任务商品 tab。
+- 同一用户、同一商品、同一价格和策略可能出现不同失败：`低于当前价`、`yahoo登录失败`、`系统原因`。根因是插件执行时页面状态不同，而不是用户端缓存。
+
+### 根因结论
+
+- 入札流程里的按钮查找范围是整页，遇到弹窗和页面推荐区同时存在同名/相似确认控件时，可能优先命中弹窗外的可点击元素。
+- 入札流程内部的 `clickElement` 只发送普通 mouse/click 事件；如果 Yahoo 的 `確認する` 是 submit 按钮或依赖 pointer/表单提交事件，普通 click 可能不稳定。
+- `/api/plugin/task` 先返回任务、插件再 PATCH `processing`，旧逻辑 PATCH 时未要求任务仍处于可执行状态；如果服务器 Chrome 有重复插件实例、多个 profile 或重复轮询，同一任务可能被并发执行，放大“短时间打开多个 tab”的问题。
+
+### 已修复内容
+
+- `yahoo-plugin/content.js`：出价按钮匹配现在优先在可见入札/落札 modal/dialog 内查找 `確認する` 等按钮，避免误点页面推荐区或弹窗外控件。
+- `yahoo-plugin/content.js`：入札流程点击按钮时补发 `pointerdown/pointerup`，并在 submit 按钮上调用 `form.requestSubmit(button)`，提升 Yahoo 弹窗确认进入下一步的稳定性。
+- `src/server/routes/plugin.js`：新增 `claimTaskForProcessing()`，`status=processing` 只允许仍为 `pending` 或 `bidding + multi_bid` 的任务原子改为 `processing`；并发执行器拿不到同一任务会收到 `success:false` 并跳过。
+- 新增回归测试：
+  - 入札弹窗和推荐区同时有 `確認する` 时，只点击弹窗内按钮。
+  - submit 类型的 `確認する` 会触发表单 `requestSubmit()`。
+  - 任务 claim SQL 必须限制在可执行状态，避免重复领取。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+node src\server\routes\plugin.test.js
+```
+
+---
+
 ## 2026-06-05 付款红色按钮点击增强
 
 ### 问题现象
@@ -914,9 +954,11 @@ node yahoo-plugin\background.test.js
 ### 已修复内容
 
 - 付款按钮识别范围扩展到 `[role="button"]`，避免 Yahoo 使用伪按钮时漏识别。
+- Yahoo 付款页红色 `確認する` 实际 DOM 可能是 `<a data-cl-params="_cl_link:confirm;_cl_position:1;">確認する</a>`，插件现在优先选择 `data-cl-params` 含 `_cl_link:confirm` 且可见、有尺寸、未 disabled 的匹配元素，避免点到隐藏模板或不可点击的同名节点。
 - 普通付款点击会先补发 `pointerdown/mousedown/pointerup/mouseup/click` 事件。
 - 如果点击 `確認する` 后 5 秒内没有进入下一付款状态，插件会使用 Chrome debugger 的 `Input.dispatchMouseEvent` 对按钮中心点再发送一次真实鼠标点击。
 - 最终确认页 `購入を確定する` 也加入同样真实鼠标点击兜底。
+- 失败诊断增强：如果真实鼠标点击后仍未进入下一页，错误信息会带上 `action`、普通点击结果、真实鼠标点击结果、当前 URL、页面按钮文本列表和候选按钮的 `tagName/text/disabled/role/href/rect`，用于判断是找不到按钮、按钮不可点，还是 Yahoo 页面点击后没有响应。
 
 ### 最近验证命令
 

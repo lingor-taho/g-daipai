@@ -619,6 +619,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     url: snapshot.url || '',
     title: snapshot.title || '',
     textSample: bodyText.slice(0, 500),
+    controlsSample: controls.slice(0, 20),
     paymentAmountJpy,
     alreadyPaid,
     complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText),
@@ -681,7 +682,15 @@ async function runMainWorldPaymentActionClick(tabId, action) {
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
-      const button = controls.find(el => pattern.test(getText(el)));
+      const isClickable = el => {
+        const rect = el.getBoundingClientRect?.();
+        return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
+      };
+      const isPreferredConfirm = el => actionName === 'review' && /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
+      const matches = controls.filter(el => pattern.test(getText(el)));
+      const button = matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        matches.find(el => isClickable(el)) ||
+        matches[0];
       if (!button) return { success: false, error: 'payment button not found' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
@@ -723,25 +732,60 @@ async function getPaymentActionClickPoint(tabId, action) {
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
-      const button = controls.find(el => pattern.test(getText(el)));
-      if (!button) return { success: false, error: 'payment button not found for trusted click' };
+      const candidates = controls.map(el => {
+        const rect = el.getBoundingClientRect?.();
+        return {
+          tagName: el.tagName,
+          text: getText(el).slice(0, 80),
+          disabled: Boolean(el.disabled || el.getAttribute?.('aria-disabled') === 'true'),
+          role: el.getAttribute?.('role') || '',
+          href: el.href || '',
+          rect: rect ? { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : null
+        };
+      }).filter(item => item.text);
+      const isClickable = el => {
+        const rect = el.getBoundingClientRect?.();
+        return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
+      };
+      const isPreferredConfirm = el => /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
+      const matches = controls.filter(el => pattern.test(getText(el)));
+      const button = matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        matches.find(el => isClickable(el)) ||
+        matches[0];
+      if (!button) return { success: false, error: 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       const rect = button.getBoundingClientRect?.();
       if (!rect || rect.width <= 0 || rect.height <= 0) {
-        return { success: false, error: 'payment button has no clickable rect' };
+        return { success: false, error: 'payment button has no clickable rect', candidates: candidates.slice(0, 20) };
       }
       return {
         success: true,
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2,
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-        text: getText(button)
+        text: getText(button),
+        candidates: candidates.slice(0, 20)
       };
     },
     args: [pattern]
   });
   const result = injectionResult?.[0]?.result;
   return result?.success ? result : { success: false, error: result?.error || 'payment button not found for trusted click' };
+}
+
+function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state, waitError) {
+  const parts = [
+    `action=${action}`,
+    `synthetic=${clickResult?.success ? 'success' : 'failed'}:${clickResult?.method || ''}:${clickResult?.text || clickResult?.error || ''}`,
+    `trusted=${trustedClick?.success ? 'success' : 'failed'}:${trustedClick?.method || ''}:${trustedClick?.text || trustedClick?.error || ''}`
+  ];
+  if (waitError?.message) parts.push(`wait=${waitError.message}`);
+  if (state?.url) parts.push(`url=${state.url}`);
+  if (Array.isArray(state?.controlsSample)) parts.push(`controls=${state.controlsSample.join(' | ').slice(0, 500)}`);
+  if (Array.isArray(trustedClick?.candidates)) {
+    parts.push(`candidates=${JSON.stringify(trustedClick.candidates).slice(0, 1000)}`);
+  }
+  return parts.join('; ');
 }
 
 async function dispatchTrustedPaymentActionClick(tab, action) {
@@ -787,7 +831,7 @@ async function dispatchTrustedPaymentActionClick(tab, action) {
       clickCount: 1
     });
     await sleep(300);
-    return { success: true, method: 'debuggerMouse', text: point.text };
+    return { success: true, method: 'debuggerMouse', text: point.text, candidates: point.candidates };
   } catch (e) {
     return { success: false, error: e.message || 'trusted payment mouse click failed' };
   } finally {
@@ -875,9 +919,18 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
     if (!trustedClick?.success) {
       return { success: false, error: trustedClick?.error || clickResult?.error || `payment ${action} click failed`, tab };
     }
-    const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
-    await injectContentScript(nextTab.id).catch(() => {});
-    return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+    try {
+      const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+      await injectContentScript(nextTab.id).catch(() => {});
+      return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+    } catch (afterTrustedError) {
+      const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+      return {
+        success: false,
+        error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterTrustedError),
+        tab
+      };
+    }
   }
 }
 

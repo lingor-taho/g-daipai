@@ -107,6 +107,30 @@ function getMinMultiBidIncrement(userMaxPrice) {
   return 1000;
 }
 
+function getRequiredBidMaxPrice(currentPrice, bidCount) {
+  const current = Number(currentPrice || 0);
+  if (!Number.isFinite(current) || current <= 0) return 0;
+  const count = Number(bidCount || 0);
+  const increment = Number.isFinite(count) && count > 0
+    ? getMinMultiBidIncrement(current)
+    : 0;
+  return Math.floor(current + increment);
+}
+
+function validateSubmitMeetsMinimumBidPrice({ bidMode, bidMaxPrice, currentPrice, bidCount }) {
+  if (bidMode === 'buyout') return;
+  const required = getRequiredBidMaxPrice(currentPrice, bidCount);
+  if (required <= 0) return;
+  const submitted = Number(bidMaxPrice || 0);
+  if (Number.isFinite(submitted) && submitted >= required) return;
+  const increment = Number(bidCount || 0) > 0 ? getMinMultiBidIncrement(currentPrice) : 0;
+  const error = new Error(increment > 0
+    ? `最高出价不满足Yahoo最低加价规则：当前价${currentPrice}円，最低加价${increment}円，最低需出到${required}円`
+    : `最高出价不能低于当前价格：最低需出到${required}円`);
+  error.statusCode = 400;
+  throw error;
+}
+
 function getDefaultMultiBidIncrement(userMaxPrice) {
   return getMinMultiBidIncrement(userMaxPrice);
 }
@@ -384,6 +408,12 @@ router.post('/submit', async (req, res) => {
     let finalUserMaxPrice = userMaxPrice;
     let finalBidMaxPrice = bidMaxPrice;
     const productCurrentPrice = Number(current_price || productInfo?.currentPrice || 0);
+    validateSubmitMeetsMinimumBidPrice({
+      bidMode: input.bidMode,
+      bidMaxPrice,
+      currentPrice: productCurrentPrice,
+      bidCount
+    });
     if (
       !followupMaxPrice &&
       shouldSplitDirectBidByYahooLowPriceRule({
@@ -662,6 +692,8 @@ module.exports.validateMultiBidUserMaxPrice = validateMultiBidUserMaxPrice;
 module.exports.getMinMultiBidIncrement = getMinMultiBidIncrement;
 module.exports.getDefaultMultiBidIncrement = getDefaultMultiBidIncrement;
 module.exports.validateMultiBidIncrement = validateMultiBidIncrement;
+module.exports.getRequiredBidMaxPrice = getRequiredBidMaxPrice;
+module.exports.validateSubmitMeetsMinimumBidPrice = validateSubmitMeetsMinimumBidPrice;
 module.exports.assertProductSubmissionOwner = assertProductSubmissionOwner;
 module.exports.isAutomaticStrategy = isAutomaticStrategy;
 module.exports.isActiveAutomaticStrategy = isActiveAutomaticStrategy;

@@ -579,6 +579,10 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function findClickable(patterns) {
     const selector = clickableSelector();
+    const modal = findActiveDialog();
+    const modalMatch = findClickableWithin(modal, selector, patterns);
+    if (modalMatch) return modalMatch;
+
     const direct = [...document.querySelectorAll(selector)].find(el => {
       return isClickableElement(el) &&
         patterns.some(pattern => pattern.test(textOf(el)));
@@ -589,6 +593,21 @@ async function executeBidV3(maxPrice, options = {}) {
       .find(el => patterns.some(pattern => pattern.test(textOf(el))));
     const closest = textNodeOwner?.closest(selector) || null;
     return closest && isClickableElement(closest) ? closest : null;
+  }
+
+  function findActiveDialog() {
+    const dialogs = [
+      ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]')
+    ].filter(el => isClickableElement(el));
+    return dialogs.find(el => /\u5165\u672d|\u843d\u672d|\u78ba\u8a8d|\u5165\u672d\u984d/.test(textOf(el))) || null;
+  }
+
+  function findClickableWithin(container, selector, patterns) {
+    if (!container?.querySelectorAll) return null;
+    return [...container.querySelectorAll(selector)].find(el => {
+      return isClickableElement(el) &&
+        patterns.some(pattern => pattern.test(textOf(el)));
+    }) || null;
   }
 
   function findBidEntryButton(mode = 'bid') {
@@ -635,8 +654,16 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function clickElement(el) {
     el.scrollIntoView({ block: 'center', inline: 'center' });
+    el.focus?.();
+    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
     el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
     el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    if (el.type === 'submit') {
+      try {
+        el.closest?.('form')?.requestSubmit?.(el);
+      } catch (_) {}
+    }
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
     el.click();
   }

@@ -668,6 +668,82 @@ async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
   assert.equal(confirmButton.clicked, true);
 }
 
+async function testDirectBidClicksConfirmInsideBidModalOnly() {
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const modalConfirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  const recommendationButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  const bidModal = createTestElement('\u5165\u672d \u5165\u672d\u984d \u78ba\u8a8d\u3059\u308b');
+  bidModal.querySelectorAll = selector => {
+    if (selector.includes('button') || selector.includes('a')) return [modalConfirmButton];
+    return [];
+  };
+  modalConfirmButton.closest = selector => selector.includes('role') || selector.includes('dialog') ? bidModal : null;
+  recommendationButton.closest = () => null;
+
+  const api = loadContentForTest('\u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,100\u5186 \u3053\u306e\u5546\u54c1\u3082\u6ce8\u76ee\u3055\u308c\u3066\u3044\u307e\u3059 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [bidModal];
+      if (selector.includes('button')) return [recommendationButton, modalConfirmButton];
+      if (selector === 'body *') return [recommendationButton, modalConfirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(1100, { maxPrice: 1100, strategy: 'direct' });
+
+  assert.equal(result.success, true);
+  assert.equal(result.pendingFinal, true);
+  assert.equal(modalConfirmButton.clicked, true);
+  assert.equal(recommendationButton.clicked, false);
+}
+
+async function testDirectBidSubmitConfirmRequestsFormSubmit() {
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  confirmButton.type = 'submit';
+  const form = {
+    submittedWith: null,
+    requestSubmit(button) {
+      this.submittedWith = button;
+    }
+  };
+  const bidModal = createTestElement('\u5165\u672d \u5165\u672d\u984d \u78ba\u8a8d\u3059\u308b');
+  bidModal.querySelectorAll = selector => {
+    if (selector.includes('button') || selector.includes('input')) return [confirmButton];
+    return [];
+  };
+  confirmButton.closest = selector => {
+    if (selector === 'form') return form;
+    if (selector.includes('role') || selector.includes('dialog')) return bidModal;
+    return null;
+  };
+
+  const api = loadContentForTest('\u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,100\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [bidModal];
+      if (selector.includes('button') || selector.includes('input')) return [confirmButton];
+      if (selector === 'body *') return [confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(1100, { maxPrice: 1100, strategy: 'direct' });
+
+  assert.equal(result.success, true);
+  assert.equal(result.pendingFinal, true);
+  assert.equal(form.submittedWith, confirmButton);
+}
+
 async function testBuyoutClicksInstantBuyThenFinalAgree() {
   let stage = 'product';
   const instantBuyButton = createTestElement('\u4eca\u3059\u3050\u843d\u672d');
@@ -1316,6 +1392,8 @@ async function run() {
   await testDirectBidNoLongerSkipsWhenWithinAutoBidLimit();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
+  await testDirectBidClicksConfirmInsideBidModalOnly();
+  await testDirectBidSubmitConfirmRequestsFormSubmit();
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();

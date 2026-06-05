@@ -6,7 +6,10 @@ import {
   getBuyoutSubmitPrice,
   getSubmitMaxPrice,
   getSubmitTaxType,
+  getYahooMinimumBidIncrement,
+  getRequiredTaxExcludedBidPrice,
   isSubmitMaxPriceAboveCurrentPrice,
+  isSubmitTaxExcludedPriceAtLeastRequiredBid,
   isBuyoutOnlyProduct,
   isStoreProduct
 } from './bidPrice.js';
@@ -67,6 +70,21 @@ function testSubmitMaxPriceMustBeAboveCurrentPrice() {
   assert.equal(isSubmitMaxPriceAboveCurrentPrice(1000, { taxType: 'tax_zero', currentPrice: 0 }), true);
 }
 
+function testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids() {
+  assert.equal(getYahooMinimumBidIncrement(4999), 100);
+  assert.equal(getYahooMinimumBidIncrement(5000), 250);
+  assert.equal(getYahooMinimumBidIncrement(10000), 500);
+  assert.equal(getYahooMinimumBidIncrement(50000), 1000);
+
+  assert.equal(getRequiredTaxExcludedBidPrice({ currentPrice: 5500, bidCount: 0 }), 5500);
+  assert.equal(getRequiredTaxExcludedBidPrice({ currentPrice: 5500, bidCount: 1 }), 5750);
+  assert.equal(getRequiredTaxExcludedBidPrice({ current_price: 4999, bid_count: 2 }), 5099);
+
+  assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(5600, { currentPrice: 5500, bidCount: 1 }), false);
+  assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(5750, { currentPrice: 5500, bidCount: 1 }), true);
+  assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(5500, { currentPrice: 5500, bidCount: 0 }), true);
+}
+
 testStoreProductDetection();
 testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual();
 testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual();
@@ -74,3 +92,4 @@ testNormalProductDoesNotApplyStoreMode();
 testBuyoutOnlyProductDetection();
 testComparableCurrentPriceAddsTaxForStoreProducts();
 testSubmitMaxPriceMustBeAboveCurrentPrice();
+testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids();
