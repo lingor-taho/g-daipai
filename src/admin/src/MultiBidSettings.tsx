@@ -63,7 +63,8 @@ export default function MultiBidSettingsPage() {
           scanStartHour: data.scanStartHour ?? 1,
           scanEndHour: data.scanEndHour ?? 20,
           scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5,
-          paymentJobLimit: data.paymentJobLimit ?? 3,
+          paymentJobLimitMin: data.paymentJobLimitMin ?? data.paymentJobLimit ?? 3,
+          paymentJobLimitMax: data.paymentJobLimitMax ?? data.paymentJobLimit ?? 3,
           paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3
         });
       })
@@ -135,7 +136,8 @@ export default function MultiBidSettingsPage() {
           scanStartHour: 1,
           scanEndHour: 20,
           scanEveryIdleRuns: 5,
-          paymentJobLimit: 3,
+          paymentJobLimitMin: 3,
+          paymentJobLimitMax: 3,
           paymentPageStaySeconds: 3
         }}
         style={{ maxWidth: 640 }}
@@ -219,13 +221,22 @@ export default function MultiBidSettingsPage() {
           <Form.Item label="手动执行扫描">
             <Button loading={requestingScan} onClick={handleRequestScan}>加入执行队列</Button>
           </Form.Item>
-          <Form.Item
-            name="paymentJobLimit"
-            label="付款流程执行任务数"
-            rules={[{ required: true, message: '请输入付款流程执行任务数' }]}
-          >
-            <InputNumber min={1} step={1} precision={0} addonAfter="件" style={{ width: '100%' }} />
-          </Form.Item>
+          <Space style={{ width: '100%' }} align="baseline">
+            <Form.Item
+              name="paymentJobLimitMin"
+              label="付款流程执行任务数最小"
+              rules={[{ required: true, message: '请输入付款流程执行任务数最小值' }]}
+            >
+              <InputNumber min={1} step={1} precision={0} addonAfter="件" style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              name="paymentJobLimitMax"
+              label="付款流程执行任务数最大"
+              rules={[{ required: true, message: '请输入付款流程执行任务数最大值' }]}
+            >
+              <InputNumber min={1} step={1} precision={0} addonAfter="件" style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
           <Form.Item
             name="paymentPageStaySeconds"
             label="付款页面停留时间(秒)"

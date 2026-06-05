@@ -594,9 +594,9 @@ npm run build
 - 进入购买手续页后，点击右侧订单金额下方 `確認する`。
 - 点击前会校验页面显示支付金额是否等于 `final_price + effectiveShippingFeeText`；不一致则失败，不继续付款。
 - 进入确认页后，点击 `上記に同意のうえ 購入を確定する` / `購入を確定する`。
-- 点击最终确认后，按后台 `payment_page_stay_seconds` 等待。
+- 最终确认页先按后台 `payment_page_stay_seconds` 取 `1-X` 秒随机停留，再点击最终确认。
 - 完成页出现 `購入が完了しました！` 时，订单状态改为 `pending_shipment`，关闭 tab。
-- 出现任何未知页面、金额不一致、仍在处理中或按钮缺失，均按失败处理：写付款提醒栏、`payment_requested=0`、关闭 tab。
+- 出现任何未知页面、金额不一致或按钮缺失，均按失败处理：写付款提醒栏、`payment_requested=0`、关闭 tab；处理中页只作为中间页继续等待完成页。
 
 ### 最近验证命令
 
@@ -774,6 +774,61 @@ node src\client\src\utils\wonStats.test.mjs
 ```powershell
 node yahoo-plugin\background.test.js
 node src\server\routes\plugin.test.js
+```
+
+---
+
+## 2026-06-05 付款任务随机化与等待点调整
+
+### 业务规则确认
+
+- 后台 `付款流程执行任务数` 改为范围配置：最小 X 到最大 X 个，例如 `2-5`。
+- `payment_requested=1` 时，服务端每次从该范围内随机取一个整数作为本批付款任务数量，例如 `2/3/4/5`，再按落札时间顺序取对应数量的 `pending_settlement` 订单。
+- `付款页面停留时间(秒)` 含义改为最大停留秒数 X。
+- 插件进入最终确认页（存在 `上記に同意のうえ 購入を確定する` / `購入を確定する`）后，先随机停留 `1-X` 秒，再点击最终确认按钮；不允许 0 秒。
+- 点击最终确认后出现 `ただいま決済処理中です。しばらくお待ちください。` 属于中间页，插件继续等待完成页，不按失败处理。
+- 看到 `購入が完了しました！` 等完成文案后，订单状态改为 `pending_shipment`，关闭 tab。
+
+### 已修复内容
+
+- `src/admin/src/MultiBidSettings.tsx`：
+  - 付款任务数改成 `paymentJobLimitMin` / `paymentJobLimitMax` 两个输入。
+  - 付款页面停留时间最小值保持 `1` 秒。
+- `src/server/routes/admin.js`：
+  - 后台配置接口读写 `payment_job_limit_min` / `payment_job_limit_max`，并继续写 `payment_job_limit` 作为旧配置兼容。
+  - 校验最小任务数不得大于最大任务数。
+- `src/server/routes/plugin.js`：
+  - `/api/plugin/payment/jobs` 按配置范围随机生成本批 limit，并返回 `limitMin/limitMax/limit`。
+  - 未配置新字段时，继续用旧 `payment_job_limit` 作为固定数量。
+- `yahoo-plugin/background.js`：
+  - 最终确认页点击前随机等待 `1-X` 秒。
+  - 图3处理中页不再作为失败状态，等待后续完成页。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+node yahoo-plugin\background.test.js
+node src\server\routes\admin.orders.test.js
+Set-Location src\admin
+npm run build
+```
+
+---
+
+## 2026-06-05 后台付款提醒栏商品 ID 链接
+
+### 已修复内容
+
+- 后台顶部付款提醒栏（`payment_alert_message`）中的商品 ID 现在会渲染为可点击链接。
+- 链接目标为 `https://auctions.yahoo.co.jp/jp/auction/{商品ID}`，点击后新窗口打开 Yahoo 商品页。
+- 支持 `商品ID p123456789` 或提醒文本中出现的拍卖 ID 自动识别。
+
+### 最近验证命令
+
+```powershell
+Set-Location src\admin
+npm run build
 ```
 
 ---

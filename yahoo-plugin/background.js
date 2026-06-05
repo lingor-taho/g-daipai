@@ -536,7 +536,7 @@ async function fetchPaymentJobs() {
   const data = await res.json();
   return {
     jobs: Array.isArray(data.jobs) ? data.jobs : [],
-    paymentPageStaySeconds: Number(data.paymentPageStaySeconds || 3)
+    paymentPageStaySeconds: Number(data.paymentPageStaySeconds ?? 3)
   };
 }
 
@@ -562,6 +562,22 @@ function parseYenAmount(value) {
   const match = text.match(/([\d,]+)\s*\u5186/);
   if (!match) return null;
   return Number(match[1].replace(/,/g, '')) || 0;
+}
+
+function getRandomSource() {
+  return typeof globalThis.__G_DAIPAI_RANDOM__ === 'function'
+    ? globalThis.__G_DAIPAI_RANDOM__
+    : Math.random;
+}
+
+function getRandomIntInclusive(min, max, randomFn = getRandomSource()) {
+  const low = Math.ceil(Number(min));
+  const high = Math.floor(Number(max));
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return 0;
+  if (high <= low) return low;
+  const raw = Number(randomFn());
+  const randomValue = Number.isFinite(raw) ? Math.min(0.999999999, Math.max(0, raw)) : Math.random();
+  return low + Math.floor(randomValue * (high - low + 1));
 }
 
 function getExpectedPaymentAmountJpy(job = {}) {
@@ -1481,7 +1497,7 @@ async function runScanJobs() {
 async function executePaymentJob(job, paymentBatch = {}) {
   let tab = null;
   const beforeTabIds = await getTabIds();
-  const pageStaySeconds = Math.max(1, Number(paymentBatch.paymentPageStaySeconds || job.paymentPageStaySeconds || 3));
+  const maxPageStaySeconds = Math.max(1, Math.floor(Number(paymentBatch.paymentPageStaySeconds ?? job.paymentPageStaySeconds ?? 3)));
   try {
     tab = await openTransactionPage(job);
     let state = await getPaymentPageState(tab.id);
@@ -1539,20 +1555,20 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (!state?.hasFinalizeButton) throw new Error('payment finalize button not found');
     assertPaymentAmountMatches(job, state);
 
+    const pageStaySeconds = getRandomIntInclusive(1, maxPageStaySeconds);
+    await sleep(pageStaySeconds * 1000);
     const previousTabIds = await getTabIds();
     const finalClick = await runMainWorldPaymentActionClick(tab.id, 'finalize');
     if (!finalClick?.success) throw new Error(finalClick?.error || 'payment finalize click failed');
-    await sleep(pageStaySeconds * 1000);
 
     tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
-      nextState.alreadyPaid || nextState.complete || nextState.processing || nextState.hasFinalizeButton,
+      nextState.alreadyPaid || nextState.complete,
       previousTabIds,
       30000
     );
     state = tab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
-    if (state?.processing) throw new Error('payment still processing after configured wait');
     throw new Error('payment completion text not found');
   } finally {
     await closeTabsForTransactionFlow(tab, beforeTabIds);
@@ -1710,6 +1726,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
   buildPaymentPageStateFromSnapshot,
+  getRandomIntInclusive,
   syncIdleYahooPages,
   runTransactionStartJobs,
   runPaymentJobs,

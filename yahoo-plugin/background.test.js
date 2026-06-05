@@ -12,10 +12,11 @@ function loadBackgroundForTest(overrides = {}) {
   const sandbox = {
     console,
     globalThis: {
-      __G_DAIPAI_TRANSACTION_START_ENABLED__: overrides.transactionStartEnabled
+      __G_DAIPAI_TRANSACTION_START_ENABLED__: overrides.transactionStartEnabled,
+      __G_DAIPAI_RANDOM__: overrides.random
     },
     setInterval() {},
-    setTimeout(fn) { fn(); },
+    setTimeout(fn, ms) { return overrides.setTimeout ? overrides.setTimeout(fn, ms) : fn(); },
     clearTimeout() {},
     URLSearchParams,
     fetch: overrides.fetch || (async () => ({ async json() { return { task: null }; } })),
@@ -385,6 +386,12 @@ function testPaymentPageStateDetectsStoreAlreadyPaidPage() {
   assert.equal(state.complete, false);
 }
 
+function testRandomIntInclusiveUsesConfiguredRange() {
+  const api = loadBackgroundForTest({ random: () => 0.75 });
+  assert.equal(api.getRandomIntInclusive(1, 3), 3);
+  assert.equal(api.getRandomIntInclusive(2, 5), 5);
+}
+
 async function testRunPaymentJobsReportsEmptyQueue() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -735,6 +742,59 @@ async function testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage() {
+  const calls = [];
+  const actions = [];
+  const sleeps = [];
+  const states = [
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top', hasEasyPaymentButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', hasReviewButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', processing: true } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    random: () => 0.75,
+    setTimeout(fn, ms) {
+      sleeps.push({ ms, actions: [...actions] });
+      fn();
+      return 1;
+    },
+    tabs: {
+      async create() { return { id: 16, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 16, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 3, jobs: [{ orderId: 16, productId: 'p16', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['easyPayment', 'review', 'finalize']);
+  assert.equal(sleeps.some(item => item.ms === 3000 && item.actions.join(',') === 'easyPayment,review'), true);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -825,6 +885,7 @@ async function run() {
   testBuildScanStatusPayloadHandlesBundleRejected();
   testPaymentPageStateDetectsPurchaseCompletePage();
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
+  testRandomIntInclusiveUsesConfiguredRange();
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
@@ -833,6 +894,7 @@ async function run() {
   await testRunPaymentJobsMarksAlreadyPaidAsSuccess();
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
+  await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testYahooLoginPageCountsAsTransactionTab();

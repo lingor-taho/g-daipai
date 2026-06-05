@@ -17,6 +17,36 @@ const menuItemsConfig = [
   { key: '/orders', fullLabel: '订单管理', shortLabel: '订' }
 ];
 
+function renderPaymentAlertMessage(messageText: string) {
+  const text = String(messageText || '');
+  const pattern = /([a-zA-Z]?\d{8,10})/g;
+  const parts: any[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const productId = match[1];
+    parts.push(
+      <a
+        key={`${productId}-${match.index}`}
+        href={`https://auctions.yahoo.co.jp/jp/auction/${productId}`}
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: '#1677ff' }}
+      >
+        {productId}
+      </a>
+    );
+    lastIndex = match.index + productId.length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts.length ? parts : text;
+}
+
 export default function AdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -147,7 +177,7 @@ export default function AdminLayout() {
                 showIcon
                 message={
                   <Space wrap>
-                    <Typography.Text style={{ color: '#cf1322' }}>{paymentAlert}</Typography.Text>
+                    <Typography.Text style={{ color: '#cf1322' }}>{renderPaymentAlertMessage(paymentAlert)}</Typography.Text>
                     <Button size="small" danger onClick={clearPaymentAlertAndContinue}>清除并继续任务</Button>
                   </Space>
                 }

@@ -1098,11 +1098,33 @@ function parsePositiveInt(value, fallback) {
   return intValue > 0 ? intValue : fallback;
 }
 
-async function getPaymentJobs(database = db) {
-  const config = await database.getOne(
-    "SELECT value FROM config WHERE key = 'payment_job_limit'"
+function randomIntInclusive(min, max, randomFn = Math.random) {
+  const low = Math.ceil(Number(min));
+  const high = Math.floor(Number(max));
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return 0;
+  if (high <= low) return low;
+  const raw = Number(randomFn());
+  const randomValue = Number.isFinite(raw) ? Math.min(0.999999999, Math.max(0, raw)) : Math.random();
+  return low + Math.floor(randomValue * (high - low + 1));
+}
+
+function getPaymentJobLimitRange(values = {}) {
+  const legacyLimit = parsePositiveInt(values.payment_job_limit, DEFAULT_PAYMENT_JOB_LIMIT);
+  const minValue = parsePositiveInt(values.payment_job_limit_min, legacyLimit);
+  const maxValue = parsePositiveInt(values.payment_job_limit_max, legacyLimit);
+  return {
+    min: Math.min(minValue, maxValue),
+    max: Math.max(minValue, maxValue)
+  };
+}
+
+async function getPaymentJobs(database = db, options = {}) {
+  const configRows = await database.getAll(
+    "SELECT key, value FROM config WHERE key IN ('payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max')"
   );
-  const limit = parsePositiveInt(config?.value, DEFAULT_PAYMENT_JOB_LIMIT);
+  const values = Object.fromEntries((configRows || []).map(row => [row.key, row.value]));
+  const range = getPaymentJobLimitRange(values);
+  const limit = randomIntInclusive(range.min, range.max, options.random || Math.random);
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
             o.transaction_url,
@@ -1138,7 +1160,9 @@ async function getPaymentJobs(database = db) {
       bundleGroupId: row.bundle_group_id || ''
     })),
     total: rows.length,
-    limit
+    limit,
+    limitMin: range.min,
+    limitMax: range.max
   };
 }
 
@@ -1401,6 +1425,8 @@ module.exports.getMultiBidConfig = getMultiBidConfig;
 module.exports.DEFAULT_MULTI_BID_MIN_PRICE = DEFAULT_MULTI_BID_MIN_PRICE;
 module.exports.DEFAULT_PAYMENT_JOB_LIMIT = DEFAULT_PAYMENT_JOB_LIMIT;
 module.exports.DEFAULT_PAYMENT_PAGE_STAY_SECONDS = DEFAULT_PAYMENT_PAGE_STAY_SECONDS;
+module.exports.randomIntInclusive = randomIntInclusive;
+module.exports.getPaymentJobLimitRange = getPaymentJobLimitRange;
 module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
 module.exports.ORDER_STATUS_WAITING_SHIPPING = ORDER_STATUS_WAITING_SHIPPING;
 module.exports.ORDER_STATUS_PENDING_BUNDLE = ORDER_STATUS_PENDING_BUNDLE;

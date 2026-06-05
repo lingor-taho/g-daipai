@@ -29,6 +29,8 @@ const {
   updateScanStatus,
   getPaymentJobs,
   updatePaymentStatus,
+  randomIntInclusive,
+  getPaymentJobLimitRange,
   ORDER_STATUS_PENDING_PAYMENT,
   ORDER_STATUS_WAITING_SHIPPING,
   ORDER_STATUS_PENDING_BUNDLE,
@@ -836,17 +838,22 @@ async function testUpdateScanStatusRejectsBundleGroupToEmptyStatus() {
 }
 
 async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
+  let getAllCall = 0;
   const fakeDb = {
-    async getOne(sql) {
-      assert.match(sql, /payment_job_limit/);
-      return { value: '2' };
-    },
     async getAll(sql, params) {
+      getAllCall += 1;
+      if (getAllCall === 1) {
+        assert.match(sql, /payment_job_limit_min/);
+        return [
+          { key: 'payment_job_limit_min', value: '2' },
+          { key: 'payment_job_limit_max', value: '5' }
+        ];
+      }
       assert.match(sql, /o\.order_status = \?/);
       assert.match(sql, /o\.total_amount_cny IS NOT NULL/);
       assert.match(sql, /ORDER BY datetime\(COALESCE\(o\.won_at, o\.created_at\)\) ASC, o\.id ASC/);
       assert.equal(params[0], 'pending_settlement');
-      assert.equal(params[1], 2);
+      assert.equal(params[1], 4);
       return [{
         order_id: 9,
         product_id: 'x1',
@@ -863,11 +870,21 @@ async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
     }
   };
 
-  const result = await getPaymentJobs(fakeDb);
+  const result = await getPaymentJobs(fakeDb, { random: () => 0.5 });
 
   assert.equal(result.jobs.length, 1);
   assert.equal(result.jobs[0].orderId, 9);
   assert.equal(result.jobs[0].effectiveShippingFeeText, '送料 500円');
+  assert.equal(result.limit, 4);
+  assert.equal(result.limitMin, 2);
+  assert.equal(result.limitMax, 5);
+}
+
+function testPaymentJobLimitRangeAndRandomSelection() {
+  assert.deepEqual(getPaymentJobLimitRange({ payment_job_limit: '3' }), { min: 3, max: 3 });
+  assert.deepEqual(getPaymentJobLimitRange({ payment_job_limit_min: '5', payment_job_limit_max: '2' }), { min: 2, max: 5 });
+  assert.equal(randomIntInclusive(2, 5, () => 0), 2);
+  assert.equal(randomIntInclusive(2, 5, () => 0.9999), 5);
 }
 
 async function testUpdatePaymentStatusSuccessAndEmptyQueue() {
@@ -981,6 +998,7 @@ Promise.all([
   testUpdateScanStatusCompletesBundleGroupWithShippingFee(),
   testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
+  Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating()
