@@ -734,6 +734,23 @@ async function waitForPaymentStateAcrossTabs(tab, predicate, previousIds, timeou
   throw new Error('payment next page did not appear');
 }
 
+async function waitForPaymentStateOnTab(tab, predicate, timeoutMs = 15000) {
+  const startAt = Date.now();
+  while (Date.now() - startAt < timeoutMs) {
+    const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => null) : null;
+    if (current?.status === 'complete') {
+      const state = await getPaymentPageState(current.id).catch(() => null);
+      if (state && predicate(state)) {
+        current._gdaipaiCreatedTabIds = tab?._gdaipaiCreatedTabIds;
+        current._gdaipaiPaymentState = state;
+        return current;
+      }
+    }
+    await sleep(500);
+  }
+  return null;
+}
+
 function assertPaymentAmountMatches(job, state) {
   const expected = getExpectedPaymentAmountJpy(job);
   const actual = Number(state?.paymentAmountJpy || 0);
@@ -1534,12 +1551,33 @@ async function executePaymentJob(job, paymentBatch = {}) {
       tab = result.tab;
       state = result.state;
     }
+
+    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton) {
+      const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        15000
+      );
+      if (reviewTab) {
+        tab = reviewTab;
+        state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
+      }
+    }
     if (!entryClicks && !state?.hasReviewButton && !state?.alreadyPaid && !state?.complete) {
       throw new Error('payment entry button not found');
     }
 
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
+    if (!state?.hasReviewButton) {
+      const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        15000
+      );
+      if (reviewTab) {
+        tab = reviewTab;
+        state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
+      }
+    }
     if (!state?.hasReviewButton) throw new Error('payment review button not found');
     assertPaymentAmountMatches(job, state);
 

@@ -795,6 +795,53 @@ async function testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProce
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
+  const calls = [];
+  const actions = [];
+  const states = [
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', hasReviewButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 4330 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 17, url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', status: 'complete' }; },
+      async query() { return [{ id: 17, url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 17, productId: 'p17', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].orderId, 17);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -895,6 +942,7 @@ async function run() {
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
+  await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testYahooLoginPageCountsAsTransactionTab();

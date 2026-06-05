@@ -778,6 +778,28 @@ node src\server\routes\plugin.test.js
 
 ---
 
+## 2026-06-05 用户端商品拍卖次数抓取
+
+### 已实现内容
+
+- 用户端提交任务页获取 Yahoo 商品信息时，服务端现在会解析商品拍卖次数 / 入札件数：
+  - 优先读取 `pageData.items.bids`、`bidCount`、`bid_count` 等结构化字段。
+  - 其次识别 Yahoo 页面链接文本里的 `0<!-- -->件</a>` / `12件</a>` 这类入札履历数量。
+- `/api/proxy/fetch` 返回 `bidCount`。
+- 提交任务页商品卡片在“当前合计金额”下一行显示小锤子图标 + `拍卖次数：X件`，0 次也会正常显示。
+- `/api/task/submit` 保存 `bid_count` 到 `tasks.bid_count`；历史数据库启动时会自动补齐该列。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\proxy.test.js
+node src\server\routes\task.test.js
+Set-Location src\client
+npm run build
+```
+
+---
+
 ## 2026-06-05 付款任务随机化与等待点调整
 
 ### 业务规则确认
@@ -857,4 +879,25 @@ npm run build
 ```powershell
 node yahoo-plugin\background.test.js
 node src\server\routes\plugin.test.js
+```
+
+---
+
+## 2026-06-05 付款页確認する按钮延迟加载修复
+
+### 问题现象
+
+- 付款任务进入 `購入手続き` 页面后，右侧订单金额下方红色 `確認する` 按钮有时因为 Yahoo 网络或页面脚本加载慢，短时间内还没有渲染出来。
+- 旧逻辑在当前页面快照里没有 `hasReviewButton` 时会直接报错，导致付款任务卡在该页面并失败。
+
+### 已修复内容
+
+- `yahoo-plugin/background.js` 新增当前付款页状态等待逻辑：同一 tab 最多等待 15 秒，每 0.5 秒重新读取一次付款页状态。
+- 当付款页已打开但 `確認する` 尚未出现时，插件会等待按钮加载完成后再点击，不再立即报 `payment entry button not found` / `payment review button not found`。
+- 保持后续流程不变：点击 `確認する` 后进入最终确认页，再按后台配置随机等待 `1-X` 秒后点击 `購入を確定する`。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
 ```

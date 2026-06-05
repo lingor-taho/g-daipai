@@ -19,6 +19,7 @@ ensureColumn('tasks', 'buyout_price', 'INTEGER');
 ensureColumn('tasks', 'bid_mode', "VARCHAR(32) DEFAULT 'bid'");
 ensureColumn('tasks', 'tax_type', "VARCHAR(32) DEFAULT 'tax_zero'");
 ensureColumn('tasks', 'product_type', "VARCHAR(32) DEFAULT 'normal'");
+ensureColumn('tasks', 'bid_count', 'INTEGER DEFAULT 0');
 ensureColumn('tasks', 'user_max_price', 'INTEGER');
 ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
 ensureColumn('tasks', 'client_request_id', 'VARCHAR(128)');

@@ -7,6 +7,23 @@ function getDisplayPrice(price, taxType) {
   return Math.floor(value * 1.1);
 }
 
+function BidCountIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      style={{ display: 'inline-block', flex: '0 0 15px' }}
+    >
+      <path
+        d="M7.2 4.3 4.6 6.9l5.5 5.5 2.6-2.6L7.2 4.3Zm1.5-1.5 5.5 5.5 1.5-1.5-5.5-5.5-1.5 1.5Zm6.1 10.2-1.6 1.6 6.1 6.1c.5.5 1.2.5 1.7 0s.5-1.2 0-1.7l-6.2-6ZM3.6 8l-1.5 1.5 5.5 5.5 1.5-1.5L3.6 8Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 export default function ProductCard({ product }) {
   const taxType = product.taxType || product.tax_type || 'tax_zero';
   const productType = product.productType || product.product_type || (taxType === 'tax_included' ? 'store' : 'normal');
@@ -17,6 +34,7 @@ export default function ProductCard({ product }) {
   const buyoutPrice = Number(displayBuyoutPrice || 0);
   const shippingFeeText = product.shippingFeeText || product.shipping_fee_text || '';
   const taxLabel = taxType === 'tax_included' ? '税込' : '税0円';
+  const bidCount = Number(product.bidCount ?? product.bid_count ?? 0);
 
   return (
     <div style={{ margin: 16, border: '1px solid #eee', borderRadius: 8, overflow: 'hidden', background: '#fff', display: 'flex' }}>
@@ -40,6 +58,10 @@ export default function ProductCard({ product }) {
         )}
         <div style={{ color: '#111827', fontSize: 14, fontWeight: 600, marginTop: 4 }}>
           当前合计金额：{formatTotalAmount(displayPrice, shippingFeeText)}
+        </div>
+        <div style={{ color: '#4b5563', fontSize: 13, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <BidCountIcon />
+          <span>拍卖次数：{Number.isFinite(bidCount) && bidCount >= 0 ? bidCount : 0}件</span>
         </div>
         {product.endTime && (
           <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>截止: {product.endTime}</div>

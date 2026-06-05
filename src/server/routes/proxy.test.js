@@ -145,6 +145,36 @@ async function testParseBuyoutPriceFromPageData() {
   assert.equal(product.buyoutPrice, 5600);
 }
 
+async function testParseBidCountFromYahooBidHistoryLink() {
+  const product = parseProductHtml(`
+    <html>
+      <head><title>Bid Count Test - Yahoo!</title></head>
+      <body>
+        <span itemprop="price" content="1078"></span>
+        <a href="/jp/show/bid_hist?aID=e1232378827">0<!-- -->件</a>
+      </body>
+    </html>
+  `, 'e1232378827', 'https://auctions.yahoo.co.jp/jp/auction/e1232378827');
+
+  assert.equal(product.bidCount, 0);
+}
+
+async function testParseBidCountFromPageDataBids() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Bid Count PageData Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"1200","bids":"12"}};
+        </script>
+      </head>
+      <body></body>
+    </html>
+  `, 'b1222222222', 'https://auctions.yahoo.co.jp/jp/auction/b1222222222');
+
+  assert.equal(product.bidCount, 12);
+}
+
 async function testParseBuyoutOnlyProductFromSingleInstantBuyButton() {
   const product = parseProductHtml(`
     <html>
@@ -681,6 +711,8 @@ async function run() {
   await testParseCurrentDisplayedPriceBeforeJsonLdOffer();
   await testParsePriceValidUntilAsEndTime();
   await testParseBuyoutPriceFromPageData();
+  await testParseBidCountFromYahooBidHistoryLink();
+  await testParseBidCountFromPageDataBids();
   await testParseBuyoutOnlyProductFromSingleInstantBuyButton();
   await testParseNormalBuyoutProductKeepsBidAvailable();
   await testParseStoreBuyoutOnlyProductFromPurchaseButton();

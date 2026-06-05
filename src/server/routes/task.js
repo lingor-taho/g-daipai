@@ -306,7 +306,7 @@ function buildActiveBiddingTaskListQuery(input) {
 
 // POST /api/task/submit - 提交竞拍任务
 router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = req.body;
+  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = req.body;
   try {
     const input = buildSubmitTaskInput(req.user, req.body);
     input.userId = req.actingUser.id;
@@ -373,6 +373,8 @@ router.post('/submit', async (req, res) => {
       ? buyoutPrices.buyoutPrice
       : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
     const shippingFeeText = shipping_fee_text || productInfo?.shippingFeeText || null;
+    const bidCountValue = Number(bid_count ?? productInfo?.bidCount ?? productInfo?.bid_count ?? 0);
+    const bidCount = Number.isFinite(bidCountValue) && bidCountValue >= 0 ? Math.floor(bidCountValue) : 0;
     const followupMaxPriceRaw = Number(pending_followup_max_price || 0);
     let followupMaxPrice = Number.isFinite(followupMaxPriceRaw) && followupMaxPriceRaw > userMaxPrice
       ? Math.floor(followupMaxPriceRaw)
@@ -401,8 +403,8 @@ router.post('/submit', async (req, res) => {
     }
 
     await db.query(
-      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id, pending_followup_max_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id, pending_followup_max_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       [
         input.userId,
         input.productId,
@@ -411,6 +413,7 @@ router.post('/submit', async (req, res) => {
         product_image_url || productInfo?.imageUrl || null,
         current_price || productInfo?.currentPrice || null,
         buyoutPrice,
+        bidCount,
         resolvedTaxType,
         resolvedProductType,
         shippingFeeText,
@@ -440,7 +443,7 @@ router.get('/list', async (req, res) => {
     input.userId = req.actingUser.id;
     const totalRow = await db.getOne('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [input.userId]);
     const tasks = await db.getAll(
-      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, error_msg, end_time, is_highest_bidder, created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, error_msg, end_time, is_highest_bidder, created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
       [input.userId, input.limit, input.offset]
     );
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });

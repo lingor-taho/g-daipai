@@ -62,6 +62,19 @@ function parsePriceText(text) {
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
 
+function parseCountText(text) {
+  const match = String(text || '').match(/([\d,]+)\s*件/);
+  if (!match?.[1]) return null;
+  return parseCountValue(match[1]);
+}
+
+function parseCountValue(rawValue) {
+  const match = String(rawValue ?? '').match(/([\d,]+)/);
+  if (!match?.[1]) return null;
+  const value = parseInt(match[1].replace(/,/g, ''), 10);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function extractImage(html) {
   const patterns = [
     /<meta[^>]*(?:property|name)=["']og:image["'][^>]*content=["']([^"']+)["']/i,
@@ -155,6 +168,30 @@ function extractBuyoutPrice(html) {
     }
   }
   return 0;
+}
+
+function extractBidCount(html) {
+  const pageDataItems = extractPageDataItems(html);
+  const pageDataCount = parseCountValue(pageDataItems?.bids ?? pageDataItems?.bidCount ?? pageDataItems?.bid_count);
+  if (pageDataCount !== null) return pageDataCount;
+
+  const nextDataItem = extractNextDataItem(html);
+  const nextDataCount = parseCountValue(nextDataItem?.bids ?? nextDataItem?.bidCount ?? nextDataItem?.bid_count);
+  if (nextDataCount !== null) return nextDataCount;
+
+  const source = String(html || '');
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let fallbackCount = null;
+  for (const match of source.matchAll(anchorPattern)) {
+    const attrs = match[1] || '';
+    const innerHtml = match[2] || '';
+    const count = parseCountText(normalizeText(innerHtml));
+    if (count === null) continue;
+    const candidate = `${attrs} ${innerHtml}`;
+    if (/bid[_-]?hist|bidhistory|入札履歴|show\/bid/i.test(candidate)) return count;
+    if (fallbackCount === null) fallbackCount = count;
+  }
+  return fallbackCount ?? 0;
 }
 
 function extractBuyoutOnly(html) {
@@ -317,6 +354,7 @@ function parseProductHtml(html, auctionId, standardUrl) {
     title,
     currentPrice: extractPrice(html),
     buyoutPrice: storePurchaseTaxIncludedPrice || rawBuyoutPrice,
+    bidCount: extractBidCount(html),
     buyoutOnly: extractBuyoutOnly(html),
     taxType,
     productType: getProductTypeFromTaxType(taxType),
@@ -460,6 +498,7 @@ function createProductService({
       title: rawProduct.title || ('商品 ' + parsed.auctionId),
       currentPrice: Number(rawProduct.currentPrice || 0),
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
+      bidCount: Number(rawProduct.bidCount ?? rawProduct.bid_count ?? 0),
       buyoutOnly: Boolean(rawProduct.buyoutOnly || rawProduct.buyout_only),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
       productType: rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
