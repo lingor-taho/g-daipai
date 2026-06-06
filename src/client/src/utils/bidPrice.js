@@ -58,6 +58,7 @@ export function getComparableCurrentPrice(product) {
 export function getYahooMinimumBidIncrement(currentTaxExcludedPrice) {
   const value = Number(currentTaxExcludedPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 1000) return 10;
   if (value < 5000) return 100;
   if (value < 10000) return 250;
   if (value < 50000) return 500;
@@ -78,6 +79,33 @@ export function isSubmitTaxExcludedPriceAtLeastRequiredBid(submitTaxExcludedPric
   const required = getRequiredTaxExcludedBidPrice(product);
   if (required <= 0) return true;
   return Number(submitTaxExcludedPrice || 0) >= required;
+}
+
+export function getMinimumBidInputRequirement(product, storeBidPriceMode) {
+  const currentTaxExcludedPrice = Number(product?.currentPrice ?? product?.current_price ?? 0);
+  if (!Number.isFinite(currentTaxExcludedPrice) || currentTaxExcludedPrice <= 0) {
+    return { currentPrice: 0, increment: 0, requiredPrice: 0, currentLabel: '当前价' };
+  }
+
+  const bidCount = Number(product?.bidCount ?? product?.bid_count ?? 0);
+  const increment = Number.isFinite(bidCount) && bidCount > 0
+    ? getYahooMinimumBidIncrement(currentTaxExcludedPrice)
+    : 0;
+  const storeProduct = isStoreProduct(product);
+  const useTaxIncludedInput = storeProduct && storeBidPriceMode === 'tax_after';
+  const currentPrice = useTaxIncludedInput
+    ? getComparableCurrentPrice(product)
+    : Math.floor(currentTaxExcludedPrice);
+  const currentLabel = storeProduct
+    ? (useTaxIncludedInput ? '当前税后价' : '当前税前价')
+    : '当前价';
+
+  return {
+    currentPrice,
+    increment,
+    requiredPrice: Math.floor(currentPrice + increment),
+    currentLabel
+  };
 }
 
 export function isSubmitMaxPriceAboveCurrentPrice(submitMaxPrice, product) {

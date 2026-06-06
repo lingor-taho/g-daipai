@@ -475,6 +475,9 @@ function testTaxIncludedBidPriceForMultiBidIncrement() {
   assert.equal(api.getTaxIncludedBidPrice(5000, 'tax_included'), 5500);
   assert.equal(api.getTaxIncludedBidPrice(9, 'tax_included'), 9);
   assert.equal(api.getTaxIncludedBidPrice(5500, 'tax_zero'), 5500);
+  assert.equal(api.getYahooMinBidIncrement(999), 10);
+  assert.equal(api.getYahooMinBidIncrement(1000), 100);
+  assert.equal(api.getYahooMinBidIncrement(5000), 250);
 }
 
 function testBidLimitRejectsTaxTotalAboveUserMax() {

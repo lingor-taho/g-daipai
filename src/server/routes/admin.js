@@ -10,6 +10,7 @@ const {
   getMultiBidIntervalMs,
   getStrategyLeadMs,
   isMultiBidTask,
+  ensureScheduledTransactionStartRequest,
   DEFAULT_MULTI_BID_MIN_PRICE
 } = require('./plugin');
 const { productService, normalizeAuctionUrl } = require('./proxy');
@@ -1061,6 +1062,9 @@ router.post('/transaction-start/request', async (req, res) => {
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_requested', '1', CURRENT_TIMESTAMP)`
   );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_requested_source', 'manual', CURRENT_TIMESTAMP)`
+  );
   res.json({ success: true });
 });
 
@@ -1173,6 +1177,7 @@ router.post('/transaction-start/reset-orders', async (req, res) => {
 });
 
 router.get('/idle-flags', async (req, res) => {
+  await ensureScheduledTransactionStartRequest(db);
   const rows = await db.getAll(
     `SELECT key, value FROM config
      WHERE key IN (

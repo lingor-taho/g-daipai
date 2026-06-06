@@ -269,6 +269,9 @@ function testMultiBidRequiresTaxIncludedUserMaxPriceAtLeast5000() {
 }
 
 function testMultiBidIncrementUsesYahooBidStepRule() {
+  assert.equal(getMinMultiBidIncrement(999), 10);
+  assert.equal(getDefaultMultiBidIncrement(999), 10);
+  assert.equal(getMinMultiBidIncrement(1000), 100);
   assert.equal(getMinMultiBidIncrement(4999), 100);
   assert.equal(getDefaultMultiBidIncrement(4999), 100);
   assert.equal(getMinMultiBidIncrement(5000), 250);
@@ -282,6 +285,7 @@ function testMultiBidIncrementUsesYahooBidStepRule() {
 }
 
 function testSubmitMinimumBidPriceUsesBidCount() {
+  assert.equal(getRequiredBidMaxPrice(1, 1), 11);
   assert.equal(getRequiredBidMaxPrice(5500, 0), 5500);
   assert.equal(getRequiredBidMaxPrice(5500, 1), 5750);
   assert.equal(getRequiredBidMaxPrice(9999, 3), 10249);

@@ -4,6 +4,7 @@ import {
   getActualBidPrice,
   getBuyoutPrice,
   getBuyoutSubmitPrice,
+  getMinimumBidInputRequirement,
   getSubmitMaxPrice,
   getSubmitTaxType,
   getYahooMinimumBidIncrement,
@@ -71,11 +72,14 @@ function testSubmitMaxPriceMustBeAboveCurrentPrice() {
 }
 
 function testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids() {
+  assert.equal(getYahooMinimumBidIncrement(999), 10);
+  assert.equal(getYahooMinimumBidIncrement(1000), 100);
   assert.equal(getYahooMinimumBidIncrement(4999), 100);
   assert.equal(getYahooMinimumBidIncrement(5000), 250);
   assert.equal(getYahooMinimumBidIncrement(10000), 500);
   assert.equal(getYahooMinimumBidIncrement(50000), 1000);
 
+  assert.equal(getRequiredTaxExcludedBidPrice({ currentPrice: 1, bidCount: 1 }), 11);
   assert.equal(getRequiredTaxExcludedBidPrice({ currentPrice: 5500, bidCount: 0 }), 5500);
   assert.equal(getRequiredTaxExcludedBidPrice({ currentPrice: 5500, bidCount: 1 }), 5750);
   assert.equal(getRequiredTaxExcludedBidPrice({ current_price: 4999, bid_count: 2 }), 5099);
@@ -83,6 +87,25 @@ function testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids() {
   assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(5600, { currentPrice: 5500, bidCount: 1 }), false);
   assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(5750, { currentPrice: 5500, bidCount: 1 }), true);
   assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(5500, { currentPrice: 5500, bidCount: 0 }), true);
+}
+
+function testMinimumBidInputRequirementUsesSelectedPriceMode() {
+  assert.deepEqual(
+    getMinimumBidInputRequirement({ taxType: 'tax_zero', currentPrice: 5000, bidCount: 1 }, 'tax_before'),
+    { currentPrice: 5000, increment: 250, requiredPrice: 5250, currentLabel: '当前价' }
+  );
+  assert.deepEqual(
+    getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 5000, bidCount: 1 }, 'tax_before'),
+    { currentPrice: 5000, increment: 250, requiredPrice: 5250, currentLabel: '当前税前价' }
+  );
+  assert.deepEqual(
+    getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 5000, bidCount: 1 }, 'tax_after'),
+    { currentPrice: 5500, increment: 250, requiredPrice: 5750, currentLabel: '当前税后价' }
+  );
+  assert.deepEqual(
+    getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 1, bidCount: 1 }, 'tax_before'),
+    { currentPrice: 1, increment: 10, requiredPrice: 11, currentLabel: '当前税前价' }
+  );
 }
 
 testStoreProductDetection();
@@ -93,3 +116,4 @@ testBuyoutOnlyProductDetection();
 testComparableCurrentPriceAddsTaxForStoreProducts();
 testSubmitMaxPriceMustBeAboveCurrentPrice();
 testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids();
+testMinimumBidInputRequirementUsesSelectedPriceMode();

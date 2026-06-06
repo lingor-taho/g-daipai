@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getBuyoutPrice, getBuyoutSubmitPrice, getComparableCurrentPrice, getRequiredTaxExcludedBidPrice, getSubmitMaxPrice, getSubmitTaxType, getYahooMinimumBidIncrement, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
+import { getActualBidPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -68,6 +68,7 @@ function shouldSplitDirectBidByYahooLowPriceRule({ strategy, bidMode, currentPri
 function getMinMultiBidIncrement(maxPrice) {
   const value = Number(maxPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 1000) return 10;
   if (value < 5000) return 100;
   if (value < 10000) return 250;
   if (value < 50000) return 500;
@@ -238,15 +239,15 @@ export default function Submit() {
     }
     // 拍卖次数为 0 可按当前价提交；已有入札时必须满足 Yahoo 最低加价。
     const submitTaxExcludedPrice = toTaxExcludedYen(effectiveMaxPrice, submitTaxType);
-    const currentTaxExcludedPrice = Number(product?.currentPrice || 0);
-    const requiredTaxExcludedPrice = getRequiredTaxExcludedBidPrice(product);
-    if (!buyoutSelected && !buyoutOnly && submitTaxExcludedPrice < requiredTaxExcludedPrice) {
-      const bidCount = Number(product?.bidCount ?? product?.bid_count ?? 0);
-      const minIncrement = bidCount > 0 ? getYahooMinimumBidIncrement(currentTaxExcludedPrice) : 0;
-      const reason = minIncrement > 0
-        ? `当前价 ${currentTaxExcludedPrice.toLocaleString('ja-JP')}円 + 最低加价 ${minIncrement.toLocaleString('ja-JP')}円`
-        : `当前 ${getComparableCurrentPrice(product).toLocaleString('ja-JP')}円`;
-      Toast.show({ content: `最高出价不能低于最低可出价（${reason}，最低 ${requiredTaxExcludedPrice.toLocaleString('ja-JP')}円）` });
+    const inputRequirement = getMinimumBidInputRequirement(product, storeBidPriceMode);
+    const inputPriceForRequirement = isStoreProduct(product) && storeBidPriceMode === 'tax_after'
+      ? Number(maxPrice || 0)
+      : submitTaxExcludedPrice;
+    if (!buyoutSelected && !buyoutOnly && inputPriceForRequirement < inputRequirement.requiredPrice) {
+      const reason = inputRequirement.increment > 0
+        ? `${inputRequirement.currentLabel}${inputRequirement.currentPrice.toLocaleString('ja-JP')}円+最低加价${inputRequirement.increment.toLocaleString('ja-JP')}円=最低${inputRequirement.requiredPrice.toLocaleString('ja-JP')}円`
+        : `${inputRequirement.currentLabel}${inputRequirement.currentPrice.toLocaleString('ja-JP')}円`;
+      Toast.show({ content: `最高出价不能低于最低可出价（${reason}）` });
       return;
     }
     const selectedStrategy = (buyoutSelected || buyoutOnly) ? 'direct' : (strategy || 'direct');

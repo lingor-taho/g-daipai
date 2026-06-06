@@ -374,6 +374,7 @@ function getTaxIncludedBidPrice(bidPrice, taxType) {
 function getYahooMinBidIncrement(currentPrice) {
   const value = Number(currentPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 1000) return 10;
   if (value < 5000) return 100;
   if (value < 10000) return 250;
   if (value < 50000) return 500;

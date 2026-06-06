@@ -23,6 +23,8 @@ const {
   processPendingFollowupTasks,
   getNextIdleAction,
   getNextScanIdleCounter,
+  ensureScheduledTransactionStartRequest,
+  completeIdleAction,
   getTransactionStartJobs,
   saveTransactionStartRunLog,
   updateTransactionStartStatus,
@@ -907,6 +909,61 @@ function testPaymentJobLimitRangeAndRandomSelection() {
   assert.equal(randomIntInclusive(2, 5, () => 0.9999), 5);
 }
 
+async function testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached() {
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      assert.match(sql, /transaction_start_hour/);
+      return [
+        { key: 'transaction_start_hour', value: '0' },
+        { key: 'transaction_start_requested', value: '0' },
+        { key: 'transaction_start_last_run_date', value: '2026-06-05' }
+      ];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await ensureScheduledTransactionStartRequest(fakeDb, Date.parse('2026-06-06T00:15:00+08:00'));
+
+  assert.equal(result.updated, true);
+  assert.equal(result.transactionStartRequested, 1);
+  assert.equal(queries.length, 2);
+  assert.equal(queries[0].params[0], 'transaction_start_requested');
+  assert.equal(queries[0].params[1], '1');
+  assert.equal(queries[1].params[0], 'transaction_start_requested_source');
+  assert.equal(queries[1].params[1], 'auto');
+}
+
+async function testCompleteManualTransactionStartDoesNotWriteAutoRunDate() {
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      assert.match(sql, /transaction_start_requested_source/);
+      return [
+        { key: 'transaction_start_hour', value: '5' },
+        { key: 'transaction_start_requested_source', value: 'manual' },
+        { key: 'scan_every_idle_runs', value: '5' },
+        { key: 'scan_idle_counter', value: '0' }
+      ];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await completeIdleAction('transaction_start', fakeDb, Date.parse('2026-06-06T03:00:00+08:00'));
+
+  assert.deepEqual(queries.map(call => call.params[0]), [
+    'transaction_start_requested',
+    'transaction_start_requested_source'
+  ]);
+  assert.equal(queries.some(call => call.params[0] === 'transaction_start_last_run_date'), false);
+}
+
 async function testUpdatePaymentStatusSuccessAndEmptyQueue() {
   const calls = [];
   const fakeDb = {
@@ -1020,6 +1077,8 @@ Promise.all([
   testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
+  testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
+  testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating()

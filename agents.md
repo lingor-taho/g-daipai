@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-05
+**最后更新**: 2026-06-06
 
 ---
 
@@ -911,6 +911,30 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-06 用户端最低出价提示修复
+
+### 已实现内容
+
+- Yahoo 最低加价阶梯补充 `<1000円` 区间：当前税前价小于 `1000円` 时最低加价为 `10円`；`1000-4999円` 仍为 `100円`，其他区间不变。
+- 用户端提交页最低可出价提示按商品和价格类型显示：
+  - 普通商品：继续显示 `当前价 X円 + 最低加价 Y円`。
+  - 商城商品 + 税前价：显示 `当前税前价 X円 + 最低加价 Y円`。
+  - 商城商品 + 税后价：显示 `当前税后价 X円 + 最低加价 Y円`，最低金额按页面显示税后价计算。
+- 最低可出价 Toast 文案改为等式表达，例如 `当前税后价5,500円+最低加价250円=最低5,750円`。
+- 同步更新服务端任务提交兜底校验和插件多次出价阶梯，避免客户端、服务端、插件规则不一致。
+
+### 最近验证命令
+
+```powershell
+node src\client\src\utils\bidPrice.test.mjs
+node src\server\routes\task.test.js
+node yahoo-plugin\content.test.js
+Set-Location src\client
+npm run build
+```
+
+---
+
 ## 2026-06-05 入札确认误点推荐商品修复
 
 ### 问题现象
@@ -940,6 +964,35 @@ node yahoo-plugin\background.test.js
 ```powershell
 node yahoo-plugin\content.test.js
 node src\server\routes\plugin.test.js
+```
+
+---
+
+## 2026-06-06 交易开始自动 flag 规则修正
+
+### 业务规则确认
+
+- `交易开始执行整点` 到达后，如果当天还没有执行过交易开始，服务端需要把 `transaction_start_requested` 自动更新为 `1`。
+- 这个 flag 不再只代表手动点击“加入执行队列”，也代表“定时已到，等待插件空闲执行”；后台仍只展示这一个 flag。
+- 5 点前等整点前手工执行交易开始，不影响到整点后自动把 flag 置为 `1` 再执行一次。
+- 如果手工执行是在配置整点之后完成，则视为当天交易开始已覆盖，会写入当天执行日期，避免同一天继续自动重复执行。
+- 插件完成 `transaction_start` 后仍会把 `transaction_start_requested` 清回 `0`，并写入 `transaction_start_last_run_date=当天`，避免当天重复自动执行。
+
+### 已修复内容
+
+- `src/server/routes/plugin.js` 新增 `ensureScheduledTransactionStartRequest()`：
+  - 读取 `transaction_start_hour`、`transaction_start_requested`、`transaction_start_last_run_date`。
+  - 当前整点达到配置值且当天未执行时，写入 `transaction_start_requested=1`。
+- 手工按钮会把内部来源标记为 `manual`；整点自动置 flag 会把内部来源标记为 `auto`。该来源只用于判断是否带 `includeAfterCutoff` 和是否写入自动执行日期，不新增后台展示字段。
+- `/api/plugin/idle-action/next` 在读取空闲 action 前会先同步自动 flag。
+- `/api/admin/idle-flags` 在返回后台顶部 flag 前也会先同步自动 flag，所以后台刷新后能看到数据库 flag 变为 `1`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node yahoo-plugin\background.test.js
 ```
 
 ---

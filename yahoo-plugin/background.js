@@ -1820,7 +1820,7 @@ async function syncIdleYahooPages() {
   const idleAction = await fetchNextIdleAction();
   if (idleAction?.action === 'transaction_start') {
     await runTransactionStartJobs({
-      includeAfterCutoff: Number(idleAction?.config?.transactionStartRequested || 0) === 1,
+      includeAfterCutoff: idleAction?.config?.transactionStartRequestSource === 'manual',
       processNormalJobs: TRANSACTION_START_ENABLED
     });
   } else if (idleAction?.action === 'scan') {

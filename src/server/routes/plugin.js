@@ -304,12 +304,30 @@ function getNextScanIdleCounter(action, config = {}) {
   return scanCounter + 1;
 }
 
+async function completeIdleAction(action, database = db, nowMs = Date.now()) {
+  const config = await getIdleActionConfig(database, nowMs);
+  if (action === 'transaction_start') {
+    await saveConfigValue(database, 'transaction_start_requested', '0');
+    await saveConfigValue(database, 'transaction_start_requested_source', '');
+    if (config.transactionStartRequestSource !== 'manual' || Number(config.nowHour) >= Number(config.transactionStartHour)) {
+      await saveConfigValue(database, 'transaction_start_last_run_date', config.today);
+    }
+  } else if (action === 'scan') {
+    await saveConfigValue(database, 'scan_idle_counter', '0');
+  } else {
+    await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
+  }
+  return { success: true };
+}
+
 async function getIdleActionConfig(database = db, nowMs = Date.now()) {
+  await ensureScheduledTransactionStartRequest(database, nowMs);
   const rows = await database.getAll(
     `SELECT key, value FROM config
      WHERE key IN (
        'transaction_start_hour',
        'transaction_start_requested',
+       'transaction_start_requested_source',
        'transaction_start_last_run_date',
        'scan_start_hour',
        'scan_end_hour',
@@ -324,6 +342,7 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
   return {
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
     transactionStartRequested: Number(values.transaction_start_requested || 0),
+    transactionStartRequestSource: values.transaction_start_requested_source || '',
     transactionStartLastRunDate: values.transaction_start_last_run_date || '',
     scanStartHour: Number(values.scan_start_hour ?? DEFAULT_SCAN_START_HOUR),
     scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
@@ -342,6 +361,50 @@ async function saveConfigValue(database, key, value) {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
     [key, String(value)]
   );
+}
+
+async function ensureScheduledTransactionStartRequest(database = db, nowMs = Date.now()) {
+  const rows = await database.getAll(
+    `SELECT key, value FROM config
+     WHERE key IN (
+       'transaction_start_hour',
+       'transaction_start_requested',
+       'transaction_start_requested_source',
+       'transaction_start_last_run_date'
+     )`
+  );
+  const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  const today = getLocalDateKey(nowMs);
+  const nowHour = new Date(nowMs).getHours();
+  const transactionStartHour = clampHour(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR, DEFAULT_TRANSACTION_START_HOUR);
+  const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
+  const transactionStartRequestSource = values.transaction_start_requested_source || '';
+  const transactionStartLastRunDate = values.transaction_start_last_run_date || '';
+  const shouldRequest = !(transactionStartRequested && transactionStartRequestSource === 'manual') &&
+    Number(nowHour) >= transactionStartHour &&
+    transactionStartLastRunDate !== today;
+
+  if (shouldRequest) {
+    await saveConfigValue(database, 'transaction_start_requested', '1');
+    await saveConfigValue(database, 'transaction_start_requested_source', 'auto');
+    return {
+      updated: true,
+      transactionStartRequested: 1,
+      transactionStartRequestSource: 'auto',
+      transactionStartHour,
+      transactionStartLastRunDate,
+      today
+    };
+  }
+
+  return {
+    updated: false,
+    transactionStartRequested: transactionStartRequested ? 1 : 0,
+    transactionStartRequestSource,
+    transactionStartHour,
+    transactionStartLastRunDate,
+    today
+  };
 }
 
 function normalizeTransactionStartLogJob(job = {}) {
@@ -417,16 +480,7 @@ router.get('/idle-action/next', async (req, res) => {
 
 router.post('/idle-action/complete', async (req, res) => {
   const action = String(req.body?.action || 'none');
-  const config = await getIdleActionConfig();
-  if (action === 'transaction_start') {
-    await saveConfigValue(db, 'transaction_start_requested', '0');
-    await saveConfigValue(db, 'transaction_start_last_run_date', config.today);
-  } else if (action === 'scan') {
-    await saveConfigValue(db, 'scan_idle_counter', '0');
-  } else {
-    await saveConfigValue(db, 'scan_idle_counter', getNextScanIdleCounter(action, config));
-  }
-  res.json({ success: true });
+  res.json(await completeIdleAction(action));
 });
 
 // PATCH /api/plugin/task/:id/status
@@ -1456,6 +1510,8 @@ module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT
 module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getNextScanIdleCounter = getNextScanIdleCounter;
+module.exports.completeIdleAction = completeIdleAction;
+module.exports.ensureScheduledTransactionStartRequest = ensureScheduledTransactionStartRequest;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
