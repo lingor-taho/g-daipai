@@ -7,6 +7,7 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '物流', '单号'];
+const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150];
 
 let cachedToken = null;
 
@@ -193,6 +194,18 @@ async function ensureHeaderRow(spreadsheetId, sheetName) {
 
 async function applySheetBaseStyle(spreadsheetId, sheetName) {
   const sheetId = await getSheetId(spreadsheetId, sheetName);
+  const columnWidthRequests = DEFAULT_COLUMN_WIDTHS.map((pixelSize, index) => ({
+    updateDimensionProperties: {
+      range: {
+        sheetId,
+        dimension: 'COLUMNS',
+        startIndex: index,
+        endIndex: index + 1
+      },
+      properties: { pixelSize },
+      fields: 'pixelSize'
+    }
+  }));
   await googleRequest(`${spreadsheetId}:batchUpdate`, {
     method: 'POST',
     body: JSON.stringify({
@@ -219,28 +232,55 @@ async function applySheetBaseStyle(spreadsheetId, sheetName) {
             },
             cell: {
               userEnteredFormat: {
-                backgroundColor: { red: 0.09, green: 0.25, blue: 0.43 },
+                backgroundColor: { red: 0.90, green: 0.94, blue: 0.99 },
                 horizontalAlignment: 'CENTER',
                 verticalAlignment: 'MIDDLE',
+                wrapStrategy: 'WRAP',
                 textFormat: {
-                  foregroundColor: { red: 1, green: 1, blue: 1 },
+                  foregroundColor: { red: 0.08, green: 0.13, blue: 0.20 },
+                  fontSize: 10,
                   bold: true
                 }
               }
             },
-            fields: 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)'
+            fields: 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)'
           }
         },
         {
-          autoResizeDimensions: {
-            dimensions: {
+          repeatCell: {
+            range: {
               sheetId,
-              dimension: 'COLUMNS',
-              startIndex: 0,
-              endIndex: 10
-            }
+              startRowIndex: 1,
+              startColumnIndex: 0,
+              endColumnIndex: 10
+            },
+            cell: {
+              userEnteredFormat: {
+                verticalAlignment: 'MIDDLE',
+                wrapStrategy: 'CLIP',
+                textFormat: {
+                  fontSize: 10
+                }
+              }
+            },
+            fields: 'userEnteredFormat(verticalAlignment,wrapStrategy,textFormat.fontSize)'
           }
-        }
+        },
+        {
+          updateDimensionProperties: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: 0,
+              endIndex: 1
+            },
+            properties: {
+              pixelSize: 34
+            },
+            fields: 'pixelSize'
+          }
+        },
+        ...columnWidthRequests
       ]
     })
   });
