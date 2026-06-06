@@ -1430,9 +1430,11 @@ function extractSellerName(text = getBodyText()) {
 function extractTrackingNumberFromText(text = getBodyText()) {
   const labeledTrackingNumber = extractLabeledValue(['伝票番号', '追跡番号'], text);
   if (labeledTrackingNumber) {
-    const digits = labeledTrackingNumber.replace(/\D/g, '');
-    if (digits.length === 12) return digits;
-    return labeledTrackingNumber;
+    const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){12}/g) || [];
+    for (const candidate of labeledMatches) {
+      const digits = candidate.replace(/\D/g, '');
+      if (digits.length === 12) return digits;
+    }
   }
   const source = String(text || '');
   const matches = source.match(/(?:\d[\s-]*){12}/g) || [];

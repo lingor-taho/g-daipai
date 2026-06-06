@@ -1091,8 +1091,8 @@ function buildDaipaiSheetRow(order = {}, baseConfig = {}) {
     order.shipping_fee_text || '',
     order.bundle_shipping_fee_text || '',
     payable.totalJpy,
-    payable.payableCny,
-    GOOGLE_SHEET_STATUS_PENDING_RECEIPT
+    order.shipping_company || '',
+    order.tracking_number || ''
   ];
 }
 
@@ -1130,6 +1130,8 @@ async function getOrdersForSheetAppend(orderId, database = db) {
             t.product_title,
             t.shipping_fee_text,
             t.tax_type,
+            o.shipping_company,
+            o.tracking_number,
             u.username,
             ufo.rate_adjustment AS user_rate_adjustment,
             ufo.bank_fee_jpy AS user_bank_fee_jpy,

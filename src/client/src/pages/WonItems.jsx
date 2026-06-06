@@ -141,13 +141,6 @@ export default function WonItems() {
                         落札时间：{wonTime}
                       </>
                     ) : null}
-                    {item.tracking_number ? (
-                      <>
-                        <br />
-                        {item.shipping_company ? <>物流：{item.shipping_company}<br /></> : null}
-                        追踪号：{item.tracking_number}
-                      </>
-                    ) : null}
                   </div>
                 </div>
               </div>

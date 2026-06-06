@@ -1486,6 +1486,26 @@ function testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields() 
   assert.equal(result.trackingNumber, '628620458093');
 }
 
+function testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber() {
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u30e4\u30de\u30c8\u904b\u8f38' },
+          { textContent: '\u4f1d\u7968\u756a\u53f7 \uff1a 3901-6644-7193\u914d\u9001\u72b6\u6cc1\u3092\u8abf\u3079\u308b\uff08\u5916\u90e8\u30b5\u30a4\u30c8\uff09 \u304a\u5c4a\u3051\u60c5\u5831 08096096438' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u30e4\u30de\u30c8\u904b\u8f38');
+  assert.equal(result.trackingNumber, '390166447193');
+}
+
 function testExtractPendingShipmentScanResultDetectsNormalShipped() {
   const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a SAMANSA\uff08658\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u65b9\u6cd5\uff1a \u3086\u3046\u30d1\u30c3\u30af\uff08\u9001\u6599\uff1a880\u5186\uff09\n\u8ffd\u8de1\u756a\u53f7\uff1a 751242160303');
   const result = api.extractPendingShipmentScanResult();
@@ -1617,6 +1637,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsStoreShipped();
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();
+  testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber();
   testExtractPendingShipmentScanResultDetectsNormalShipped();
   testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();

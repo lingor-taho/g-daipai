@@ -6,7 +6,7 @@ const DEFAULT_SHEET_NAME = '-代拍表-';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
-const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '应付款', '订单状态'];
+const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '物流', '单号'];
 
 let cachedToken = null;
 
@@ -128,6 +128,9 @@ async function appendRows({ rows, backgroundColor = null }) {
   if (!Array.isArray(rows) || !rows.length) return { skipped: true, reason: 'no rows' };
   const { spreadsheetId, sheetName } = getSheetConfig();
   await ensureHeaderRow(spreadsheetId, sheetName);
+  await applySheetBaseStyle(spreadsheetId, sheetName).catch(error => {
+    console.warn('[Google Sheets] apply style skipped:', error.message || error);
+  });
   const appendResult = await googleRequest(
     `${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A:J`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&includeValuesInResponse=false`,
     {
@@ -179,7 +182,8 @@ async function ensureHeaderRow(spreadsheetId, sheetName) {
   const data = await googleRequest(`${spreadsheetId}/values/${range}?majorDimension=ROWS`);
   const firstRow = data.values?.[0] || [];
   const hasAnyHeader = firstRow.some(value => String(value || '').trim());
-  if (hasAnyHeader) return { updated: false };
+  const headerMatches = DEFAULT_HEADERS.every((header, index) => String(firstRow[index] || '').trim() === header);
+  if (hasAnyHeader && headerMatches) return { updated: false };
   await googleRequest(`${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     body: JSON.stringify({ values: [DEFAULT_HEADERS] })
@@ -187,8 +191,64 @@ async function ensureHeaderRow(spreadsheetId, sheetName) {
   return { updated: true };
 }
 
+async function applySheetBaseStyle(spreadsheetId, sheetName) {
+  const sheetId = await getSheetId(spreadsheetId, sheetName);
+  await googleRequest(`${spreadsheetId}:batchUpdate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [
+        {
+          updateSheetProperties: {
+            properties: {
+              sheetId,
+              gridProperties: {
+                frozenRowCount: 1
+              }
+            },
+            fields: 'gridProperties.frozenRowCount'
+          }
+        },
+        {
+          repeatCell: {
+            range: {
+              sheetId,
+              startRowIndex: 0,
+              endRowIndex: 1,
+              startColumnIndex: 0,
+              endColumnIndex: 10
+            },
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: { red: 0.09, green: 0.25, blue: 0.43 },
+                horizontalAlignment: 'CENTER',
+                verticalAlignment: 'MIDDLE',
+                textFormat: {
+                  foregroundColor: { red: 1, green: 1, blue: 1 },
+                  bold: true
+                }
+              }
+            },
+            fields: 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)'
+          }
+        },
+        {
+          autoResizeDimensions: {
+            dimensions: {
+              sheetId,
+              dimension: 'COLUMNS',
+              startIndex: 0,
+              endIndex: 10
+            }
+          }
+        }
+      ]
+    })
+  });
+}
+
 module.exports = {
   appendRows,
+  applySheetBaseStyle,
   ensureHeaderRow,
   getSheetConfig,
   isGoogleSheetsConfigured

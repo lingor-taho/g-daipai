@@ -868,6 +868,8 @@ function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
     final_price: 1000,
     shipping_fee_text: '落札者負担',
     bundle_shipping_fee_text: '110円',
+    shipping_company: '日本郵便',
+    tracking_number: '628620458093',
     tax_type: 'tax_zero'
   }, {
     rate: 0.05,
@@ -885,8 +887,8 @@ function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
     '落札者負担',
     '110円',
     1110,
-    95.5,
-    '待收货'
+    '日本郵便',
+    '628620458093'
   ]);
 }
 
