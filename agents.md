@@ -1302,3 +1302,28 @@ node yahoo-plugin\background.test.js
 ```powershell
 node yahoo-plugin\background.test.js
 ```
+---
+
+## 2026-06-06 数据批处理待收货补表格
+
+### 已实现内容
+
+- 后台“数据批处理”新增 Tab：`待收货补表格`。
+- 新增后台接口：`POST /api/admin/receipt-sheet-backfill/run`，用于批量处理已经是 `pending_receipt`（待收货）但还没有写入 Google 表格的订单。
+- 批处理复用扫描发货后的同一套 Google 表格追加逻辑：
+  - 写入 `-代拍表-` 页。
+  - 字段顺序为：落札日期、用户名、商品链接、商品标题、落札价、运费、同捆运费、总价、应付款、订单状态。
+  - 表格 A1:J1 为空时自动写入表头。
+  - 同捆商品会按同组连续追加，并使用组背景色；相邻同捆组颜色轮换。
+- 重复判断规则：
+  - 系统内通过 `orders.google_sheet_appended_at IS NULL` 过滤，追加成功后写入 `google_sheet_appended_at`，避免扫描重试或后台补写重复追加。
+  - 当前不会读取 Google 表格已有内容做二次去重；如果表格里有人工手动添加的旧行，系统无法识别。当前表格为空时可直接使用。
+- 后台补表页为了避免 Windows/服务器编码差异导致 TSX 乱码，中文显示文本使用 Unicode 转义保存，浏览器显示仍为中文。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+Set-Location src\admin
+npm run build
+```

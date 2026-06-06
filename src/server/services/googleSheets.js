@@ -6,6 +6,7 @@ const DEFAULT_SHEET_NAME = '-代拍表-';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '应付款', '订单状态'];
 
 let cachedToken = null;
 
@@ -126,6 +127,7 @@ async function appendRows({ rows, backgroundColor = null }) {
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
   if (!Array.isArray(rows) || !rows.length) return { skipped: true, reason: 'no rows' };
   const { spreadsheetId, sheetName } = getSheetConfig();
+  await ensureHeaderRow(spreadsheetId, sheetName);
   const appendResult = await googleRequest(
     `${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A:J`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&includeValuesInResponse=false`,
     {
@@ -172,8 +174,22 @@ async function appendRows({ rows, backgroundColor = null }) {
   };
 }
 
+async function ensureHeaderRow(spreadsheetId, sheetName) {
+  const range = encodeURIComponent(`${sheetName}!A1:J1`);
+  const data = await googleRequest(`${spreadsheetId}/values/${range}?majorDimension=ROWS`);
+  const firstRow = data.values?.[0] || [];
+  const hasAnyHeader = firstRow.some(value => String(value || '').trim());
+  if (hasAnyHeader) return { updated: false };
+  await googleRequest(`${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [DEFAULT_HEADERS] })
+  });
+  return { updated: true };
+}
+
 module.exports = {
   appendRows,
+  ensureHeaderRow,
   getSheetConfig,
   isGoogleSheetsConfigured
 };

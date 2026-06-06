@@ -12,6 +12,7 @@ const {
   isMultiBidTask,
   ensureScheduledTransactionStartRequest,
   getShipmentAlerts,
+  appendPendingReceiptOrderToGoogleSheet,
   DEFAULT_MULTI_BID_MIN_PRICE
 } = require('./plugin');
 const { productService, normalizeAuctionUrl } = require('./proxy');
@@ -1363,6 +1364,64 @@ router.post('/product-type-refresh/run', async (req, res) => {
     results,
     updated: results.filter(item => item.success).length,
     failed: results.filter(item => !item.success).length
+  });
+});
+
+router.post('/receipt-sheet-backfill/run', async (req, res) => {
+  const limit = Math.max(1, Math.min(500, Math.floor(Number(req.body?.limit || 100))));
+  const rows = await db.getAll(
+    `SELECT o.id AS order_id,
+            t.product_id,
+            o.bundle_group_id
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE o.order_status = 'pending_receipt'
+       AND o.google_sheet_appended_at IS NULL
+     ORDER BY datetime(COALESCE(o.shipped_at, o.updated_at, o.created_at)) ASC, o.id ASC
+     LIMIT ?`,
+    [limit]
+  );
+  const processedBundleGroups = new Set();
+  const results = [];
+  for (const row of rows) {
+    if (row.bundle_group_id && processedBundleGroups.has(row.bundle_group_id)) {
+      results.push({
+        orderId: row.order_id,
+        productId: row.product_id,
+        success: true,
+        skipped: true,
+        reason: '同捆组已随主商品处理'
+      });
+      continue;
+    }
+    try {
+      const appendResult = await appendPendingReceiptOrderToGoogleSheet(row.order_id, db);
+      if (row.bundle_group_id && !appendResult?.skipped) processedBundleGroups.add(row.bundle_group_id);
+      results.push({
+        orderId: row.order_id,
+        productId: row.product_id,
+        success: !appendResult?.skipped,
+        skipped: appendResult?.skipped === true,
+        reason: appendResult?.reason || '',
+        appendedRows: appendResult?.appendedRows || 0,
+        updatedRange: appendResult?.updatedRange || ''
+      });
+    } catch (err) {
+      results.push({
+        orderId: row.order_id,
+        productId: row.product_id,
+        success: false,
+        error: err.message || '待收货补表格失败'
+      });
+    }
+  }
+  res.json({
+    success: true,
+    results,
+    total: rows.length,
+    appended: results.filter(item => item.success && !item.skipped).length,
+    skipped: results.filter(item => item.skipped).length,
+    failed: results.filter(item => !item.success && !item.skipped).length
   });
 });
 
