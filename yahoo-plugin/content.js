@@ -1383,6 +1383,44 @@ function normalizeTextValue(value, maxLength = 128) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+const SHIPMENT_LABELS = [
+  '配送業者',
+  '配送方法',
+  '伝票番号',
+  '追跡番号',
+  '配送希望日',
+  '配送希望時間',
+  '購入日時',
+  '注文番号'
+];
+
+function valueAfterLabel(text, labels) {
+  const source = String(text || '');
+  for (const label of labels) {
+    const index = source.indexOf(label);
+    if (index < 0) continue;
+    let value = source.slice(index + label.length).replace(/^\s*[:：]?\s*/, '');
+    let stopAt = value.length;
+    for (const stopLabel of SHIPMENT_LABELS) {
+      const stopIndex = value.indexOf(stopLabel);
+      if (stopIndex > 0 && stopIndex < stopAt) stopAt = stopIndex;
+    }
+    value = value.slice(0, stopAt).split(/[\n\r]/)[0];
+    return normalizeTextValue(value);
+  }
+  return '';
+}
+
+function extractLabeledValue(labels, text = getBodyText()) {
+  const selectors = 'tr, dl, div, li, p';
+  const elements = Array.from(document.querySelectorAll(selectors) || []);
+  for (const element of elements) {
+    const value = valueAfterLabel(element?.textContent || '', labels);
+    if (value) return value;
+  }
+  return valueAfterLabel(text, labels);
+}
+
 function extractSellerName(text = getBodyText()) {
   const source = String(text || '');
   const match = source.match(/出品者\s*[:：]\s*([^\n\r（(]+)/);
@@ -1390,6 +1428,12 @@ function extractSellerName(text = getBodyText()) {
 }
 
 function extractTrackingNumberFromText(text = getBodyText()) {
+  const labeledTrackingNumber = extractLabeledValue(['伝票番号', '追跡番号'], text);
+  if (labeledTrackingNumber) {
+    const digits = labeledTrackingNumber.replace(/\D/g, '');
+    if (digits.length === 12) return digits;
+    return labeledTrackingNumber;
+  }
   const source = String(text || '');
   const matches = source.match(/(?:\d[\s-]*){12}/g) || [];
   for (const candidate of matches) {
@@ -1400,6 +1444,12 @@ function extractTrackingNumberFromText(text = getBodyText()) {
 }
 
 function extractShippingCompany(text = getBodyText()) {
+  const labeledShippingCompany = extractLabeledValue(['配送業者', '配送方法'], text);
+  if (labeledShippingCompany) {
+    return normalizeTextValue(labeledShippingCompany
+      .replace(/[（(]\s*送料[\s\S]*$/, '')
+      .replace(/\s*送料[\s\S]*$/, ''));
+  }
   const source = String(text || '');
   const patterns = [
     /配送(?:業者|方法)\s*[:：]\s*([^\n\r]+)/,

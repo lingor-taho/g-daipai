@@ -1327,3 +1327,26 @@ node src\server\routes\plugin.test.js
 Set-Location src\admin
 npm run build
 ```
+---
+
+## 2026-06-06 待发货扫描物流字段修正
+
+### 问题
+
+- 服务器商品 `c1232119416` 为商城商品，订单仍停留在 `pending_shipment`，`shipping_company` 和 `tracking_number` 为空。
+- 服务器查询显示该订单已有 `transaction_url=https://buy.auctions.yahoo.co.jp/order/status?auctionId=c1232119416`，说明不是交易链接缺失，而是待发货扫描进入取引页后没有稳定识别已发货物流字段。
+
+### 已修复内容
+
+- `yahoo-plugin/content.js` 的待发货扫描现在优先从 DOM 表格/块元素按字段名抽取物流和单号：
+  - 商城商品：`配送業者` -> 物流，`伝票番号` -> 单号。
+  - 普通商品：`配送方法` -> 物流，`追跡番号` -> 单号。
+- 普通商品物流字段会去掉运费部分，例如 `ゆうバック（送料:880円）` 保存为 `ゆうバック`。
+- 保留旧兜底逻辑：如果字段里没有单号，继续从聊天文本里找 12 位数字；仍找不到时用出品者名称兜底。
+- 新增回归测试覆盖商城/普通两类 DOM 表格字段。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+```
