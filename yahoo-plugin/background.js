@@ -453,16 +453,30 @@ async function fetchProductInfo(url) {
 }
 
 async function syncOrderHistory(orders) {
-  if (!Array.isArray(orders)) return;
+  if (!Array.isArray(orders)) return null;
   try {
-    await apiFetch('/api/plugin/orders/sync', {
+    const res = await apiFetch('/api/plugin/orders/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orders })
     });
+    return await res.json().catch(() => null);
   } catch (e) {
     console.error('[Yahoo Bid] Failed to sync order history:', e);
+    return null;
   }
+}
+
+async function confirmWonBeforeFail(task) {
+  const productId = normalizeAuctionId(task?.product_url || task?.product_id || '');
+  if (!productId) return false;
+  const result = await openWonPageForSync().catch(error => {
+    console.warn('[Yahoo Bid] Failed to confirm won page before marking failed:', error?.message || error);
+    return null;
+  });
+  if (!result || Number(result.updated || 0) <= 0) return false;
+  console.warn('[Yahoo Bid] Task looked failed but Yahoo won page confirmed order:', productId, result);
+  return true;
 }
 
 async function syncBiddingItems(items) {
@@ -1016,8 +1030,9 @@ async function openWonPageForSync() {
   });
   await reportYahooLoginStatus(response?.loginStatus);
   if (response?.success) {
-    await syncOrderHistory(response.orders || []);
+    return await syncOrderHistory(response.orders || []);
   }
+  return null;
 }
 
 async function openBiddingPageForSync() {
@@ -1951,7 +1966,10 @@ async function pollAndExecute() {
         if (taskTab?.id && e.closeTab) {
           await closeTaskTab(taskTab.id);
         }
-        await markTaskStatus(task.id, 'failed', e.message);
+        const confirmedWon = await confirmWonBeforeFail(task);
+        if (!confirmedWon) {
+          await markTaskStatus(task.id, 'failed', e.message);
+        }
       }
     } else if (taskResponse.canIdleSync) {
       await chrome.storage.session.remove(['currentTask']);
@@ -1999,6 +2017,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   runTransactionStartJobs,
   runPaymentJobs,
   buildPaymentFailurePayload,
+  confirmWonBeforeFail,
   getExpectedPaymentAmountJpy,
   parseYenAmount
 };

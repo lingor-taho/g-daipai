@@ -571,16 +571,16 @@ function normalizeYahooWonTimeText(value, nowMs = Date.now()) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-async function upsertOrderFromTask(taskId, options = {}) {
-  const task = await db.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
+async function upsertOrderFromTask(taskId, options = {}, database = db) {
+  const task = await database.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task) return;
-  const existing = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
+  const existing = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
   const transactionUrl = String(options.transactionUrl || '').trim() || null;
   if (existing) {
-    await db.query(
+    await database.query(
       `UPDATE orders
        SET product_title = ?, product_url = ?, final_price = ?,
            won_at = COALESCE(?, won_at),
@@ -591,7 +591,7 @@ async function upsertOrderFromTask(taskId, options = {}) {
       [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
     );
   } else {
-    await db.query(
+    await database.query(
       `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text, transaction_url)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
@@ -999,6 +999,51 @@ function parseShipmentAlerts(value) {
   } catch (_) {
     return [];
   }
+}
+
+async function syncYahooWonOrders(orders = [], database = db) {
+  let updated = 0;
+  let skippedExisting = 0;
+  let forcedResync = 0;
+  for (const order of orders) {
+    const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
+    if (!match) continue;
+    const productId = match[0].toLowerCase();
+    const task = await database.getOne(
+      `SELECT id, force_orders_resync FROM tasks
+       WHERE product_id = ? AND status IN ('bidding', 'success', 'failed')
+       ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
+       LIMIT 1`,
+      [productId]
+    );
+    if (!task) continue;
+    const isForced = Number(task.force_orders_resync || 0) === 1;
+    const existingOrder = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
+    if (existingOrder && !isForced) {
+      skippedExisting += 1;
+      continue;
+    }
+    await database.query(
+      `UPDATE tasks
+       SET status = 'success',
+           error_msg = NULL,
+           force_orders_resync = 0,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [task.id]
+    );
+    await upsertOrderFromTask(task.id, {
+      finalPrice: order.price,
+      wonTimeText: order.wonTimeText,
+      transactionUrl: order.transactionUrl
+    }, database);
+    if (order.trackingNumber) {
+      await database.query('UPDATE orders SET tracking_number = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?', [order.trackingNumber, task.id]);
+    }
+    if (isForced) forcedResync += 1;
+    updated += 1;
+  }
+  return { updated, failed: 0, skippedExisting, forcedResync };
 }
 
 async function getShipmentAlerts(database = db) {
@@ -1458,54 +1503,9 @@ router.post('/bidding/sync', async (req, res) => {
 
 router.post('/orders/sync', async (req, res) => {
   const orders = Array.isArray(req.body?.orders) ? req.body.orders : [];
-  let updated = 0;
-  let skippedExisting = 0;
-  let forcedResync = 0;
-  // Yahoo /my/won 页面按落札时间倒序（最新在前）。从第一条开始处理，
-  // 碰到已经存在 orders 行的任务就停下来——这条之后的都早就同步过了。
-  // 例外：如果任务被打上 force_orders_resync 标记（后台"落札商品更新"功能触发），
-  // 则强制覆盖且不中断后续遍历，处理后清除标记。
-  for (const order of orders) {
-    const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
-    if (!match) continue;
-    const productId = match[0].toLowerCase();
-    const task = await db.getOne(
-      `SELECT id, force_orders_resync FROM tasks
-       WHERE product_id = ? AND status IN ('bidding', 'success')
-       ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
-       LIMIT 1`,
-      [productId]
-    );
-    if (!task) continue;
-    const isForced = Number(task.force_orders_resync || 0) === 1;
-    const existingOrder = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
-    if (existingOrder && !isForced) {
-      skippedExisting += 1;
-      break;
-    }
-    await db.query(
-      `UPDATE tasks
-       SET status = 'success',
-           error_msg = NULL,
-           force_orders_resync = 0,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [task.id]
-    );
-    await upsertOrderFromTask(task.id, {
-      finalPrice: order.price,
-      wonTimeText: order.wonTimeText,
-      transactionUrl: order.transactionUrl
-    });
-    if (order.trackingNumber) {
-      await db.query('UPDATE orders SET tracking_number = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?', [order.trackingNumber, task.id]);
-    }
-    if (isForced) forcedResync += 1;
-    updated += 1;
-  }
+  const result = await syncYahooWonOrders(orders, db);
   await setYahooLoginStatus('ok');
-  const failed = 0;
-  res.json({ success: true, updated, failed, skippedExisting, forcedResync });
+  res.json({ success: true, ...result });
 });
 
 router.get('/transaction-start/jobs', async (req, res) => {
@@ -1661,6 +1661,7 @@ module.exports.ensureScheduledTransactionStartRequest = ensureScheduledTransacti
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
+module.exports.syncYahooWonOrders = syncYahooWonOrders;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
 module.exports.calculateOverdueShipmentDays = calculateOverdueShipmentDays;

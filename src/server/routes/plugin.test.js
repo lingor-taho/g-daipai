@@ -28,6 +28,7 @@ const {
   getTransactionStartJobs,
   saveTransactionStartRunLog,
   updateTransactionStartStatus,
+  syncYahooWonOrders,
   getScanJobs,
   updateScanStatus,
   getPaymentJobs,
@@ -744,6 +745,52 @@ async function testUpdateTransactionStartStatusUpdatesBundleByProductIds() {
   assert.equal(statusUpdate.params[1], 'bundle-20260601-c1133337781');
 }
 
+async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask() {
+  const calls = [];
+  const tasks = new Map([
+    ['a123456789', { id: 1, force_orders_resync: 0 }],
+    ['u1231877298', { id: 110, force_orders_resync: 0 }]
+  ]);
+  const taskRows = new Map([
+    [110, {
+      id: 110,
+      product_id: 'u1231877298',
+      product_title: 'buyout item',
+      product_url: 'https://auctions.yahoo.co.jp/jp/auction/u1231877298'
+    }]
+  ]);
+  const existingOrders = new Map([[1, { id: 1001 }]]);
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) return tasks.get(params[0]) || null;
+      if (/SELECT id FROM orders WHERE task_id/.test(sql)) return existingOrders.get(params[0]) || null;
+      if (/SELECT \* FROM tasks WHERE id/.test(sql)) return taskRows.get(params[0]) || null;
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    { productId: 'a123456789', price: '100円' },
+    { productId: 'u1231877298', price: '350円', wonTimeText: '6/6 04:26', transactionUrl: 'https://contact.example/u1231877298' }
+  ], fakeDb);
+
+  assert.equal(result.skippedExisting, 1);
+  assert.equal(result.updated, 1);
+  const taskSelects = calls.filter(call => call.type === 'getOne' && /FROM tasks\s+WHERE product_id/.test(call.sql));
+  assert.equal(taskSelects.length, 2);
+  assert.match(taskSelects[0].sql, /'failed'/);
+  const statusUpdate = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
+  assert.equal(statusUpdate.params[0], 110);
+  const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
+  assert.equal(orderInsert.params[0], 110);
+  assert.equal(orderInsert.params[3], 350);
+}
+
 async function testGetScanJobsReturnsWaitingShippingOnly() {
   const calls = [];
   const fakeDb = {
@@ -1135,6 +1182,7 @@ Promise.all([
   testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun(),
   testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
+  testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
   testUpdateScanStatusMarksPendingShipmentAsCancelled(),

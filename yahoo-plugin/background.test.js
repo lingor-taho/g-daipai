@@ -1011,6 +1011,57 @@ async function testTransactionCleanupClosesNewYahooLoginTabs() {
   assert.deepEqual(removed, [2]);
 }
 
+async function testConfirmWonBeforeFailUsesWonPageSyncResult() {
+  const fetchCalls = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url, options });
+      if (String(url).includes('/api/plugin/orders/sync')) {
+        return {
+          ok: true,
+          async json() {
+            return { success: true, updated: 1 };
+          }
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return {};
+        }
+      };
+    },
+    tabs: {
+      async query() {
+        return [];
+      },
+      async create() {
+        return { id: 9, status: 'complete', url: 'https://auctions.yahoo.co.jp/my/won' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/my/won' };
+      },
+      async sendMessage(id, msg) {
+        if (msg.type === 'EXTRACT_ORDER_HISTORY') {
+          return {
+            success: true,
+            loginStatus: { status: 'ok' },
+            orders: [{ productId: 'u1231877298', price: '350円' }]
+          };
+        }
+        return { success: true };
+      }
+    }
+  });
+
+  const confirmed = await api.confirmWonBeforeFail({
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/u1231877298'
+  });
+
+  assert.equal(confirmed, true);
+  assert.equal(fetchCalls.some(call => String(call.url).includes('/api/plugin/orders/sync')), true);
+}
+
 async function run() {
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
@@ -1043,6 +1094,7 @@ async function run() {
   testBuildPaymentFailurePayloadIncludesProductId();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
+  await testConfirmWonBeforeFailUsesWonPageSyncResult();
 }
 
 run().catch(err => {
