@@ -574,6 +574,8 @@ router.get('/won', async (req, res) => {
          o.handling_fee,
          o.jpy_to_cny_rate,
          o.order_status,
+         o.shipping_company,
+         o.shipped_at,
          o.tracking_number
        FROM tasks won_task
        LEFT JOIN orders o ON o.task_id = won_task.id

@@ -24,6 +24,9 @@ const ORDER_STATUS_PENDING_BUNDLE = 'pending_bundle';
 const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
+const ORDER_STATUS_PENDING_RECEIPT = 'pending_receipt';
+const ORDER_STATUS_CANCELLED = 'cancelled';
+const SHIPMENT_ALERTS_CONFIG_KEY = 'shipment_alerts';
 
 function parseTimeMs(value) {
   let input = String(value || '').trim();
@@ -985,22 +988,101 @@ function normalizeShippingFeeText(value) {
   return amount ? `${amount}円` : '';
 }
 
+function normalizePlainText(value, maxLength = 128) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function parseShipmentAlerts(value) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function getShipmentAlerts(database = db) {
+  const row = await database.getOne(
+    `SELECT value FROM config WHERE key = ?`,
+    [SHIPMENT_ALERTS_CONFIG_KEY]
+  );
+  return parseShipmentAlerts(row?.value);
+}
+
+async function saveShipmentAlerts(database, alerts) {
+  await saveConfigValue(database, SHIPMENT_ALERTS_CONFIG_KEY, JSON.stringify(alerts || []));
+}
+
+function calculateOverdueShipmentDays(sinceValue, nowMs = Date.now()) {
+  const sinceMs = parseTimeMs(sinceValue);
+  if (!sinceMs) return 0;
+  const days = Math.floor((nowMs - sinceMs) / (24 * 60 * 60 * 1000));
+  return Number.isFinite(days) && days > 7 ? days : 0;
+}
+
+async function addPendingShipmentAlert(payload = {}, database = db, nowMs = Date.now()) {
+  const orderId = Number(payload.orderId || 0);
+  const productId = normalizePlainText(payload.productId, 32);
+  const daysOverdue = Number(payload.daysOverdue || 0);
+  if (!Number.isInteger(orderId) || orderId <= 0 || !productId || daysOverdue <= 7) {
+    return { added: false };
+  }
+  const id = `shipment-${orderId}-${daysOverdue}`;
+  const alerts = await getShipmentAlerts(database);
+  if (alerts.some(alert => alert.id === id)) return { added: false, duplicate: true };
+  alerts.push({
+    id,
+    orderId,
+    productId,
+    productTitle: normalizePlainText(payload.productTitle, 160),
+    daysOverdue,
+    createdDate: getLocalDateKey(nowMs),
+    createdAt: new Date(nowMs).toISOString(),
+    closedAt: null,
+    autoClosedAt: null
+  });
+  await saveShipmentAlerts(database, alerts);
+  return { added: true, id };
+}
+
+async function autoCloseShipmentAlerts(orderId, database = db) {
+  const targetOrderId = Number(orderId || 0);
+  if (!Number.isInteger(targetOrderId) || targetOrderId <= 0) return { closed: 0 };
+  const alerts = await getShipmentAlerts(database);
+  let closed = 0;
+  const now = new Date().toISOString();
+  const next = alerts.map(alert => {
+    if (Number(alert.orderId) !== targetOrderId || alert.closedAt || alert.autoClosedAt) return alert;
+    closed += 1;
+    return { ...alert, autoClosedAt: now };
+  });
+  if (closed) await saveShipmentAlerts(database, next);
+  return { closed };
+}
+
 async function getScanJobs(database = db) {
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
             o.order_status,
             o.transaction_url,
             o.bundle_group_id,
+            COALESCE((
+              SELECT MAX(l.created_at)
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id
+                AND l.new_status = ?
+            ), o.updated_at, o.created_at) AS pending_shipment_since,
             t.product_id,
             t.product_url,
             t.product_title,
+            t.product_type,
             t.shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
-     WHERE o.order_status IN (?, ?)
+     WHERE o.order_status IN (?, ?, ?)
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
-    [ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE]
+    [ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE, ORDER_STATUS_PENDING_SHIPMENT]
   );
   return {
     jobs: rows.map(row => ({
@@ -1009,9 +1091,11 @@ async function getScanJobs(database = db) {
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
+      productType: row.product_type || 'normal',
       shippingFeeText: row.shipping_fee_text || '',
       bundleGroupId: row.bundle_group_id || '',
-      transactionUrl: row.transaction_url || ''
+      transactionUrl: row.transaction_url || '',
+      pendingShipmentSince: row.pending_shipment_since || ''
     })),
     total: rows.length
   };
@@ -1025,6 +1109,66 @@ async function updateScanStatus(payload = {}, database = db) {
     const err = new Error('orderId is required');
     err.statusCode = 400;
     throw err;
+  }
+  if (payload.cancelled === true) {
+    const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND order_status = ?`,
+      [ORDER_STATUS_CANCELLED, orderId, ORDER_STATUS_PENDING_SHIPMENT]
+    );
+    if (result.rowCount) {
+      await autoCloseShipmentAlerts(orderId, database).catch(() => null);
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: ORDER_STATUS_CANCELLED,
+        source: 'scan_pending_shipment_cancelled',
+        metadata: { orderId }
+      }).catch(() => null);
+    }
+    return { updated: result.rowCount || 0, cancelled: true };
+  }
+  if (payload.shipped === true) {
+    const shippingCompany = normalizePlainText(payload.shippingCompany);
+    const trackingNumber = normalizePlainText(payload.trackingNumber);
+    if (!trackingNumber) {
+      const err = new Error('valid trackingNumber is required');
+      err.statusCode = 400;
+      throw err;
+    }
+    const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           shipping_company = ?,
+           tracking_number = ?,
+           shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND order_status = ?`,
+      [ORDER_STATUS_PENDING_RECEIPT, shippingCompany || null, trackingNumber, orderId, ORDER_STATUS_PENDING_SHIPMENT]
+    );
+    if (result.rowCount) {
+      await autoCloseShipmentAlerts(orderId, database).catch(() => null);
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: ORDER_STATUS_PENDING_RECEIPT,
+        source: 'scan_pending_shipment_shipped',
+        metadata: { orderId, shippingCompany, trackingNumber }
+      }).catch(() => null);
+    }
+    return { updated: result.rowCount || 0, shipped: true, shippingCompany, trackingNumber };
+  }
+  if (payload.pendingShipment === true) {
+    const daysOverdue = Number(payload.daysOverdue || 0);
+    const alertResult = await addPendingShipmentAlert({
+      orderId,
+      productId: payload.productId,
+      productTitle: payload.productTitle,
+      daysOverdue
+    }, database).catch(() => ({ added: false }));
+    return { updated: 0, pendingShipment: true, daysOverdue, alert: alertResult };
   }
   if (payload.bundleRejected === true) {
     const beforeRows = typeof database.getAll === 'function'
@@ -1508,6 +1652,8 @@ module.exports.ORDER_STATUS_PENDING_BUNDLE = ORDER_STATUS_PENDING_BUNDLE;
 module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;
 module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
+module.exports.ORDER_STATUS_PENDING_RECEIPT = ORDER_STATUS_PENDING_RECEIPT;
+module.exports.ORDER_STATUS_CANCELLED = ORDER_STATUS_CANCELLED;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getNextScanIdleCounter = getNextScanIdleCounter;
 module.exports.completeIdleAction = completeIdleAction;
@@ -1517,6 +1663,10 @@ module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
+module.exports.calculateOverdueShipmentDays = calculateOverdueShipmentDays;
+module.exports.addPendingShipmentAlert = addPendingShipmentAlert;
+module.exports.autoCloseShipmentAlerts = autoCloseShipmentAlerts;
+module.exports.getShipmentAlerts = getShipmentAlerts;
 module.exports.getPaymentJobs = getPaymentJobs;
 module.exports.updatePaymentStatus = updatePaymentStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;

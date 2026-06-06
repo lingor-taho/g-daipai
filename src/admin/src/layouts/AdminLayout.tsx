@@ -54,6 +54,7 @@ export default function AdminLayout() {
   const username = localStorage.getItem('username') || 'admin';
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
   const [paymentAlert, setPaymentAlert] = useState('');
+  const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
 
   // 根据折叠状态生成菜单项
@@ -75,9 +76,15 @@ export default function AdminLayout() {
       }
       try {
         const flags = await fetchAdminJson('/api/admin/idle-flags');
-        if (active) setPaymentAlert(flags.paymentAlertMessage || '');
+        if (active) {
+          setPaymentAlert(flags.paymentAlertMessage || '');
+          setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
+        }
       } catch {
-        if (active) setPaymentAlert('');
+        if (active) {
+          setPaymentAlert('');
+          setShipmentAlerts([]);
+        }
       }
     }
 
@@ -103,6 +110,15 @@ export default function AdminLayout() {
       message.success('付款任务已继续');
     } catch (e: any) {
       message.error(e.message || '继续付款任务失败');
+    }
+  }
+
+  async function closeShipmentAlert(alertId: string) {
+    try {
+      await fetchAdminJson(`/api/admin/shipment-alerts/${encodeURIComponent(alertId)}/close`, { method: 'POST' });
+      setShipmentAlerts(items => items.filter(item => item.id !== alertId));
+    } catch (e: any) {
+      message.error(e.message || '关闭待发货提醒失败');
     }
   }
 
@@ -184,6 +200,30 @@ export default function AdminLayout() {
                 style={{ marginBottom: 12 }}
               />
             ) : null}
+            {shipmentAlerts.map(alert => (
+              <Alert
+                key={alert.id}
+                type="warning"
+                showIcon
+                message={
+                  <Space wrap>
+                    <Typography.Text>
+                      <a
+                        href={`https://auctions.yahoo.co.jp/jp/auction/${alert.productId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#1677ff' }}
+                      >
+                        {alert.productId}
+                      </a>
+                      {alert.productTitle ? ` ${alert.productTitle}` : ' 商品'}，超过{alert.daysOverdue}天未发货！
+                    </Typography.Text>
+                    <Button size="small" onClick={() => closeShipmentAlert(alert.id)}>关闭</Button>
+                  </Space>
+                }
+                style={{ marginBottom: 12 }}
+              />
+            ))}
             <Outlet />
           </Content>
         </Layout>

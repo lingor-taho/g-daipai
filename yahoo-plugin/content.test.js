@@ -1350,6 +1350,50 @@ function testExtractBundleScanResultDetectsBundleRejected() {
   assert.equal(result.type, 'bundle_rejected');
 }
 
+function testExtractPendingShipmentScanResultDetectsStorePending() {
+  const api = loadContentForTest('\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002');
+  assert.equal(api.extractPendingShipmentScanResult().type, 'pending_shipment');
+}
+
+function testExtractPendingShipmentScanResultDetectsNormalPending() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002');
+  assert.equal(api.extractPendingShipmentScanResult().type, 'pending_shipment');
+}
+
+function testExtractPendingShipmentScanResultDetectsStoreShipped() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a LOLOMA\uff089986\uff09\n\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u696d\u8005\uff1a \u65e5\u672c\u90f5\u4fbf\n\u4f1d\u7968\u756a\u53f7\uff1a 628620458093');
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u65e5\u672c\u90f5\u4fbf');
+  assert.equal(result.trackingNumber, '628620458093');
+}
+
+function testExtractPendingShipmentScanResultDetectsNormalShipped() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a SAMANSA\uff08658\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u65b9\u6cd5\uff1a \u3086\u3046\u30d1\u30c3\u30af\uff08\u9001\u6599\uff1a880\u5186\uff09\n\u8ffd\u8de1\u756a\u53f7\uff1a 751242160303');
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u3086\u3046\u30d1\u30c3\u30af');
+  assert.equal(result.trackingNumber, '751242160303');
+}
+
+function testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8 1234-5678-9012');
+  assert.equal(api.extractPendingShipmentScanResult().trackingNumber, '123456789012');
+}
+
+function testExtractPendingShipmentScanResultFallsBackToSellerName() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u696d\u8005\uff1a \u65e5\u672c\u90f5\u4fbf');
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, 'asua');
+  assert.equal(result.trackingFallback, 'seller_name');
+}
+
+function testExtractPendingShipmentScanResultDetectsCancelled() {
+  const api = loadContentForTest('\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002\u30ad\u30e3\u30f3\u30bb\u30eb\u5f8c\u306e\u6d41\u308c\u306f\u30d8\u30eb\u30d7\u3092\u3054\u78ba\u8a8d\u304f\u3060\u3055\u3044\u3002');
+  assert.equal(api.extractPendingShipmentScanResult().type, 'cancelled');
+}
+
 async function run() {
   testOutbidTextIsNotHighestBidder();
   testRaiseBidButtonTextAloneIsNotOutbidFailure();
@@ -1427,6 +1471,13 @@ async function run() {
   testExtractBundleScanResultExtractsDeliveryMethodShippingFee();
   testExtractBundleScanResultExtractsPaymentShippingFee();
   testExtractBundleScanResultDetectsBundleRejected();
+  testExtractPendingShipmentScanResultDetectsStorePending();
+  testExtractPendingShipmentScanResultDetectsNormalPending();
+  testExtractPendingShipmentScanResultDetectsStoreShipped();
+  testExtractPendingShipmentScanResultDetectsNormalShipped();
+  testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
+  testExtractPendingShipmentScanResultFallsBackToSellerName();
+  testExtractPendingShipmentScanResultDetectsCancelled();
 }
 
 run().catch(err => {

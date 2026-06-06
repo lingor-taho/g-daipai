@@ -94,6 +94,8 @@ function renderOrderStatus(status: string | null | undefined) {
   if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
   if (status === 'pending_shipment') return <Tag color="lime">待发货</Tag>;
+  if (status === 'pending_receipt') return <Tag color="geekblue">待收货</Tag>;
+  if (status === 'cancelled') return <Tag color="red">取消</Tag>;
   if (status === 'waiting_shipping') return <Tag color="orange">等待运费</Tag>;
   if (status === 'pending_bundle') return <Tag color="purple">待同捆</Tag>;
   if (status === 'bundle_completed') return <Tag color="cyan">同捆完了</Tag>;
@@ -310,6 +312,7 @@ export default function OrdersPage() {
       )
     },
     { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 160, ellipsis: true, onCell: () => noWrapCell },
+    { title: '物流', dataIndex: 'shipping_company', width: 100, ellipsis: true, onCell: () => noWrapCell },
     { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];
 

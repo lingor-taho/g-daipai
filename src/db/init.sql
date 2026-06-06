@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS orders (
   bundle_group_id VARCHAR(64),
   transaction_started_at DATETIME,
   transaction_start_error TEXT,
+  shipping_company VARCHAR(128),
   tracking_number VARCHAR(128),
   shipped_at DATETIME,
   settled_at DATETIME,

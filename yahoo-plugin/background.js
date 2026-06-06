@@ -1531,6 +1531,36 @@ async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
 function buildScanStatusPayload(job) {
   const result = job?.result || {};
   if (!job?.orderId) return null;
+  if (job.orderStatus === 'pending_shipment') {
+    if (result.type === 'cancelled') {
+      return {
+        orderId: job.orderId,
+        cancelled: true
+      };
+    }
+    if (result.type === 'shipped') {
+      return {
+        orderId: job.orderId,
+        shipped: true,
+        shippingCompany: result.shippingCompany || '',
+        trackingNumber: result.trackingNumber || ''
+      };
+    }
+    if (result.type === 'pending_shipment') {
+      const sinceMs = parseTimeMs(job.pendingShipmentSince);
+      const daysOverdue = Number.isFinite(sinceMs)
+        ? Math.floor((Date.now() - sinceMs) / (24 * 60 * 60 * 1000))
+        : 0;
+      return {
+        orderId: job.orderId,
+        pendingShipment: true,
+        productId: job.productId,
+        productTitle: job.productTitle,
+        daysOverdue
+      };
+    }
+    return null;
+  }
   if (job.orderStatus === 'pending_bundle') {
     if (result.type === 'bundle_rejected') {
       return {
@@ -1557,6 +1587,29 @@ function buildScanStatusPayload(job) {
     orderId: job.orderId,
     shippingFeeText: result.shippingFeeText
   };
+}
+
+async function executePendingShipmentScanJob(job) {
+  let tab = null;
+  const beforeTabIds = await getTabIds();
+  try {
+    tab = await openTransactionPage(job);
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_PENDING_SHIPMENT_SCAN' }).catch(error => {
+      console.error('[Yahoo Bid] Failed to extract pending shipment scan:', error);
+      return null;
+    });
+    await reportYahooLoginStatus(response?.loginStatus);
+    if (response?.loginStatus?.status === 'failed') return { stop: true };
+    if (!response?.success) return { stop: false };
+    const payload = buildScanStatusPayload({ ...job, result: response.result });
+    if (payload) await updateScanStatus(payload);
+    return { stop: false };
+  } catch (e) {
+    console.warn('[Yahoo Bid] Pending shipment scan job failed:', e.message || e);
+    return { stop: false };
+  } finally {
+    await closeTabsForScanFlow(tab, beforeTabIds);
+  }
 }
 
 async function executeWaitingShippingScanJob(job) {
@@ -1664,7 +1717,9 @@ async function runScanJobs() {
     if (job.bundleGroupId && processedBundleGroups.has(job.bundleGroupId)) continue;
     const result = job.orderStatus === 'pending_bundle'
       ? await executePendingBundleScanJob(job)
-      : await executeWaitingShippingScanJob(job);
+      : (job.orderStatus === 'pending_shipment'
+        ? await executePendingShipmentScanJob(job)
+        : await executeWaitingShippingScanJob(job));
     if (result?.processedBundleGroupId) {
       processedBundleGroups.add(result.processedBundleGroupId);
     }

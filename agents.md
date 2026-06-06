@@ -935,6 +935,52 @@ npm run build
 
 ---
 
+## 2026-06-06 扫描待发货状态当前进度
+
+### 已实现内容
+
+- `scan` 任务新增第三类取单状态：`pending_shipment`（待发货），与原 `waiting_shipping`、`pending_bundle` 分开处理。
+- `orders` 新增兼容字段：`shipping_company`，用于保存物流公司；继续复用已有 `tracking_number`、`shipped_at`。
+- 待发货扫描进入订单 `取引連絡` 后识别：
+  - 商城未发货：`ご購入ありがとうございます。商品の発送連絡をお待ちください。`，保持待发货并执行超期提醒判断。
+  - 商城已发货：`商品が発送されました。到着までお待ちください。`，抽取物流和单号，订单改为 `pending_receipt`（待收货）。
+  - 商城取消：页面含 `キャンセルされました`，订单改为 `cancelled`（取消）。
+  - 普通未发货：`出品者に支払い完了の連絡をしました。商品の発送連絡をお待ちください。`，保持待发货并执行超期提醒判断。
+  - 普通已发货：`出品者から商品発送の連絡がありました。到着したら、受け取り連絡をしてください。`，抽取物流和单号，订单改为 `pending_receipt`（待收货）。
+- 单号判断：
+  - 优先从页面/取引消息中抽取 12 位数字，支持中间用 `-` 或空格分隔。
+  - 抽不到单号时，用 `出品者` 名称兜底；如 `出品者： asua（9986）` 保存为 `asua`。
+- 待发货超期提醒：
+  - 按进入 `pending_shipment` 的状态日志时间计算，超过 7 天开始提醒。
+  - 每个订单每天生成一条独立提醒，提醒 ID 为 `订单ID + 超期天数`；关闭后当天同一条不再重复。
+  - 未关闭的旧提醒会保留，第二天继续新增下一条提醒；发货或取消后自动关闭该订单未关闭提醒。
+  - 后台顶部新增待发货提醒栏，每条提醒可单独关闭，商品 ID 可点击跳 Yahoo。
+- 用户端落札商品：
+  - `cancelled` 显示红色 `取消` 标签，整行淡粉色背景。
+  - `pending_receipt` 显示 `待收货`，`pending_shipment` 显示 `待发货`。
+  - 有物流时显示物流和追踪号。
+- 后台订单管理新增 `待收货`、`取消` 状态标签，并显示物流列。
+
+### 待补充
+
+- 发货后追加 Google 表格的具体表格地址、字段和认证方式尚未提供，当前仅完成订单状态与物流信息入库。
+- 普通商品取消页面文案后续补充后，需要把专用文案加入 `pending_shipment` 扫描识别；当前通用 `キャンセルされました` 已可覆盖常见取消页。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+node src\server\routes\plugin.test.js
+node yahoo-plugin\background.test.js
+node src\server\routes\admin.orders.test.js
+Set-Location src\client
+npm run build
+Set-Location ..\admin
+npm run build
+```
+
+---
+
 ## 2026-06-05 入札确认误点推荐商品修复
 
 ### 问题现象

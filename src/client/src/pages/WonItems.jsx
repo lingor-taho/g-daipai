@@ -29,6 +29,13 @@ function getWonTimeDisplay(item) {
   return item.won_time_text || (item.won_at ? formatBeijingDateTime(item.won_at) : '');
 }
 
+function renderOrderStatusTag(status) {
+  if (status === 'cancelled') return <Tag color="danger">取消</Tag>;
+  if (status === 'pending_receipt') return <Tag color="warning">待收货</Tag>;
+  if (status === 'pending_shipment') return <Tag color="primary">待发货</Tag>;
+  return null;
+}
+
 export default function WonItems() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,8 +105,9 @@ export default function WonItems() {
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
           const finalPrice = getFinalPrice(item);
           const wonTime = getWonTimeDisplay(item);
+          const isCancelled = item.order_status === 'cancelled';
           return (
-            <List.Item key={item.id}>
+            <List.Item key={item.id} style={isCancelled ? { background: '#fff1f0' } : undefined}>
               <div style={{ display: 'flex', gap: 12 }}>
                 {item.product_image_url ? (
                   <img
@@ -112,7 +120,8 @@ export default function WonItems() {
                 )}
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                    <Tag color="success">落札成功</Tag>
+                    {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">落札成功</Tag>}
+                    {!isCancelled && renderOrderStatusTag(item.order_status)}
                     <span style={{ fontSize: 12, color: '#666' }}>{strategy}</span>
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}>
@@ -135,6 +144,7 @@ export default function WonItems() {
                     {item.tracking_number ? (
                       <>
                         <br />
+                        {item.shipping_company ? <>物流：{item.shipping_company}<br /></> : null}
                         追踪号：{item.tracking_number}
                       </>
                     ) : null}

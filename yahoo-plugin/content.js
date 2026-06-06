@@ -1352,6 +1352,72 @@ function extractBundleScanResult(text = getBodyText()) {
   return { type: 'unknown' };
 }
 
+function normalizeTextValue(value, maxLength = 128) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function extractSellerName(text = getBodyText()) {
+  const source = String(text || '');
+  const match = source.match(/出品者\s*[:：]\s*([^\n\r（(]+)/);
+  return normalizeTextValue(match?.[1] || '');
+}
+
+function extractTrackingNumberFromText(text = getBodyText()) {
+  const source = String(text || '');
+  const matches = source.match(/(?:\d[\s-]*){12}/g) || [];
+  for (const candidate of matches) {
+    const digits = candidate.replace(/\D/g, '');
+    if (digits.length === 12) return digits;
+  }
+  return '';
+}
+
+function extractShippingCompany(text = getBodyText()) {
+  const source = String(text || '');
+  const patterns = [
+    /配送(?:業者|方法)\s*[:：]\s*([^\n\r]+)/,
+    /配送方法\s+([^\n\r:：]+)/,
+    /配送業者\s+([^\n\r:：]+)/
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1]) {
+      return normalizeTextValue(match[1]
+        .replace(/追跡番号[\s\S]*$/, '')
+        .replace(/[（(]\s*送料[\s\S]*$/, '')
+        .replace(/送料[\s\S]*$/, ''));
+    }
+  }
+  return '';
+}
+
+function extractPendingShipmentScanResult(text = getBodyText()) {
+  const source = String(text || '');
+  if (/キャンセルされました/.test(source)) {
+    return { type: 'cancelled' };
+  }
+
+  const storeShipped = /商品が発送されました。?\s*到着までお待ちください/.test(source);
+  const normalShipped = /出品者から商品発送の連絡がありました。?\s*到着したら、受け取り連絡をしてください/.test(source);
+  if (storeShipped || normalShipped) {
+    const sellerName = extractSellerName(source);
+    return {
+      type: 'shipped',
+      shippingCompany: extractShippingCompany(source),
+      trackingNumber: extractTrackingNumberFromText(source) || sellerName,
+      trackingFallback: !extractTrackingNumberFromText(source) && !!sellerName ? 'seller_name' : ''
+    };
+  }
+
+  const storePending = /ご購入ありがとうございます。?\s*商品の発送連絡をお待ちください/.test(source);
+  const normalPending = /出品者に支払い完了の連絡をしました。?\s*商品の発送連絡をお待ちください/.test(source);
+  if (storePending || normalPending) {
+    return { type: 'pending_shipment' };
+  }
+
+  return { type: 'unknown' };
+}
+
 function getBundleTransactionActionState() {
   return {
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
@@ -1452,6 +1518,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'EXTRACT_PENDING_SHIPMENT_SCAN') {
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      result: loginStatus.status === 'ok' ? extractPendingShipmentScanResult() : null,
+      loginStatus
+    });
+    return true;
+  }
+
   if (msg.type === 'CLICK_TRANSACTION_CONTACT') {
     sendResponse(clickTransactionContactForProduct(msg.productId));
     return true;
@@ -1499,6 +1575,10 @@ window.__G_DAIPAI_TEST__ = {
   detectWaitingShippingPaymentAmount,
   extractWaitingShippingScanResult,
   extractBundleScanResult,
+  extractPendingShipmentScanResult,
+  extractTrackingNumberFromText,
+  extractShippingCompany,
+  extractSellerName,
   detectYahooLoginStatus,
   extractTaxIncludedTotal: () => extractTaxIncludedTotal(),
   getTaxIncludedBidPrice,

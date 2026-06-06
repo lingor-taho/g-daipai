@@ -11,6 +11,7 @@ const {
   getStrategyLeadMs,
   isMultiBidTask,
   ensureScheduledTransactionStartRequest,
+  getShipmentAlerts,
   DEFAULT_MULTI_BID_MIN_PRICE
 } = require('./plugin');
 const { productService, normalizeAuctionUrl } = require('./proxy');
@@ -1188,7 +1189,8 @@ router.get('/idle-flags', async (req, res) => {
        'scan_every_idle_runs',
        'scan_idle_counter',
        'payment_requested',
-       'payment_alert_message'
+       'payment_alert_message',
+       'shipment_alerts'
      )`
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -1219,8 +1221,29 @@ router.get('/idle-flags', async (req, res) => {
     scanFlag: scanIdleCounter,
     scanEveryIdleRuns,
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
-    paymentAlertMessage: values.payment_alert_message || ''
+    paymentAlertMessage: values.payment_alert_message || '',
+    shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt)
   });
+});
+
+router.post('/shipment-alerts/:id/close', async (req, res) => {
+  const alertId = String(req.params.id || '').trim();
+  if (!alertId) return res.status(400).json({ error: 'alert id is required' });
+  const alerts = await getShipmentAlerts(db);
+  let closed = 0;
+  const next = alerts.map(alert => {
+    if (alert.id !== alertId || alert.closedAt || alert.autoClosedAt) return alert;
+    closed += 1;
+    return { ...alert, closedAt: new Date().toISOString() };
+  });
+  if (closed) {
+    await db.query(
+      `INSERT OR REPLACE INTO config (key, value, updated_at)
+       VALUES ('shipment_alerts', ?, CURRENT_TIMESTAMP)`,
+      [JSON.stringify(next)]
+    );
+  }
+  res.json({ success: true, closed });
 });
 
 function parseShippingRefreshIds(value) {
