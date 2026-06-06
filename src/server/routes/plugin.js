@@ -6,6 +6,10 @@ const {
   getOrderStatusAuditRows,
   writeOrderStatusAuditLogs
 } = require('../services/orderStatusAudit');
+const {
+  appendRows: appendGoogleSheetRows,
+  isGoogleSheetsConfigured
+} = require('../services/googleSheets');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
@@ -27,6 +31,14 @@ const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
 const ORDER_STATUS_PENDING_RECEIPT = 'pending_receipt';
 const ORDER_STATUS_CANCELLED = 'cancelled';
 const SHIPMENT_ALERTS_CONFIG_KEY = 'shipment_alerts';
+const GOOGLE_SHEET_STATUS_PENDING_RECEIPT = '待收货';
+const BUNDLE_SHEET_COLORS = [
+  { red: 0.93, green: 0.97, blue: 1 },
+  { red: 1, green: 0.95, blue: 0.88 },
+  { red: 0.93, green: 1, blue: 0.92 },
+  { red: 1, green: 0.92, blue: 0.95 },
+  { red: 0.96, green: 0.94, blue: 1 }
+];
 
 function parseTimeMs(value) {
   let input = String(value || '').trim();
@@ -992,6 +1004,174 @@ function normalizePlainText(value, maxLength = 128) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function parseShippingFeeToNumber(value) {
+  const text = String(value || '').trim();
+  if (!text || /無料|着払い|落札者負担/i.test(text)) return 0;
+  const match = text.match(/(\d[\d,]*)\s*円/);
+  return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
+}
+
+function getTaxIncludedFinalPrice(finalPrice, taxType) {
+  const value = Number(finalPrice || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
+  return Math.floor(value * 1.1);
+}
+
+function normalizeNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+async function getSheetFinanceBaseConfig(database = db) {
+  const rows = await database.getAll(
+    "SELECT key, value FROM config WHERE key IN ('jpy_to_cny_rate', 'bank_fee_jpy', 'handling_fee_cny', 'large_amount_fee_cny')"
+  );
+  const values = Object.fromEntries((rows || []).map(row => [row.key, row.value]));
+  let rate = Number(values.jpy_to_cny_rate || 0);
+  if (!rate && typeof database.getOne === 'function') {
+    const latestRate = await database.getOne('SELECT rate FROM exchange_config ORDER BY updated_at DESC LIMIT 1').catch(() => null);
+    rate = Number(latestRate?.rate || 0);
+  }
+  return {
+    rate: rate || 0.049,
+    bankFeeJpy: Number(values.bank_fee_jpy || 0),
+    handlingFeeCny: Number(values.handling_fee_cny || 0),
+    largeAmountFeeCny: Number(values.large_amount_fee_cny || 0)
+  };
+}
+
+function applySheetUserFinance(baseConfig = {}, order = {}) {
+  const rateAdjustment = normalizeNullableNumber(order.user_rate_adjustment) || 0;
+  const bankFeeJpy = normalizeNullableNumber(order.user_bank_fee_jpy);
+  const handlingFeeCny = normalizeNullableNumber(order.user_handling_fee_cny);
+  const largeAmountFeeCny = normalizeNullableNumber(order.user_large_amount_fee_cny);
+  return {
+    rate: Number((Number(baseConfig.rate || 0) + rateAdjustment).toFixed(4)),
+    bankFeeJpy: bankFeeJpy !== null ? bankFeeJpy : Number(baseConfig.bankFeeJpy || 0),
+    handlingFeeCny: handlingFeeCny !== null ? handlingFeeCny : Number(baseConfig.handlingFeeCny || 0),
+    largeAmountFeeCny: largeAmountFeeCny !== null ? largeAmountFeeCny : Number(baseConfig.largeAmountFeeCny || 0)
+  };
+}
+
+function calculateSheetPayable(order = {}, baseConfig = {}) {
+  const finalPrice = Number(order.final_price || 0);
+  const effectiveShippingText = String(order.bundle_shipping_fee_text || '').trim() || String(order.shipping_fee_text || '').trim();
+  const shippingFee = parseShippingFeeToNumber(effectiveShippingText);
+  const config = applySheetUserFinance(baseConfig, order);
+  const taxIncludedFinalPrice = getTaxIncludedFinalPrice(finalPrice, order.tax_type);
+  const largeAmountFeeCny = taxIncludedFinalPrice >= 30000 ? Number(config.largeAmountFeeCny || 0) : 0;
+  return {
+    totalJpy: finalPrice + shippingFee,
+    payableCny: Number((((finalPrice + shippingFee + Number(config.bankFeeJpy || 0)) * Number(config.rate || 0)) + Number(config.handlingFeeCny || 0) + largeAmountFeeCny).toFixed(2))
+  };
+}
+
+function getBundleSheetColor(bundleGroupId) {
+  const text = String(bundleGroupId || '');
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (hash + text.charCodeAt(i)) % BUNDLE_SHEET_COLORS.length;
+  return BUNDLE_SHEET_COLORS[hash];
+}
+
+function formatSheetDate(value) {
+  const text = String(value || '').trim();
+  return text ? text.slice(0, 10) : '';
+}
+
+function buildDaipaiSheetRow(order = {}, baseConfig = {}) {
+  const payable = calculateSheetPayable(order, baseConfig);
+  return [
+    formatSheetDate(order.won_at || order.created_at),
+    order.username || '',
+    order.product_url || '',
+    order.product_title || '',
+    Number(order.final_price || 0),
+    order.shipping_fee_text || '',
+    order.bundle_shipping_fee_text || '',
+    payable.totalJpy,
+    payable.payableCny,
+    GOOGLE_SHEET_STATUS_PENDING_RECEIPT
+  ];
+}
+
+async function getOrdersForSheetAppend(orderId, database = db) {
+  const target = await database.getOne(
+    `SELECT id, bundle_group_id
+     FROM orders
+     WHERE id = ?`,
+    [orderId]
+  );
+  if (!target) return { orders: [], isBundle: false };
+  const hasBundleShipping = target.bundle_group_id
+    ? await database.getOne(
+      `SELECT 1 AS yes
+       FROM orders
+       WHERE bundle_group_id = ?
+         AND COALESCE(bundle_shipping_fee_text, '') <> ''
+       LIMIT 1`,
+      [target.bundle_group_id]
+    )
+    : null;
+  const where = hasBundleShipping ? 'o.bundle_group_id = ?' : 'o.id = ?';
+  const params = hasBundleShipping ? [target.bundle_group_id] : [orderId];
+  const orders = await database.getAll(
+    `SELECT o.id,
+            o.won_at,
+            o.created_at,
+            o.final_price,
+            o.order_status,
+            o.bundle_group_id,
+            o.bundle_shipping_fee_text,
+            o.google_sheet_appended_at,
+            t.product_id,
+            t.product_url,
+            t.product_title,
+            t.shipping_fee_text,
+            t.tax_type,
+            u.username,
+            ufo.rate_adjustment AS user_rate_adjustment,
+            ufo.bank_fee_jpy AS user_bank_fee_jpy,
+            ufo.handling_fee_cny AS user_handling_fee_cny,
+            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     INNER JOIN users u ON t.user_id = u.id
+     LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
+     WHERE ${where}
+       AND o.order_status IN (?, ?)
+       AND o.google_sheet_appended_at IS NULL
+     ORDER BY o.id ASC`,
+    [...params, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]
+  );
+  return { orders, isBundle: Boolean(hasBundleShipping), bundleGroupId: target.bundle_group_id || '' };
+}
+
+async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
+  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
+  const { orders, isBundle, bundleGroupId } = await getOrdersForSheetAppend(orderId, database);
+  if (!orders.length) return { skipped: true, reason: 'no appendable orders' };
+  const baseConfig = await getSheetFinanceBaseConfig(database);
+  const rows = orders.map(order => buildDaipaiSheetRow(order, baseConfig));
+  const appendResult = await appendGoogleSheetRows({
+    rows,
+    backgroundColor: isBundle ? getBundleSheetColor(bundleGroupId) : null
+  });
+  if (!appendResult?.skipped) {
+    const ids = orders.map(order => order.id);
+    const placeholders = ids.map(() => '?').join(',');
+    await database.query(
+      `UPDATE orders
+       SET google_sheet_appended_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (${placeholders})`,
+      ids
+    );
+  }
+  return appendResult;
+}
+
 function parseShipmentAlerts(value) {
   try {
     const parsed = JSON.parse(String(value || '[]'));
@@ -1202,6 +1382,9 @@ async function updateScanStatus(payload = {}, database = db) {
         source: 'scan_pending_shipment_shipped',
         metadata: { orderId, shippingCompany, trackingNumber }
       }).catch(() => null);
+      await appendPendingReceiptOrderToGoogleSheet(orderId, database).catch(error => {
+        console.warn('[Yahoo Bid] Google Sheet append skipped/failed:', error.message || error);
+      });
     }
     return { updated: result.rowCount || 0, shipped: true, shippingCompany, trackingNumber };
   }
@@ -1664,6 +1847,10 @@ module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.syncYahooWonOrders = syncYahooWonOrders;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
+module.exports.buildDaipaiSheetRow = buildDaipaiSheetRow;
+module.exports.calculateSheetPayable = calculateSheetPayable;
+module.exports.getOrdersForSheetAppend = getOrdersForSheetAppend;
+module.exports.appendPendingReceiptOrderToGoogleSheet = appendPendingReceiptOrderToGoogleSheet;
 module.exports.calculateOverdueShipmentDays = calculateOverdueShipmentDays;
 module.exports.addPendingShipmentAlert = addPendingShipmentAlert;
 module.exports.autoCloseShipmentAlerts = autoCloseShipmentAlerts;

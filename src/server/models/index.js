@@ -43,6 +43,7 @@ ensureColumn('orders', 'bundle_group_id', 'VARCHAR(64)');
 ensureColumn('orders', 'transaction_started_at', 'DATETIME');
 ensureColumn('orders', 'transaction_start_error', 'TEXT');
 ensureColumn('orders', 'shipping_company', 'VARCHAR(128)');
+ensureColumn('orders', 'google_sheet_appended_at', 'DATETIME');
 ensureColumn('users', 'user_level', 'INTEGER DEFAULT 1');
 ensureColumn('users', 'parent_user_id', 'INTEGER');
 ensureColumn('users', 'bid_strategy_scope', "VARCHAR(32) DEFAULT 'all'");

@@ -31,6 +31,8 @@ const {
   syncYahooWonOrders,
   getScanJobs,
   updateScanStatus,
+  buildDaipaiSheetRow,
+  getOrdersForSheetAppend,
   getPaymentJobs,
   updatePaymentStatus,
   randomIntInclusive,
@@ -857,6 +859,65 @@ async function testUpdateScanStatusMarksPendingShipmentAsShipped() {
   assert.equal(statusUpdate.params[4], ORDER_STATUS_PENDING_SHIPMENT);
 }
 
+function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
+  const row = buildDaipaiSheetRow({
+    won_at: '2026-06-06 12:34:56',
+    username: 'user-a',
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/s1113817953',
+    product_title: 'bundle item',
+    final_price: 1000,
+    shipping_fee_text: '落札者負担',
+    bundle_shipping_fee_text: '110円',
+    tax_type: 'tax_zero'
+  }, {
+    rate: 0.05,
+    bankFeeJpy: 500,
+    handlingFeeCny: 15,
+    largeAmountFeeCny: 0
+  });
+
+  assert.deepEqual(row, [
+    '2026-06-06',
+    'user-a',
+    'https://auctions.yahoo.co.jp/jp/auction/s1113817953',
+    'bundle item',
+    1000,
+    '落札者負担',
+    '110円',
+    1110,
+    95.5,
+    '待收货'
+  ]);
+}
+
+async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ sql, params });
+      if (/SELECT id, bundle_group_id/.test(sql)) return { id: 14, bundle_group_id: 'bundle-a' };
+      if (/COALESCE\(bundle_shipping_fee_text/.test(sql)) return { yes: 1 };
+      return null;
+    },
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      assert.match(sql, /o\.bundle_group_id = \?/);
+      assert.deepEqual(params, ['bundle-a', ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
+      return [
+        { id: 13, product_id: 'c1135451955', bundle_shipping_fee_text: '0円' },
+        { id: 14, product_id: 's1113817953', bundle_shipping_fee_text: '110円' }
+      ];
+    }
+  };
+
+  const result = await getOrdersForSheetAppend(14, fakeDb);
+
+  assert.equal(result.isBundle, true);
+  assert.equal(result.bundleGroupId, 'bundle-a');
+  assert.deepEqual(result.orders.map(order => order.id), [13, 14]);
+  assert.equal(calls.length, 3);
+}
+
 async function testUpdateScanStatusMarksPendingShipmentAsCancelled() {
   const calls = [];
   const fakeDb = {
@@ -1185,6 +1246,8 @@ Promise.all([
   testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
+  Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),
+  testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
   testUpdateScanStatusMarksPendingShipmentAsCancelled(),
   testUpdateScanStatusWritesShippingAndPendingPayment(),
   testUpdateScanStatusKeepsWaitingShippingWhenShippingPending(),

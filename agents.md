@@ -1020,6 +1020,53 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-06 待发货扫描发货后追加 Google 代拍表
+
+### 业务规则确认
+
+- 扫描流程中，`待发货(pending_shipment)` 商品发现已发货后，订单状态更新为 `待收货(pending_receipt)`，同时追加 Google 表格。
+- 表格地址：`https://docs.google.com/spreadsheets/d/1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4/edit?gid=0#gid=0`。
+- 操作页签：`-代拍表-`。
+- 追加字段顺序：
+  - `落札日期`
+  - `用户名`
+  - `商品链接`
+  - `商品标题`
+  - `落札价`
+  - `运费`
+  - `同捆运费`
+  - `总价`
+  - `应付款`
+  - `订单状态`
+- 普通商品总价：`落札价 + 运费`。
+- 同捆商品总价：`落札价 + 同捆运费`。
+- 有同捆运费的商品组，需要把同组商品连续插入，并给整组商品行设置背景色；不同同捆组按组 ID 使用不同浅色，便于区分。
+
+### 实现说明
+
+- `src/server/models/index.js` 新增兼容列 `orders.google_sheet_appended_at`，用于防止扫描重试重复追加。
+- `src/server/services/googleSheets.js` 新增 Google Sheets API 客户端：
+  - 默认 spreadsheet id：`1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4`
+  - 默认 sheet name：`-代拍表-`
+  - 支持环境变量：
+    - `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON`
+    - 或 `GOOGLE_APPLICATION_CREDENTIALS`
+    - 或 `GOOGLE_SHEETS_CLIENT_EMAIL` + `GOOGLE_SHEETS_PRIVATE_KEY`
+    - 可选覆盖：`GOOGLE_SHEETS_SPREADSHEET_ID`、`GOOGLE_SHEETS_SHEET_NAME`
+- 注意：服务端 API 写表不能直接复用插件 Chrome 已登录的 Google cookie。需要把目标表格共享给服务账号邮箱；如果未配置 Google 凭据，扫描状态更新不受影响，但会跳过表格追加。
+- `src/server/routes/plugin.js` 在 `scan_pending_shipment_shipped` 成功后调用表格追加：
+  - 普通订单只追加当前订单。
+  - 如果当前订单属于有 `bundle_shipping_fee_text` 的同捆组，则一次性取整组未追加订单，连续追加并标色。
+  - 表格追加成功后写入 `google_sheet_appended_at`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+```
+
+---
+
 ## 2026-06-06 普通商品付款多运费选择修复
 
 ### 问题现象
