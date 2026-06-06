@@ -1371,3 +1371,28 @@ node yahoo-plugin\content.test.js
 Set-Location src\client
 npm run build
 ```
+---
+
+## 2026-06-06 商城即決价格税后口径修正
+
+### 问题
+
+- 商城商品抓取时，`currentPrice` 仍按系统内部税前口径保存并由用户端展示时乘 `1.1`，但 `buyoutPrice` 如果来自 Yahoo `pageData.items.winPrice`，之前直接返回税前值。
+- 结果用户端商品卡显示当前价为税后，但即決价格仍显示税前，例如 `winPrice=250091` 被显示为 `250,091円（税込）`，正确应显示 `275,100円（税込）`。
+
+### 已实现内容
+
+- `src/server/routes/proxy.js`：商城商品 `tax_included` 且即決价来自 `pageData.items.winPrice` 时，返回给前端前乘 `1.1` 转为税后口径。
+- `yahoo-plugin/content.js`：插件商品快照同样对 `pageData.items.winPrice` 的商城即決价乘 `1.1`，避免刷新快照时写回税前即決价。
+- `currentPrice` 仍保持税前口径，沿用现有出价校验/提交逻辑。
+- 新增回归测试覆盖 `price=250091`、`winPrice=250091`、页面显示税込时，`buyoutPrice=275100`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\proxy.test.js
+node yahoo-plugin\content.test.js
+node src\client\src\utils\bidPrice.test.mjs
+Set-Location src\client
+npm run build
+```

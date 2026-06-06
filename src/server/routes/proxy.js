@@ -170,6 +170,13 @@ function extractBuyoutPrice(html) {
   return 0;
 }
 
+function toTaxIncludedPrice(price, taxType) {
+  const value = Number(price || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
+  return Math.floor(value * 1.1);
+}
+
 function extractBidCount(html) {
   const pageDataItems = extractPageDataItems(html);
   const pageDataCount = parseCountValue(pageDataItems?.bids ?? pageDataItems?.bidCount ?? pageDataItems?.bid_count);
@@ -344,16 +351,19 @@ function extractTitle(html, auctionId) {
 function parseProductHtml(html, auctionId, standardUrl) {
   const title = extractTitle(html, auctionId);
   const taxType = extractTaxType(html);
+  const pageDataBuyoutPrice = extractPageDataItemPrice(html, 'winPrice');
   const rawBuyoutPrice = extractBuyoutPrice(html);
   const storePurchaseTaxIncludedPrice = taxType === 'tax_included'
     ? extractStorePurchaseTaxIncludedPrice(html)
     : 0;
+  const buyoutPrice = storePurchaseTaxIncludedPrice ||
+    (pageDataBuyoutPrice > 0 ? toTaxIncludedPrice(pageDataBuyoutPrice, taxType) : rawBuyoutPrice);
   return {
     auctionId,
     standardUrl,
     title,
     currentPrice: extractPrice(html),
-    buyoutPrice: storePurchaseTaxIncludedPrice || rawBuyoutPrice,
+    buyoutPrice,
     bidCount: extractBidCount(html),
     buyoutOnly: extractBuyoutOnly(html),
     taxType,

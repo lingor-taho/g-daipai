@@ -240,6 +240,29 @@ async function testParseStoreBuyoutOnlyProductFromPurchaseButton() {
   assert.equal(product.buyoutOnly, true);
 }
 
+async function testParseStoreBuyoutPriceAddsTaxForPageDataWinPrice() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Store Buyout Tax Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"250091","winPrice":"250091","bids":"1"}};
+        </script>
+      </head>
+      <body>
+        <dt>\u73fe\u5728</dt>
+        <dd><span>275,100\u5186</span><span>\uff08\u7a0e\u8fbc\uff09</span></dd>
+        <dt>\u5373\u6c7a\u4fa1\u683c</dt>
+        <dd><span>250,091\u5186</span></dd>
+      </body>
+    </html>
+  `, 'c1234567890', 'https://auctions.yahoo.co.jp/jp/auction/c1234567890');
+
+  assert.equal(product.currentPrice, 250091);
+  assert.equal(product.buyoutPrice, 275100);
+  assert.equal(product.taxType, 'tax_included');
+}
+
 async function testParseStoreTaxTypeFromTaxIncludedLabel() {
   const product = parseProductHtml(`
     <html>
@@ -716,6 +739,7 @@ async function run() {
   await testParseBuyoutOnlyProductFromSingleInstantBuyButton();
   await testParseNormalBuyoutProductKeepsBidAvailable();
   await testParseStoreBuyoutOnlyProductFromPurchaseButton();
+  await testParseStoreBuyoutPriceAddsTaxForPageDataWinPrice();
   await testParseStoreTaxTypeFromTaxIncludedLabel();
   await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();
