@@ -100,7 +100,7 @@ function testMinimumBidInputRequirementUsesSelectedPriceMode() {
   );
   assert.deepEqual(
     getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 5000, bidCount: 1 }, 'tax_after'),
-    { currentPrice: 5500, increment: 250, requiredPrice: 5750, currentLabel: '当前税后价' }
+    { currentPrice: 5500, increment: 275, requiredPrice: 5775, currentLabel: '当前税后价' }
   );
   assert.deepEqual(
     getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 1, bidCount: 1 }, 'tax_before'),
@@ -117,3 +117,10 @@ testComparableCurrentPriceAddsTaxForStoreProducts();
 testSubmitMaxPriceMustBeAboveCurrentPrice();
 testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids();
 testMinimumBidInputRequirementUsesSelectedPriceMode();
+
+{
+  const requirement = getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 4500, bidCount: 1 }, 'tax_after');
+  assert.equal(requirement.currentPrice, 4950);
+  assert.equal(requirement.increment, 110);
+  assert.equal(requirement.requiredPrice, 5060);
+}

@@ -601,11 +601,16 @@ function getExpectedPaymentAmountJpy(job = {}) {
   return finalPrice + shipping;
 }
 
+function getExpectedPaymentShippingFeeJpy(job = {}) {
+  return parseYenAmount(job.effectiveShippingFeeText || job.shippingFeeText || '');
+}
+
 function getPaymentActionPatternSource(action) {
   const patterns = {
     easyPayment: '\\u0059\\u0061\\u0068\\u006f\\u006f\\u0021\\u304b\\u3093\\u305f\\u3093\\u6c7a\\u6e08\\u3067\\u652f\\u6255\\u3046',
     purchaseProcedure: '\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
     transactionInfoInput: '\\u53d6\\u5f15\\u60c5\\u5831\\u3092\\u5165\\u529b\\u3059\\u308b',
+    placementOk: '^\\s*OK\\s*$',
     transactionDecide: '^\\s*\\u6c7a\\u5b9a\\u3059\\u308b\\s*$',
     transactionConfirm: '^\\s*\\u78ba\\u5b9a\\u3059\\u308b\\s*$',
     review: '^\\s*\\u78ba\\u8a8d\\u3059\\u308b\\s*$',
@@ -626,7 +631,19 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const paymentAmountJpy = paymentAmountMatch
     ? Number(paymentAmountMatch[1].replace(/,/g, '')) || 0
     : (yenMatches.length ? Math.max(...yenMatches) : 0);
+  const shippingOptions = Array.isArray(snapshot.shippingOptions)
+    ? snapshot.shippingOptions
+      .map(option => ({
+        amountJpy: Number(option?.amountJpy || 0),
+        checked: !!option?.checked,
+        disabled: !!option?.disabled,
+        text: normalize(option?.text || '')
+      }))
+      .filter(option => option.amountJpy > 0)
+    : [];
+  const selectedShippingOption = shippingOptions.find(option => option.checked);
   const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
+  const hasPlacementDefaultModal = /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(bodyText);
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
   return {
@@ -635,12 +652,15 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     textSample: bodyText.slice(0, 500),
     controlsSample: controls.slice(0, 20),
     paymentAmountJpy,
+    shippingOptions,
+    selectedShippingAmountJpy: selectedShippingOption ? selectedShippingOption.amountJpy : null,
     alreadyPaid,
     complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText),
     processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
     hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
     hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
     hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
+    hasPlacementOkButton: hasPlacementDefaultModal && hasControl(/^\s*OK\s*$/),
     hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
     hasTransactionConfirmButton: hasControl(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
     hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
@@ -664,13 +684,54 @@ async function getPaymentPageState(tabId) {
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
         .map(el => getText(el))
         .filter(Boolean);
+      const parseAmount = text => {
+        const match = String(text || '').match(/([\d,]+)\s*\u5186/);
+        return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
+      };
+      const optionTextFromRadio = radio => {
+        const parts = [];
+        const label = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
+        if (label) parts.push(getText(label));
+        let node = radio.closest('label, li, tr, dd, div');
+        let depth = 0;
+        while (node && node !== document.body && depth < 5) {
+          const text = getText(node);
+          if (text) parts.push(text);
+          node = node.parentElement;
+          depth += 1;
+        }
+        return normalize(parts.join(' '));
+      };
+      const shippingHeader = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')]
+        .find(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
+      const shippingKeywords = /\u914d\u9001|\u9001\u6599|\u304a\u3066\u304c\u308b|\u3086\u3046|\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8|\u30ec\u30bf\u30fc\u30d1\u30c3\u30af|\u5b9a\u5f62|\u5b85\u6025\u4fbf/;
+      const paymentKeywords = /\u30af\u30ec\u30b8\u30c3\u30c8|\u30b3\u30f3\u30d3\u30cb|PayPay|\u9280\u884c\u632f\u8fbc|\u652f\u6255|\u624b\u6570\u6599/;
+      const shippingOptions = [...document.querySelectorAll('input[type="radio"]')]
+        .map((radio, index) => {
+          const text = optionTextFromRadio(radio);
+          const afterShippingHeader = shippingHeader
+            ? !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
+            : shippingKeywords.test(text);
+          const looksLikePaymentMethod = paymentKeywords.test(text) && !shippingKeywords.test(text);
+          return {
+            index,
+            amountJpy: parseAmount(text),
+            checked: !!radio.checked,
+            disabled: !!radio.disabled,
+            text,
+            isShipping: afterShippingHeader && !looksLikePaymentMethod
+          };
+        })
+        .filter(option => option.isShipping && option.amountJpy > 0)
+        .map(({ amountJpy, checked, disabled, text }) => ({ amountJpy, checked, disabled, text: text.slice(0, 200) }));
       return {
         success: true,
         snapshot: {
           url: location.href,
           title: document.title || '',
           bodyText,
-          controls
+          controls,
+          shippingOptions
         }
       };
     }
@@ -916,6 +977,112 @@ function assertPaymentAmountMatches(job, state) {
   }
 }
 
+function shouldSelectPaymentShippingOption(job = {}, state = {}) {
+  const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
+  if (expectedShipping === null || expectedShipping <= 0) return false;
+  const selectedShipping = Number(state?.selectedShippingAmountJpy || 0);
+  const options = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
+  const hasExpectedOption = options.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
+  if (!hasExpectedOption) return false;
+  return selectedShipping !== expectedShipping;
+}
+
+async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [expectedShippingJpy],
+    func: expectedAmount => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const parseAmount = text => {
+        const match = String(text || '').match(/([\d,]+)\s*\u5186/);
+        return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
+      };
+      const optionTextFromRadio = radio => {
+        const parts = [];
+        const label = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
+        if (label) parts.push(getText(label));
+        let node = radio.closest('label, li, tr, dd, div');
+        let depth = 0;
+        while (node && node !== document.body && depth < 5) {
+          const text = getText(node);
+          if (text) parts.push(text);
+          node = node.parentElement;
+          depth += 1;
+        }
+        return normalize(parts.join(' '));
+      };
+      const shippingHeader = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')]
+        .find(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
+      const shippingKeywords = /\u914d\u9001|\u9001\u6599|\u304a\u3066\u304c\u308b|\u3086\u3046|\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8|\u30ec\u30bf\u30fc\u30d1\u30c3\u30af|\u5b9a\u5f62|\u5b85\u6025\u4fbf/;
+      const paymentKeywords = /\u30af\u30ec\u30b8\u30c3\u30c8|\u30b3\u30f3\u30d3\u30cb|PayPay|\u9280\u884c\u632f\u8fbc|\u652f\u6255|\u624b\u6570\u6599/;
+      const options = [...document.querySelectorAll('input[type="radio"]')]
+        .map((radio, index) => {
+          const text = optionTextFromRadio(radio);
+          const afterShippingHeader = shippingHeader
+            ? !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
+            : shippingKeywords.test(text);
+          const looksLikePaymentMethod = paymentKeywords.test(text) && !shippingKeywords.test(text);
+          return {
+            index,
+            radio,
+            amountJpy: parseAmount(text),
+            checked: !!radio.checked,
+            disabled: !!radio.disabled,
+            text,
+            isShipping: afterShippingHeader && !looksLikePaymentMethod
+          };
+        })
+        .filter(option => option.isShipping && option.amountJpy > 0);
+      const target = options.find(option => option.amountJpy === expectedAmount && !option.disabled);
+      if (!target) {
+        return {
+          success: false,
+          error: 'matching payment shipping option not found',
+          expectedShippingJpy: expectedAmount,
+          options: options.map(option => ({ amountJpy: option.amountJpy, checked: option.checked, disabled: option.disabled, text: option.text.slice(0, 160) }))
+        };
+      }
+      if (target.checked) {
+        return { success: true, changed: false, selectedShippingJpy: expectedAmount };
+      }
+      target.radio.scrollIntoView({ block: 'center', inline: 'center' });
+      target.radio.focus?.();
+      target.radio.click();
+      target.radio.checked = true;
+      target.radio.dispatchEvent(new Event('input', { bubbles: true }));
+      target.radio.dispatchEvent(new Event('change', { bubbles: true }));
+      return {
+        success: true,
+        changed: true,
+        selectedShippingJpy: expectedAmount,
+        previousShippingJpy: options.find(option => option.checked && option.index !== target.index)?.amountJpy || null
+      };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'shipping option selection returned no result' };
+}
+
+async function ensurePaymentShippingOption(tab, job, state) {
+  if (!tab?.id || !state?.hasReviewButton || !shouldSelectPaymentShippingOption(job, state)) return state;
+  const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
+  const result = await selectPaymentShippingOption(tab.id, expectedShipping);
+  if (!result?.success) {
+    const optionSummary = Array.isArray(result?.options)
+      ? result.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')
+      : '';
+    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}`);
+  }
+  if (result.changed) await sleep(800);
+  return await getPaymentPageState(tab.id);
+}
+
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const previousTabIds = await getTabIds();
   const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
@@ -955,11 +1122,21 @@ async function completePaymentTransactionInfoInput(tab, initialState = null) {
   }
 
   let result = await clickPaymentActionAndFollowTab(tab, 'transactionInfoInput', nextState =>
-    nextState.alreadyPaid || nextState.complete || nextState.hasTransactionDecideButton
+    nextState.alreadyPaid || nextState.complete || nextState.hasPlacementOkButton || nextState.hasTransactionDecideButton
   );
   if (!result?.success) return result;
   tab = result.tab;
   state = result.state;
+
+  if (state?.alreadyPaid || state?.complete) return { success: true, tab, state };
+  if (state?.hasPlacementOkButton) {
+    result = await clickPaymentActionAndFollowTab(tab, 'placementOk', nextState =>
+      nextState.alreadyPaid || nextState.complete || nextState.hasTransactionDecideButton
+    );
+    if (!result?.success) return result;
+    tab = result.tab;
+    state = result.state;
+  }
 
   if (state?.alreadyPaid || state?.complete) return { success: true, tab, state };
   if (!state?.hasTransactionDecideButton) {
@@ -1124,8 +1301,9 @@ function getBundleActionPatternSource(action) {
   const patterns = {
     close: '\\u9589\\u3058\\u308b',
     start: '^\\s*\\u307e\\u3068\\u3081\\u3066\\u53d6\\u5f15\\u3092(?:\\u306f\\u3058\\u3081\\u308b|\\u4f9d\\u983c\\u3059\\u308b)\\s*$',
-    input: '\\u53d6\\u5f15\\u60c5\\u5831\\u3092\\u5165\\u529b\\u3059\\u308b',
-    decide: '\\u6c7a\\u5b9a\\u3059\\u308b',
+    input: '\\u53d6\\u5f15\\s*\\u60c5\\u5831\\s*\\u3092\\s*\\u5165\\u529b\\s*\\u3059\\u308b',
+    placementOk: '^\\s*OK\\s*$',
+    decide: '^\\s*(?:\\u6c7a\\u5b9a\\u3059\\u308b|\\u78ba\\u8a8d\\u3059\\u308b)\\s*$',
     confirm: '\\u78ba\\u5b9a\\u3059\\u308b'
   };
   return patterns[action] || '';
@@ -1155,8 +1333,11 @@ async function runMainWorldBundleActionClick(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-      const button = controls.find(el => pattern.test(getText(el)));
+      const clickableSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]';
+      const resolveClickable = el => el.closest?.(clickableSelector) || (el.matches?.(clickableSelector) ? el : null);
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params], body *')];
+      const matched = controls.find(el => pattern.test(getText(el)) && resolveClickable(el));
+      const button = matched ? resolveClickable(matched) : null;
       if (!button) return { success: false, error: 'button not found in MAIN world' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
@@ -1188,8 +1369,11 @@ async function getBundleActionClickPoint(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-      const button = controls.find(el => pattern.test(getText(el)));
+      const clickableSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]';
+      const resolveClickable = el => el.closest?.(clickableSelector) || (el.matches?.(clickableSelector) ? el : null);
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params], body *')];
+      const matched = controls.find(el => pattern.test(getText(el)) && resolveClickable(el));
+      const button = matched ? resolveClickable(matched) : null;
       if (!button) return { success: false, error: 'button not found for trusted click' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
@@ -1412,6 +1596,12 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
 
 async function completeBidderPaysShippingTransaction(tab) {
   let state = await getBundleActionState(tab.id);
+  if (state?.canPlacementOk) {
+    const okResult = await clickBundleActionAndFollowTab(tab, 'placementOk', state => state.canDecide || state.waitingShipping);
+    if (!okResult?.success) return okResult;
+    tab = okResult.tab;
+    state = await getBundleActionState(tab.id);
+  }
   if (state?.waitingShipping) {
     return { success: true, tab };
   }
@@ -1663,6 +1853,10 @@ async function extractBundleScanResult(tab) {
   return { stop: false, result: response?.success ? response.result : null };
 }
 
+function shouldAttemptBundleInputAction(result, state) {
+  return ['unknown', 'waiting_agreement', 'shipping_pending', 'input_required'].includes(result?.type) && !!state?.canInputTransaction;
+}
+
 async function executePendingBundleScanJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
@@ -1687,13 +1881,19 @@ async function executePendingBundleScanJob(job) {
       return { stop: false, processedBundleGroupId: job.bundleGroupId || null };
     }
 
-    if (result?.type === 'unknown') {
+    if (['unknown', 'waiting_agreement', 'shipping_pending', 'input_required'].includes(result?.type)) {
       let state = await getBundleActionState(tab.id);
-      if (state?.canInputTransaction) {
-        let clickResult = await clickBundleActionAndFollowTab(tab, 'input', state => state.canDecide || state.waitingShipping);
+      if (shouldAttemptBundleInputAction(result, state)) {
+        let clickResult = await clickBundleActionAndFollowTab(tab, 'input', state => state.canPlacementOk || state.canDecide || state.waitingShipping);
         if (!clickResult?.success) return { stop: false };
         tab = clickResult.tab;
         state = await getBundleActionState(tab.id);
+        if (state?.canPlacementOk) {
+          clickResult = await clickBundleActionAndFollowTab(tab, 'placementOk', state => state.canDecide || state.waitingShipping);
+          if (!clickResult?.success) return { stop: false };
+          tab = clickResult.tab;
+          state = await getBundleActionState(tab.id);
+        }
         if (!state?.waitingShipping) {
           clickResult = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.waitingShipping);
           if (!clickResult?.success) return { stop: false };
@@ -1810,6 +2010,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
       }
     }
     if (!state?.hasReviewButton) throw new Error('payment review button not found');
+    state = await ensurePaymentShippingOption(tab, job, state);
     assertPaymentAmountMatches(job, state);
 
     let result = await clickPaymentActionAndFollowTab(tab, 'review', nextState =>
@@ -2011,6 +2212,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
+  shouldAttemptBundleInputAction,
   buildPaymentPageStateFromSnapshot,
   getRandomIntInclusive,
   syncIdleYahooPages,
@@ -2019,6 +2221,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildPaymentFailurePayload,
   confirmWonBeforeFail,
   getExpectedPaymentAmountJpy,
+  getExpectedPaymentShippingFeeJpy,
+  shouldSelectPaymentShippingOption,
   parseYenAmount
 };
 chrome.tabs.onRemoved.addListener(tabId => {

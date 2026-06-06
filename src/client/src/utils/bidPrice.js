@@ -96,14 +96,17 @@ export function getMinimumBidInputRequirement(product, storeBidPriceMode) {
   const currentPrice = useTaxIncludedInput
     ? getComparableCurrentPrice(product)
     : Math.floor(currentTaxExcludedPrice);
+  const displayIncrement = useTaxIncludedInput && increment > 0
+    ? Math.floor(increment * 1.1)
+    : increment;
   const currentLabel = storeProduct
     ? (useTaxIncludedInput ? '当前税后价' : '当前税前价')
     : '当前价';
 
   return {
     currentPrice,
-    increment,
-    requiredPrice: Math.floor(currentPrice + increment),
+    increment: displayIncrement,
+    requiredPrice: Math.floor(currentPrice + displayIncrement),
     currentLabel
   };
 }

@@ -911,6 +911,116 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-06 同捆扫描输入按钮未点击修复
+
+### 问题现象
+
+- 商品 `s1113817953` 是同捆主商品，本地数据库仍为 `pending_bundle`，同组商品也仍为 `pending_bundle`。
+- `/api/plugin/scan/jobs` 能取到该商品，并且该商品排在扫描队列第一位，说明问题不是服务端没有下发扫描任务。
+- 订单没有 `order_status_change_logs`，说明插件没有成功回写 `bundle_shipping_fee_text` 或同捆状态变化。
+
+### 根因判断
+
+- 用户提供的真实 HTML 显示按钮为 `<a class="libBtnBlueL" ...>取引情報を入力する</a>`。
+- 该页面同时可能包含 `出品者がまとめて取引に同意しました` 和 `出品者から配送方法の連絡が届いています` 文案，旧识别会优先返回 `main_agreed`。
+- `main_agreed` 分支会先尝试点击 `閉じる`；但该 HTML 是页面内普通按钮，不是弹窗，没有 `閉じる`，所以流程直接退出，没有继续点击 `取引情報を入力する`。
+- 该失败只写入 Chrome 扩展 console，不会写入数据库，因此后台看不到错误字段。
+
+### 已修复内容
+
+- `yahoo-plugin/content.js`：如果页面已经存在可点击的 `取引情報を入力する`，优先返回 `input_required`，不再先走 `main_agreed -> 閉じる`。
+- `yahoo-plugin/content.js` / `background.js`：放宽 `取引情報を入力する` 按钮识别，允许中间有空白，并兼容 `role=button`、`onclick`、`tabindex`、`data-cl-params` 等 Yahoo 可点击容器。
+- `yahoo-plugin/content.js` / `background.js`：保留同捆后续 `決定する / 確認する` 兼容。
+- 新增回归测试：基于 `s1113817953` 页面 HTML，存在 `<a class="libBtnBlueL">取引情報を入力する</a>` 时必须识别为 `input_required` 并点击该链接。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+```
+
+---
+
+## 2026-06-06 交易信息输入后置き配 OK 弹窗处理
+
+### 业务规则确认
+
+- 点击 `取引情報を入力する` 后，Yahoo 可能弹出 `置き配場所（玄関前）が初期設定されました` 窗口。
+- 该窗口不只出现在同捆商品，普通商品等其他交易信息输入流程也可能出现。
+- 如果弹出该窗口，需要先点击 `OK`，再继续后面的 `決定する / 確認する / 確定する` 或付款流程。
+- 如果不弹出，保持原流程不变。
+
+### 已修复内容
+
+- `yahoo-plugin/content.js`：新增 `detectPlacementDefaultModal()`，识别 `置き配場所...初期設定されました` + `OK` 按钮。
+- `yahoo-plugin/content.js`：同捆/交易动作新增 `placementOk`，可点击弹窗中的 `OK`。
+- `yahoo-plugin/background.js`：同捆扫描点击 `取引情報を入力する` 后，如果先出现 `canPlacementOk`，会先点 `OK`，再继续后续操作。
+- `yahoo-plugin/background.js`：普通交易开始的 `completeBidderPaysShippingTransaction()` 也会先处理 `OK` 弹窗。
+- `yahoo-plugin/background.js`：付款流程 `completePaymentTransactionInfoInput()` 点击 `取引情報を入力する` 后，也会处理 `OK` 弹窗，覆盖非同捆商品。
+- 新增回归测试覆盖 content 侧弹窗识别/点击，以及付款流程 `transactionInfoInput -> placementOk -> transactionDecide`。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+```
+
+---
+
+## 2026-06-06 用户端商城税后出价最低加价修正
+
+### 问题现象
+
+- 商城商品选择 `税后价` 出价时，最低可出价提示里的当前价已经按税后价显示，但最低加价仍使用 Yahoo 税前加价。
+- 示例：税前当前价 `4,500円`、税后当前价 `4,950円` 时，旧提示为 `当前税后价4,950円+最低加价100円=最低5,050円`。
+
+### 业务规则确认
+
+- 商城商品选择 `税前价`：最低加价保持 Yahoo 税前阶梯，例如 `4,500円 + 100円 = 4,600円`。
+- 商城商品选择 `税后价`：最低加价也要按税后口径显示，即税前最低加价 `* 1.1`，例如 `4,950円 + 110円 = 5,060円`。
+
+### 已修复内容
+
+- `src/client/src/utils/bidPrice.js`：`getMinimumBidInputRequirement()` 在商城 `tax_after` 模式下，将展示用最低加价转换为税后口径。
+- `src/client/src/utils/bidPrice.test.mjs`：新增 `currentPrice=4500`、`tax_after` 时 `increment=110`、`requiredPrice=5060` 的回归测试，并更新 `5000` 税前当前价对应的税后加价预期为 `275`。
+
+### 最近验证命令
+
+```powershell
+node src\client\src\utils\bidPrice.test.mjs
+Set-Location src\client
+npm run build
+```
+
+---
+
+## 2026-06-06 普通商品付款多运费选择修复
+
+### 问题现象
+
+- 商品 `u1231877298` 抓取商品信息时取到最低运费 `185円`。
+- Yahoo 普通商品付款输入页存在多个配送方法时，页面默认选中的配送方法可能不是系统抓取的最低运费，例如默认 `230円`。
+- 旧付款流程直接点击右侧 `確認する`，没有先确认配送方法是否与订单运费一致，导致付款金额可能按 Yahoo 默认运费继续。
+
+### 已修复内容
+
+- `yahoo-plugin/background.js` 的付款页状态读取新增 `shippingOptions` 和 `selectedShippingAmountJpy`，只从 `配送方法` 区域识别配送 radio，避免误选上方 `コンビニ / PayPay / 銀行振込` 等付款方式。
+- 普通商品付款流程在点击 `確認する` 前新增 `ensurePaymentShippingOption()`：
+  - 如果当前选中配送金额与订单 `effectiveShippingFeeText / shippingFeeText` 一致，继续原流程。
+  - 如果不一致，并且页面存在相同金额的配送选项，则自动选中对应 radio，例如从默认 `230円` 切换到 `クリックポスト 185円`。
+  - 切换后重新读取页面状态，再执行原有付款金额校验和后续 `確認する -> 購入を確定する` 流程。
+- 新增回归测试覆盖付款页配送选项识别，以及“默认运费 230円、订单运费 185円”时需要触发切换的判断。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+```
+
+---
+
 ## 2026-06-06 用户端最低出价提示修复
 
 ### 已实现内容
@@ -1006,6 +1116,34 @@ npm run build
 ```powershell
 node src\server\routes\plugin.test.js
 node yahoo-plugin\background.test.js
+```
+
+---
+
+## 2026-06-06 同捆扫描主商品未点击修复
+
+### 问题现象
+
+- 商品 `s1113817953` 是同捆主商品，数据库状态为 `pending_bundle`，同组 `bundle_group_id=bundle-20260602-s1113817953`。
+- `getScanJobs()` 能取到该订单，且它在同组中排第一；`scan_idle_counter` 已被清零，说明扫描任务近期执行过。
+- 订单状态日志为空，表示插件打开页面后没有回写扫描结果，也没有完成主商品操作。
+
+### 根因
+
+- 原同捆扫描只在 `extractBundleScanResult()` 返回 `unknown` 时才会检查并点击 `取引情報を入力する`。
+- 真实页面如果先匹配成 `waiting_agreement` 或 `shipping_pending`，即使页面上已经出现主商品可点击操作按钮，旧逻辑也会直接返回，不点击、不回写。
+
+### 已修复内容
+
+- 同捆扫描点击条件放宽：当扫描结果为 `unknown`、`waiting_agreement` 或 `shipping_pending` 时，只要页面状态检测到 `canInputTransaction=true`，就继续点击 `取引情報を入力する` -> `決定する` -> `確定する`。
+- 补充识别文案：`出品者がまとめて取引に同意しました。配送方法を確認し取引情報を入力してください。` 代表需要我方继续操作，不是等待运费；扫描结果标记为 `input_required` 并进入 `取引情報を入力する` 后续流程。
+- 新增 `shouldAttemptBundleInputAction()` 并加回归测试，覆盖 `waiting_agreement + canInputTransaction` 可继续主商品操作，`child_agreed` 仍不会误点。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\content.test.js
 ```
 
 ---

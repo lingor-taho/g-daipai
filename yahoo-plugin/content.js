@@ -1148,7 +1148,7 @@ function getClickableText(el) {
 }
 
 function resolveClickableElement(el) {
-  return el.closest?.('button, a, input[type="button"], input[type="submit"]') || el;
+  return el.closest?.('button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]') || el;
 }
 
 function isElementClickable(el) {
@@ -1160,6 +1160,15 @@ function isElementClickable(el) {
 
 function isNativeClickableElement(el) {
   return /^(BUTTON|A|INPUT)$/i.test(el?.tagName || '');
+}
+
+function isClickableLikeElement(el) {
+  return isNativeClickableElement(el) ||
+    el?.getAttribute?.('role') === 'button' ||
+    typeof el?.onclick === 'function' ||
+    el?.hasAttribute?.('onclick') ||
+    el?.hasAttribute?.('tabindex') ||
+    el?.hasAttribute?.('data-cl-params');
 }
 
 function clickElement(el) {
@@ -1257,15 +1266,15 @@ function clickElement(el) {
 }
 
 function findClickableByText(pattern, options = {}) {
-  const priority = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+  const priority = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]')];
   const broad = [...document.querySelectorAll('*')];
   const candidates = [...priority, ...broad]
     .filter(el => pattern.test(getClickableText(el)) && isElementClickable(el))
     .filter(el => {
       const target = resolveClickableElement(el);
-      if (isNativeClickableElement(target)) return true;
+      if (isClickableLikeElement(target)) return true;
       if (options.nativeOnly) return false;
-      return typeof target.onclick === 'function' || target.getAttribute?.('role') === 'button';
+      return false;
     })
     .sort((a, b) => {
       const aNative = isNativeClickableElement(resolveClickableElement(a)) ? 0 : 1;
@@ -1280,8 +1289,9 @@ function clickBundleTransactionAction(action) {
   const patterns = {
     close: /\u9589\u3058\u308b/,
     start: /^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/,
-    input: /\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/,
-    decide: /\u6c7a\u5b9a\u3059\u308b/,
+    input: /\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/,
+    placementOk: /^\s*OK\s*$/,
+    decide: /^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/,
     confirm: /\u78ba\u5b9a\u3059\u308b/
   };
   const pattern = patterns[action];
@@ -1294,6 +1304,12 @@ function clickBundleTransactionAction(action) {
 
 function detectWaitingShippingPaymentAmount(text = getBodyText()) {
   return /\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,80}\u9001\u6599\u6c7a\u5b9a\u5f8c[\s\S]{0,20}\u78ba\u5b9a\u3057\u307e\u3059/.test(String(text || ''));
+}
+
+function detectPlacementDefaultModal(text = getBodyText()) {
+  const source = String(text || '');
+  return /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(source) &&
+    !!findClickableByText(/^\s*OK\s*$/);
 }
 
 function normalizeYenText(value) {
@@ -1339,9 +1355,20 @@ function extractBundleScanResult(text = getBodyText()) {
   if (/\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source)) {
     return { type: 'child_agreed' };
   }
+  const canInputTransaction = !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/);
+  if (/\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source) &&
+      canInputTransaction &&
+      (/\u914d\u9001\u65b9\u6cd5\u306e\u9023\u7d61\u304c\u5c4a\u3044\u3066\u3044\u307e\u3059/.test(source) ||
+       /\u914d\u9001\u65b9\u6cd5\u3092\u78ba\u8a8d\u3057\s*\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044/.test(source))) {
+    return { type: 'input_required' };
+  }
   if (/\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source) &&
       /\u914d\u9001\u65b9\u6cd5\u306e\u9023\u7d61\u304c\u5c4a\u3044\u3066\u3044\u307e\u3059/.test(source)) {
     return { type: 'main_agreed' };
+  }
+  if (/\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source) &&
+      /\u914d\u9001\u65b9\u6cd5\u3092\u78ba\u8a8d\u3057\s*\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044/.test(source)) {
+    return { type: 'input_required' };
   }
   if (detectBundleRequestedComplete()) {
     return { type: 'waiting_agreement' };
@@ -1421,8 +1448,9 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
 function getBundleTransactionActionState() {
   return {
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
-    canInputTransaction: !!findClickableByText(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
-    canDecide: !!findClickableByText(/\u6c7a\u5b9a\u3059\u308b/),
+    canInputTransaction: !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/),
+    canPlacementOk: detectPlacementDefaultModal(),
+    canDecide: !!findClickableByText(/^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/),
     canConfirm: !!findClickableByText(/\u78ba\u5b9a\u3059\u308b/),
     waitingShipping: detectWaitingShippingPaymentAmount(),
     complete: detectBundleRequestedComplete(),

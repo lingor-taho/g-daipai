@@ -1235,6 +1235,31 @@ function testClickBundleTransactionActionIgnoresInstructionText() {
   assert.equal(requestButton.clicked, true);
 }
 
+function testClickBundleTransactionActionFindsInputRoleButtonParent() {
+  const roleButton = createTestElement('');
+  roleButton.tagName = 'DIV';
+  roleButton.getAttribute = name => name === 'role' ? 'button' : '';
+  roleButton.hasAttribute = name => name === 'role';
+  const label = createTestElement('\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b');
+  label.tagName = 'SPAN';
+  label.closest = selector => selector.includes('[role="button"]') ? roleButton : null;
+  const api = loadContentForTest('', '/buyer/top', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]') return [roleButton];
+      if (selector === '*') return [label, roleButton];
+      return [];
+    }
+  });
+
+  const state = api.getBundleTransactionActionState();
+  const result = api.clickBundleTransactionAction('input');
+
+  assert.equal(state.canInputTransaction, true);
+  assert.equal(result.success, true);
+  assert.equal(roleButton.clicked, true);
+}
+
 function testBundleTransactionActionStateDetectsDecideButton() {
   const decideButton = createTestElement('\u6c7a\u5b9a\u3059\u308b');
   decideButton.tagName = 'BUTTON';
@@ -1251,6 +1276,50 @@ function testBundleTransactionActionStateDetectsDecideButton() {
 
   assert.equal(state.canDecide, true);
   assert.equal(state.complete, false);
+}
+
+function testBundleTransactionActionStateDetectsReviewButtonAsDecide() {
+  const reviewButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  reviewButton.tagName = 'BUTTON';
+  const api = loadContentForTest('', '/buyer/input', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'button, a, input[type="button"], input[type="submit"]') return [reviewButton];
+      if (selector === '*') return [reviewButton];
+      return [];
+    }
+  });
+
+  const state = api.getBundleTransactionActionState();
+  const clickResult = api.clickBundleTransactionAction('decide');
+
+  assert.equal(state.canDecide, true);
+  assert.equal(clickResult.success, true);
+  assert.equal(reviewButton.clicked, true);
+}
+
+function testBundleTransactionActionStateDetectsPlacementOkModal() {
+  const okButton = createTestElement('OK');
+  okButton.tagName = 'BUTTON';
+  const api = loadContentForTest(
+    '\u7f6e\u304d\u914d\u5834\u6240\uff08\u7384\u95a2\u524d\uff09\u304c\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f',
+    '/buyer/edit',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector === 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]') return [okButton];
+        if (selector === '*') return [okButton];
+        return [];
+      }
+    }
+  );
+
+  const state = api.getBundleTransactionActionState();
+  const clickResult = api.clickBundleTransactionAction('placementOk');
+
+  assert.equal(state.canPlacementOk, true);
+  assert.equal(clickResult.success, true);
+  assert.equal(okButton.clicked, true);
 }
 
 function testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount() {
@@ -1325,6 +1394,34 @@ function testExtractBundleScanResultDetectsMainAgreementPopup() {
   const result = api.extractBundleScanResult();
 
   assert.equal(result.type, 'main_agreed');
+}
+
+function testExtractBundleScanResultPrefersInputRequiredWhenInputLinkExists() {
+  const inputLink = createTestElement('\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b');
+  inputLink.tagName = 'A';
+  inputLink.href = '/buyer/edit?aid=s1113817953';
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f\u3002\u51fa\u54c1\u8005\u304b\u3089\u914d\u9001\u65b9\u6cd5\u306e\u9023\u7d61\u304c\u5c4a\u3044\u3066\u3044\u307e\u3059\u3002',
+    '/seller/top',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector === 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]') return [inputLink];
+        if (selector === '*') return [inputLink];
+        return [];
+      }
+    }
+  );
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'input_required');
+}
+
+function testExtractBundleScanResultDetectsInputRequiredPage() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f\u3002\u914d\u9001\u65b9\u6cd5\u3092\u78ba\u8a8d\u3057\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'input_required');
 }
 
 function testExtractBundleScanResultExtractsDeliveryMethodShippingFee() {
@@ -1459,7 +1556,10 @@ async function run() {
   testClickTransactionContactForProduct();
   testClickBundleTransactionActionFindsRequestButton();
   testClickBundleTransactionActionIgnoresInstructionText();
+  testClickBundleTransactionActionFindsInputRoleButtonParent();
   testBundleTransactionActionStateDetectsDecideButton();
+  testBundleTransactionActionStateDetectsReviewButtonAsDecide();
+  testBundleTransactionActionStateDetectsPlacementOkModal();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
   testExtractWaitingShippingScanResultFindsShippingFee();
   testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
@@ -1468,6 +1568,7 @@ async function run() {
   testExtractBundleScanResultDetectsWaitingForSellerAgreement();
   testExtractBundleScanResultDetectsChildAgreementPopup();
   testExtractBundleScanResultDetectsMainAgreementPopup();
+  testExtractBundleScanResultPrefersInputRequiredWhenInputLinkExists();
   testExtractBundleScanResultExtractsDeliveryMethodShippingFee();
   testExtractBundleScanResultExtractsPaymentShippingFee();
   testExtractBundleScanResultDetectsBundleRejected();
