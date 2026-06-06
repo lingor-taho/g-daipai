@@ -996,6 +996,30 @@ npm run build
 
 ---
 
+## 2026-06-06 商城商品同捆付款单品处理
+
+### 业务规则确认
+
+- 付款流程中，商城商品即使页面提示可同捆购买，也不走本系统普通商品同捆逻辑。
+- 商城商品同捆付款按一般商城商品单品付款处理，不写同捆运费、不改同捆订单状态。
+- 图1普通商城付款页：点击红色 `購入手続きする`，进入后续普通商品支付步骤 A。
+- 图2商城同捆提示页：如果有弹出框，先点击 `閉じる`；然后不要点红色 `まとめて購入手続きする`，必须点击下面的 `単品で購入手続きする`，再进入后续普通商品支付步骤 A。
+
+### 已修复内容
+
+- `yahoo-plugin/background.js`：付款页状态新增 `hasStoreBundlePurchaseNotice`、`hasPaymentCloseButton`、`hasSinglePurchaseProcedureButton`。
+- `yahoo-plugin/background.js`：进入付款流程后，如果检测到商城同捆购买提示弹窗，先点击 `閉じる`。
+- `yahoo-plugin/background.js`：付款入口按钮优先级改为 `単品で購入手続きする` > `Yahoo!かんたん決済で支払う` > `購入手続きする`，避免误点红色 `まとめて購入手続きする`。
+- 新增回归测试覆盖商城同捆付款页动作顺序：`paymentClose -> singlePurchaseProcedure -> review -> finalize`。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+```
+
+---
+
 ## 2026-06-06 普通商品付款多运费选择修复
 
 ### 问题现象

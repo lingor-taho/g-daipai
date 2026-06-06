@@ -608,6 +608,8 @@ function getExpectedPaymentShippingFeeJpy(job = {}) {
 function getPaymentActionPatternSource(action) {
   const patterns = {
     easyPayment: '\\u0059\\u0061\\u0068\\u006f\\u006f\\u0021\\u304b\\u3093\\u305f\\u3093\\u6c7a\\u6e08\\u3067\\u652f\\u6255\\u3046',
+    paymentClose: '^\\s*\\u9589\\u3058\\u308b\\s*$',
+    singlePurchaseProcedure: '\\u5358\\u54c1\\u3067\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
     purchaseProcedure: '\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
     transactionInfoInput: '\\u53d6\\u5f15\\u60c5\\u5831\\u3092\\u5165\\u529b\\u3059\\u308b',
     placementOk: '^\\s*OK\\s*$',
@@ -644,6 +646,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const selectedShippingOption = shippingOptions.find(option => option.checked);
   const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
   const hasPlacementDefaultModal = /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(bodyText);
+  const hasStoreBundlePurchaseNotice = /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d\u3067\u304d\u308b\u5546\u54c1/.test(bodyText);
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
   return {
@@ -658,6 +661,9 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText),
     processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
     hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
+    hasPaymentCloseButton: hasControl(/^\s*\u9589\u3058\u308b\s*$/),
+    hasStoreBundlePurchaseNotice,
+    hasSinglePurchaseProcedureButton: hasControl(/\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
     hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
     hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
     hasPlacementOkButton: hasPlacementDefaultModal && hasControl(/^\s*OK\s*$/),
@@ -1962,10 +1968,29 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
 
+    if (state?.hasStoreBundlePurchaseNotice && state?.hasPaymentCloseButton) {
+      const closeResult = await clickPaymentActionAndFollowTab(tab, 'paymentClose', nextState =>
+        nextState.alreadyPaid ||
+        nextState.complete ||
+        nextState.hasSinglePurchaseProcedureButton ||
+        nextState.hasPurchaseProcedureButton ||
+        nextState.hasEasyPaymentButton ||
+        nextState.hasReviewButton
+      );
+      if (!closeResult?.success) throw new Error(closeResult?.error || 'store bundle popup close failed');
+      tab = closeResult.tab;
+      state = closeResult.state;
+    }
+
     let entryClicks = 0;
     while (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton && entryClicks < 3) {
       let result = null;
-      if (state?.hasEasyPaymentButton) {
+      if (state?.hasSinglePurchaseProcedureButton) {
+        result = await clickPaymentActionAndFollowTab(tab, 'singlePurchaseProcedure', nextState =>
+          nextState.alreadyPaid || nextState.complete || nextState.hasEasyPaymentButton || nextState.hasReviewButton
+        );
+        if (!result?.success) throw new Error(result?.error || 'single purchase procedure button click failed');
+      } else if (state?.hasEasyPaymentButton) {
         result = await clickPaymentActionAndFollowTab(tab, 'easyPayment', nextState =>
           nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton
         );

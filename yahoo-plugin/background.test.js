@@ -802,6 +802,61 @@ async function testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure() {
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage() {
+  const calls = [];
+  const actions = [];
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550',
+        hasStoreBundlePurchaseNotice: true,
+        hasPaymentCloseButton: true,
+        hasSinglePurchaseProcedureButton: true
+      }
+    },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', hasSinglePurchaseProcedureButton: true } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=x1231583550', hasReviewButton: true, paymentAmountJpy: 28172 } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/payment/confirm?auctionId=x1231583550', hasFinalizeButton: true, paymentAmountJpy: 28172 } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=x1231583550', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() { return { id: 16, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', status: 'complete' }; },
+      async query() { return [{ id: 16, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 16, productId: 'x1231583550', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', finalPrice: 28172, effectiveShippingFeeText: '0\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['paymentClose', 'singlePurchaseProcedure', 'review', 'finalize']);
+  assert.equal(calls[0].orderId, 16);
+  assert.equal(calls[0].productId, 'x1231583550');
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure() {
   const calls = [];
   const actions = [];
@@ -1196,6 +1251,7 @@ async function run() {
   await testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput();
   await testRunPaymentJobsMarksAlreadyPaidAsSuccess();
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
+  await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
