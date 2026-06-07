@@ -1428,6 +1428,43 @@ function extractSellerName(text = getBodyText()) {
   return normalizeTextValue(match?.[1] || '');
 }
 
+function normalizeNameValue(value, maxLength = 128) {
+  return String(value || '').replace(/[ \t\r\n\f]+/g, ' ').trim().slice(0, maxLength);
+}
+
+function extractNameValueFromSellerInfoBlock(value) {
+  const source = String(value || '');
+  const match = source.match(/氏名\s*[:：]?\s*([^\n\r]+)/);
+  if (!match?.[1]) return '';
+  return normalizeNameValue(match[1].replace(/\s*(?:住所|出品者情報を確認する)[\s\S]*$/, ''));
+}
+
+function extractSellerInfoName(text = getBodyText()) {
+  const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
+  let inSellerInfo = false;
+  for (const element of elements) {
+    const rawText = String(element?.textContent || '');
+    const normalized = normalizeTextValue(rawText, 512);
+    if (/出品者情報/.test(normalized)) {
+      inSellerInfo = true;
+    } else if (inSellerInfo && /(?:お届け情報|お支払い情報|落札者情報|お届け先)/.test(normalized)) {
+      inSellerInfo = false;
+    }
+    if (!inSellerInfo && !/出品者情報/.test(normalized)) continue;
+    const name = extractNameValueFromSellerInfoBlock(rawText);
+    if (name) return name;
+  }
+  const source = String(text || '');
+  const sellerBlock = source.match(/出品者情報[\s\S]*?氏名\s*[:：]?\s*([^\n\r]+)(?:[\s\S]*?住所|$)/);
+  return normalizeNameValue(sellerBlock?.[1] || '');
+}
+
+function hasUnregisteredTrackingNumber(text = getBodyText()) {
+  const labeledTrackingNumber = extractLabeledValue(['伝票番号', '追跡番号'], text);
+  if (/未登録|反映されるまでお待ちください/.test(labeledTrackingNumber)) return true;
+  return /(?:伝票番号|追跡番号)\s*[:：]?\s*未登録/.test(String(text || ''));
+}
+
 function extractTrackingNumberFromText(text = getBodyText()) {
   const labeledTrackingNumber = extractLabeledValue(['伝票番号', '追跡番号'], text);
   if (labeledTrackingNumber) {
@@ -1479,13 +1516,30 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
 
   const storeShipped = /商品が発送されました。?\s*到着までお待ちください/.test(source);
   const normalShipped = /出品者から商品発送の連絡がありました。?\s*到着したら、受け取り連絡をしてください/.test(source);
-  if (storeShipped || normalShipped) {
+  if (storeShipped) {
+    const trackingNumber = extractTrackingNumberFromText(source);
     const sellerName = extractSellerName(source);
     return {
       type: 'shipped',
       shippingCompany: extractShippingCompany(source),
-      trackingNumber: extractTrackingNumberFromText(source) || sellerName,
-      trackingFallback: !extractTrackingNumberFromText(source) && !!sellerName ? 'seller_name' : ''
+      trackingNumber: trackingNumber || sellerName,
+      trackingFallback: trackingNumber ? '' : (sellerName ? 'seller_name' : '')
+    };
+  }
+  if (normalShipped) {
+    if (hasUnregisteredTrackingNumber(source)) {
+      return { type: 'pending_shipment' };
+    }
+    const trackingNumber = extractTrackingNumberFromText(source);
+    const sellerInfoName = extractSellerInfoName(source);
+    const sellerName = extractSellerName(source);
+    return {
+      type: 'shipped',
+      shippingCompany: extractShippingCompany(source),
+      trackingNumber: trackingNumber || sellerInfoName || sellerName,
+      trackingFallback: trackingNumber
+        ? ''
+        : (sellerInfoName ? 'seller_info_name' : (sellerName ? 'seller_name' : ''))
     };
   }
 
@@ -1657,6 +1711,7 @@ window.__G_DAIPAI_TEST__ = {
   extractWaitingShippingScanResult,
   extractBundleScanResult,
   extractPendingShipmentScanResult,
+  extractSellerInfoName,
   extractTrackingNumberFromText,
   extractShippingCompany,
   extractSellerName,

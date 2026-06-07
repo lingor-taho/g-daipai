@@ -1551,6 +1551,32 @@ function testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages()
   assert.equal(api.extractPendingShipmentScanResult().trackingNumber, '123456789012');
 }
 
+function testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u72b6\u6cc1\uff1a \u8377\u7269\u53d7\u4ed8\n\u914d\u9001\u65b9\u6cd5\uff1a \u304a\u3066\u304c\u308b\u914d\u9001 \u30cd\u30b3\u30dd\u30b9\uff08\u9001\u6599\uff1a230\u5186\uff09\n\u8ffd\u8de1\u756a\u53f7\uff1a \u672a\u767b\u9332\uff08\u53cd\u6620\u3055\u308c\u308b\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\uff09');
+  assert.equal(api.extractPendingShipmentScanResult().type, 'pending_shipment');
+}
+
+function testExtractPendingShipmentScanResultFallsBackToSellerInfoName() {
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\uff1a kat********\uff08356\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u65b9\u6cd5\uff1a \u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08\u9001\u6599\uff1a185\u5186\uff09',
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u51fa\u54c1\u8005\u60c5\u5831' },
+          { textContent: '\u6c0f\u540d \u6bdb\u5229\u3000\u597d\u4e4b\u52a9' },
+          { textContent: '\u4f4f\u6240 \u3012064**** \u5317\u6d77\u9053 \u672d\u5e4c\u5e02\u4e2d\u592e\u533a ****' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, '\u6bdb\u5229\u3000\u597d\u4e4b\u52a9');
+  assert.equal(result.trackingFallback, 'seller_info_name');
+}
+
 function testExtractPendingShipmentScanResultFallsBackToSellerName() {
   const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u696d\u8005\uff1a \u65e5\u672c\u90f5\u4fbf');
   const result = api.extractPendingShipmentScanResult();
@@ -1654,6 +1680,8 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsNormalShipped();
   testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
+  testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();
+  testExtractPendingShipmentScanResultFallsBackToSellerInfoName();
   testExtractPendingShipmentScanResultFallsBackToSellerName();
   testExtractPendingShipmentScanResultDetectsCancelled();
 }
