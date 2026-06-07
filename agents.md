@@ -1493,6 +1493,68 @@ node yahoo-plugin\background.test.js
 ```
 ---
 
+## 2026-06-07 确认收货功能实现
+
+### 当前状态
+
+- 确认收货任务已实现，复用现有插件空闲任务体系，新增独立 action：`confirm_receipt`。
+- 前置数据状态已有：`pending_receipt`（待收货）、`completed`（完了）。
+- Google 表格已新增“读取表格行颜色并按商品 ID 匹配”的能力。
+
+### 业务规则确认
+
+- 后台新增确认收货启动时间，默认每天 `18:01` 执行：
+  - 配置项保存前面的整点小时，默认 `18`。
+  - 到设置整点后 1 分钟时，自动置 `confirm_receipt_requested=1`。
+  - 同交易开始一样支持手动执行。
+  - 同一自动执行槽位只执行一次；如果改到当天已过点小时，不补跑当天，等第二天该小时 `HH:01`。
+- 后台新增“收货商品颜色配置”，默认黄色 `#ffff00`。
+- 确认收货 Flag 为 `1` 时，只处理 `orders.order_status='pending_receipt'` 的订单。
+- 处理前必须去 Google 表格找该商品所在行：
+  - 按商品 ID 匹配。
+  - 该行 A-J 任意一个单元格背景色命中后台配置颜色，即允许执行确认收货。
+  - 商品 ID 找不到、颜色不匹配或读取表格失败时跳过，不改订单状态。
+- 普通商品：
+  - 打开 Yahoo `取引連絡` 页面。
+  - 勾选 `商品を受け取りました。`。
+  - 等 `受け取り連絡` 按钮变红/可点击后点击。
+  - 出现 `すべての取引が完了しました! またYahoo!オークションをご利用ください。` 后，订单状态更新为 `completed`（完了），关闭 tab。
+- 同捆商品：
+  - 待收货状态只会在主商品上。
+  - 主商品按普通商品流程确认收货成功后，同一 `bundle_group_id` 的所有子商品一起更新为 `completed`。
+- 商城商品：
+  - 不打开 Yahoo 页面，直接把订单状态更新为 `completed`，关闭/不创建 tab。
+- 用户端“落札商品”页面需要把 `completed` 显示为 `完了`。
+
+### 已实现内容
+
+- 后台“系统配置”新增确认收货执行整点配置，默认 `18`，到 `HH:01` 自动置 `confirm_receipt_requested=1`；规则与交易开始一致，按 `YYYY-MM-DD-HH` 槽位防重复，手动执行不占自动槽位。
+- 后台“系统配置”新增“收货商品颜色配置”，默认 `#ffff00`，保存时标准化为 HEX；后台订单管理顶部新增 `确认收货flag` 展示。
+- 后台新增“手动执行确认收货”按钮：`POST /api/admin/confirm-receipt/request`。
+- Google Sheets 新增按商品 ID 查找行并检查 A-J 任意单元格背景色是否命中配置色的能力；未命中颜色的待收货订单会跳过，不修改订单状态。
+- 插件新增 idle action：`confirm_receipt`。空闲任务链路按 `C 交易开始 -> D 扫描(计数到阈值) -> E 付款 -> F 确认收货` 执行。只要没有执行 C/D，执行 E、F 或空闲 none 后都会让扫描计数 `+1`。
+- 服务端新增 `/api/plugin/confirm-receipt/jobs` 和 `/api/plugin/confirm-receipt/status`：
+  - 只取 `orders.order_status='pending_receipt'` 的订单；
+  - 商城商品直接更新为 `completed`；
+  - 普通商品由插件打开取引页执行确认收货；
+  - 同捆主商品确认成功后，同一 `bundle_group_id` 下 `pending_receipt` / `bundle_completed` 订单一起更新为 `completed`。
+- 插件普通商品流程：打开取引页，勾选 `商品を受け取りました。`，点击 `受け取り連絡`，等待出现 `すべての取引が完了しました` 后回写成功并关闭 tab。
+- 用户端“落札商品”页新增 `completed -> 完了` 状态显示。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node yahoo-plugin\background.test.js
+Set-Location src\admin
+npm run build
+Set-Location src\client
+npm run build
+```
+
+---
+
 ## 2026-06-07 付款页配送方式选择修正
 
 ### 问题

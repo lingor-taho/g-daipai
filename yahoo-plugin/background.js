@@ -563,11 +563,33 @@ async function updatePaymentStatus(payload) {
   });
 }
 
+async function fetchConfirmReceiptJobs() {
+  const res = await apiFetch('/api/plugin/confirm-receipt/jobs');
+  const data = await res.json();
+  return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+async function updateConfirmReceiptStatus(payload) {
+  await apiFetch('/api/plugin/confirm-receipt/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
 function buildPaymentFailurePayload(job, error) {
   return {
     orderId: job?.orderId,
     productId: job?.productId,
     error: error?.message || String(error || 'payment failed')
+  };
+}
+
+function buildConfirmReceiptFailurePayload(job, error) {
+  return {
+    orderId: job?.orderId,
+    productId: job?.productId,
+    error: error?.message || String(error || 'confirm receipt failed')
   };
 }
 
@@ -1398,6 +1420,140 @@ async function waitForExpectedPaymentAmount(tab, job, state) {
     latest = await getPaymentPageState(tab.id);
   }
   return latest;
+}
+
+function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
+  const text = String(snapshot.bodyText || '').replace(/\s+/g, ' ').trim();
+  const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
+  return {
+    url: snapshot.url || '',
+    textSample: text.slice(0, 500),
+    complete: /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text),
+    hasReceiptCheckbox: /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(text) || Boolean(snapshot.hasReceiptCheckbox),
+    hasReceiptSubmitButton: controls.some(value => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(value)) || Boolean(snapshot.hasReceiptSubmitButton)
+  };
+}
+
+async function getConfirmReceiptPageState(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+        .map(el => getText(el))
+        .filter(Boolean);
+      const checkbox = [...document.querySelectorAll('input[type="checkbox"]')]
+        .find(input => {
+          const label = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`) : null;
+          const container = input.closest('label, li, div, section');
+          return /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(getText(label) || getText(container));
+        });
+      return {
+        success: true,
+        snapshot: {
+          url: location.href,
+          bodyText: normalize(document.body?.textContent || ''),
+          controls,
+          hasReceiptCheckbox: Boolean(checkbox)
+        }
+      };
+    }
+  });
+  const result = injectionResult?.[0]?.result;
+  if (!result?.success) return null;
+  return buildConfirmReceiptPageStateFromSnapshot(result.snapshot || {});
+}
+
+async function clickConfirmReceiptCheckbox(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const checkbox = [...document.querySelectorAll('input[type="checkbox"]')]
+        .find(input => {
+          const label = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`) : null;
+          const container = input.closest('label, li, div, section');
+          return /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(getText(label) || getText(container));
+        });
+      if (!checkbox) return { success: false, error: 'receipt checkbox not found' };
+      const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : null;
+      const target = label || checkbox.closest('label, li, div') || checkbox;
+      const eventOptions = { bubbles: true, cancelable: true, view: window };
+      target.scrollIntoView?.({ block: 'center', inline: 'center' });
+      target.focus?.();
+      if (typeof PointerEvent !== 'undefined') target.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+      target.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+      if (typeof PointerEvent !== 'undefined') target.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+      target.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+      target.click?.();
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      return { success: true };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'receipt checkbox click returned no result' };
+}
+
+async function clickConfirmReceiptSubmit(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
+      const button = controls.find(el => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(getText(el)));
+      if (!button) return { success: false, error: 'receipt submit button not found' };
+      const eventOptions = { bubbles: true, cancelable: true, view: window };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      button.focus?.();
+      if (typeof PointerEvent !== 'undefined') button.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+      button.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+      if (typeof PointerEvent !== 'undefined') button.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+      button.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+      button.click?.();
+      button.dispatchEvent(new MouseEvent('click', eventOptions));
+      return { success: true, text: getText(button) };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'receipt submit click returned no result' };
+}
+
+async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
+  const startAt = Date.now();
+  while (Date.now() - startAt < timeoutMs) {
+    const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => null) : null;
+    if (current?.status === 'complete') {
+      const state = await getConfirmReceiptPageState(current.id).catch(() => null);
+      if (state && predicate(state)) {
+        current._gdaipaiCreatedTabIds = tab?._gdaipaiCreatedTabIds;
+        current._gdaipaiConfirmReceiptState = state;
+        return current;
+      }
+    }
+    await sleep(500);
+  }
+  return null;
 }
 
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
@@ -2408,6 +2564,89 @@ async function runPaymentJobs() {
   }
 }
 
+async function executeConfirmReceiptJob(job) {
+  if (job.productType === 'store') {
+    await updateConfirmReceiptStatus({
+      orderId: job.orderId,
+      productId: job.productId,
+      status: 'success',
+      bundleGroupId: job.bundleGroupId || ''
+    });
+    return { success: true, store: true };
+  }
+  let tab = null;
+  const beforeTabIds = await getTabIds();
+  try {
+    tab = await openTransactionPage(job);
+    let state = await getConfirmReceiptPageState(tab.id);
+    if (state?.complete) {
+      await updateConfirmReceiptStatus({
+        orderId: job.orderId,
+        productId: job.productId,
+        status: 'already_completed',
+        bundleGroupId: job.bundleGroupId || ''
+      });
+      return { success: true, alreadyCompleted: true };
+    }
+    if (!state?.hasReceiptCheckbox) {
+      throw new Error(`receipt checkbox not found${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);
+    }
+    const checkboxResult = await clickConfirmReceiptCheckbox(tab.id);
+    if (!checkboxResult?.success) throw new Error(checkboxResult?.error || 'receipt checkbox click failed');
+    await sleep(800);
+    state = await getConfirmReceiptPageState(tab.id);
+    if (!state?.hasReceiptSubmitButton) {
+      const readyTab = await waitForConfirmReceiptState(tab, nextState => nextState.hasReceiptSubmitButton || nextState.complete, 5000);
+      if (readyTab) {
+        tab = readyTab;
+        state = readyTab._gdaipaiConfirmReceiptState || await getConfirmReceiptPageState(tab.id);
+      }
+    }
+    if (state?.complete) {
+      await updateConfirmReceiptStatus({
+        orderId: job.orderId,
+        productId: job.productId,
+        status: 'already_completed',
+        bundleGroupId: job.bundleGroupId || ''
+      });
+      return { success: true, alreadyCompleted: true };
+    }
+    if (!state?.hasReceiptSubmitButton) {
+      throw new Error(`receipt submit button not found${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);
+    }
+    const submitResult = await clickConfirmReceiptSubmit(tab.id);
+    if (!submitResult?.success) throw new Error(submitResult?.error || 'receipt submit click failed');
+    const completeTab = await waitForConfirmReceiptState(tab, nextState => nextState.complete, 15000);
+    if (!completeTab) throw new Error('receipt completion text not found');
+    tab = completeTab;
+    await updateConfirmReceiptStatus({
+      orderId: job.orderId,
+      productId: job.productId,
+      status: 'success',
+      bundleGroupId: job.bundleGroupId || ''
+    });
+    return { success: true };
+  } finally {
+    await closeTabsForTransactionFlow(tab, beforeTabIds);
+  }
+}
+
+async function runConfirmReceiptJobs() {
+  const jobs = await fetchConfirmReceiptJobs();
+  if (!jobs.length) {
+    await updateConfirmReceiptStatus({ empty: true });
+    return;
+  }
+  for (const job of jobs) {
+    try {
+      await executeConfirmReceiptJob(job);
+    } catch (error) {
+      await updateConfirmReceiptStatus(buildConfirmReceiptFailurePayload(job, error)).catch(() => {});
+      break;
+    }
+  }
+}
+
 async function syncIdleYahooPages() {
   await refreshPluginConfig();
   const now = Date.now();
@@ -2423,6 +2662,8 @@ async function syncIdleYahooPages() {
       includeAfterCutoff: idleAction?.config?.transactionStartRequestSource === 'manual',
       processNormalJobs: TRANSACTION_START_ENABLED
     });
+  } else if (idleAction?.action === 'confirm_receipt') {
+    await runConfirmReceiptJobs();
   } else if (idleAction?.action === 'scan') {
     await runScanJobs();
   } else if (idleAction?.action === 'payment') {
@@ -2548,6 +2789,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   syncIdleYahooPages,
   runTransactionStartJobs,
   runPaymentJobs,
+  runConfirmReceiptJobs,
+  buildConfirmReceiptPageStateFromSnapshot,
   buildPaymentFailurePayload,
   confirmWonBeforeFail,
   getExpectedPaymentAmountJpy,

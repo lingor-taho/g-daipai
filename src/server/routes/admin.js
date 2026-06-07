@@ -12,9 +12,14 @@ const {
   isMultiBidTask,
   ensureScheduledTransactionStartRequest,
   shouldAutoRequestTransactionStart,
+  ensureScheduledConfirmReceiptRequest,
+  shouldAutoRequestConfirmReceipt,
   getShipmentAlerts,
   appendPendingReceiptOrderToGoogleSheet,
-  DEFAULT_MULTI_BID_MIN_PRICE
+  DEFAULT_MULTI_BID_MIN_PRICE,
+  DEFAULT_CONFIRM_RECEIPT_HOUR,
+  DEFAULT_CONFIRM_RECEIPT_COLOR,
+  normalizeReceiptColorConfig
 } = require('./plugin');
 const { productService, normalizeAuctionUrl } = require('./proxy');
 const { buildYahooLoginStatus } = require('../services/yahooLoginStatus');
@@ -937,7 +942,7 @@ async function saveUserFinanceOverride(body = {}) {
 
 async function getMultiBidConfig() {
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'confirm_receipt_hour', 'confirm_receipt_color', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const legacyPaymentJobLimit = normalizePositiveIntegerConfig(values.payment_job_limit, 3);
@@ -950,6 +955,8 @@ async function getMultiBidConfig() {
     idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || 10),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
     transactionStartHour: Number(values.transaction_start_hour ?? 1),
+    confirmReceiptHour: Number(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR),
+    confirmReceiptColor: normalizeReceiptColorConfig(values.confirm_receipt_color, DEFAULT_CONFIRM_RECEIPT_COLOR),
     scanStartHour: Number(values.scan_start_hour ?? 1),
     scanEndHour: Number(values.scan_end_hour ?? 20),
     scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? 5),
@@ -977,6 +984,8 @@ router.put('/multi-bid-config', async (req, res) => {
   const idleBidGuardMinutes = Number(req.body.idleBidGuardMinutes ?? 10);
   const multiBidMinPrice = Number(req.body.multiBidMinPrice ?? DEFAULT_MULTI_BID_MIN_PRICE);
   const transactionStartHour = Number(req.body.transactionStartHour ?? 1);
+  const confirmReceiptHour = Number(req.body.confirmReceiptHour ?? DEFAULT_CONFIRM_RECEIPT_HOUR);
+  const confirmReceiptColor = normalizeReceiptColorConfig(req.body.confirmReceiptColor ?? DEFAULT_CONFIRM_RECEIPT_COLOR, '');
   const scanStartHour = Number(req.body.scanStartHour ?? 1);
   const scanEndHour = Number(req.body.scanEndHour ?? 20);
   const scanEveryIdleRuns = Number(req.body.scanEveryIdleRuns ?? 5);
@@ -1001,6 +1010,7 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   for (const [name, value] of [
     ['transactionStartHour', transactionStartHour],
+    ['confirmReceiptHour', confirmReceiptHour],
     ['scanStartHour', scanStartHour],
     ['scanEndHour', scanEndHour]
   ]) {
@@ -1010,6 +1020,9 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (!Number.isFinite(scanEveryIdleRuns) || scanEveryIdleRuns <= 0 || Math.floor(scanEveryIdleRuns) !== scanEveryIdleRuns) {
     return res.status(400).json({ error: 'valid scanEveryIdleRuns is required' });
+  }
+  if (!confirmReceiptColor) {
+    return res.status(400).json({ error: 'valid confirmReceiptColor is required' });
   }
   if (paymentJobLimitMin > paymentJobLimitMax) {
     return res.status(400).json({ error: 'paymentJobLimitMin must be <= paymentJobLimitMax' });
@@ -1039,6 +1052,14 @@ router.put('/multi-bid-config', async (req, res) => {
     [String(transactionStartHour)]
   );
   await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_hour', ?, CURRENT_TIMESTAMP)`,
+    [String(confirmReceiptHour)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_color', ?, CURRENT_TIMESTAMP)`,
+    [confirmReceiptColor]
+  );
+  await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('scan_start_hour', ?, CURRENT_TIMESTAMP)`,
     [String(scanStartHour)]
   );
@@ -1066,7 +1087,7 @@ router.put('/multi-bid-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('payment_page_stay_seconds', ?, CURRENT_TIMESTAMP)`,
     [String(paymentPageStaySeconds)]
   );
-  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds });
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds });
 });
 
 router.post('/transaction-start/request', async (req, res) => {
@@ -1075,6 +1096,19 @@ router.post('/transaction-start/request', async (req, res) => {
   );
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_requested_source', 'manual', CURRENT_TIMESTAMP)`
+  );
+  res.json({ success: true });
+});
+
+router.post('/confirm-receipt/request', async (req, res) => {
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_alert_message', '', CURRENT_TIMESTAMP)`
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_requested', '1', CURRENT_TIMESTAMP)`
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_requested_source', 'manual', CURRENT_TIMESTAMP)`
   );
   res.json({ success: true });
 });
@@ -1189,6 +1223,7 @@ router.post('/transaction-start/reset-orders', async (req, res) => {
 
 router.get('/idle-flags', async (req, res) => {
   await ensureScheduledTransactionStartRequest(db);
+  await ensureScheduledConfirmReceiptRequest(db);
   const rows = await db.getAll(
     `SELECT key, value, updated_at FROM config
      WHERE key IN (
@@ -1197,6 +1232,10 @@ router.get('/idle-flags', async (req, res) => {
        'transaction_start_last_run_date',
        'transaction_start_last_run_slot',
        'transaction_start_last_run_log',
+       'confirm_receipt_hour',
+       'confirm_receipt_requested',
+       'confirm_receipt_last_run_slot',
+       'confirm_receipt_alert_message',
        'scan_every_idle_runs',
        'scan_idle_counter',
        'payment_requested',
@@ -1224,6 +1263,13 @@ router.get('/idle-flags', async (req, res) => {
     transactionStartLastRunSlot: values.transaction_start_last_run_slot || '',
     transactionStartLastRunLog: values.transaction_start_last_run_log || ''
   }) ? 1 : 0;
+  const confirmReceiptHour = Number(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR);
+  const confirmReceiptRequested = Number(values.confirm_receipt_requested || 0) === 1;
+  const confirmReceiptFlag = confirmReceiptRequested || shouldAutoRequestConfirmReceipt({
+    confirmReceiptHour,
+    confirmReceiptHourUpdatedAt: updatedAt.confirm_receipt_hour || '',
+    confirmReceiptLastRunSlot: values.confirm_receipt_last_run_slot || ''
+  }) ? 1 : 0;
   const scanEveryIdleRuns = Math.max(1, Number(values.scan_every_idle_runs || 5));
   const scanIdleCounter = Math.max(0, Number(values.scan_idle_counter || 0));
 
@@ -1234,6 +1280,10 @@ router.get('/idle-flags', async (req, res) => {
     transactionStartHour,
     transactionStartLastRunDate,
     transactionStartLastRunLog,
+    confirmReceiptFlag,
+    confirmReceiptRequested: confirmReceiptRequested ? 1 : 0,
+    confirmReceiptHour,
+    confirmReceiptAlertMessage: values.confirm_receipt_alert_message || '',
     scanFlag: scanIdleCounter,
     scanEveryIdleRuns,
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,

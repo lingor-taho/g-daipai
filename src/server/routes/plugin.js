@@ -8,6 +8,7 @@ const {
 } = require('../services/orderStatusAudit');
 const {
   appendRows: appendGoogleSheetRows,
+  findRowsByProductIdWithAnyColor,
   isGoogleSheetsConfigured
 } = require('../services/googleSheets');
 
@@ -18,6 +19,8 @@ const DEFAULT_IDLE_BID_GUARD_MINUTES = 10;
 const DEFAULT_MULTI_BID_MIN_PRICE = 5000;
 const DEFAULT_TRANSACTION_START_HOUR = 1;
 const TRANSACTION_START_DELAY_MINUTES = 1;
+const DEFAULT_CONFIRM_RECEIPT_HOUR = 18;
+const DEFAULT_CONFIRM_RECEIPT_COLOR = '#ffff00';
 const DEFAULT_SCAN_START_HOUR = 1;
 const DEFAULT_SCAN_END_HOUR = 20;
 const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
@@ -31,6 +34,7 @@ const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
 const ORDER_STATUS_PENDING_RECEIPT = 'pending_receipt';
 const ORDER_STATUS_CANCELLED = 'cancelled';
+const ORDER_STATUS_COMPLETED = 'completed';
 const SHIPMENT_ALERTS_CONFIG_KEY = 'shipment_alerts';
 const GOOGLE_SHEET_STATUS_PENDING_RECEIPT = '待收货';
 const BUNDLE_SHEET_COLORS = [
@@ -346,6 +350,39 @@ function shouldAutoRequestTransactionStart(config = {}, nowMs = Date.now()) {
   return true;
 }
 
+function getConfirmReceiptReadyMs(confirmReceiptHour, nowMs = Date.now()) {
+  const readyAt = new Date(nowMs);
+  readyAt.setHours(clampHour(confirmReceiptHour, DEFAULT_CONFIRM_RECEIPT_HOUR), TRANSACTION_START_DELAY_MINUTES, 0, 0);
+  return readyAt.getTime();
+}
+
+function getConfirmReceiptSlot(confirmReceiptHour, nowMs = Date.now(), dateKey = '') {
+  return `${dateKey || getLocalDateKey(nowMs)}-${String(clampHour(confirmReceiptHour, DEFAULT_CONFIRM_RECEIPT_HOUR)).padStart(2, '0')}`;
+}
+
+function isConfirmReceiptReady(config = {}, nowMs = Date.now()) {
+  if (config.nowHour !== undefined || config.nowMinute !== undefined) {
+    const confirmReceiptHour = clampHour(config.confirmReceiptHour, DEFAULT_CONFIRM_RECEIPT_HOUR);
+    const now = new Date(nowMs);
+    const nowHour = Number(config.nowHour ?? now.getHours());
+    const nowMinute = Number(config.nowMinute ?? (config.nowHour !== undefined ? TRANSACTION_START_DELAY_MINUTES : now.getMinutes()));
+    return nowHour > confirmReceiptHour ||
+      (nowHour === confirmReceiptHour && nowMinute >= TRANSACTION_START_DELAY_MINUTES);
+  }
+  return nowMs >= getConfirmReceiptReadyMs(config.confirmReceiptHour, nowMs);
+}
+
+function shouldAutoRequestConfirmReceipt(config = {}, nowMs = Date.now()) {
+  const confirmReceiptHour = clampHour(config.confirmReceiptHour, DEFAULT_CONFIRM_RECEIPT_HOUR);
+  if (!isConfirmReceiptReady({ ...config, confirmReceiptHour }, nowMs)) return false;
+  const slot = getConfirmReceiptSlot(confirmReceiptHour, nowMs, config.today);
+  if (String(config.confirmReceiptLastRunSlot || '').trim() === slot) return false;
+  const updatedMs = parseSqliteTimestampMs(config.confirmReceiptHourUpdatedAt);
+  const readyMs = getConfirmReceiptReadyMs(confirmReceiptHour, nowMs);
+  if (updatedMs && updatedMs > readyMs) return false;
+  return true;
+}
+
 function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const now = new Date(nowMs);
   const nowHour = config.nowHour ?? now.getHours();
@@ -368,6 +405,11 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   }
   if (Number(config.paymentRequested || 0) === 1) {
     return { action: 'payment', today };
+  }
+  const confirmReceiptHour = clampHour(config.confirmReceiptHour, DEFAULT_CONFIRM_RECEIPT_HOUR);
+  const confirmReceiptRequested = Number(config.confirmReceiptRequested || 0) === 1;
+  if (confirmReceiptRequested || shouldAutoRequestConfirmReceipt({ ...config, confirmReceiptHour }, nowMs)) {
+    return { action: 'confirm_receipt', today };
   }
   return { action: 'none', today };
 }
@@ -393,6 +435,17 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
         getTransactionStartSlot(config.transactionStartHour, nowMs)
       );
     }
+  } else if (action === 'confirm_receipt') {
+    await saveConfigValue(database, 'confirm_receipt_requested', '0');
+    await saveConfigValue(database, 'confirm_receipt_requested_source', '');
+    if (config.confirmReceiptRequestSource !== 'manual') {
+      await saveConfigValue(
+        database,
+        'confirm_receipt_last_run_slot',
+        getConfirmReceiptSlot(config.confirmReceiptHour, nowMs)
+      );
+    }
+    await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   } else if (action === 'scan') {
     await saveConfigValue(database, 'scan_idle_counter', '0');
   } else {
@@ -403,8 +456,9 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
 
 async function getIdleActionConfig(database = db, nowMs = Date.now()) {
   await ensureScheduledTransactionStartRequest(database, nowMs);
+  await ensureScheduledConfirmReceiptRequest(database, nowMs);
   const rows = await database.getAll(
-    `SELECT key, value FROM config
+    `SELECT key, value, updated_at FROM config
      WHERE key IN (
        'transaction_start_hour',
        'transaction_start_requested',
@@ -412,6 +466,11 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
        'transaction_start_last_run_date',
        'transaction_start_last_run_slot',
        'transaction_start_last_run_log',
+       'confirm_receipt_hour',
+       'confirm_receipt_requested',
+       'confirm_receipt_requested_source',
+       'confirm_receipt_last_run_slot',
+       'confirm_receipt_color',
        'scan_start_hour',
        'scan_end_hour',
        'scan_every_idle_runs',
@@ -431,6 +490,12 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
     transactionStartLastRunDate: values.transaction_start_last_run_date || '',
     transactionStartLastRunSlot: values.transaction_start_last_run_slot || '',
     transactionStartLastRunLog: values.transaction_start_last_run_log || '',
+    confirmReceiptHour: Number(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR),
+    confirmReceiptHourUpdatedAt: updatedAt.confirm_receipt_hour || '',
+    confirmReceiptRequested: Number(values.confirm_receipt_requested || 0),
+    confirmReceiptRequestSource: values.confirm_receipt_requested_source || '',
+    confirmReceiptLastRunSlot: values.confirm_receipt_last_run_slot || '',
+    confirmReceiptColor: values.confirm_receipt_color || DEFAULT_CONFIRM_RECEIPT_COLOR,
     scanStartHour: Number(values.scan_start_hour ?? DEFAULT_SCAN_START_HOUR),
     scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
     scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? DEFAULT_SCAN_EVERY_IDLE_RUNS),
@@ -442,6 +507,9 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
     nowHour: new Date(nowMs).getHours(),
     transactionStartReady: isTransactionStartReady({
       transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR)
+    }, nowMs),
+    confirmReceiptReady: isConfirmReceiptReady({
+      confirmReceiptHour: Number(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR)
     }, nowMs)
   };
 }
@@ -455,7 +523,7 @@ async function saveConfigValue(database, key, value) {
 
 async function ensureScheduledTransactionStartRequest(database = db, nowMs = Date.now()) {
   const rows = await database.getAll(
-    `SELECT key, value FROM config
+    `SELECT key, value, updated_at FROM config
      WHERE key IN (
        'transaction_start_hour',
        'transaction_start_requested',
@@ -505,6 +573,53 @@ async function ensureScheduledTransactionStartRequest(database = db, nowMs = Dat
     transactionStartHour,
     transactionStartLastRunDate,
     transactionStartLastRunSlot,
+    today
+  };
+}
+
+async function ensureScheduledConfirmReceiptRequest(database = db, nowMs = Date.now()) {
+  const rows = await database.getAll(
+    `SELECT key, value, updated_at FROM config
+     WHERE key IN (
+       'confirm_receipt_hour',
+       'confirm_receipt_requested',
+       'confirm_receipt_requested_source',
+       'confirm_receipt_last_run_slot'
+     )`
+  );
+  const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  const updatedAt = Object.fromEntries(rows.map(row => [row.key, row.updated_at]));
+  const today = getLocalDateKey(nowMs);
+  const confirmReceiptHour = clampHour(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR, DEFAULT_CONFIRM_RECEIPT_HOUR);
+  const confirmReceiptRequested = Number(values.confirm_receipt_requested || 0) === 1;
+  const confirmReceiptRequestSource = values.confirm_receipt_requested_source || '';
+  const confirmReceiptLastRunSlot = values.confirm_receipt_last_run_slot || '';
+  const shouldRequest = !confirmReceiptRequested &&
+    shouldAutoRequestConfirmReceipt({
+      confirmReceiptHour,
+      confirmReceiptHourUpdatedAt: updatedAt.confirm_receipt_hour || '',
+      confirmReceiptLastRunSlot
+    }, nowMs);
+
+  if (shouldRequest) {
+    await saveConfigValue(database, 'confirm_receipt_requested', '1');
+    await saveConfigValue(database, 'confirm_receipt_requested_source', 'auto');
+    return {
+      updated: true,
+      confirmReceiptRequested: 1,
+      confirmReceiptRequestSource: 'auto',
+      confirmReceiptHour,
+      confirmReceiptLastRunSlot,
+      today
+    };
+  }
+
+  return {
+    updated: false,
+    confirmReceiptRequested: confirmReceiptRequested ? 1 : 0,
+    confirmReceiptRequestSource,
+    confirmReceiptHour,
+    confirmReceiptLastRunSlot,
     today
   };
 }
@@ -1648,6 +1763,141 @@ function getPaymentJobLimitRange(values = {}) {
   };
 }
 
+function normalizeReceiptColorConfig(value, fallback = DEFAULT_CONFIRM_RECEIPT_COLOR) {
+  const text = String(value || '').trim().toLowerCase();
+  const hex = text.startsWith('#') ? text : `#${text}`;
+  return /^#[0-9a-f]{6}$/.test(hex) ? hex : fallback;
+}
+
+async function isConfirmReceiptSheetColorMatched(productId, colorHex, options = {}) {
+  const targetProductId = String(productId || '').trim();
+  if (!targetProductId) return false;
+  const resolver = options.findRowsByProductIdWithAnyColor || findRowsByProductIdWithAnyColor;
+  if (typeof resolver !== 'function') return false;
+  const result = await resolver(targetProductId, colorHex);
+  return Boolean(result?.matched || (Array.isArray(result?.rows) && result.rows.length));
+}
+
+async function getConfirmReceiptJobs(database = db, options = {}) {
+  const configRows = await database.getAll(
+    "SELECT key, value FROM config WHERE key IN ('confirm_receipt_color')"
+  );
+  const values = Object.fromEntries((configRows || []).map(row => [row.key, row.value]));
+  const colorHex = normalizeReceiptColorConfig(values.confirm_receipt_color || DEFAULT_CONFIRM_RECEIPT_COLOR);
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.transaction_url,
+            o.bundle_group_id,
+            t.product_id,
+            t.product_url,
+            t.product_title,
+            t.product_type
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE o.order_status = ?
+       AND t.status = 'success'
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
+    [ORDER_STATUS_PENDING_RECEIPT]
+  );
+  const jobs = [];
+  for (const row of rows) {
+    let sheetMatched = false;
+    let sheetError = '';
+    try {
+      sheetMatched = await isConfirmReceiptSheetColorMatched(row.product_id, colorHex, options);
+    } catch (error) {
+      sheetError = error.message || String(error);
+    }
+    if (!sheetMatched) continue;
+    jobs.push({
+      orderId: row.order_id,
+      productId: row.product_id,
+      productUrl: row.product_url,
+      productTitle: row.product_title,
+      productType: row.product_type || 'normal',
+      transactionUrl: row.transaction_url || '',
+      bundleGroupId: row.bundle_group_id || '',
+      receiptColor: colorHex,
+      sheetMatched: true,
+      sheetError
+    });
+  }
+  return {
+    jobs,
+    total: jobs.length,
+    scanned: rows.length,
+    receiptColor: colorHex
+  };
+}
+
+async function updateConfirmReceiptStatus(payload = {}, database = db) {
+  if (payload.empty === true) {
+    await saveConfigValue(database, 'confirm_receipt_requested', '0');
+    await saveConfigValue(database, 'confirm_receipt_alert_message', '');
+    return { confirmReceiptRequested: 0 };
+  }
+  const error = String(payload.error || '').trim();
+  if (error) {
+    await saveConfigValue(database, 'confirm_receipt_requested', '0');
+    await saveConfigValue(database, 'confirm_receipt_alert_message', `确认收货失败：商品ID ${String(payload.productId || '-')}，原因：${error}`);
+    return { confirmReceiptRequested: 0 };
+  }
+  const orderId = Number(payload.orderId || 0);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    const err = new Error('orderId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const status = String(payload.status || '').trim();
+  if (status !== 'success' && status !== 'already_completed') {
+    const err = new Error('valid confirm receipt status is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const bundleGroupId = String(payload.bundleGroupId || '').trim();
+  let beforeRows = [];
+  let result;
+  if (bundleGroupId) {
+    beforeRows = typeof database.getAll === 'function'
+      ? await database.getAll(
+        `SELECT o.id AS order_id, o.order_status AS old_status, t.product_id
+         FROM orders o
+         INNER JOIN tasks t ON o.task_id = t.id
+         WHERE o.bundle_group_id = ?
+           AND o.order_status IN (?, ?)`,
+        [bundleGroupId, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]
+      )
+      : [];
+    result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE bundle_group_id = ?
+         AND order_status IN (?, ?)`,
+      [ORDER_STATUS_COMPLETED, bundleGroupId, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]
+    );
+  } else {
+    beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+    result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND order_status = ?`,
+      [ORDER_STATUS_COMPLETED, orderId, ORDER_STATUS_PENDING_RECEIPT]
+    );
+  }
+  if (result.rowCount) {
+    await saveConfigValue(database, 'confirm_receipt_alert_message', '');
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status: ORDER_STATUS_COMPLETED,
+      source: 'confirm_receipt_status',
+      metadata: { orderId, bundleGroupId, status }
+    }).catch(() => null);
+  }
+  return { updated: result.rowCount || 0 };
+}
+
 async function getPaymentJobs(database = db, options = {}) {
   const configRows = await database.getAll(
     "SELECT key, value FROM config WHERE key IN ('payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max')"
@@ -1815,6 +2065,24 @@ router.post('/scan/status', async (req, res) => {
   }
 });
 
+router.get('/confirm-receipt/jobs', async (req, res) => {
+  try {
+    const result = await getConfirmReceiptJobs(db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'confirm receipt jobs failed' });
+  }
+});
+
+router.post('/confirm-receipt/status', async (req, res) => {
+  try {
+    const result = await updateConfirmReceiptStatus(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'confirm receipt update failed' });
+  }
+});
+
 router.get('/payment/jobs', async (req, res) => {
   const config = await getIdleActionConfig();
   const result = await getPaymentJobs(db);
@@ -1910,6 +2178,8 @@ module.exports.getMultiBidConfig = getMultiBidConfig;
 module.exports.DEFAULT_MULTI_BID_MIN_PRICE = DEFAULT_MULTI_BID_MIN_PRICE;
 module.exports.DEFAULT_PAYMENT_JOB_LIMIT = DEFAULT_PAYMENT_JOB_LIMIT;
 module.exports.DEFAULT_PAYMENT_PAGE_STAY_SECONDS = DEFAULT_PAYMENT_PAGE_STAY_SECONDS;
+module.exports.DEFAULT_CONFIRM_RECEIPT_HOUR = DEFAULT_CONFIRM_RECEIPT_HOUR;
+module.exports.DEFAULT_CONFIRM_RECEIPT_COLOR = DEFAULT_CONFIRM_RECEIPT_COLOR;
 module.exports.randomIntInclusive = randomIntInclusive;
 module.exports.getPaymentJobLimitRange = getPaymentJobLimitRange;
 module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
@@ -1920,14 +2190,20 @@ module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT
 module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.ORDER_STATUS_PENDING_RECEIPT = ORDER_STATUS_PENDING_RECEIPT;
 module.exports.ORDER_STATUS_CANCELLED = ORDER_STATUS_CANCELLED;
+module.exports.ORDER_STATUS_COMPLETED = ORDER_STATUS_COMPLETED;
 module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getNextScanIdleCounter = getNextScanIdleCounter;
 module.exports.completeIdleAction = completeIdleAction;
 module.exports.ensureScheduledTransactionStartRequest = ensureScheduledTransactionStartRequest;
+module.exports.ensureScheduledConfirmReceiptRequest = ensureScheduledConfirmReceiptRequest;
 module.exports.getTransactionStartReadyMs = getTransactionStartReadyMs;
 module.exports.getTransactionStartSlot = getTransactionStartSlot;
 module.exports.isTransactionStartReady = isTransactionStartReady;
 module.exports.shouldAutoRequestTransactionStart = shouldAutoRequestTransactionStart;
+module.exports.getConfirmReceiptReadyMs = getConfirmReceiptReadyMs;
+module.exports.getConfirmReceiptSlot = getConfirmReceiptSlot;
+module.exports.isConfirmReceiptReady = isConfirmReceiptReady;
+module.exports.shouldAutoRequestConfirmReceipt = shouldAutoRequestConfirmReceipt;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
@@ -1944,6 +2220,9 @@ module.exports.autoCloseShipmentAlerts = autoCloseShipmentAlerts;
 module.exports.getShipmentAlerts = getShipmentAlerts;
 module.exports.getPaymentJobs = getPaymentJobs;
 module.exports.updatePaymentStatus = updatePaymentStatus;
+module.exports.normalizeReceiptColorConfig = normalizeReceiptColorConfig;
+module.exports.getConfirmReceiptJobs = getConfirmReceiptJobs;
+module.exports.updateConfirmReceiptStatus = updateConfirmReceiptStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;

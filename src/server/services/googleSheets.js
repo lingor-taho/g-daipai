@@ -178,6 +178,70 @@ async function appendRows({ rows, backgroundColor = null }) {
   };
 }
 
+function normalizeHexColor(value) {
+  const text = String(value || '').trim().toLowerCase();
+  const hex = text.startsWith('#') ? text : `#${text}`;
+  return /^#[0-9a-f]{6}$/.test(hex) ? hex : '';
+}
+
+function googleColorToHex(color = {}) {
+  if (!color || typeof color !== 'object') return '';
+  const toByte = value => {
+    const number = Number(value ?? 0);
+    if (!Number.isFinite(number)) return 0;
+    return Math.max(0, Math.min(255, Math.round(number * 255)));
+  };
+  const red = toByte(color.red).toString(16).padStart(2, '0');
+  const green = toByte(color.green).toString(16).padStart(2, '0');
+  const blue = toByte(color.blue).toString(16).padStart(2, '0');
+  return `#${red}${green}${blue}`;
+}
+
+function extractCellText(cell = {}) {
+  if (cell.formattedValue !== undefined) return String(cell.formattedValue || '');
+  const value = cell.userEnteredValue || cell.effectiveValue || {};
+  return String(value.stringValue ?? value.numberValue ?? value.formulaValue ?? value.boolValue ?? '');
+}
+
+function rowMatchesProductId(rowData = {}, productId = '') {
+  const target = String(productId || '').trim().toLowerCase();
+  if (!target) return false;
+  const cells = Array.isArray(rowData.values) ? rowData.values.slice(0, 10) : [];
+  return cells.some(cell => String(extractCellText(cell)).toLowerCase().includes(target));
+}
+
+function rowMatchesAnyBackgroundColor(rowData = {}, targetHex = '') {
+  const normalizedTarget = normalizeHexColor(targetHex);
+  if (!normalizedTarget) return false;
+  const cells = Array.isArray(rowData.values) ? rowData.values.slice(0, 10) : [];
+  return cells.some(cell => {
+    const color = cell.userEnteredFormat?.backgroundColor || cell.effectiveFormat?.backgroundColor;
+    return googleColorToHex(color) === normalizedTarget;
+  });
+}
+
+async function findRowsByProductIdWithAnyColor(productId, targetHex) {
+  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', matched: false, rows: [] };
+  const { spreadsheetId, sheetName } = getSheetConfig();
+  const range = `${sheetName}!A:J`;
+  const data = await googleRequest(
+    `${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(startRow,rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat/backgroundColor,effectiveFormat/backgroundColor))))`
+  );
+  const matches = [];
+  for (const sheet of data.sheets || []) {
+    for (const grid of sheet.data || []) {
+      const startRow = Number(grid.startRow || 0);
+      const rows = Array.isArray(grid.rowData) ? grid.rowData : [];
+      rows.forEach((rowData, index) => {
+        if (!rowMatchesProductId(rowData, productId)) return;
+        if (!rowMatchesAnyBackgroundColor(rowData, targetHex)) return;
+        matches.push({ rowNumber: startRow + index + 1 });
+      });
+    }
+  }
+  return { matched: matches.length > 0, rows: matches };
+}
+
 async function ensureHeaderRow(spreadsheetId, sheetName) {
   const range = encodeURIComponent(`${sheetName}!A1:J1`);
   const data = await googleRequest(`${spreadsheetId}/values/${range}?majorDimension=ROWS`);
@@ -290,6 +354,8 @@ module.exports = {
   appendRows,
   applySheetBaseStyle,
   ensureHeaderRow,
+  findRowsByProductIdWithAnyColor,
   getSheetConfig,
+  googleColorToHex,
   isGoogleSheetsConfigured
 };

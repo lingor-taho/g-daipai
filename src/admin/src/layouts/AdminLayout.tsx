@@ -54,6 +54,7 @@ export default function AdminLayout() {
   const username = localStorage.getItem('username') || 'admin';
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
   const [paymentAlert, setPaymentAlert] = useState('');
+  const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -78,11 +79,13 @@ export default function AdminLayout() {
         const flags = await fetchAdminJson('/api/admin/idle-flags');
         if (active) {
           setPaymentAlert(flags.paymentAlertMessage || '');
+          setConfirmReceiptAlert(flags.confirmReceiptAlertMessage || '');
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
         }
       } catch {
         if (active) {
           setPaymentAlert('');
+          setConfirmReceiptAlert('');
           setShipmentAlerts([]);
         }
       }
@@ -197,6 +200,14 @@ export default function AdminLayout() {
                     <Button size="small" danger onClick={clearPaymentAlertAndContinue}>清除并继续任务</Button>
                   </Space>
                 }
+                style={{ marginBottom: 12 }}
+              />
+            ) : null}
+            {confirmReceiptAlert ? (
+              <Alert
+                type="error"
+                showIcon
+                message={<Typography.Text style={{ color: '#cf1322' }}>{renderPaymentAlertMessage(confirmReceiptAlert)}</Typography.Text>}
                 style={{ marginBottom: 12 }}
               />
             ) : null}

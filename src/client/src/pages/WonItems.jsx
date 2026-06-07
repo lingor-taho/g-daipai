@@ -33,6 +33,7 @@ function renderOrderStatusTag(status) {
   if (status === 'cancelled') return <Tag color="danger">取消</Tag>;
   if (status === 'pending_receipt') return <Tag color="warning">待收货</Tag>;
   if (status === 'pending_shipment') return <Tag color="primary">待发货</Tag>;
+  if (status === 'completed') return <Tag color="success">完了</Tag>;
   return null;
 }
 

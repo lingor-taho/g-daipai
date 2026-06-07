@@ -23,6 +23,16 @@ async function requestTransactionStart() {
   return data;
 }
 
+async function requestConfirmReceipt() {
+  const res = await fetch('/api/admin/confirm-receipt/request', {
+    method: 'POST',
+    headers: authHeaders()
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '执行失败');
+  return data;
+}
+
 async function requestScan() {
   const res = await fetch('/api/admin/scan/request', {
     method: 'POST',
@@ -47,6 +57,7 @@ export default function MultiBidSettingsPage() {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [requestingConfirmReceipt, setRequestingConfirmReceipt] = useState(false);
   const [requestingScan, setRequestingScan] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -60,6 +71,8 @@ export default function MultiBidSettingsPage() {
           idleSyncIntervalMinutes: data.idleSyncIntervalMinutes ?? 5,
           idleBidGuardMinutes: data.idleBidGuardMinutes ?? 15,
           transactionStartHour: data.transactionStartHour ?? 1,
+          confirmReceiptHour: data.confirmReceiptHour ?? 18,
+          confirmReceiptColor: data.confirmReceiptColor || '#ffff00',
           scanStartHour: data.scanStartHour ?? 1,
           scanEndHour: data.scanEndHour ?? 20,
           scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5,
@@ -94,6 +107,18 @@ export default function MultiBidSettingsPage() {
       message.error(e.message || '执行失败');
     } finally {
       setRequesting(false);
+    }
+  }
+
+  async function handleRequestConfirmReceipt() {
+    setRequestingConfirmReceipt(true);
+    try {
+      await requestConfirmReceipt();
+      message.success('确认收货已加入空闲执行队列');
+    } catch (e: any) {
+      message.error(e.message || '执行失败');
+    } finally {
+      setRequestingConfirmReceipt(false);
     }
   }
 
@@ -134,6 +159,8 @@ export default function MultiBidSettingsPage() {
           idleSyncIntervalMinutes: 5,
           idleBidGuardMinutes: 15,
           transactionStartHour: 1,
+          confirmReceiptHour: 18,
+          confirmReceiptColor: '#ffff00',
           scanStartHour: 1,
           scanEndHour: 20,
           scanEveryIdleRuns: 5,
@@ -198,6 +225,23 @@ export default function MultiBidSettingsPage() {
               <Button loading={requesting} onClick={handleRequestTransactionStart}>加入执行队列</Button>
               <Button danger loading={resetting} onClick={handleResetTransactionStartOrders}>初始化订单状态</Button>
             </Space>
+          </Form.Item>
+          <Form.Item
+            name="confirmReceiptHour"
+            label="确认收货执行整点后1分钟"
+            rules={[{ required: true, message: '请输入确认收货执行整点' }]}
+          >
+            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点01分" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="confirmReceiptColor"
+            label="收货商品颜色配置"
+            rules={[{ required: true, pattern: /^#[0-9a-fA-F]{6}$/, message: '请输入 #ffff00 这种颜色值' }]}
+          >
+            <Input addonBefore="HEX" />
+          </Form.Item>
+          <Form.Item label="手动执行确认收货">
+            <Button loading={requestingConfirmReceipt} onClick={handleRequestConfirmReceipt}>加入执行队列</Button>
           </Form.Item>
           <Form.Item
             name="scanStartHour"

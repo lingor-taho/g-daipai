@@ -378,6 +378,7 @@ export default function OrdersPage() {
           <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
           <Typography.Text>扫描计数：{idleFlags?.scanFlag ?? '-'} / {idleFlags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
           <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
+          <Typography.Text>确认收货flag：{idleFlags?.confirmReceiptFlag ?? '-'}</Typography.Text>
           <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
         </Space>
       </Card>

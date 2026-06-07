@@ -24,6 +24,7 @@ const {
   getNextIdleAction,
   getNextScanIdleCounter,
   ensureScheduledTransactionStartRequest,
+  ensureScheduledConfirmReceiptRequest,
   isTransactionStartReady,
   shouldAutoRequestTransactionStart,
   completeIdleAction,
@@ -37,6 +38,7 @@ const {
   getOrdersForSheetAppend,
   getPaymentJobs,
   updatePaymentStatus,
+  updateConfirmReceiptStatus,
   randomIntInclusive,
   getPaymentJobLimitRange,
   ORDER_STATUS_PENDING_PAYMENT,
@@ -536,6 +538,7 @@ function testScanCounterClearsAfterThresholdWhenScanDoesNotRun() {
   assert.equal(getNextScanIdleCounter('none', { scanIdleCounter: 13, scanEveryIdleRuns: 5 }), 0);
   assert.equal(getNextScanIdleCounter('none', { scanIdleCounter: 4, scanEveryIdleRuns: 5 }), 5);
   assert.equal(getNextScanIdleCounter('none', { scanIdleCounter: 5, scanEveryIdleRuns: 5 }), 0);
+  assert.equal(getNextScanIdleCounter('confirm_receipt', { scanIdleCounter: 2, scanEveryIdleRuns: 5 }), 3);
 }
 
 function testIsFollowupTaskReady() {
@@ -1232,10 +1235,131 @@ async function testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChan
   assert.equal(queries.length, 0);
 }
 
+async function testEnsureScheduledConfirmReceiptRequestSetsFlagAtDefault1801() {
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      assert.match(sql, /confirm_receipt_hour/);
+      return [
+        { key: 'confirm_receipt_requested', value: '0' }
+      ];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const before = await ensureScheduledConfirmReceiptRequest(fakeDb, Date.parse('2026-06-07T18:00:30+08:00'));
+  assert.equal(before.updated, false);
+  assert.equal(queries.length, 0);
+
+  const after = await ensureScheduledConfirmReceiptRequest(fakeDb, Date.parse('2026-06-07T18:01:00+08:00'));
+  assert.equal(after.updated, true);
+  assert.equal(after.confirmReceiptRequested, 1);
+  assert.equal(queries[0].params[0], 'confirm_receipt_requested');
+  assert.equal(queries[0].params[1], '1');
+  assert.equal(queries[1].params[0], 'confirm_receipt_requested_source');
+  assert.equal(queries[1].params[1], 'auto');
+}
+
+function testIdleActionUsesScanPaymentConfirmReceiptPriority() {
+  const base = {
+    transactionStartRequested: 0,
+    transactionStartHour: 1,
+    transactionStartLastRunSlot: '2026-06-07-01',
+    confirmReceiptRequested: 1,
+    scanStartHour: 1,
+    scanEndHour: 23,
+    scanEveryIdleRuns: 5,
+    paymentRequested: 1,
+    today: '2026-06-07',
+    nowHour: 18
+  };
+  const nowMs = Date.parse('2026-06-07T18:02:00+08:00');
+
+  assert.equal(getNextIdleAction({ ...base, scanIdleCounter: 5 }, nowMs).action, 'scan');
+  assert.equal(getNextIdleAction({ ...base, scanIdleCounter: 2 }, nowMs).action, 'payment');
+  assert.equal(getNextIdleAction({ ...base, scanIdleCounter: 2, paymentRequested: 0 }, nowMs).action, 'confirm_receipt');
+}
+
+async function testCompleteConfirmReceiptIncrementsScanCounter() {
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      if (/transaction_start_hour/.test(sql) && !/confirm_receipt_hour/.test(sql)) {
+        return [
+          { key: 'transaction_start_hour', value: '1', updated_at: '2026-06-07T00:00:00+08:00' },
+          { key: 'transaction_start_requested', value: '0' },
+          { key: 'transaction_start_last_run_slot', value: '2026-06-07-01' }
+        ];
+      }
+      if (/confirm_receipt_hour/.test(sql) && !/transaction_start_hour/.test(sql)) {
+        return [
+          { key: 'confirm_receipt_hour', value: '18', updated_at: '2026-06-07T00:00:00+08:00' },
+          { key: 'confirm_receipt_requested', value: '1' },
+          { key: 'confirm_receipt_requested_source', value: 'manual' },
+          { key: 'confirm_receipt_last_run_slot', value: '' }
+        ];
+      }
+      return [
+        { key: 'transaction_start_hour', value: '1', updated_at: '2026-06-07T00:00:00+08:00' },
+        { key: 'transaction_start_requested', value: '0' },
+        { key: 'transaction_start_last_run_slot', value: '2026-06-07-01' },
+        { key: 'confirm_receipt_hour', value: '18' },
+        { key: 'confirm_receipt_requested', value: '1' },
+        { key: 'confirm_receipt_requested_source', value: 'manual' },
+        { key: 'scan_every_idle_runs', value: '5' },
+        { key: 'scan_idle_counter', value: '2' }
+      ];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await completeIdleAction('confirm_receipt', fakeDb, Date.parse('2026-06-07T18:02:00+08:00'));
+
+  assert.deepEqual(queries.map(call => call.params[0]), [
+    'confirm_receipt_requested',
+    'confirm_receipt_requested_source',
+    'scan_idle_counter'
+  ]);
+  assert.equal(queries[2].params[1], '3');
+}
+
+async function testUpdateConfirmReceiptStatusCompletesBundleGroup() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [
+        { order_id: 31, old_status: 'pending_receipt', product_id: 'm1' },
+        { order_id: 32, old_status: 'bundle_completed', product_id: 'm2' }
+      ];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 2 };
+    }
+  };
+
+  const result = await updateConfirmReceiptStatus({ orderId: 31, status: 'success', bundleGroupId: 'bundle-1' }, fakeDb);
+
+  assert.equal(result.updated, 2);
+  const updateCall = calls.find(call => call.type === 'query');
+  assert.match(updateCall.sql, /bundle_group_id = \?/);
+  assert.match(updateCall.sql, /order_status = \?/);
+  assert.equal(updateCall.params[0], 'completed');
+  assert.equal(updateCall.params[1], 'bundle-1');
+}
+
 async function testCompleteManualTransactionStartDoesNotWriteAutoRunDate() {
   const queries = [];
   const fakeDb = {
     async getAll(sql) {
+      if (/confirm_receipt_requested/.test(sql) && !/transaction_start_requested_source/.test(sql)) return [];
       assert.match(sql, /transaction_start_requested_source/);
       return [
         { key: 'transaction_start_hour', value: '5' },
@@ -1355,6 +1479,7 @@ testIdleActionChoosesTransactionStartBeforeScan();
 testTransactionStartReadyOneMinuteAfterConfiguredHour();
 testTransactionStartScheduleFollowsChangedHourSlots();
 testPaymentIdleActionUsesFlagAfterScanPriority();
+testIdleActionUsesScanPaymentConfirmReceiptPriority();
 testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
 Promise.all([
@@ -1382,6 +1507,9 @@ Promise.all([
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
   testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
   testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChangedHour(),
+  testEnsureScheduledConfirmReceiptRequestSetsFlagAtDefault1801(),
+  testCompleteConfirmReceiptIncrementsScanCounter(),
+  testUpdateConfirmReceiptStatusCompletesBundleGroup(),
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),

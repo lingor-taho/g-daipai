@@ -969,6 +969,34 @@ async function testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProce
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab() {
+  const calls = [];
+  let openedTab = false;
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() {
+        openedTab = true;
+        return { id: 31, status: 'complete' };
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return { async json() { return { success: true, jobs: [{ orderId: 31, productId: 's31', productType: 'store', bundleGroupId: '' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(openedTab, false);
+  assert.deepEqual(calls[0], { orderId: 31, productId: 's31', status: 'success', bundleGroupId: '' });
+}
+
 async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
   const calls = [];
   const actions = [];
@@ -1466,6 +1494,7 @@ async function run() {
   await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
+  await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
