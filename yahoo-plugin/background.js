@@ -3,6 +3,7 @@ const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
 const TRANSACTION_START_ENABLED = globalThis.__G_DAIPAI_TRANSACTION_START_ENABLED__ !== false;
+const PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS = 15000;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
 
 let isRunning = false;
@@ -633,6 +634,8 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const paymentAmountJpy = paymentAmountMatch
     ? Number(paymentAmountMatch[1].replace(/,/g, '')) || 0
     : (yenMatches.length ? Math.max(...yenMatches) : 0);
+  const paymentMethodFeeMatch = bodyText.match(/\u624b\u6570\u6599[^\d]{0,20}([\d,]+)\s*\u5186/);
+  const paymentMethodFeeJpy = paymentMethodFeeMatch ? Number(paymentMethodFeeMatch[1].replace(/,/g, '')) || 0 : 0;
   const shippingOptions = Array.isArray(snapshot.shippingOptions)
     ? snapshot.shippingOptions
       .map(option => ({
@@ -655,6 +658,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     textSample: bodyText.slice(0, 500),
     controlsSample: controls.slice(0, 20),
     paymentAmountJpy,
+    paymentMethodFeeJpy,
     shippingOptions,
     selectedShippingAmountJpy: selectedShippingOption ? selectedShippingOption.amountJpy : null,
     alreadyPaid,
@@ -694,6 +698,25 @@ async function getPaymentPageState(tabId) {
         const match = String(text || '').match(/([\d,]+)\s*\u5186/);
         return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
       };
+      const isVisibleElement = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle?.(el);
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        const rect = el.getBoundingClientRect?.();
+        return !!(rect && rect.width > 0 && rect.height > 0);
+      };
+      const isVisibleRadioOption = radio => {
+        if (!radio) return false;
+        let node = radio;
+        while (node && node !== document.body) {
+          const style = window.getComputedStyle?.(node);
+          if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+          node = node.parentElement;
+        }
+        const label = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
+        const container = radio.closest('label, li, tr, dd, div');
+        return isVisibleElement(radio) || isVisibleElement(label) || isVisibleElement(container);
+      };
       const optionTextFromRadio = radio => {
         const parts = [];
         const label = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
@@ -725,11 +748,12 @@ async function getPaymentPageState(tabId) {
             checked: !!radio.checked,
             disabled: !!radio.disabled,
             text,
+            visible: isVisibleRadioOption(radio),
             isShipping: afterShippingHeader && !looksLikePaymentMethod
           };
         })
-        .filter(option => option.isShipping && option.amountJpy > 0)
-        .map(({ amountJpy, checked, disabled, text }) => ({ amountJpy, checked, disabled, text: text.slice(0, 200) }));
+        .filter(option => option.isShipping && option.visible && option.amountJpy > 0)
+        .map(({ amountJpy, checked, disabled, text, visible }) => ({ amountJpy, checked, disabled, visible, text: text.slice(0, 200) }));
       return {
         success: true,
         snapshot: {
@@ -762,7 +786,7 @@ async function runMainWorldPaymentActionClick(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span')];
       const isClickable = el => {
         const rect = el.getBoundingClientRect?.();
         return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
@@ -812,7 +836,7 @@ async function getPaymentActionClickPoint(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span')];
       const candidates = controls.map(el => {
         const rect = el.getBoundingClientRect?.();
         return {
@@ -979,7 +1003,15 @@ function assertPaymentAmountMatches(job, state) {
     throw new Error('payment expected amount unavailable');
   }
   if (actual > 0 && actual !== expected) {
-    throw new Error(`payment amount mismatch: expected ${expected}\u5186, found ${actual}\u5186`);
+    const shippingSummary = summarizePaymentShippingState(state);
+    const paymentFee = Number(state?.paymentMethodFeeJpy || 0);
+    const feeSummary = paymentFee > 0 && actual === expected + paymentFee
+      ? `; paymentMethodFee: ${paymentFee}\u5186 (current payment method adds fee)`
+      : '';
+    const sampleSource = String(state?.textSample || '');
+    const relevantIndex = sampleSource.search(/\u304a\u652f\u6255\u3044\u91d1\u984d|\u624b\u6570\u6599|\u914d\u9001\u65b9\u6cd5|\u30b3\u30f3\u30d3\u30cb/);
+    const sample = (relevantIndex >= 0 ? sampleSource.slice(relevantIndex, relevantIndex + 240) : sampleSource.slice(0, 240));
+    throw new Error(`payment amount mismatch: expected ${expected}\u5186, found ${actual}\u5186${feeSummary}${shippingSummary ? `; shippingState: ${shippingSummary}` : ''}${sample ? `; pageSample: ${sample}` : ''}`);
   }
 }
 
@@ -991,6 +1023,219 @@ function shouldSelectPaymentShippingOption(job = {}, state = {}) {
   const hasExpectedOption = options.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
   if (!hasExpectedOption) return false;
   return selectedShipping !== expectedShipping;
+}
+
+async function expandPaymentShippingOptions(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const controlSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const controls = [...document.querySelectorAll(controlSelector)];
+      const textElements = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')];
+      const shippingKeywords = /\u914d\u9001\u65b9\u6cd5|\u304a\u3066\u304c\u308b|\u3086\u3046|\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8|\u30ec\u30bf\u30fc\u30d1\u30c3\u30af|\u9001\u6599/;
+      const stopKeywords = /\u843d\u672d\u8005\u60c5\u5831|\u304a\u5c4a\u3051\u5148|\u3054\u8cfc\u5165\u5185\u5bb9|\u304a\u652f\u6255\u3044\u65b9\u6cd5|PayPay\u30dd\u30a4\u30f3\u30c8|\u30af\u30fc\u30dd\u30f3/;
+      const isFollowing = (first, second) => Boolean(first?.compareDocumentPosition?.(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const isChangeButton = el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el));
+      const clickTargetFor = el => el?.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || el;
+      const clickElement = el => {
+        const target = clickTargetFor(el);
+        const eventOptions = { bubbles: true, cancelable: true, view: window };
+        const keyOptions = { bubbles: true, cancelable: true, view: window };
+        const fireMouse = node => {
+          if (!node) return;
+          node.scrollIntoView?.({ block: 'center', inline: 'center' });
+          node.focus?.();
+          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+          node.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+          node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+          node.click?.();
+          node.dispatchEvent(new MouseEvent('click', eventOptions));
+        };
+        const fireKeyboard = node => {
+          if (!node) return;
+          node.focus?.();
+          for (const key of ['Enter', ' ']) {
+            node.dispatchEvent(new KeyboardEvent('keydown', { ...keyOptions, key, code: key === ' ' ? 'Space' : 'Enter' }));
+            node.dispatchEvent(new KeyboardEvent('keyup', { ...keyOptions, key, code: key === ' ' ? 'Space' : 'Enter' }));
+          }
+        };
+        fireMouse(el);
+        if (target !== el) fireMouse(target);
+        fireKeyboard(target);
+        return target;
+      };
+      const shippingSection = [...document.querySelectorAll('section')]
+        .filter(section => typeof section.querySelectorAll === 'function')
+        .find(section => [...section.querySelectorAll('h1,h2,h3,h4,span')]
+          .some(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el))));
+      if (shippingSection) {
+        const sectionChange = [...shippingSection.querySelectorAll(controlSelector)].find(isChangeButton);
+        if (sectionChange) {
+          const clicked = clickElement(sectionChange);
+          return { success: true, changed: true, text: getText(sectionChange), method: 'shippingSection', clickedText: getText(clicked) };
+        }
+      }
+      const changeControls = controls.filter(isChangeButton);
+      const shippingHeaders = textElements.filter(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
+      for (const header of shippingHeaders) {
+        const nextStop = textElements.find(el => el !== header && isFollowing(header, el) && stopKeywords.test(getText(el)));
+        const target = changeControls.find(el => isFollowing(header, el) && (!nextStop || isFollowing(el, nextStop)));
+        if (target) {
+          const clicked = clickElement(target);
+          return { success: true, changed: true, text: getText(target), method: 'afterShippingHeader', clickedText: getText(clicked) };
+        }
+      }
+      const changeButtons = changeControls
+        .map(el => {
+          let node = el;
+          let containerText = '';
+          let depth = 0;
+          while (node && node !== document.body && depth < 6) {
+            containerText = getText(node);
+            if (shippingKeywords.test(containerText)) break;
+            node = node.parentElement;
+            depth += 1;
+          }
+          return {
+            el,
+            text: getText(el),
+            containerText
+          };
+        })
+        .filter(item => shippingKeywords.test(item.containerText));
+      const target = changeButtons[0];
+      if (!target) {
+        return { success: true, changed: false, reason: 'shipping change button not found' };
+      }
+      const clicked = clickElement(target.el);
+      return { success: true, changed: true, text: target.text, method: 'ancestorText', clickedText: getText(clicked) };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'shipping option expansion returned no result' };
+}
+
+async function getPaymentShippingChangeClickPoint(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const isClickable = el => {
+        const rect = el?.getBoundingClientRect?.();
+        return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
+      };
+      const isFollowing = (first, second) => Boolean(first?.compareDocumentPosition?.(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const controlSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const controls = [...document.querySelectorAll(controlSelector)];
+      const textElements = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')];
+      const stopKeywords = /\u843d\u672d\u8005\u60c5\u5831|\u304a\u5c4a\u3051\u5148|\u3054\u8cfc\u5165\u5185\u5bb9|\u304a\u652f\u6255\u3044\u65b9\u6cd5|PayPay\u30dd\u30a4\u30f3\u30c8|\u30af\u30fc\u30dd\u30f3/;
+      const clickTargetFor = el => el?.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || el;
+      const changeControls = controls.filter(el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el)));
+      const shippingHeaders = textElements.filter(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
+      let button = null;
+      const shippingSection = [...document.querySelectorAll('section')]
+        .filter(section => typeof section.querySelectorAll === 'function')
+        .find(section => [...section.querySelectorAll('h1,h2,h3,h4,span')]
+          .some(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el))));
+      if (shippingSection) {
+        const sectionChange = [...shippingSection.querySelectorAll(controlSelector)].find(el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el)));
+        button = clickTargetFor(sectionChange);
+        if (button && !isClickable(button)) button = sectionChange;
+      }
+      for (const header of shippingHeaders) {
+        if (button) break;
+        const nextStop = textElements.find(el => el !== header && isFollowing(header, el) && stopKeywords.test(getText(el)));
+        const target = changeControls.find(el => isFollowing(header, el) && (!nextStop || isFollowing(el, nextStop)));
+        button = clickTargetFor(target);
+        if (button && !isClickable(button)) button = target;
+        if (button) break;
+      }
+      if (!button || !isClickable(button)) return { success: false, error: 'shipping change button click point not found' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      const rect = button.getBoundingClientRect?.();
+      return {
+        success: true,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        text: getText(button)
+      };
+    }
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'shipping change button click point not found' };
+}
+
+async function dispatchTrustedPaymentShippingChangeClick(tab) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for trusted shipping change click' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+
+  const point = await getPaymentShippingChangeClickPoint(tabId);
+  if (!point?.success) return point;
+
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1
+    });
+    return { success: true, method: 'debugger', text: point.text };
+  } catch (e) {
+    return { success: false, error: e.message || String(e), point };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
+function summarizePaymentShippingState(state = {}) {
+  const options = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
+  return options
+    .map(option => `${option.amountJpy || 0}\u5186${option.checked ? ':checked' : ''}${option.visible === false ? ':hidden' : ''}`)
+    .join(', ');
 }
 
 async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
@@ -1009,6 +1254,25 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
       const parseAmount = text => {
         const match = String(text || '').match(/([\d,]+)\s*\u5186/);
         return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
+      };
+      const isVisibleElement = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle?.(el);
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        const rect = el.getBoundingClientRect?.();
+        return !!(rect && rect.width > 0 && rect.height > 0);
+      };
+      const isVisibleRadioOption = radio => {
+        if (!radio) return false;
+        let node = radio;
+        while (node && node !== document.body) {
+          const style = window.getComputedStyle?.(node);
+          if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+          node = node.parentElement;
+        }
+        const label = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
+        const container = radio.closest('label, li, tr, dd, div');
+        return isVisibleElement(radio) || isVisibleElement(label) || isVisibleElement(container);
       };
       const optionTextFromRadio = radio => {
         const parts = [];
@@ -1042,10 +1306,11 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
             checked: !!radio.checked,
             disabled: !!radio.disabled,
             text,
+            visible: isVisibleRadioOption(radio),
             isShipping: afterShippingHeader && !looksLikePaymentMethod
           };
         })
-        .filter(option => option.isShipping && option.amountJpy > 0);
+        .filter(option => option.isShipping && option.visible && option.amountJpy > 0);
       const target = options.find(option => option.amountJpy === expectedAmount && !option.disabled);
       if (!target) {
         return {
@@ -1058,9 +1323,16 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
       if (target.checked) {
         return { success: true, changed: false, selectedShippingJpy: expectedAmount };
       }
-      target.radio.scrollIntoView({ block: 'center', inline: 'center' });
-      target.radio.focus?.();
-      target.radio.click();
+      const label = target.radio.id ? document.querySelector(`label[for="${CSS.escape(target.radio.id)}"]`) : null;
+      const clickTarget = label || target.radio.closest('label, li, tr, dd, div') || target.radio;
+      clickTarget.scrollIntoView?.({ block: 'center', inline: 'center' });
+      clickTarget.focus?.();
+      const eventOptions = { bubbles: true, cancelable: true, view: window };
+      if (typeof PointerEvent !== 'undefined') clickTarget.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+      clickTarget.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+      if (typeof PointerEvent !== 'undefined') clickTarget.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+      clickTarget.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+      clickTarget.click?.();
       target.radio.checked = true;
       target.radio.dispatchEvent(new Event('input', { bubbles: true }));
       target.radio.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1076,17 +1348,56 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
 }
 
 async function ensurePaymentShippingOption(tab, job, state) {
-  if (!tab?.id || !state?.hasReviewButton || !shouldSelectPaymentShippingOption(job, state)) return state;
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
+  const expectedAmount = getExpectedPaymentAmountJpy(job);
+  const currentAmount = Number(state?.paymentAmountJpy || 0);
+  const needsAmountCorrection = expectedAmount !== null && currentAmount > 0 && currentAmount !== expectedAmount;
+  const hasShippingChoices = (Array.isArray(state?.shippingOptions) && state.shippingOptions.length) ||
+    /\u914d\u9001\u65b9\u6cd5/.test(String(state?.textSample || ''));
+  if (!tab?.id || !state?.hasReviewButton || expectedShipping === null || expectedShipping <= 0 || (!hasShippingChoices && !needsAmountCorrection)) return state;
+  const visibleOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
+  const hasExpectedOption = visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
+  let expandResult = null;
+  let trustedExpand = null;
+  if (!hasExpectedOption) {
+    expandResult = await expandPaymentShippingOptions(tab.id);
+    await sleep(500);
+    state = await getPaymentPageState(tab.id);
+    const expandedOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
+    const expandedHasExpectedOption = expandedOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
+    if (!expandedHasExpectedOption) {
+      trustedExpand = await dispatchTrustedPaymentShippingChangeClick(tab);
+      if (trustedExpand?.success) {
+        await sleep(800);
+        state = await getPaymentPageState(tab.id);
+      }
+    }
+  }
   const result = await selectPaymentShippingOption(tab.id, expectedShipping);
   if (!result?.success) {
     const optionSummary = Array.isArray(result?.options)
       ? result.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')
       : '';
-    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}`);
+    const stateSummary = summarizePaymentShippingState(state);
+    const expandSummary = expandResult ? `; expand=${expandResult.method || expandResult.reason || expandResult.error || 'unknown'}:${expandResult.text || ''}:${expandResult.clickedText || ''}` : '';
+    const trustedSummary = trustedExpand ? `; trustedExpand=${trustedExpand.success ? 'success' : 'failed'}:${trustedExpand.method || ''}:${trustedExpand.text || trustedExpand.error || ''}` : '';
+    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${stateSummary ? `; visibleState: ${stateSummary}` : ''}${expandSummary}${trustedSummary}`);
   }
   if (result.changed) await sleep(800);
   return await getPaymentPageState(tab.id);
+}
+
+async function waitForExpectedPaymentAmount(tab, job, state) {
+  const expected = getExpectedPaymentAmountJpy(job);
+  if (!tab?.id || expected === null) return state;
+  let latest = state;
+  const startAt = Date.now();
+  while (Date.now() - startAt < 5000) {
+    if (Number(latest?.paymentAmountJpy || 0) === expected) return latest;
+    await sleep(500);
+    latest = await getPaymentPageState(tab.id);
+  }
+  return latest;
 }
 
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
@@ -2036,6 +2347,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
     }
     if (!state?.hasReviewButton) throw new Error('payment review button not found');
     state = await ensurePaymentShippingOption(tab, job, state);
+    state = await waitForExpectedPaymentAmount(tab, job, state);
     assertPaymentAmountMatches(job, state);
 
     let result = await clickPaymentActionAndFollowTab(tab, 'review', nextState =>
@@ -2060,18 +2372,10 @@ async function executePaymentJob(job, paymentBatch = {}) {
       tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
         nextState.alreadyPaid || nextState.complete,
         previousTabIds,
-        5000
+        PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS
       );
     } catch (e) {
-      console.warn('[Yahoo Bid] Payment finalize synthetic click did not complete, trying trusted mouse click:', e.message || e);
-      const trustedClick = await dispatchTrustedPaymentActionClick(tab, 'finalize');
-      console.log('[Yahoo Bid] Trusted payment finalize mouse click result:', trustedClick);
-      if (!trustedClick?.success) throw new Error(trustedClick?.error || finalClick?.error || 'payment finalize click failed');
-      tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete,
-        previousTabIds,
-        30000
-      );
+      throw new Error(`payment completion page did not appear within 15s: ${e.message || e}`);
     }
     state = tab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
     if (state?.alreadyPaid) return { alreadyPaid: true };
@@ -2234,6 +2538,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   dispatchTrustedBundleActionClick,
   dispatchTrustedPaymentActionClick,
   getPaymentActionClickPoint,
+  getPaymentShippingChangeClickPoint,
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,

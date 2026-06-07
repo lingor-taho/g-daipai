@@ -11,7 +11,7 @@ const {
   getStrategyLeadMs,
   isMultiBidTask,
   ensureScheduledTransactionStartRequest,
-  isTransactionStartReady,
+  shouldAutoRequestTransactionStart,
   getShipmentAlerts,
   appendPendingReceiptOrderToGoogleSheet,
   DEFAULT_MULTI_BID_MIN_PRICE
@@ -1190,11 +1190,12 @@ router.post('/transaction-start/reset-orders', async (req, res) => {
 router.get('/idle-flags', async (req, res) => {
   await ensureScheduledTransactionStartRequest(db);
   const rows = await db.getAll(
-    `SELECT key, value FROM config
+    `SELECT key, value, updated_at FROM config
      WHERE key IN (
        'transaction_start_hour',
        'transaction_start_requested',
        'transaction_start_last_run_date',
+       'transaction_start_last_run_slot',
        'transaction_start_last_run_log',
        'scan_every_idle_runs',
        'scan_idle_counter',
@@ -1204,6 +1205,7 @@ router.get('/idle-flags', async (req, res) => {
      )`
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  const updatedAt = Object.fromEntries(rows.map(row => [row.key, row.updated_at]));
   const today = getLocalDateKey();
   const transactionStartHour = Number(values.transaction_start_hour ?? 1);
   const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
@@ -1216,7 +1218,12 @@ router.get('/idle-flags', async (req, res) => {
   } catch {
     transactionStartLastRunLog = null;
   }
-  const transactionStartFlag = transactionStartRequested || (isTransactionStartReady({ transactionStartHour }) && transactionStartLastRunDate !== today) ? 1 : 0;
+  const transactionStartFlag = transactionStartRequested || shouldAutoRequestTransactionStart({
+    transactionStartHour,
+    transactionStartHourUpdatedAt: updatedAt.transaction_start_hour || '',
+    transactionStartLastRunSlot: values.transaction_start_last_run_slot || '',
+    transactionStartLastRunLog: values.transaction_start_last_run_log || ''
+  }) ? 1 : 0;
   const scanEveryIdleRuns = Math.max(1, Number(values.scan_every_idle_runs || 5));
   const scanIdleCounter = Math.max(0, Number(values.scan_idle_counter || 0));
 

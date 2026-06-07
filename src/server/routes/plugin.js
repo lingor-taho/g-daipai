@@ -291,6 +291,37 @@ function getTransactionStartReadyMs(transactionStartHour, nowMs = Date.now()) {
   return readyAt.getTime();
 }
 
+function getTransactionStartSlot(transactionStartHour, nowMs = Date.now(), dateKey = '') {
+  return `${dateKey || getLocalDateKey(nowMs)}-${String(clampHour(transactionStartHour, DEFAULT_TRANSACTION_START_HOUR)).padStart(2, '0')}`;
+}
+
+function parseSqliteTimestampMs(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)
+    ? `${text.replace(' ', 'T')}Z`
+    : text;
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function inferTransactionStartLastRunSlot(config = {}, nowMs = Date.now()) {
+  const explicit = String(config.transactionStartLastRunSlot || '').trim();
+  if (explicit) return explicit;
+  let log = null;
+  try {
+    log = config.transactionStartLastRunLog
+      ? (typeof config.transactionStartLastRunLog === 'string' ? JSON.parse(config.transactionStartLastRunLog) : config.transactionStartLastRunLog)
+      : null;
+  } catch {
+    log = null;
+  }
+  if (log?.source !== 'auto' || !log.createdAt) return '';
+  const logMs = Date.parse(log.createdAt);
+  if (!Number.isFinite(logMs) || getLocalDateKey(logMs) !== getLocalDateKey(nowMs)) return '';
+  return getTransactionStartSlot(new Date(logMs).getHours(), logMs);
+}
+
 function isTransactionStartReady(config = {}, nowMs = Date.now()) {
   if (config.nowHour !== undefined || config.nowMinute !== undefined) {
     const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
@@ -304,14 +335,24 @@ function isTransactionStartReady(config = {}, nowMs = Date.now()) {
   return nowMs >= readyMs;
 }
 
+function shouldAutoRequestTransactionStart(config = {}, nowMs = Date.now()) {
+  const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
+  if (!isTransactionStartReady({ ...config, transactionStartHour }, nowMs)) return false;
+  const slot = getTransactionStartSlot(transactionStartHour, nowMs, config.today);
+  if (inferTransactionStartLastRunSlot(config, nowMs) === slot) return false;
+  const updatedMs = parseSqliteTimestampMs(config.transactionStartHourUpdatedAt);
+  const readyMs = getTransactionStartReadyMs(transactionStartHour, nowMs);
+  if (updatedMs && updatedMs > readyMs) return false;
+  return true;
+}
+
 function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const now = new Date(nowMs);
   const nowHour = config.nowHour ?? now.getHours();
   const today = config.today || getLocalDateKey(nowMs);
   const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
   const transactionRequested = Number(config.transactionStartRequested || 0) === 1;
-  const lastRunDate = String(config.transactionStartLastRunDate || '');
-  if (transactionRequested || (isTransactionStartReady({ ...config, transactionStartHour }, nowMs) && lastRunDate !== today)) {
+  if (transactionRequested || shouldAutoRequestTransactionStart({ ...config, transactionStartHour }, nowMs)) {
     return { action: 'transaction_start', today };
   }
 
@@ -344,8 +385,13 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
   if (action === 'transaction_start') {
     await saveConfigValue(database, 'transaction_start_requested', '0');
     await saveConfigValue(database, 'transaction_start_requested_source', '');
-    if (config.transactionStartRequestSource !== 'manual' || config.transactionStartReady) {
+    if (config.transactionStartRequestSource !== 'manual') {
       await saveConfigValue(database, 'transaction_start_last_run_date', config.today);
+      await saveConfigValue(
+        database,
+        'transaction_start_last_run_slot',
+        getTransactionStartSlot(config.transactionStartHour, nowMs)
+      );
     }
   } else if (action === 'scan') {
     await saveConfigValue(database, 'scan_idle_counter', '0');
@@ -364,6 +410,8 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
        'transaction_start_requested',
        'transaction_start_requested_source',
        'transaction_start_last_run_date',
+       'transaction_start_last_run_slot',
+       'transaction_start_last_run_log',
        'scan_start_hour',
        'scan_end_hour',
        'scan_every_idle_runs',
@@ -374,11 +422,15 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
      )`
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  const updatedAt = Object.fromEntries(rows.map(row => [row.key, row.updated_at]));
   return {
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
+    transactionStartHourUpdatedAt: updatedAt.transaction_start_hour || '',
     transactionStartRequested: Number(values.transaction_start_requested || 0),
     transactionStartRequestSource: values.transaction_start_requested_source || '',
     transactionStartLastRunDate: values.transaction_start_last_run_date || '',
+    transactionStartLastRunSlot: values.transaction_start_last_run_slot || '',
+    transactionStartLastRunLog: values.transaction_start_last_run_log || '',
     scanStartHour: Number(values.scan_start_hour ?? DEFAULT_SCAN_START_HOUR),
     scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
     scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? DEFAULT_SCAN_EVERY_IDLE_RUNS),
@@ -408,18 +460,29 @@ async function ensureScheduledTransactionStartRequest(database = db, nowMs = Dat
        'transaction_start_hour',
        'transaction_start_requested',
        'transaction_start_requested_source',
-       'transaction_start_last_run_date'
+       'transaction_start_last_run_date',
+       'transaction_start_last_run_slot',
+       'transaction_start_last_run_log'
      )`
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
+  const updatedAt = Object.fromEntries(rows.map(row => [row.key, row.updated_at]));
   const today = getLocalDateKey(nowMs);
   const transactionStartHour = clampHour(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR, DEFAULT_TRANSACTION_START_HOUR);
   const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
   const transactionStartRequestSource = values.transaction_start_requested_source || '';
   const transactionStartLastRunDate = values.transaction_start_last_run_date || '';
-  const shouldRequest = !(transactionStartRequested && transactionStartRequestSource === 'manual') &&
-    isTransactionStartReady({ transactionStartHour }, nowMs) &&
-    transactionStartLastRunDate !== today;
+  const transactionStartLastRunSlot = inferTransactionStartLastRunSlot({
+    transactionStartLastRunSlot: values.transaction_start_last_run_slot || '',
+    transactionStartLastRunLog: values.transaction_start_last_run_log || ''
+  }, nowMs);
+  const shouldRequest = !transactionStartRequested &&
+    shouldAutoRequestTransactionStart({
+      transactionStartHour,
+      transactionStartHourUpdatedAt: updatedAt.transaction_start_hour || '',
+      transactionStartLastRunSlot,
+      transactionStartLastRunLog: values.transaction_start_last_run_log || ''
+    }, nowMs);
 
   if (shouldRequest) {
     await saveConfigValue(database, 'transaction_start_requested', '1');
@@ -430,6 +493,7 @@ async function ensureScheduledTransactionStartRequest(database = db, nowMs = Dat
       transactionStartRequestSource: 'auto',
       transactionStartHour,
       transactionStartLastRunDate,
+      transactionStartLastRunSlot,
       today
     };
   }
@@ -440,6 +504,7 @@ async function ensureScheduledTransactionStartRequest(database = db, nowMs = Dat
     transactionStartRequestSource,
     transactionStartHour,
     transactionStartLastRunDate,
+    transactionStartLastRunSlot,
     today
   };
 }
@@ -1860,7 +1925,9 @@ module.exports.getNextScanIdleCounter = getNextScanIdleCounter;
 module.exports.completeIdleAction = completeIdleAction;
 module.exports.ensureScheduledTransactionStartRequest = ensureScheduledTransactionStartRequest;
 module.exports.getTransactionStartReadyMs = getTransactionStartReadyMs;
+module.exports.getTransactionStartSlot = getTransactionStartSlot;
 module.exports.isTransactionStartReady = isTransactionStartReady;
+module.exports.shouldAutoRequestTransactionStart = shouldAutoRequestTransactionStart;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;

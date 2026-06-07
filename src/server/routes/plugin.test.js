@@ -25,6 +25,7 @@ const {
   getNextScanIdleCounter,
   ensureScheduledTransactionStartRequest,
   isTransactionStartReady,
+  shouldAutoRequestTransactionStart,
   completeIdleAction,
   getTransactionStartJobs,
   saveTransactionStartRunLog,
@@ -422,7 +423,7 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   }).action, 'transaction_start');
   assert.equal(getNextIdleAction({
     transactionStartHour: 1,
-    transactionStartLastRunDate: '2026-06-01',
+    transactionStartLastRunSlot: '2026-06-01-01',
     scanIdleCounter: 5,
     scanEveryIdleRuns: 5,
     scanStartHour: 1,
@@ -469,6 +470,37 @@ function testTransactionStartReadyOneMinuteAfterConfiguredHour() {
   }).action, 'transaction_start');
 }
 
+function testTransactionStartScheduleFollowsChangedHourSlots() {
+  assert.equal(shouldAutoRequestTransactionStart({
+    transactionStartHour: 0,
+    transactionStartHourUpdatedAt: '2026-06-06T20:00:00+08:00'
+  }, Date.parse('2026-06-07T00:01:00+08:00')), true);
+
+  assert.equal(shouldAutoRequestTransactionStart({
+    transactionStartHour: 0,
+    transactionStartHourUpdatedAt: '2026-06-06T20:00:00+08:00',
+    transactionStartLastRunSlot: '2026-06-07-00'
+  }, Date.parse('2026-06-07T08:00:00+08:00')), false);
+
+  assert.equal(shouldAutoRequestTransactionStart({
+    transactionStartHour: 9,
+    transactionStartHourUpdatedAt: '2026-06-07T08:00:00+08:00',
+    transactionStartLastRunSlot: '2026-06-07-00'
+  }, Date.parse('2026-06-07T09:01:00+08:00')), true);
+
+  assert.equal(shouldAutoRequestTransactionStart({
+    transactionStartHour: 2,
+    transactionStartHourUpdatedAt: '2026-06-07T10:00:00+08:00',
+    transactionStartLastRunSlot: '2026-06-07-09'
+  }, Date.parse('2026-06-07T10:01:00+08:00')), false);
+
+  assert.equal(shouldAutoRequestTransactionStart({
+    transactionStartHour: 2,
+    transactionStartHourUpdatedAt: '2026-06-07T10:00:00+08:00',
+    transactionStartLastRunSlot: '2026-06-07-09'
+  }, Date.parse('2026-06-08T02:01:00+08:00')), true);
+}
+
 function testPaymentIdleActionUsesFlagAfterScanPriority() {
   assert.equal(DEFAULT_PAYMENT_JOB_LIMIT, 3);
   assert.equal(DEFAULT_PAYMENT_PAGE_STAY_SECONDS, 3);
@@ -476,7 +508,7 @@ function testPaymentIdleActionUsesFlagAfterScanPriority() {
   assert.equal(ORDER_STATUS_PENDING_SHIPMENT, 'pending_shipment');
   assert.equal(getNextIdleAction({
     transactionStartHour: 1,
-    transactionStartLastRunDate: '2026-06-03',
+    transactionStartLastRunSlot: '2026-06-03-01',
     scanIdleCounter: 0,
     scanEveryIdleRuns: 5,
     scanStartHour: 1,
@@ -488,7 +520,7 @@ function testPaymentIdleActionUsesFlagAfterScanPriority() {
 
   assert.equal(getNextIdleAction({
     transactionStartHour: 1,
-    transactionStartLastRunDate: '2026-06-03',
+    transactionStartLastRunSlot: '2026-06-03-01',
     scanIdleCounter: 5,
     scanEveryIdleRuns: 5,
     scanStartHour: 1,
@@ -1177,6 +1209,29 @@ async function testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour
   assert.equal(queries.length, 2);
 }
 
+async function testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChangedHour() {
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      assert.match(sql, /transaction_start_hour/);
+      return [
+        { key: 'transaction_start_hour', value: '2', updated_at: '2026-06-07T10:00:00+08:00' },
+        { key: 'transaction_start_requested', value: '0' },
+        { key: 'transaction_start_last_run_slot', value: '2026-06-07-09' }
+      ];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await ensureScheduledTransactionStartRequest(fakeDb, Date.parse('2026-06-07T10:01:00+08:00'));
+
+  assert.equal(result.updated, false);
+  assert.equal(queries.length, 0);
+}
+
 async function testCompleteManualTransactionStartDoesNotWriteAutoRunDate() {
   const queries = [];
   const fakeDb = {
@@ -1298,6 +1353,7 @@ testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIdleActionChoosesTransactionStartBeforeScan();
 testTransactionStartReadyOneMinuteAfterConfiguredHour();
+testTransactionStartScheduleFollowsChangedHourSlots();
 testPaymentIdleActionUsesFlagAfterScanPriority();
 testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
@@ -1325,6 +1381,7 @@ Promise.all([
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
   testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
+  testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChangedHour(),
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
