@@ -5,6 +5,7 @@ const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
 const { actingUserMiddleware } = require('../services/actingUser');
 const { DEFAULT_MULTI_BID_MIN_PRICE, shouldSplitDirectBidByYahooLowPriceRule, YAHOO_LOW_PRICE_INITIAL_BID } = require('./plugin');
+const { getCaptchaChallenge } = require('../services/manualCaptcha');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
@@ -158,6 +159,13 @@ function normalizeBidStrategyScope(value) {
 
 function isClientAdminUser(user) {
   return Number(user?.user_level || 1) >= 3;
+}
+
+function buildClientManualVerificationAlert(user, challenge) {
+  if (!isClientAdminUser(user) || challenge?.type !== 'pin') {
+    return { show: false, message: '', type: '' };
+  }
+  return { show: true, message: '后端有事情要处理！', type: 'pin' };
 }
 
 function assertBidStrategyAllowed(context, strategy) {
@@ -508,6 +516,15 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+router.get('/manual-verification-alert', async (req, res) => {
+  try {
+    const challenge = await getCaptchaChallenge(db);
+    res.json(buildClientManualVerificationAlert(req.user, challenge));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/task/won-stats - 近 N 天落札统计和导出明细
 router.get('/won-stats', async (req, res) => {
   try {
@@ -705,3 +722,4 @@ module.exports.assertNoActiveAutomaticStrategy = assertNoActiveAutomaticStrategy
 module.exports.findTaskByClientRequestId = findTaskByClientRequestId;
 module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;
 module.exports.assertBidStrategyAllowed = assertBidStrategyAllowed;
+module.exports.buildClientManualVerificationAlert = buildClientManualVerificationAlert;

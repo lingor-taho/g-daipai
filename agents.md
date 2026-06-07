@@ -1632,13 +1632,19 @@ node yahoo-plugin\content.test.js
   - 管理员输入 PIN 后，插件轮询 `/api/plugin/manual-captcha/answer/:id` 拿到答案；
   - 插件自动填入 Yahoo PIN 输入框并点击继续/确认类按钮；
   - 如果验证码之后再次回到 PIN 页，会复用刚才的 PIN 自动再填一次，不再重复提醒管理员输入。
+  - 如果 PIN 提交后仍停在 PIN 页，不会继续复用同一个 PIN，而是重新在后台提醒栏要求输入。
 - 文字验证码协同流程：
   - 跳到 `https://login.yahoo.co.jp/ncaptcha...` 时，插件激活验证码 tab；
   - 使用 `chrome.tabs.captureVisibleTab` 截取可见页，并优先裁出验证码图片区域；裁剪失败时回退为整页截图；
   - 验证码图片以 data URL 写入服务端，后台 `/api/admin/idle-flags` 返回当前待处理验证码；
   - 管理员输入图中日文后，插件自动填入 Yahoo 验证码输入框并点击 `続ける`。
+  - 如果验证码输入错误后 Yahoo 仍停留在验证码页面，插件下一轮会重新截图并再次发到后台提醒栏，直到验证码通过或达到循环上限。
 - 验证流程最多循环 6 步，覆盖 `PIN -> 验证码 -> PIN -> 取引页` 这类链路，避免无限卡住。
 - 每次 PIN / 验证码提交并成功填入后，插件会关闭对应后台提醒；验证结束后继续原来的取引页流程。
+- 前台用户端新增管理员提醒栏：
+  - 新接口 `/api/task/manual-verification-alert` 只对登录用户 `user_level >= 3` 且当前挑战为 `type='pin'` 时返回提醒；
+  - 前台所有已登录页面顶部会显示 `后端有事情要处理！`；
+  - 没有 PIN 挑战、挑战关闭、或登录用户不是前台管理员时，前台提醒栏不显示。
 - 该功能是人工协同，不做自动识别验证码，也不绕过 Yahoo 验证；后续拿到真实 PIN 页面源码/截图后，仍可能需要微调输入框和按钮选择器。
 
 ### 最近验证命令
@@ -1646,6 +1652,32 @@ node yahoo-plugin\content.test.js
 ```powershell
 node src\server\services\manualCaptcha.test.js
 node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\task.test.js
+node src\client\src\utils\manualVerificationAlert.test.mjs
+Set-Location src\admin
+npm run build
+Set-Location src\client
+npm run build
+```
+---
+
+## 2026-06-07 Google 表格配置凭据路径显示
+
+### 已实现内容
+
+- 后台“系统配置 -> Google 表格配置”在 Google 表格地址下面新增只读备注字段：`Google JSON文件绝对路径`。
+- 该字段来自服务端 `.env` 的 `GOOGLE_APPLICATION_CREDENTIALS`，服务端会用 `path.resolve()` 转为绝对路径后返回。
+- 如果使用的是 `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON` 或 `GOOGLE_SHEETS_CLIENT_EMAIL` / `GOOGLE_SHEETS_PRIVATE_KEY` 这类非文件方式，则该路径为空，页面显示未配置文件路径的占位提示。
+- 迁移服务器时，需要同时迁移 `.env` 配置和该 JSON 文件；Chrome 登录的 Google 账号不影响该 service account 方式的 Google Sheets API 调用。
+- 2026-06-07 追加：Google 表格地址和 JSON 文件绝对路径默认锁定不可编辑；后台新增“允许修改 Google 表格配置”勾选框，勾选后才允许修改。
+- 勾选后保存会把表格 ID 写入 `config.google_sheets_spreadsheet_id`，把 JSON 路径写入 `config.google_application_credentials`，并立即覆盖当前 Node 进程的 Google Sheets 运行配置。
+- Google Sheets 写表和确认收货颜色匹配任务执行前会从 `config` 表加载这两个覆盖值；如果没有数据库覆盖值，则继续使用 `.env` 中的 `GOOGLE_SHEETS_SPREADSHEET_ID` / `GOOGLE_APPLICATION_CREDENTIALS`。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\googleSheets.test.js
 node src\server\routes\plugin.test.js
 Set-Location src\admin
 npm run build

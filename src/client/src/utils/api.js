@@ -78,6 +78,7 @@ export const getWonStats = (params) => api.get('/task/won-stats', { params });
 export const getTaskDetail = (id) => api.get(`/task/${id}`);
 export const cancelTask = (id) => api.patch(`/task/${id}/cancel`);
 export const getTaskStats = () => api.get('/task/stats');
+export const getManualVerificationAlert = () => api.get('/task/manual-verification-alert');
 export const getPluginConfig = () => api.get('/plugin/config');
 
 export function createGetProductInfo({ apiClient = api } = {}) {

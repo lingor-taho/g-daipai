@@ -6,12 +6,18 @@ import TaskList from './pages/TaskList';
 import WonItems from './pages/WonItems';
 import Statistics from './pages/Statistics';
 import { installUserActivityListeners } from './utils/activity';
+import ManualVerificationAlert from './components/ManualVerificationAlert';
 
 installUserActivityListeners();
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
-  return token ? children : <Navigate to="/login" />;
+  return token ? (
+    <>
+      <ManualVerificationAlert />
+      {children}
+    </>
+  ) : <Navigate to="/login" />;
 }
 
 export default function App() {

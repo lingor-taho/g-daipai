@@ -1922,6 +1922,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   let handled = false;
   let pinAnswer = String(context.pinAnswer || '').trim();
+  let canReusePinAfterCaptcha = false;
   for (let step = 0; step < 6 && current?.id; step += 1) {
     current = await chrome.tabs.get(current.id).catch(() => current);
     if (isManualCaptchaTab(current)) {
@@ -1940,7 +1941,8 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       const fillResult = await fillManualCaptchaAnswer(current.id, answer);
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
       await closeManualCaptchaChallenge(id);
-      await waitForTabComplete(current.id, 60000).catch(() => {});
+      if (pinAnswer) canReusePinAfterCaptcha = true;
+      await waitForTabComplete(current.id, 15000).catch(() => {});
       await sleep(2000);
       continue;
     }
@@ -1949,7 +1951,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     if (!pinDetected) break;
     handled = true;
     let pinChallengeId = '';
-    if (!pinAnswer) {
+    if (!pinAnswer || !canReusePinAfterCaptcha) {
       pinChallengeId = buildManualVerificationId('pin', current, context);
       await postManualCaptchaChallenge({
         id: pinChallengeId,
@@ -1964,6 +1966,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
     if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
+    canReusePinAfterCaptcha = false;
     await waitForTabComplete(current.id, 60000).catch(() => {});
     await sleep(2500);
   }

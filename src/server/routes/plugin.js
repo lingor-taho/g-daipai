@@ -8,6 +8,7 @@ const {
 } = require('../services/orderStatusAudit');
 const {
   appendRows: appendGoogleSheetRows,
+  applyGoogleSheetsConfigFromDb,
   findRowsByProductIdWithAnyColor,
   isGoogleSheetsConfigured
 } = require('../services/googleSheets');
@@ -1352,6 +1353,7 @@ async function getOrdersForSheetAppend(orderId, database = db) {
 }
 
 async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
+  await applyGoogleSheetsConfigFromDb(database);
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
   const { orders, isBundle, bundleGroupId } = await getOrdersForSheetAppend(orderId, database);
   if (!orders.length) return { skipped: true, reason: 'no appendable orders' };
@@ -1777,6 +1779,7 @@ function normalizeReceiptColorConfig(value, fallback = DEFAULT_CONFIRM_RECEIPT_C
 async function isConfirmReceiptSheetColorMatched(productId, colorHex, options = {}) {
   const targetProductId = String(productId || '').trim();
   if (!targetProductId) return false;
+  if (!options.findRowsByProductIdWithAnyColor) await applyGoogleSheetsConfigFromDb(db);
   const resolver = options.findRowsByProductIdWithAnyColor || findRowsByProductIdWithAnyColor;
   if (typeof resolver !== 'function') return false;
   const result = await resolver(targetProductId, colorHex);

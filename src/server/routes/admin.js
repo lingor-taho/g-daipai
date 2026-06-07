@@ -33,7 +33,13 @@ const {
   writeOrderStatusAuditLogs,
   backfillMissingOrderStatusAuditLogs
 } = require('../services/orderStatusAudit');
-const { getSheetConfig } = require('../services/googleSheets');
+const {
+  applyGoogleSheetsConfig,
+  applyGoogleSheetsConfigFromDb,
+  extractSpreadsheetId,
+  getGoogleSheetsCredentialPath,
+  getSheetConfig
+} = require('../services/googleSheets');
 const {
   getCaptchaChallenge,
   answerCaptchaChallenge,
@@ -946,6 +952,7 @@ async function saveUserFinanceOverride(body = {}) {
 }
 
 async function getMultiBidConfig() {
+  await applyGoogleSheetsConfigFromDb(db);
   const rows = await db.getAll(
     "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'confirm_receipt_hour', 'confirm_receipt_color', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
   );
@@ -969,7 +976,8 @@ async function getMultiBidConfig() {
     paymentJobLimitMin: Math.min(paymentJobLimitMin, paymentJobLimitMax),
     paymentJobLimitMax: Math.max(paymentJobLimitMin, paymentJobLimitMax),
     paymentPageStaySeconds: normalizePositiveIntegerConfig(values.payment_page_stay_seconds, 3),
-    googleSheetUrl: buildGoogleSheetUrl(getSheetConfig().spreadsheetId)
+    googleSheetUrl: buildGoogleSheetUrl(getSheetConfig().spreadsheetId),
+    googleCredentialPath: getGoogleSheetsCredentialPath()
   };
 }
 
@@ -998,6 +1006,9 @@ router.put('/multi-bid-config', async (req, res) => {
   const paymentJobLimitMin = normalizePositiveIntegerConfig(req.body.paymentJobLimitMin ?? legacyPaymentJobLimit, legacyPaymentJobLimit);
   const paymentJobLimitMax = normalizePositiveIntegerConfig(req.body.paymentJobLimitMax ?? legacyPaymentJobLimit, legacyPaymentJobLimit);
   const paymentPageStaySeconds = normalizePositiveIntegerConfig(req.body.paymentPageStaySeconds ?? 3, 3);
+  const googleConfigEditable = req.body.googleConfigEditable === true;
+  const googleSheetId = extractSpreadsheetId(req.body.googleSheetUrl || '');
+  const googleCredentialPath = String(req.body.googleCredentialPath || '').trim();
   if (!Number.isFinite(startHours) || startHours <= 0) {
     return res.status(400).json({ error: 'valid startHours is required' });
   }
@@ -1031,6 +1042,12 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (paymentJobLimitMin > paymentJobLimitMax) {
     return res.status(400).json({ error: 'paymentJobLimitMin must be <= paymentJobLimitMax' });
+  }
+  if (googleConfigEditable && !googleSheetId) {
+    return res.status(400).json({ error: 'valid googleSheetUrl is required' });
+  }
+  if (googleConfigEditable && !googleCredentialPath) {
+    return res.status(400).json({ error: 'valid googleCredentialPath is required' });
   }
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_start_hours', ?, CURRENT_TIMESTAMP)`,
@@ -1092,6 +1109,17 @@ router.put('/multi-bid-config', async (req, res) => {
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('payment_page_stay_seconds', ?, CURRENT_TIMESTAMP)`,
     [String(paymentPageStaySeconds)]
   );
+  if (googleConfigEditable) {
+    await db.query(
+      `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('google_sheets_spreadsheet_id', ?, CURRENT_TIMESTAMP)`,
+      [googleSheetId]
+    );
+    await db.query(
+      `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('google_application_credentials', ?, CURRENT_TIMESTAMP)`,
+      [googleCredentialPath]
+    );
+    applyGoogleSheetsConfig({ googleSheetId, googleCredentialPath });
+  }
   res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds });
 });
 

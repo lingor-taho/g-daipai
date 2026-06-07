@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Space, Typography, message } from 'antd';
+import { Button, Card, Checkbox, Form, Input, InputNumber, Space, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
 async function saveMultiBidConfig(values: any) {
@@ -60,6 +60,7 @@ export default function MultiBidSettingsPage() {
   const [requestingConfirmReceipt, setRequestingConfirmReceipt] = useState(false);
   const [requestingScan, setRequestingScan] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [googleConfigEditable, setGoogleConfigEditable] = useState(false);
 
   useEffect(() => {
     fetchAdminJson('/api/admin/multi-bid-config')
@@ -79,8 +80,11 @@ export default function MultiBidSettingsPage() {
           paymentJobLimitMin: data.paymentJobLimitMin ?? data.paymentJobLimit ?? 3,
           paymentJobLimitMax: data.paymentJobLimitMax ?? data.paymentJobLimit ?? 3,
           paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3,
-          googleSheetUrl: data.googleSheetUrl || ''
+          googleSheetUrl: data.googleSheetUrl || '',
+          googleCredentialPath: data.googleCredentialPath || '',
+          googleConfigEditable: false
         });
+        setGoogleConfigEditable(false);
       })
       .catch(() => {});
   }, [form]);
@@ -90,6 +94,8 @@ export default function MultiBidSettingsPage() {
     setSaving(true);
     try {
       await saveMultiBidConfig(values);
+      setGoogleConfigEditable(false);
+      form.setFieldValue('googleConfigEditable', false);
       message.success('参数已保存');
     } catch (e: any) {
       message.error(e.message || '保存失败');
@@ -168,7 +174,9 @@ export default function MultiBidSettingsPage() {
           paymentJobLimitMin: 3,
           paymentJobLimitMax: 3,
           paymentPageStaySeconds: 3,
-          googleSheetUrl: ''
+          googleSheetUrl: '',
+          googleCredentialPath: '',
+          googleConfigEditable: false
         }}
         style={{ maxWidth: 640 }}
       >
@@ -309,12 +317,26 @@ export default function MultiBidSettingsPage() {
         </Card>
 
         <Card title="Google 表格配置" style={{ marginTop: 16 }}>
+          <Form.Item name="googleConfigEditable" valuePropName="checked">
+            <Checkbox onChange={event => setGoogleConfigEditable(event.target.checked)}>
+              允许修改 Google 表格配置
+            </Checkbox>
+          </Form.Item>
           <Form.Item
             name="googleSheetUrl"
             label="Google表格地址"
           >
-            <Input disabled />
+            <Input disabled={!googleConfigEditable} />
           </Form.Item>
+          <Form.Item
+            name="googleCredentialPath"
+            label="Google JSON文件绝对路径"
+          >
+            <Input disabled={!googleConfigEditable} placeholder="GOOGLE_APPLICATION_CREDENTIALS 未配置" />
+          </Form.Item>
+          <Typography.Text type="secondary">
+            备注：平时默认锁定，避免误改；换服务器或更换表格时，勾选后再修改并保存。JSON 文件路径需要在当前服务器真实存在。
+          </Typography.Text>
         </Card>
 
         <Form.Item style={{ marginTop: 16 }}>

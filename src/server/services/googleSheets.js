@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const path = require('path');
 
 const DEFAULT_SPREADSHEET_ID = '1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4';
 const DEFAULT_SHEET_NAME = '-代拍表-';
@@ -10,6 +11,10 @@ const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标
 const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150];
 
 let cachedToken = null;
+let runtimeConfig = {
+  googleSheetId: '',
+  googleCredentialPath: ''
+};
 
 function base64Url(input) {
   return Buffer.from(input)
@@ -22,6 +27,7 @@ function base64Url(input) {
 function isGoogleSheetsConfigured() {
   return Boolean(
     process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON ||
+    runtimeConfig.googleCredentialPath ||
     process.env.GOOGLE_APPLICATION_CREDENTIALS ||
     process.env.GOOGLE_SHEETS_CLIENT_EMAIL
   );
@@ -29,17 +35,54 @@ function isGoogleSheetsConfigured() {
 
 function getSheetConfig() {
   return {
-    spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID,
+    spreadsheetId: runtimeConfig.googleSheetId || process.env.GOOGLE_SHEETS_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID,
     sheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || DEFAULT_SHEET_NAME
   };
+}
+
+function getGoogleSheetsCredentialPath() {
+  const value = String(runtimeConfig.googleCredentialPath || process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
+  return value ? path.resolve(value) : '';
+}
+
+function extractSpreadsheetId(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/\/spreadsheets\/d\/([^/]+)/);
+  return (match ? match[1] : text).trim();
+}
+
+function applyGoogleSheetsConfig(config = {}) {
+  const nextSheetId = extractSpreadsheetId(config.googleSheetId || config.spreadsheetId || config.googleSheetUrl || '');
+  const nextCredentialPath = String(config.googleCredentialPath || config.credentialPath || '').trim();
+  const credentialChanged = nextCredentialPath !== runtimeConfig.googleCredentialPath;
+  runtimeConfig = {
+    googleSheetId: nextSheetId,
+    googleCredentialPath: nextCredentialPath
+  };
+  if (credentialChanged) cachedToken = null;
+  return { ...runtimeConfig };
+}
+
+async function applyGoogleSheetsConfigFromDb(database) {
+  if (!database?.getAll) return { ...runtimeConfig };
+  const rows = await database.getAll(
+    "SELECT key, value FROM config WHERE key IN ('google_sheets_spreadsheet_id', 'google_application_credentials')"
+  );
+  const values = Object.fromEntries((rows || []).map(row => [row.key, row.value]));
+  return applyGoogleSheetsConfig({
+    googleSheetId: values.google_sheets_spreadsheet_id || '',
+    googleCredentialPath: values.google_application_credentials || ''
+  });
 }
 
 function readServiceAccount() {
   if (process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON) {
     return JSON.parse(process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON);
   }
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8'));
+  const credentialPath = getGoogleSheetsCredentialPath();
+  if (credentialPath) {
+    return JSON.parse(fs.readFileSync(credentialPath, 'utf8'));
   }
   if (process.env.GOOGLE_SHEETS_CLIENT_EMAIL && process.env.GOOGLE_SHEETS_PRIVATE_KEY) {
     return {
@@ -352,9 +395,13 @@ async function applySheetBaseStyle(spreadsheetId, sheetName) {
 
 module.exports = {
   appendRows,
+  applyGoogleSheetsConfig,
+  applyGoogleSheetsConfigFromDb,
   applySheetBaseStyle,
   ensureHeaderRow,
+  extractSpreadsheetId,
   findRowsByProductIdWithAnyColor,
+  getGoogleSheetsCredentialPath,
   getSheetConfig,
   googleColorToHex,
   isGoogleSheetsConfigured
