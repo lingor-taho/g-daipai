@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-06
+**最后更新**: 2026-06-07
 
 ---
 
@@ -1351,6 +1351,92 @@ npm run build
 
 ```powershell
 node yahoo-plugin\content.test.js
+```
+---
+
+## 2026-06-07 后台系统配置 Google 表格地址
+
+### 已实现内容
+
+- 后台“系统配置”页面新增 `Google表格地址` 只读配置项。
+- 地址由服务端 `/api/admin/multi-bid-config` 返回，来源为当前 Google Sheets 追加逻辑实际使用的 `GOOGLE_SHEETS_SPREADSHEET_ID`，未配置环境变量时显示默认表格：
+  `https://docs.google.com/spreadsheets/d/1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4/edit?gid=0#gid=0`
+- 该字段仅用于后台显示当前导入/追加的 Google 表格地址，不改变 Google Sheets 写入逻辑；如需切换表格，仍按当前服务端环境变量配置方式处理。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\admin.orders.test.js
+Set-Location src\admin
+npm run build
+```
+---
+
+## 2026-06-07 交易开始最近执行摘要修正
+
+### 问题
+
+- 后台订单管理顶部 `最近执行` 原来只显示 `回写 X 次`，其中成功状态回写和失败错误回写都会计数。
+- 交易开始插件任务失败时，系统会写入 `transaction_start_error`，但 `orders.order_status` 保持空；这会让页面看起来像“没有执行过”，实际是执行后失败。
+
+### 已实现内容
+
+- 后台订单管理顶部 `最近执行` 改为显示：回写总数、成功数、失败数、未更新数。
+- 如果最近执行日志里有失败原因，会在摘要中展示最多 2 条错误，方便直接判断是否是 Yahoo 页面、登录态或取引页点击失败。
+
+### 最近验证命令
+
+```powershell
+Set-Location src\admin
+npm run build
+```
+---
+
+## 2026-06-07 交易开始空状态订单取单规则修正
+
+### 问题
+
+- 业务规则要求交易开始处理 `orders.order_status` 为空的落札订单。
+- 旧取单 SQL 额外要求关联任务 `tasks.status='success'`，自动执行时还按执行整点做 cutoff，导致部分空状态订单不会进入交易开始。
+
+### 已修复内容
+
+- `/api/plugin/transaction-start/jobs` 改为以订单空状态为准取单：`orders.order_status IS NULL OR orders.order_status=''`。
+- 不再用 `tasks.status='success'` 或执行整点 cutoff 排除空状态订单；手动和自动交易开始都会拿到全部空状态落札订单。
+- 后台订单管理把 `交易开始错误` 列移动到 `订单状态` 后面，方便直接看到空状态订单是否是交易开始失败。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+Set-Location src\admin
+npm run build
+```
+---
+
+## 2026-06-07 交易开始 flag 置位时间修正
+
+### 业务规则确认
+
+- 后台设置的 `交易开始执行整点` 不是一个 0-59 分钟的小时区间。
+- 自动交易开始 flag 应在“设置整点后 1 分钟”置为 `1`：
+  - 设置 `0`：`00:01` 开始置 `transaction_start_requested=1`。
+  - 设置 `5`：`05:01` 开始置 `transaction_start_requested=1`。
+- 到达该时间前，即使小时已经相同，也不能提前置 flag。
+
+### 已修复内容
+
+- `src/server/routes/plugin.js` 新增分钟级判断：`isTransactionStartReady()`，自动置 flag 改为比较当天 `transaction_start_hour:01:00`。
+- `/api/plugin/idle-action/next`、`ensureScheduledTransactionStartRequest()`、`completeIdleAction()` 统一使用“整点后 1 分钟”判断。
+- `/api/admin/idle-flags` 后台顶部状态同步使用同一判断，避免后台显示和插件调度不一致。
+- 后台系统配置字段文案改为 `交易开始执行整点后1分钟`，输入框后缀显示 `点01分`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+Set-Location src\admin
+npm run build
 ```
 ---
 

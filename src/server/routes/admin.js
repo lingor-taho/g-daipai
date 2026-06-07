@@ -11,6 +11,7 @@ const {
   getStrategyLeadMs,
   isMultiBidTask,
   ensureScheduledTransactionStartRequest,
+  isTransactionStartReady,
   getShipmentAlerts,
   appendPendingReceiptOrderToGoogleSheet,
   DEFAULT_MULTI_BID_MIN_PRICE
@@ -27,11 +28,18 @@ const {
   writeOrderStatusAuditLogs,
   backfillMissingOrderStatusAuditLogs
 } = require('../services/orderStatusAudit');
+const { getSheetConfig } = require('../services/googleSheets');
 
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_COMPLETED = 'completed';
 const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
 const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
+
+function buildGoogleSheetUrl(spreadsheetId) {
+  const id = String(spreadsheetId || '').trim();
+  if (!id) return '';
+  return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit?gid=0#gid=0`;
+}
 
 function normalizeBidStrategyScope(value) {
   return value === 'direct_only' ? 'direct_only' : 'all';
@@ -948,7 +956,8 @@ async function getMultiBidConfig() {
     paymentJobLimit: legacyPaymentJobLimit,
     paymentJobLimitMin: Math.min(paymentJobLimitMin, paymentJobLimitMax),
     paymentJobLimitMax: Math.max(paymentJobLimitMin, paymentJobLimitMax),
-    paymentPageStaySeconds: normalizePositiveIntegerConfig(values.payment_page_stay_seconds, 3)
+    paymentPageStaySeconds: normalizePositiveIntegerConfig(values.payment_page_stay_seconds, 3),
+    googleSheetUrl: buildGoogleSheetUrl(getSheetConfig().spreadsheetId)
   };
 }
 
@@ -1196,7 +1205,6 @@ router.get('/idle-flags', async (req, res) => {
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const today = getLocalDateKey();
-  const nowHour = new Date().getHours();
   const transactionStartHour = Number(values.transaction_start_hour ?? 1);
   const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
   const transactionStartLastRunDate = values.transaction_start_last_run_date || '';
@@ -1208,7 +1216,7 @@ router.get('/idle-flags', async (req, res) => {
   } catch {
     transactionStartLastRunLog = null;
   }
-  const transactionStartFlag = transactionStartRequested || (nowHour >= transactionStartHour && transactionStartLastRunDate !== today) ? 1 : 0;
+  const transactionStartFlag = transactionStartRequested || (isTransactionStartReady({ transactionStartHour }) && transactionStartLastRunDate !== today) ? 1 : 0;
   const scanEveryIdleRuns = Math.max(1, Number(values.scan_every_idle_runs || 5));
   const scanIdleCounter = Math.max(0, Number(values.scan_idle_counter || 0));
 
@@ -1623,3 +1631,4 @@ module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
 module.exports.normalizePositiveIntegerConfig = normalizePositiveIntegerConfig;
 module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;
+module.exports.buildGoogleSheetUrl = buildGoogleSheetUrl;

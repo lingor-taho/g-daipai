@@ -17,6 +17,7 @@ const DEFAULT_IDLE_SYNC_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_BID_GUARD_MINUTES = 10;
 const DEFAULT_MULTI_BID_MIN_PRICE = 5000;
 const DEFAULT_TRANSACTION_START_HOUR = 1;
+const TRANSACTION_START_DELAY_MINUTES = 1;
 const DEFAULT_SCAN_START_HOUR = 1;
 const DEFAULT_SCAN_END_HOUR = 20;
 const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
@@ -284,6 +285,25 @@ function clampHour(value, fallback) {
   return Math.min(23, Math.max(0, Math.floor(hour)));
 }
 
+function getTransactionStartReadyMs(transactionStartHour, nowMs = Date.now()) {
+  const readyAt = new Date(nowMs);
+  readyAt.setHours(clampHour(transactionStartHour, DEFAULT_TRANSACTION_START_HOUR), TRANSACTION_START_DELAY_MINUTES, 0, 0);
+  return readyAt.getTime();
+}
+
+function isTransactionStartReady(config = {}, nowMs = Date.now()) {
+  if (config.nowHour !== undefined || config.nowMinute !== undefined) {
+    const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
+    const now = new Date(nowMs);
+    const nowHour = Number(config.nowHour ?? now.getHours());
+    const nowMinute = Number(config.nowMinute ?? (config.nowHour !== undefined ? TRANSACTION_START_DELAY_MINUTES : now.getMinutes()));
+    return nowHour > transactionStartHour ||
+      (nowHour === transactionStartHour && nowMinute >= TRANSACTION_START_DELAY_MINUTES);
+  }
+  const readyMs = getTransactionStartReadyMs(config.transactionStartHour, nowMs);
+  return nowMs >= readyMs;
+}
+
 function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const now = new Date(nowMs);
   const nowHour = config.nowHour ?? now.getHours();
@@ -291,7 +311,7 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
   const transactionRequested = Number(config.transactionStartRequested || 0) === 1;
   const lastRunDate = String(config.transactionStartLastRunDate || '');
-  if (transactionRequested || (Number(nowHour) >= transactionStartHour && lastRunDate !== today)) {
+  if (transactionRequested || (isTransactionStartReady({ ...config, transactionStartHour }, nowMs) && lastRunDate !== today)) {
     return { action: 'transaction_start', today };
   }
 
@@ -324,7 +344,7 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
   if (action === 'transaction_start') {
     await saveConfigValue(database, 'transaction_start_requested', '0');
     await saveConfigValue(database, 'transaction_start_requested_source', '');
-    if (config.transactionStartRequestSource !== 'manual' || Number(config.nowHour) >= Number(config.transactionStartHour)) {
+    if (config.transactionStartRequestSource !== 'manual' || config.transactionStartReady) {
       await saveConfigValue(database, 'transaction_start_last_run_date', config.today);
     }
   } else if (action === 'scan') {
@@ -367,7 +387,10 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
     paymentJobLimit: parsePositiveInt(values.payment_job_limit, DEFAULT_PAYMENT_JOB_LIMIT),
     paymentPageStaySeconds: parsePositiveInt(values.payment_page_stay_seconds, DEFAULT_PAYMENT_PAGE_STAY_SECONDS),
     today: getLocalDateKey(nowMs),
-    nowHour: new Date(nowMs).getHours()
+    nowHour: new Date(nowMs).getHours(),
+    transactionStartReady: isTransactionStartReady({
+      transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR)
+    }, nowMs)
   };
 }
 
@@ -390,13 +413,12 @@ async function ensureScheduledTransactionStartRequest(database = db, nowMs = Dat
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const today = getLocalDateKey(nowMs);
-  const nowHour = new Date(nowMs).getHours();
   const transactionStartHour = clampHour(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR, DEFAULT_TRANSACTION_START_HOUR);
   const transactionStartRequested = Number(values.transaction_start_requested || 0) === 1;
   const transactionStartRequestSource = values.transaction_start_requested_source || '';
   const transactionStartLastRunDate = values.transaction_start_last_run_date || '';
   const shouldRequest = !(transactionStartRequested && transactionStartRequestSource === 'manual') &&
-    Number(nowHour) >= transactionStartHour &&
+    isTransactionStartReady({ transactionStartHour }, nowMs) &&
     transactionStartLastRunDate !== today;
 
   if (shouldRequest) {
@@ -819,8 +841,6 @@ async function syncBiddingItems(items, database = db) {
 
 async function getTransactionStartJobs(database = db, options = {}) {
   const includeAfterCutoff = options.includeAfterCutoff ? 1 : 0;
-  const cutoffHour = clampHour(options.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
-  const cutoffModifier = `+${cutoffHour} hours`;
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
             o.transaction_url,
@@ -831,12 +851,8 @@ async function getTransactionStartJobs(database = db, options = {}) {
             t.shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
-     WHERE t.status = 'success'
-       AND (o.order_status IS NULL OR o.order_status = '')
-       AND (? = 1 OR datetime(COALESCE(o.won_at, o.created_at)) < datetime('now', 'start of day', ?))
+     WHERE (o.order_status IS NULL OR o.order_status = '')
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`
-    ,
-    [includeAfterCutoff, cutoffModifier]
   );
 
   const jobs = [];
@@ -1843,6 +1859,8 @@ module.exports.getNextIdleAction = getNextIdleAction;
 module.exports.getNextScanIdleCounter = getNextScanIdleCounter;
 module.exports.completeIdleAction = completeIdleAction;
 module.exports.ensureScheduledTransactionStartRequest = ensureScheduledTransactionStartRequest;
+module.exports.getTransactionStartReadyMs = getTransactionStartReadyMs;
+module.exports.isTransactionStartReady = isTransactionStartReady;
 module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;

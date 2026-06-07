@@ -15,7 +15,8 @@ const {
   requestPayment,
   clearPaymentAlertAndContinue,
   normalizeOrderStatusRefreshTarget,
-  normalizePositiveIntegerConfig
+  normalizePositiveIntegerConfig,
+  buildGoogleSheetUrl
 } = require('./admin');
 
 function testShippingFeeParsing() {
@@ -23,6 +24,14 @@ function testShippingFeeParsing() {
   assert.equal(parseShippingFeeToNumber('送料 着払い'), 0);
   assert.equal(parseShippingFeeToNumber('送料 落札者負担'), 0);
   assert.equal(parseShippingFeeToNumber('送料 1,000円'), 1000);
+}
+
+function testBuildGoogleSheetUrl() {
+  assert.equal(
+    buildGoogleSheetUrl('1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4'),
+    'https://docs.google.com/spreadsheets/d/1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4/edit?gid=0#gid=0'
+  );
+  assert.equal(buildGoogleSheetUrl(''), '');
 }
 
 function testSettleableShippingFeeDetection() {
@@ -316,6 +325,7 @@ testCompletedOrderStatusConstant();
 testNormalizeOrderStatusRefreshTargetSupportsBlankAndCompleted();
 testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
+testBuildGoogleSheetUrl();
 
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),

@@ -41,8 +41,16 @@ function renderTransactionStartLastRun(log: any) {
   const total = Number(log.total || 0);
   const storeUpdated = Number(log.storeUpdated || 0);
   const jobs = Array.isArray(log.jobs) ? log.jobs.length : 0;
-  const results = Array.isArray(log.results) ? log.results.length : 0;
-  return `最近执行：${source} ${time}，取到 ${total} 单，商城直接待支付 ${storeUpdated} 单，插件任务 ${jobs} 单，回写 ${results} 次`;
+  const results = Array.isArray(log.results) ? log.results : [];
+  const successResults = results.filter((item: any) => item?.status && Number(item?.updated || 0) > 0).length;
+  const failedResults = results.filter((item: any) => item?.error).length;
+  const noUpdateResults = results.filter((item: any) => !item?.error && Number(item?.updated || 0) === 0).length;
+  const errors = Array.from(new Set(results
+    .map((item: any) => String(item?.error || '').trim())
+    .filter(Boolean)))
+    .slice(0, 2);
+  const errorText = errors.length ? `，错误：${errors.join('；')}` : '';
+  return `最近执行：${source} ${time}，取到 ${total} 单，商城直接待支付 ${storeUpdated} 单，插件任务 ${jobs} 单，回写 ${results.length} 次（成功 ${successResults}，失败 ${failedResults}，未更新 ${noUpdateResults}）${errorText}`;
 }
 
 function renderStatusChangeSource(row: any) {
@@ -294,6 +302,7 @@ export default function OrdersPage() {
     { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
     { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
     { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => renderOrderStatus(row.order_status) },
+    { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 180, ellipsis: true, onCell: () => noWrapCell },
     { title: '最后操作时间', dataIndex: 'updated_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.updated_at || row.created_at) },
     { title: '状态来源', dataIndex: 'latest_status_change_source', width: 360, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderStatusChangeSource(row) },
     {
@@ -311,7 +320,6 @@ export default function OrdersPage() {
         </Button>
       )
     },
-    { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 160, ellipsis: true, onCell: () => noWrapCell },
     { title: '物流', dataIndex: 'shipping_company', width: 100, ellipsis: true, onCell: () => noWrapCell },
     { title: '追踪号', dataIndex: 'tracking_number', width: 120, ellipsis: true, onCell: () => noWrapCell }
   ];

@@ -24,6 +24,7 @@ const {
   getNextIdleAction,
   getNextScanIdleCounter,
   ensureScheduledTransactionStartRequest,
+  isTransactionStartReady,
   completeIdleAction,
   getTransactionStartJobs,
   saveTransactionStartRunLog,
@@ -431,6 +432,43 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   }).action, 'scan');
 }
 
+function testTransactionStartReadyOneMinuteAfterConfiguredHour() {
+  assert.equal(isTransactionStartReady({
+    transactionStartHour: 0,
+    nowHour: 0,
+    nowMinute: 0
+  }), false);
+  assert.equal(isTransactionStartReady({
+    transactionStartHour: 0,
+    nowHour: 0,
+    nowMinute: 1
+  }), true);
+  assert.equal(isTransactionStartReady({
+    transactionStartHour: 5,
+    nowHour: 5,
+    nowMinute: 0
+  }), false);
+  assert.equal(isTransactionStartReady({
+    transactionStartHour: 5,
+    nowHour: 5,
+    nowMinute: 1
+  }), true);
+  assert.equal(getNextIdleAction({
+    transactionStartHour: 0,
+    transactionStartLastRunDate: '2026-05-31',
+    nowHour: 0,
+    nowMinute: 0,
+    today: '2026-06-01'
+  }).action, 'none');
+  assert.equal(getNextIdleAction({
+    transactionStartHour: 0,
+    transactionStartLastRunDate: '2026-05-31',
+    nowHour: 0,
+    nowMinute: 1,
+    today: '2026-06-01'
+  }).action, 'transaction_start');
+}
+
 function testPaymentIdleActionUsesFlagAfterScanPriority() {
   assert.equal(DEFAULT_PAYMENT_JOB_LIMIT, 3);
   assert.equal(DEFAULT_PAYMENT_PAGE_STAY_SECONDS, 3);
@@ -672,9 +710,10 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.equal(result.jobs[0].transactionUrl, '');
   assert.equal(result.jobs[1].productId, 'n2');
   assert.equal(result.jobs[2].productId, 'n3');
-  assert.match(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
+  assert.doesNotMatch(queries[0].sql, /t\.status = 'success'/);
+  assert.doesNotMatch(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
   assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
-  assert.deepEqual(queries[0].params, [0, '+1 hours']);
+  assert.equal(queries[0].params, undefined);
   const storeUpdate = queries.find(call => /UPDATE orders/.test(call.sql));
   assert.equal(storeUpdate.params[0], ORDER_STATUS_PENDING_PAYMENT);
 }
@@ -691,7 +730,7 @@ async function testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun() {
   const result = await getTransactionStartJobs(fakeDb, { includeAfterCutoff: true, transactionStartHour: 3 });
 
   assert.equal(result.total, 0);
-  assert.deepEqual(calls[0].params, [1, '+3 hours']);
+  assert.equal(calls[0].params, undefined);
 }
 
 async function testSaveTransactionStartRunLogWritesJsonConfig() {
@@ -1112,6 +1151,32 @@ async function testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached
   assert.equal(queries[1].params[1], 'auto');
 }
 
+async function testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour() {
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      assert.match(sql, /transaction_start_hour/);
+      return [
+        { key: 'transaction_start_hour', value: '0' },
+        { key: 'transaction_start_requested', value: '0' },
+        { key: 'transaction_start_last_run_date', value: '2026-06-05' }
+      ];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const before = await ensureScheduledTransactionStartRequest(fakeDb, Date.parse('2026-06-06T00:00:30+08:00'));
+  assert.equal(before.updated, false);
+  assert.equal(queries.length, 0);
+
+  const after = await ensureScheduledTransactionStartRequest(fakeDb, Date.parse('2026-06-06T00:01:00+08:00'));
+  assert.equal(after.updated, true);
+  assert.equal(queries.length, 2);
+}
+
 async function testCompleteManualTransactionStartDoesNotWriteAutoRunDate() {
   const queries = [];
   const fakeDb = {
@@ -1232,6 +1297,7 @@ testNormalizeYahooWonTimeTextInfersCurrentYear();
 testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIdleActionChoosesTransactionStartBeforeScan();
+testTransactionStartReadyOneMinuteAfterConfiguredHour();
 testPaymentIdleActionUsesFlagAfterScanPriority();
 testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
@@ -1258,6 +1324,7 @@ Promise.all([
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
+  testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, InputNumber, Space, Typography, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Space, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
 async function saveMultiBidConfig(values: any) {
@@ -65,7 +65,8 @@ export default function MultiBidSettingsPage() {
           scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5,
           paymentJobLimitMin: data.paymentJobLimitMin ?? data.paymentJobLimit ?? 3,
           paymentJobLimitMax: data.paymentJobLimitMax ?? data.paymentJobLimit ?? 3,
-          paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3
+          paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3,
+          googleSheetUrl: data.googleSheetUrl || ''
         });
       })
       .catch(() => {});
@@ -138,7 +139,8 @@ export default function MultiBidSettingsPage() {
           scanEveryIdleRuns: 5,
           paymentJobLimitMin: 3,
           paymentJobLimitMax: 3,
-          paymentPageStaySeconds: 3
+          paymentPageStaySeconds: 3,
+          googleSheetUrl: ''
         }}
         style={{ maxWidth: 640 }}
       >
@@ -186,10 +188,10 @@ export default function MultiBidSettingsPage() {
           </Form.Item>
           <Form.Item
             name="transactionStartHour"
-            label="交易开始执行整点"
+            label="交易开始执行整点后1分钟"
             rules={[{ required: true, message: '请输入交易开始执行整点' }]}
           >
-            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点" style={{ width: '100%' }} />
+            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点01分" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item label="手动执行交易开始">
             <Space wrap>
@@ -243,6 +245,12 @@ export default function MultiBidSettingsPage() {
             rules={[{ required: true, message: '请输入付款页面停留时间' }]}
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="秒" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="googleSheetUrl"
+            label="Google表格地址"
+          >
+            <Input disabled />
           </Form.Item>
           <Typography.Text type="secondary">
             插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会执行这些空闲操作。
