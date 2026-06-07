@@ -16,6 +16,7 @@ const labels = {
 export default function DataBatchPage() {
   return (
     <Tabs
+      className="admin-data-batch-tabs"
       defaultActiveKey="shipping"
       items={[
         {

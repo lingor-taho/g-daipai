@@ -152,6 +152,7 @@ export default function MultiBidSettingsPage() {
         form={form}
         layout="vertical"
         onFinish={handleSave}
+        className="admin-config-form"
         initialValues={{
           startHours: 0.5,
           intervalMinutes: 5,
@@ -198,7 +199,7 @@ export default function MultiBidSettingsPage() {
           </Typography.Text>
         </Card>
 
-        <Card title="入札、落札、交易开始、扫描、付款、收货配置" style={{ marginTop: 16 }}>
+        <Card title="入札 / 落札空闲同步" style={{ marginTop: 16 }}>
           <Form.Item
             name="idleSyncIntervalMinutes"
             label="空闲同步间隔"
@@ -213,6 +214,12 @@ export default function MultiBidSettingsPage() {
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
           </Form.Item>
+          <Typography.Text type="secondary">
+            插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会进入空闲任务链路。
+          </Typography.Text>
+        </Card>
+
+        <Card title="交易开始任务" style={{ marginTop: 16 }}>
           <Form.Item
             name="transactionStartHour"
             label="交易开始执行整点后1分钟"
@@ -226,23 +233,9 @@ export default function MultiBidSettingsPage() {
               <Button danger loading={resetting} onClick={handleResetTransactionStartOrders}>初始化订单状态</Button>
             </Space>
           </Form.Item>
-          <Form.Item
-            name="confirmReceiptHour"
-            label="确认收货执行整点后1分钟"
-            rules={[{ required: true, message: '请输入确认收货执行整点' }]}
-          >
-            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点01分" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="confirmReceiptColor"
-            label="收货商品颜色配置"
-            rules={[{ required: true, pattern: /^#[0-9a-fA-F]{6}$/, message: '请输入 #ffff00 这种颜色值' }]}
-          >
-            <Input addonBefore="HEX" />
-          </Form.Item>
-          <Form.Item label="手动执行确认收货">
-            <Button loading={requestingConfirmReceipt} onClick={handleRequestConfirmReceipt}>加入执行队列</Button>
-          </Form.Item>
+        </Card>
+
+        <Card title="扫描任务" style={{ marginTop: 16 }}>
           <Form.Item
             name="scanStartHour"
             label="扫描开始整点"
@@ -267,7 +260,10 @@ export default function MultiBidSettingsPage() {
           <Form.Item label="手动执行扫描">
             <Button loading={requestingScan} onClick={handleRequestScan}>加入执行队列</Button>
           </Form.Item>
-          <Space style={{ width: '100%' }} align="baseline">
+        </Card>
+
+        <Card title="付款任务" style={{ marginTop: 16 }}>
+          <Space className="admin-config-payment-range" style={{ width: '100%' }} align="baseline">
             <Form.Item
               name="paymentJobLimitMin"
               label="付款流程执行任务数最小"
@@ -290,15 +286,35 @@ export default function MultiBidSettingsPage() {
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="秒" style={{ width: '100%' }} />
           </Form.Item>
+        </Card>
+
+        <Card title="确认收货任务" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="confirmReceiptHour"
+            label="确认收货执行整点后1分钟"
+            rules={[{ required: true, message: '请输入确认收货执行整点' }]}
+          >
+            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点01分" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="confirmReceiptColor"
+            label="收货商品颜色配置"
+            rules={[{ required: true, pattern: /^#[0-9a-fA-F]{6}$/, message: '请输入 #ffff00 这种颜色值' }]}
+          >
+            <Input addonBefore="HEX" />
+          </Form.Item>
+          <Form.Item label="手动执行确认收货">
+            <Button loading={requestingConfirmReceipt} onClick={handleRequestConfirmReceipt}>加入执行队列</Button>
+          </Form.Item>
+        </Card>
+
+        <Card title="Google 表格配置" style={{ marginTop: 16 }}>
           <Form.Item
             name="googleSheetUrl"
             label="Google表格地址"
           >
             <Input disabled />
           </Form.Item>
-          <Typography.Text type="secondary">
-            插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会执行这些空闲操作。
-          </Typography.Text>
         </Card>
 
         <Form.Item style={{ marginTop: 16 }}>

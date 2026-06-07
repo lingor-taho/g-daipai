@@ -1,0 +1,153 @@
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+.admin-bottom-nav {
+  display: none;
+}
+
+.admin-bottom-nav-link {
+  display: flex;
+  min-width: 0;
+  height: 52px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: inherit;
+  line-height: 1.15;
+  text-decoration: none;
+}
+
+.admin-bottom-nav-link-active {
+  color: #1677ff;
+}
+
+.admin-bottom-nav-full {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .admin-header {
+    height: 52px !important;
+    padding-inline: 12px !important;
+    line-height: 52px !important;
+  }
+
+  .admin-header .ant-space {
+    min-width: 0;
+  }
+
+  .admin-header .ant-typography {
+    white-space: nowrap;
+  }
+
+  .admin-content {
+    min-height: calc(100vh - 52px) !important;
+    padding: 10px 10px calc(74px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .admin-content .ant-card {
+    border-radius: 8px;
+  }
+
+  .admin-content .ant-card-body {
+    padding: 12px;
+  }
+
+  .admin-content .ant-card-head {
+    min-height: 42px;
+    padding-inline: 12px;
+  }
+
+  .admin-content .ant-card-head-title {
+    padding-block: 10px;
+    font-size: 14px;
+  }
+
+  .admin-bottom-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1000;
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid #e5e7eb;
+    background: #fff;
+    box-shadow: 0 -4px 14px rgba(15, 23, 42, 0.08);
+  }
+
+  .admin-mobile-form.ant-form-inline {
+    display: grid;
+    grid-template-columns: 1fr;
+    row-gap: 10px;
+  }
+
+  .admin-mobile-form.ant-form-inline .ant-form-item {
+    width: 100%;
+    margin-inline-end: 0;
+    margin-bottom: 0;
+  }
+
+  .admin-mobile-form .ant-input-number,
+  .admin-mobile-form .ant-btn {
+    width: 100%;
+  }
+
+  .admin-mobile-action-space,
+  .admin-mobile-flag-space,
+  .admin-config-payment-range {
+    width: 100%;
+  }
+
+  .admin-mobile-action-space .ant-space-item,
+  .admin-config-payment-range .ant-space-item {
+    width: 100%;
+  }
+
+  .admin-mobile-action-space .ant-input-number,
+  .admin-mobile-action-space .ant-btn,
+  .admin-config-payment-range .ant-form-item,
+  .admin-config-payment-range .ant-input-number {
+    width: 100%;
+  }
+
+  .admin-mobile-flag-space {
+    gap: 8px !important;
+  }
+
+  .admin-mobile-flag-space .ant-space-item {
+    display: block;
+    width: 100%;
+  }
+
+  .admin-config-form {
+    max-width: none !important;
+  }
+
+  .admin-config-form .ant-btn {
+    min-height: 32px;
+  }
+
+  .admin-data-batch-tabs .ant-tabs-nav-wrap {
+    overflow-x: auto;
+  }
+
+  .admin-data-batch-tabs .ant-tabs-nav-list {
+    min-width: max-content;
+  }
+
+  .ant-pro-table-search,
+  .ant-pro-table-list-toolbar-container {
+    padding-inline: 0 !important;
+  }
+}

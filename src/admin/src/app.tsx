@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { isAdminLoggedIn, redirectToLogin } from './utils/auth';
+import './global.css';
 
 function AdminAuthGuard({ children }: { children: ReactNode }) {
   const [allowed, setAllowed] = useState(() => {

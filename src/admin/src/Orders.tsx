@@ -327,7 +327,7 @@ export default function OrdersPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card>
-        <Form form={form} layout="inline" onFinish={handleSaveConfig}>
+        <Form form={form} layout="inline" className="admin-mobile-form" onFinish={handleSaveConfig}>
           <Form.Item name="bankFeeJpy" label="银行手续费(日元)" rules={[{ required: true, message: '请输入银行手续费' }]}>
             <InputNumber min={0} step={1} precision={0} />
           </Form.Item>
@@ -352,7 +352,7 @@ export default function OrdersPage() {
       </Card>
 
       <Card>
-        <Space wrap>
+        <Space wrap className="admin-mobile-action-space">
           <Typography.Text>本次结算汇率</Typography.Text>
           <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
           <Switch
@@ -374,7 +374,7 @@ export default function OrdersPage() {
       </Card>
 
       <Card>
-        <Space wrap size={16}>
+        <Space wrap size={16} className="admin-mobile-flag-space">
           <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
           <Typography.Text>扫描计数：{idleFlags?.scanFlag ?? '-'} / {idleFlags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
           <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
