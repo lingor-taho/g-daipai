@@ -5,6 +5,7 @@ const AUTO_BID_ENABLED = true;
 const TRANSACTION_START_ENABLED = globalThis.__G_DAIPAI_TRANSACTION_START_ENABLED__ !== false;
 const PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS = 15000;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
+const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 
 let isRunning = false;
 let fetchFailureCount = 0;
@@ -575,6 +576,27 @@ async function updateConfirmReceiptStatus(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
+}
+
+async function postManualCaptchaChallenge(payload) {
+  await apiFetch('/api/plugin/manual-captcha/challenge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+async function fetchManualCaptchaAnswer(id) {
+  const res = await apiFetch(`/api/plugin/manual-captcha/answer/${encodeURIComponent(id)}`);
+  return await res.json();
+}
+
+async function closeManualCaptchaChallenge(id) {
+  await apiFetch('/api/plugin/manual-captcha/close', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  }).catch(() => null);
 }
 
 function buildPaymentFailurePayload(job, error) {
@@ -1707,6 +1729,252 @@ function isBidderPaysShippingText(value) {
   return /\u843d\u672d\u8005\u8ca0\u62c5/.test(String(value || ''));
 }
 
+function isManualCaptchaTab(tab) {
+  const url = String(tab?.url || '');
+  return /:\/\/login\.yahoo\.co\.jp\/ncaptcha/i.test(url);
+}
+
+function isLikelyManualPinTab(tab) {
+  const url = String(tab?.url || '');
+  if (!url || isManualCaptchaTab(tab)) return false;
+  if (!/:\/\/(?:login|account\.edit)\.yahoo\.co\.jp\//i.test(url)) return false;
+  return /(?:verify|pin|auth|challenge|confirm|security|code)/i.test(url);
+}
+
+function buildManualVerificationId(type, tab, context = {}) {
+  const productId = String(context.productId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'unknown';
+  const prefix = type === 'pin' ? 'pin' : 'captcha';
+  return `${prefix}-${productId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildManualCaptchaId(tab, context = {}) {
+  return buildManualVerificationId('captcha', tab, context);
+}
+
+async function getManualCaptchaRect(tabId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const isVisible = el => {
+        const rect = el.getBoundingClientRect?.();
+        const style = window.getComputedStyle(el);
+        return rect && rect.width > 40 && rect.height > 20 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const toRect = rect => ({
+        left: Math.max(0, rect.left),
+        top: Math.max(0, rect.top),
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height)
+      });
+      const media = [...document.querySelectorAll('img, canvas, svg')]
+        .map(el => ({ el, rect: el.getBoundingClientRect?.(), text: el.alt || el.getAttribute?.('aria-label') || '' }))
+        .filter(item => item.rect && item.rect.width >= 120 && item.rect.height >= 40 && isVisible(item.el))
+        .filter(item => !/Yahoo/i.test(item.text));
+      if (media.length) {
+        const target = media.sort((a, b) => (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height))[0];
+        return { success: true, rect: toRect(target.rect), method: 'media' };
+      }
+      const panels = [...document.querySelectorAll('div, section, form, table')]
+        .map(el => ({ el, rect: el.getBoundingClientRect?.(), text: String(el.textContent || '') }))
+        .filter(item => item.rect && item.rect.width >= 180 && item.rect.height >= 80 && isVisible(item.el))
+        .filter(item => /\u753b\u50cf\u3067\u8a8d\u8a3c\u3059\u308b|\u753b\u50cf\u3092\u5909\u66f4/.test(item.text));
+      if (panels.length) {
+        const target = panels.sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height))[0];
+        return { success: true, rect: toRect(target.rect), method: 'panel' };
+      }
+      return { success: false, error: 'captcha image rect not found' };
+    }
+  }).catch(error => [{ result: { success: false, error: error.message || 'captcha rect script failed' } }]);
+  return result?.[0]?.result || { success: false, error: 'captcha rect unavailable' };
+}
+
+async function cropDataUrl(dataUrl, rect, deviceScaleFactor = 1) {
+  if (!rect || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap !== 'function') {
+    return dataUrl;
+  }
+  const blob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const scale = Number(deviceScaleFactor || 1) || 1;
+  const sx = Math.max(0, Math.floor(rect.left * scale));
+  const sy = Math.max(0, Math.floor(rect.top * scale));
+  const sw = Math.min(bitmap.width - sx, Math.ceil(rect.width * scale));
+  const sh = Math.min(bitmap.height - sy, Math.ceil(rect.height * scale));
+  if (sw <= 0 || sh <= 0) return dataUrl;
+  const canvas = new OffscreenCanvas(sw, sh);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+  const out = await canvas.convertToBlob({ type: 'image/png' });
+  const bytes = new Uint8Array(await out.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:image/png;base64,${btoa(binary)}`;
+}
+
+async function captureManualCaptchaImage(tab) {
+  const tabId = tab?.id;
+  if (!tabId) throw new Error('captcha tab id is required');
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(500);
+  const rectResult = await getManualCaptchaRect(tabId);
+  const imageDataUrl = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
+  if (!rectResult?.success) return imageDataUrl;
+  return await cropDataUrl(imageDataUrl, rectResult.rect, currentTab.width ? currentTab.width / currentTab.width : 1).catch(() => imageDataUrl);
+}
+
+async function waitForManualCaptchaAnswer(id, timeoutMs = MANUAL_CAPTCHA_WAIT_TIMEOUT_MS) {
+  const startAt = Date.now();
+  while (Date.now() - startAt < timeoutMs) {
+    const result = await fetchManualCaptchaAnswer(id).catch(() => null);
+    if (result?.answered && result.answer) return result.answer;
+    await sleep(2000);
+  }
+  throw new Error('manual captcha answer timeout');
+}
+
+async function fillManualCaptchaAnswer(tabId, answer) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (captchaAnswer) => {
+      const getText = el => [
+        el.textContent,
+        el.value,
+        el.placeholder,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const input = [...document.querySelectorAll('input[type="text"], input:not([type]), textarea')]
+        .find(el => /\u8868\u793a\u3055\u308c\u3066\u3044\u308b\u6587\u5b57|\u6587\u5b57/.test(getText(el)) || el.offsetWidth > 100);
+      if (!input) return { success: false, error: 'captcha input not found' };
+      input.focus();
+      input.value = captchaAnswer;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      const controls = [...document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')];
+      const button = controls.find(el => /^\s*\u7d9a\u3051\u308b\s*$/.test(getText(el)));
+      if (!button) return { success: false, error: 'captcha submit button not found' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      button.click();
+      return { success: true };
+    },
+    args: [answer]
+  });
+  return result?.[0]?.result || { success: false, error: 'captcha fill script failed' };
+}
+
+async function detectManualPinPage(tab) {
+  const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  if (!current?.id || !isLikelyManualPinTab(current)) return false;
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: current.id },
+    world: 'MAIN',
+    func: () => {
+      const text = String(document.body?.innerText || document.body?.textContent || '').replace(/\s+/g, ' ');
+      const hasInput = !!document.querySelector('input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])');
+      return hasInput && /(PIN|pin|\u78ba\u8a8d\u30b3\u30fc\u30c9|\u8a8d\u8a3c\u30b3\u30fc\u30c9|\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u30b3\u30fc\u30c9|\u30b3\u30fc\u30c9)/.test(text);
+    }
+  }).catch(() => [{ result: isLikelyManualPinTab(current) }]);
+  return !!result?.[0]?.result;
+}
+
+async function fillManualPinAnswer(tabId, answer) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (pinAnswer) => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => [
+        el.textContent,
+        el.value,
+        el.placeholder,
+        el.name,
+        el.id,
+        el.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' ');
+      const inputs = [...document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])')]
+        .filter(el => !el.disabled && !el.readOnly && el.offsetWidth > 0 && el.offsetHeight > 0);
+      const input = inputs.find(el => /(PIN|pin|\u78ba\u8a8d|\u8a8d\u8a3c|\u30b3\u30fc\u30c9|\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3)/.test(getText(el))) || inputs[0];
+      if (!input) return { success: false, error: 'pin input not found' };
+      input.focus();
+      input.value = pinAnswer;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      const controls = [...document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"], a')]
+        .filter(el => !el.disabled && el.offsetWidth > 0 && el.offsetHeight > 0);
+      const button = controls.find(el => /(\u7d9a\u3051\u308b|\u6b21\u3078|\u78ba\u8a8d|\u9001\u4fe1|\u8a8d\u8a3c)/.test(normalize(getText(el)))) || controls.find(el => el.tagName === 'BUTTON' || el.type === 'submit');
+      if (!button) return { success: false, error: 'pin submit button not found' };
+      button.scrollIntoView?.({ block: 'center', inline: 'center' });
+      button.click();
+      return { success: true };
+    },
+    args: [answer]
+  });
+  return result?.[0]?.result || { success: false, error: 'pin fill script failed' };
+}
+
+async function handleManualVerificationIfPresent(tab, context = {}) {
+  let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  let handled = false;
+  let pinAnswer = String(context.pinAnswer || '').trim();
+  for (let step = 0; step < 6 && current?.id; step += 1) {
+    current = await chrome.tabs.get(current.id).catch(() => current);
+    if (isManualCaptchaTab(current)) {
+      handled = true;
+      const id = buildManualVerificationId('captcha', current, context);
+      const imageDataUrl = await captureManualCaptchaImage(current);
+      await postManualCaptchaChallenge({
+        id,
+        type: 'captcha',
+        imageDataUrl,
+        pageUrl: current.url || '',
+        productId: context.productId || '',
+        source: context.source || ''
+      });
+      const answer = await waitForManualCaptchaAnswer(id);
+      const fillResult = await fillManualCaptchaAnswer(current.id, answer);
+      if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
+      await closeManualCaptchaChallenge(id);
+      await waitForTabComplete(current.id, 60000).catch(() => {});
+      await sleep(2000);
+      continue;
+    }
+
+    const pinDetected = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+    if (!pinDetected) break;
+    handled = true;
+    let pinChallengeId = '';
+    if (!pinAnswer) {
+      pinChallengeId = buildManualVerificationId('pin', current, context);
+      await postManualCaptchaChallenge({
+        id: pinChallengeId,
+        type: 'pin',
+        message: 'Yahoo PIN code verification',
+        pageUrl: current.url || '',
+        productId: context.productId || '',
+        source: context.source || ''
+      });
+      pinAnswer = await waitForManualCaptchaAnswer(pinChallengeId);
+    }
+    const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
+    if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
+    if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
+    await waitForTabComplete(current.id, 60000).catch(() => {});
+    await sleep(2500);
+  }
+  if (current?.id) await injectContentScript(current.id).catch(() => {});
+  return { handled, tab: current || tab, pinAnswer };
+}
+
+async function handleManualCaptchaIfPresent(tab, context = {}) {
+  return handleManualVerificationIfPresent(tab, context);
+}
+
 async function openTransactionPage(job) {
   const createdTabIds = [];
   if (job.transactionUrl) {
@@ -1714,9 +1982,11 @@ async function openTransactionPage(job) {
     if (tab.id) createdTabIds.push(tab.id);
     if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
     await sleep(3000);
-    await injectContentScript(tab.id);
+    await injectContentScript(tab.id).catch(() => {});
     tab._gdaipaiCreatedTabIds = createdTabIds;
-    return tab;
+    const captchaResult = await handleManualCaptchaIfPresent(tab, { productId: job.productId, source: 'transaction_url' });
+    captchaResult.tab._gdaipaiCreatedTabIds = createdTabIds;
+    return captchaResult.tab;
   }
   const tab = await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/won', active: false });
   if (tab.id) createdTabIds.push(tab.id);
@@ -1737,13 +2007,17 @@ async function openTransactionPage(job) {
     const nextTab = await switchToNewestNewTab(new Set(createdTabIds), tab);
     for (const id of nextTab._gdaipaiCreatedTabIds || []) createdTabIds.push(id);
     nextTab._gdaipaiCreatedTabIds = [...new Set(createdTabIds)];
-    return nextTab;
+    const captchaResult = await handleManualCaptchaIfPresent(nextTab, { productId: job.productId, source: 'transaction_contact_new_tab' });
+    captchaResult.tab._gdaipaiCreatedTabIds = [...new Set(createdTabIds)];
+    return captchaResult.tab;
   }
   await waitForTabComplete(tab.id).catch(() => {});
   await sleep(3000);
-  await injectContentScript(tab.id);
+  await injectContentScript(tab.id).catch(() => {});
   tab._gdaipaiCreatedTabIds = createdTabIds;
-  return tab;
+  const captchaResult = await handleManualCaptchaIfPresent(tab, { productId: job.productId, source: 'transaction_contact' });
+  captchaResult.tab._gdaipaiCreatedTabIds = createdTabIds;
+  return captchaResult.tab;
 }
 
 async function getTabIds() {
@@ -1765,7 +2039,7 @@ async function switchToNewestNewTab(previousIds, fallbackTab) {
   }
   if (nextTab.id) await waitForTabComplete(nextTab.id).catch(() => {});
   await sleep(1500);
-  await injectContentScript(nextTab.id);
+  await injectContentScript(nextTab.id).catch(() => {});
   nextTab._gdaipaiCreatedTabIds = [...created];
   return nextTab;
 }
@@ -2792,6 +3066,9 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   runConfirmReceiptJobs,
   buildConfirmReceiptPageStateFromSnapshot,
   buildPaymentFailurePayload,
+  isManualCaptchaTab,
+  isLikelyManualPinTab,
+  buildManualCaptchaId,
   confirmWonBeforeFail,
   getExpectedPaymentAmountJpy,
   getExpectedPaymentShippingFeeJpy,

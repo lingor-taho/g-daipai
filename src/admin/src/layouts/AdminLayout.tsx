@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Layout, Menu, Space, Typography, message } from 'antd';
+import { Alert, Button, Input, Layout, Menu, Space, Typography, message } from 'antd';
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
 
@@ -55,6 +55,8 @@ export default function AdminLayout() {
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
   const [paymentAlert, setPaymentAlert] = useState('');
   const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
+  const [captchaChallenge, setCaptchaChallenge] = useState<any>(null);
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
@@ -81,12 +83,16 @@ export default function AdminLayout() {
         if (active) {
           setPaymentAlert(flags.paymentAlertMessage || '');
           setConfirmReceiptAlert(flags.confirmReceiptAlertMessage || '');
+          setCaptchaChallenge(flags.captchaChallenge || null);
+          if (!flags.captchaChallenge) setCaptchaAnswer('');
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
         }
       } catch {
         if (active) {
           setPaymentAlert('');
           setConfirmReceiptAlert('');
+          setCaptchaChallenge(null);
+          setCaptchaAnswer('');
           setShipmentAlerts([]);
         }
       }
@@ -135,6 +141,42 @@ export default function AdminLayout() {
       message.error(e.message || '关闭待发货提醒失败');
     }
   }
+
+  async function submitCaptchaAnswer() {
+    const answer = captchaAnswer.trim();
+    if (!captchaChallenge?.id || !answer) {
+      message.warning(captchaChallenge?.type === 'pin' ? '请输入 PIN 码' : '请输入验证码文字');
+      return;
+    }
+    try {
+      await fetchAdminJson('/api/admin/manual-captcha/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: captchaChallenge.id, answer })
+      });
+      setCaptchaAnswer('');
+      message.success('已提交，插件会继续当前任务');
+    } catch (e: any) {
+      message.error(e.message || '提交验证信息失败');
+    }
+  }
+
+  async function closeCaptchaChallenge() {
+    if (!captchaChallenge?.id) return;
+    try {
+      await fetchAdminJson('/api/admin/manual-captcha/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: captchaChallenge.id })
+      });
+      setCaptchaChallenge(null);
+      setCaptchaAnswer('');
+    } catch (e: any) {
+      message.error(e.message || '关闭验证码失败');
+    }
+  }
+
+  const isPinChallenge = captchaChallenge?.type === 'pin';
 
   return (
     <Layout className="admin-shell" style={{ minHeight: '100vh' }}>
@@ -234,6 +276,45 @@ export default function AdminLayout() {
                 type="error"
                 showIcon
                 message={<Typography.Text style={{ color: '#cf1322' }}>{renderPaymentAlertMessage(confirmReceiptAlert)}</Typography.Text>}
+                style={{ marginBottom: 12 }}
+              />
+            ) : null}
+            {captchaChallenge ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Typography.Text strong>
+                      {isPinChallenge ? 'Yahoo 需要 PIN 码验证，请输入 PIN 后继续任务' : 'Yahoo 需要文字验证码，请人工输入后继续任务'}
+                    </Typography.Text>
+                    <Space wrap align="start">
+                      {!isPinChallenge ? (
+                        <img
+                          src={captchaChallenge.imageDataUrl}
+                          alt="Yahoo 验证码"
+                          style={{ maxWidth: 360, width: '100%', border: '1px solid #d9d9d9', background: '#fff' }}
+                        />
+                      ) : null}
+                      <Space direction="vertical">
+                        <Typography.Text type="secondary">
+                          {captchaChallenge.productId ? `商品ID：${captchaChallenge.productId}` : 'Yahoo 验证页面'}
+                        </Typography.Text>
+                        <Input
+                          value={captchaAnswer}
+                          onChange={event => setCaptchaAnswer(event.target.value)}
+                          onPressEnter={submitCaptchaAnswer}
+                          placeholder={isPinChallenge ? '输入 PIN 码' : '输入图中日文'}
+                          style={{ width: 220 }}
+                        />
+                        <Space>
+                          <Button type="primary" onClick={submitCaptchaAnswer}>{isPinChallenge ? '提交 PIN' : '提交验证码'}</Button>
+                          <Button onClick={closeCaptchaChallenge}>关闭</Button>
+                        </Space>
+                      </Space>
+                    </Space>
+                  </Space>
+                }
                 style={{ marginBottom: 12 }}
               />
             ) : null}

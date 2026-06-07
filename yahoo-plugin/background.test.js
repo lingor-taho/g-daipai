@@ -1383,6 +1383,23 @@ function testBuildPaymentFailurePayloadIncludesProductId() {
   assert.equal(payload.error, 'payment page detail phase disabled');
 }
 
+function testManualCaptchaTabDetection() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.isManualCaptchaTab({ url: 'https://login.yahoo.co.jp/ncaptcha?fido=1' }), true);
+  assert.equal(api.isManualCaptchaTab({ url: 'https://login.yahoo.co.jp/config/login?.src=auc' }), false);
+  assert.equal(api.isManualCaptchaTab({ url: 'https://contact.auctions.yahoo.co.jp/buyer/top' }), false);
+}
+
+function testLikelyManualPinTabDetection() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.isLikelyManualPinTab({ url: 'https://login.yahoo.co.jp/config/verify?.src=pay' }), true);
+  assert.equal(api.isLikelyManualPinTab({ url: 'https://account.edit.yahoo.co.jp/verify' }), true);
+  assert.equal(api.isLikelyManualPinTab({ url: 'https://contact.auctions.yahoo.co.jp/buyer/top' }), false);
+  assert.equal(api.isLikelyManualPinTab({ url: 'https://login.yahoo.co.jp/ncaptcha?fido=1' }), false);
+}
+
 function testYahooLoginPageCountsAsTransactionTab() {
   const api = loadBackgroundForTest();
 
@@ -1503,6 +1520,8 @@ async function run() {
   await testPaymentShippingChangeClickPointUsesShippingSectionRoleButton();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
+  testManualCaptchaTabDetection();
+  testLikelyManualPinTabDetection();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
   await testConfirmWonBeforeFailUsesWonPageSyncResult();

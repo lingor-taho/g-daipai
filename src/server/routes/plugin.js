@@ -11,6 +11,11 @@ const {
   findRowsByProductIdWithAnyColor,
   isGoogleSheetsConfigured
 } = require('../services/googleSheets');
+const {
+  saveCaptchaChallenge,
+  getCaptchaChallenge,
+  closeCaptchaChallenge
+} = require('../services/manualCaptcha');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
@@ -2100,6 +2105,33 @@ router.post('/payment/status', async (req, res) => {
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'payment update failed' });
   }
+});
+
+router.post('/manual-captcha/challenge', async (req, res) => {
+  try {
+    const challenge = await saveCaptchaChallenge(db, req.body || {});
+    res.json({ success: true, challenge: { ...challenge, imageDataUrl: challenge.imageDataUrl } });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'captcha challenge failed' });
+  }
+});
+
+router.get('/manual-captcha/answer/:id', async (req, res) => {
+  const challenge = await getCaptchaChallenge(db);
+  if (!challenge || challenge.id !== String(req.params.id || '')) {
+    return res.json({ success: true, found: false, answered: false });
+  }
+  res.json({
+    success: true,
+    found: true,
+    answered: !!challenge.answer,
+    answer: challenge.answer || ''
+  });
+});
+
+router.post('/manual-captcha/close', async (req, res) => {
+  const result = await closeCaptchaChallenge(db, req.body?.id || '');
+  res.json({ success: true, ...result });
 });
 
 router.post('/yahoo-login/status', async (req, res) => {

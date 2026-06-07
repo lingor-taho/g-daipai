@@ -34,6 +34,11 @@ const {
   backfillMissingOrderStatusAuditLogs
 } = require('../services/orderStatusAudit');
 const { getSheetConfig } = require('../services/googleSheets');
+const {
+  getCaptchaChallenge,
+  answerCaptchaChallenge,
+  closeCaptchaChallenge
+} = require('../services/manualCaptcha');
 
 const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_COMPLETED = 'completed';
@@ -1183,6 +1188,20 @@ router.post('/payment/continue', async (req, res) => {
   res.json(result);
 });
 
+router.post('/manual-captcha/answer', async (req, res) => {
+  try {
+    const challenge = await answerCaptchaChallenge(db, req.body || {});
+    res.json({ success: true, id: challenge.id, answeredAt: challenge.answeredAt });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'captcha answer failed' });
+  }
+});
+
+router.post('/manual-captcha/close', async (req, res) => {
+  const result = await closeCaptchaChallenge(db, req.body?.id || '');
+  res.json({ success: true, ...result });
+});
+
 router.post('/transaction-start/reset-orders', async (req, res) => {
   const beforeRows = await db.getAll(
     `SELECT o.id AS order_id, o.order_status AS old_status, t.product_id
@@ -1288,6 +1307,7 @@ router.get('/idle-flags', async (req, res) => {
     scanEveryIdleRuns,
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
     paymentAlertMessage: values.payment_alert_message || '',
+    captchaChallenge: await getCaptchaChallenge(db),
     shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt)
   });
 });

@@ -53,7 +53,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '6mb' }));
 
 app.use('/api/task', taskRoutes);
 app.use('/api/admin', adminRoutes);

@@ -1616,6 +1616,42 @@ node yahoo-plugin\content.test.js
 ```
 ---
 
+## 2026-06-07 Yahoo PIN / 文字验证码人工协同
+
+### 已实现内容
+
+- 插件打开 `取引連絡` / 取引页时，如果跳到 Yahoo 人工验证页，会自动暂停当前流程并把验证需求同步到后台顶部提醒栏。
+- 后台提醒栏复用 `config.manual_captcha_challenge` 存储当前验证挑战，支持两种类型：
+  - `type='pin'`：只显示 PIN 输入框和“提交 PIN”按钮。
+  - `type='captcha'`：显示验证码图片、输入框和“提交验证码”按钮。
+- PIN 页面识别：
+  - 插件会优先按 Yahoo 登录/账号验证域名和 URL 关键字判断可能的 PIN 页；
+  - 再读取页面文本和输入框，匹配 `PIN`、`確認コード`、`認証コード`、`セキュリティコード`、`コード` 等文字。
+- PIN 协同流程：
+  - 后台顶部出现“Yahoo 需要 PIN 码验证，请输入 PIN 后继续任务”；
+  - 管理员输入 PIN 后，插件轮询 `/api/plugin/manual-captcha/answer/:id` 拿到答案；
+  - 插件自动填入 Yahoo PIN 输入框并点击继续/确认类按钮；
+  - 如果验证码之后再次回到 PIN 页，会复用刚才的 PIN 自动再填一次，不再重复提醒管理员输入。
+- 文字验证码协同流程：
+  - 跳到 `https://login.yahoo.co.jp/ncaptcha...` 时，插件激活验证码 tab；
+  - 使用 `chrome.tabs.captureVisibleTab` 截取可见页，并优先裁出验证码图片区域；裁剪失败时回退为整页截图；
+  - 验证码图片以 data URL 写入服务端，后台 `/api/admin/idle-flags` 返回当前待处理验证码；
+  - 管理员输入图中日文后，插件自动填入 Yahoo 验证码输入框并点击 `続ける`。
+- 验证流程最多循环 6 步，覆盖 `PIN -> 验证码 -> PIN -> 取引页` 这类链路，避免无限卡住。
+- 每次 PIN / 验证码提交并成功填入后，插件会关闭对应后台提醒；验证结束后继续原来的取引页流程。
+- 该功能是人工协同，不做自动识别验证码，也不绕过 Yahoo 验证；后续拿到真实 PIN 页面源码/截图后，仍可能需要微调输入框和按钮选择器。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\manualCaptcha.test.js
+node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
+Set-Location src\admin
+npm run build
+```
+---
+
 ## 2026-06-06 待收货物流单号显示与抽取修正
 
 ### 已实现内容
