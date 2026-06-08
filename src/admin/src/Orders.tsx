@@ -34,6 +34,19 @@ function formatDateTime(value: string | null | undefined) {
   return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second}`;
 }
 
+function truncateText(value: string | null | undefined, maxLength = 20) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function renderShippingText(row: any) {
+  const shipping = row.shipping_fee_text || '-';
+  const bundleShipping = String(row.bundle_shipping_fee_text || '').trim();
+  if (!bundleShipping) return shipping;
+  return `${shipping}->${bundleShipping}`;
+}
+
 function renderTransactionStartLastRun(log: any) {
   if (!log) return '最近执行：-';
   const source = log.source === 'manual' ? '手动' : '自动';
@@ -286,8 +299,15 @@ export default function OrdersPage() {
         return <span>{idNode}{renderProductTypeTag(row.product_type)}</span>;
       }
     },
-    { title: '运费', dataIndex: 'shipping_fee_text', width: 120, ellipsis: true, onCell: () => noWrapCell },
-    { title: '同捆运费', dataIndex: 'bundle_shipping_fee_text', width: 100, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => row.bundle_shipping_fee_text || '-' },
+    {
+      title: '商品名称',
+      dataIndex: 'product_title',
+      width: 190,
+      ellipsis: true,
+      render: (_: any, row: any) => truncateText(row.product_title)
+    },
+    { title: '落札时间', dataIndex: 'won_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.won_at || row.won_time_text) },
+    { title: '运费', dataIndex: 'shipping_fee_text', width: 150, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderShippingText(row) },
     { title: '落札金额', dataIndex: 'final_price', width: 105, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.final_price) },
     { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 100, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
     { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },
@@ -441,7 +461,7 @@ export default function OrdersPage() {
           }
         }}
         search={false}
-        scroll={{ x: 1185 }}
+        scroll={{ x: 1460 }}
       />
     </Space>
   );

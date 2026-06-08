@@ -225,7 +225,8 @@ function testMapAdminOrderListItemUsesEffectiveBundleShipping() {
 
   const mapped = mapAdminOrderListItem(item);
 
-  assert.equal(mapped.shipping_fee_text, '110\u5186');
+  assert.equal(mapped.shipping_fee_text, '\u9001\u6599 \u843d\u672d\u8005\u8ca0\u62c5');
+  assert.equal(mapped.effective_shipping_fee_text, '110\u5186');
   assert.equal(mapped.can_settle, true);
   assert.equal(mapped.shipping_fee_jpy, 110);
   assert.equal(mapped.bundle_shipping_fee_text, '110\u5186');
