@@ -4,6 +4,7 @@ const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
 const { actingUserMiddleware } = require('../services/actingUser');
+const { getWebsiteRate } = require('../services/websiteRate');
 const { DEFAULT_MULTI_BID_MIN_PRICE, shouldSplitDirectBidByYahooLowPriceRule, YAHOO_LOW_PRICE_INITIAL_BID } = require('./plugin');
 const { getCaptchaChallenge } = require('../services/manualCaptcha');
 router.use(authMiddleware);
@@ -522,6 +523,23 @@ router.get('/manual-verification-alert', async (req, res) => {
     res.json(buildClientManualVerificationAlert(req.user, challenge));
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/website-rate', async (req, res) => {
+  try {
+    const rate = await getWebsiteRate();
+    res.json({
+      success: true,
+      rate: rate.rate,
+      sourceRate: rate.sourceRate,
+      sourceName: rate.sourceName,
+      fetchedAt: rate.fetchedAt,
+      expiresAt: rate.expiresAt,
+      cacheHit: rate.cacheHit
+    });
+  } catch (err) {
+    res.status(503).json({ error: err.message || 'failed to fetch website rate' });
   }
 });
 

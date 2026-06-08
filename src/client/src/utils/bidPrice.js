@@ -32,7 +32,7 @@ export function getActualBidPrice(maxPrice, product, storeBidPriceMode) {
   const value = Number(maxPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
   if (isStoreProduct(product) && storeBidPriceMode === 'tax_before') {
-    return Math.floor(value * 1.1);
+    return Math.ceil(value * 1.1);
   }
   return Math.floor(value);
 }
@@ -115,4 +115,50 @@ export function isSubmitMaxPriceAboveCurrentPrice(submitMaxPrice, product) {
   const currentPrice = getComparableCurrentPrice(product);
   if (currentPrice <= 0) return true;
   return Number(submitMaxPrice || 0) > currentPrice;
+}
+
+export function getBidInputYenPrice(inputAmount, currency = 'jpy', websiteRate = 0) {
+  const value = Number(inputAmount || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (currency !== 'cny') return Math.floor(value);
+  const rate = Number(websiteRate || 0);
+  if (!Number.isFinite(rate) || rate <= 0) return 0;
+  return Math.floor(value / rate);
+}
+
+export function formatCnyAmount(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return '0';
+  const rounded = Number(amount.toFixed(2));
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+export function getYenAsCnyAmount(yenAmount, websiteRate = 0) {
+  const yen = Number(yenAmount || 0);
+  const rate = Number(websiteRate || 0);
+  if (!Number.isFinite(yen) || yen <= 0 || !Number.isFinite(rate) || rate <= 0) return 0;
+  return Number((yen * rate).toFixed(2));
+}
+
+export function getActualBidDisplay(inputAmount, product, storeBidPriceMode, currency = 'jpy', websiteRate = 0) {
+  const inputYenPrice = getBidInputYenPrice(inputAmount, currency, websiteRate);
+  const actualYenPrice = getActualBidPrice(inputYenPrice, product, storeBidPriceMode);
+  if (currency !== 'cny') {
+    return {
+      inputYenPrice,
+      actualYenPrice,
+      actualCnyAmount: 0
+    };
+  }
+
+  const inputCnyAmount = Number(inputAmount || 0);
+  const actualCnyAmount = isStoreProduct(product) && storeBidPriceMode === 'tax_before'
+    ? Number((inputCnyAmount * 1.1).toFixed(2))
+    : inputCnyAmount;
+
+  return {
+    inputYenPrice,
+    actualYenPrice,
+    actualCnyAmount
+  };
 }

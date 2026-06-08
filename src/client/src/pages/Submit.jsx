@@ -1,8 +1,8 @@
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
-import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, submitTask } from '../utils/api';
-import { getActualBidPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
+import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
+import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -40,6 +40,8 @@ function getDisplayPrice(price, taxType) {
 const YAHOO_LOW_PRICE_THRESHOLD = 1000;
 const YAHOO_LOW_PRICE_BID_LIMIT = 10000;
 const YAHOO_LOW_PRICE_INITIAL_BID = 9000;
+const WEBSITE_RATE_CACHE_KEY = 'websiteBidRateCache';
+const WEBSITE_RATE_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 
 // 把含税值折回税前（Yahoo 内部口径）。普通商品税前=原值。
 function toTaxExcludedYen(value, taxType) {
@@ -79,6 +81,29 @@ function getDefaultMultiBidIncrement(maxPrice) {
   return getMinMultiBidIncrement(maxPrice);
 }
 
+function readWebsiteRateCache(nowMs = Date.now()) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WEBSITE_RATE_CACHE_KEY) || 'null');
+    if (!parsed || Number(parsed.rate || 0) <= 0 || Number(parsed.expiresAtMs || 0) <= nowMs) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeWebsiteRateCache(data, nowMs = Date.now()) {
+  const rate = Number(data?.rate || 0);
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  const cached = {
+    rate,
+    sourceRate: Number(data?.sourceRate || 0) || null,
+    fetchedAt: data?.fetchedAt || new Date(nowMs).toISOString(),
+    expiresAtMs: nowMs + WEBSITE_RATE_CACHE_TTL_MS
+  };
+  localStorage.setItem(WEBSITE_RATE_CACHE_KEY, JSON.stringify(cached));
+  return cached;
+}
+
 function hasDirectBiddingRecord(tasks, auctionId) {
   const normalizedAuctionId = String(auctionId || '').toLowerCase();
   return tasks.some(task => {
@@ -102,6 +127,10 @@ export default function Submit() {
   const [fetching, setFetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [storeBidPriceMode, setStoreBidPriceMode] = useState('tax_before');
+  const [bidCurrency, setBidCurrency] = useState('jpy');
+  const [websiteRate, setWebsiteRate] = useState(null);
+  const [websiteRateLoading, setWebsiteRateLoading] = useState(false);
+  const [websiteRateError, setWebsiteRateError] = useState('');
   const [lastFetchedUrl, setLastFetchedUrl] = useState('');
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [multiBidConfig, setMultiBidConfig] = useState({
@@ -127,6 +156,31 @@ export default function Submit() {
   }, []);
 
   useEffect(() => {
+    const cached = readWebsiteRateCache();
+    if (cached) {
+      setWebsiteRate(cached);
+      return;
+    }
+    setWebsiteRateLoading(true);
+    runDeduped('Submit:getWebsiteRate', getWebsiteRate)
+      .then(res => {
+        const nextRate = writeWebsiteRateCache(res.data);
+        if (nextRate) {
+          setWebsiteRate(nextRate);
+          setWebsiteRateError('');
+        } else {
+          setWebsiteRateError('网站汇率无效');
+        }
+      })
+      .catch(() => {
+        setWebsiteRateError('网站汇率获取失败');
+      })
+      .finally(() => {
+        setWebsiteRateLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
     const prefillUrl = String(searchParams.get('url') || '').trim();
     if (!prefillUrl) return;
     setUrl(prefillUrl);
@@ -144,6 +198,7 @@ export default function Submit() {
       setMultiBidIncrement('');
       setBuyoutSelected(false);
       setStoreBidPriceMode('tax_before');
+      setBidCurrency('jpy');
       setLastFetchedUrl('');
       setTaskListVersion(version => version + 1);
     }
@@ -192,7 +247,10 @@ export default function Submit() {
         setStoreBidPriceMode('tax_before');
         if (isBuyoutOnlyProduct(nextProduct)) {
           setBuyoutSelected(true);
-          setMaxPrice(String(getBuyoutSubmitPrice(nextProduct) || ''));
+          const buyoutSubmitPrice = getBuyoutSubmitPrice(nextProduct) || 0;
+          setMaxPrice(bidCurrency === 'cny' && websiteRate?.rate
+            ? formatCnyAmount(getYenAsCnyAmount(buyoutSubmitPrice, websiteRate.rate))
+            : String(buyoutSubmitPrice || ''));
           setStrategy('direct');
         } else {
           setBuyoutSelected(false);
@@ -222,13 +280,74 @@ export default function Submit() {
     handleFetch(url, { skipIfFetched: true, silentInvalid: true });
   }
 
+  function getInputYenPrice(value = maxPrice, currency = bidCurrency) {
+    return getBidInputYenPrice(value, currency, websiteRate?.rate || 0);
+  }
+
+  function getDisplayedInputValue() {
+    if (!(buyoutSelected || buyoutOnly)) return maxPrice;
+    const buyoutSubmitPrice = getBuyoutSubmitPrice(product) || 0;
+    if (bidCurrency === 'cny' && websiteRate?.rate) {
+      return formatCnyAmount(getYenAsCnyAmount(buyoutSubmitPrice, websiteRate.rate));
+    }
+    return String(buyoutSubmitPrice || '');
+  }
+
+  function getActualBidSourceInput() {
+    if (!(buyoutSelected || buyoutOnly)) return maxPrice;
+    return getDisplayedInputValue();
+  }
+
+  function updateMultiBidIncrementForInput(value, currency = bidCurrency, priceMode = storeBidPriceMode) {
+    if (strategy !== 'multi_bid') return;
+    const inputYenPrice = getBidInputYenPrice(value, currency, websiteRate?.rate || 0);
+    const nextEffectiveMaxPrice = getSubmitMaxPrice(inputYenPrice, product, priceMode);
+    const nextDefault = getDefaultMultiBidIncrement(nextEffectiveMaxPrice);
+    setMultiBidIncrement(String(nextDefault || ''));
+  }
+
+  function handleCurrencyChange(nextCurrency) {
+    if (nextCurrency === bidCurrency) return;
+    if (nextCurrency === 'cny' && !websiteRate?.rate) {
+      Toast.show({ content: websiteRateLoading ? '网站汇率获取中' : (websiteRateError || '网站汇率获取失败') });
+      return;
+    }
+
+    const currentYen = getInputYenPrice();
+    let nextValue = maxPrice;
+    if (currentYen > 0) {
+      nextValue = nextCurrency === 'cny'
+        ? formatCnyAmount(getYenAsCnyAmount(currentYen, websiteRate.rate))
+        : String(currentYen);
+      setMaxPrice(nextValue);
+    }
+    setBidCurrency(nextCurrency);
+    updateMultiBidIncrementForInput(nextValue, nextCurrency);
+  }
+
+  function renderActualBidText() {
+    const sourceInput = getActualBidSourceInput();
+    const actualPriceMode = (buyoutSelected || buyoutOnly) ? 'tax_after' : storeBidPriceMode;
+    const display = getActualBidDisplay(sourceInput, product, actualPriceMode, bidCurrency, websiteRate?.rate || 0);
+    if (!display.actualYenPrice) {
+      return bidCurrency === 'cny'
+        ? '实际出价：0人民币 ≈0日元'
+        : '实际出价：0日元';
+    }
+    if (bidCurrency === 'cny') {
+      return `实际出价：${formatCnyAmount(display.actualCnyAmount)}人民币 ≈${display.actualYenPrice.toLocaleString('ja-JP')}日元`;
+    }
+    return `实际出价：${display.actualYenPrice.toLocaleString('ja-JP')}日元`;
+  }
+
   async function handleSubmit() {
     if (submitting) return;
     const submitTaxType = getSubmitTaxType(product, storeBidPriceMode);
     const buyoutPrice = getBuyoutPrice(product);
+    const inputYenPrice = getInputYenPrice();
     const effectiveMaxPrice = (buyoutSelected || buyoutOnly)
       ? getBuyoutSubmitPrice(product)
-      : getSubmitMaxPrice(maxPrice, product, storeBidPriceMode);
+      : getSubmitMaxPrice(inputYenPrice, product, storeBidPriceMode);
     if ((buyoutSelected || buyoutOnly) && buyoutPrice <= 0) {
       Toast.show({ content: '出价失败：该商品没有即決价格' });
       return;
@@ -241,7 +360,7 @@ export default function Submit() {
     const submitTaxExcludedPrice = toTaxExcludedYen(effectiveMaxPrice, submitTaxType);
     const inputRequirement = getMinimumBidInputRequirement(product, storeBidPriceMode);
     const inputPriceForRequirement = isStoreProduct(product) && storeBidPriceMode === 'tax_after'
-      ? Number(maxPrice || 0)
+      ? inputYenPrice
       : submitTaxExcludedPrice;
     if (!buyoutSelected && !buyoutOnly && inputPriceForRequirement < inputRequirement.requiredPrice) {
       const reason = inputRequirement.increment > 0
@@ -298,7 +417,7 @@ export default function Submit() {
         taxType: submitTaxType
       })) {
         // 弹窗里显示用户原本输入的最高价和价格类型（税前/税后），避免与"实际出价"混淆。
-        const userTypedMaxPrice = Math.floor(Number(maxPrice || 0));
+        const userTypedMaxPrice = Math.floor(Number(inputYenPrice || 0));
         const isStore = isStoreProduct(product);
         const priceTypeLabel = isStore
           ? (storeBidPriceMode === 'tax_before' ? '税前最高价' : '税后最高价')
@@ -408,7 +527,10 @@ export default function Submit() {
                       if (buyoutOnly) return;
                       setBuyoutSelected(checked);
                       if (checked) {
-                        setMaxPrice(String(getBuyoutSubmitPrice(product) || ''));
+                        const buyoutSubmitPrice = getBuyoutSubmitPrice(product) || 0;
+                        setMaxPrice(bidCurrency === 'cny' && websiteRate?.rate
+                          ? formatCnyAmount(getYenAsCnyAmount(buyoutSubmitPrice, websiteRate.rate))
+                          : String(buyoutSubmitPrice || ''));
                         setStrategy('direct');
                       }
                     }}
@@ -427,10 +549,7 @@ export default function Submit() {
                   value={storeBidPriceMode}
                   onChange={(value) => {
                     setStoreBidPriceMode(value);
-                    if (strategy === 'multi_bid') {
-                      const nextEffectiveMaxPrice = getSubmitMaxPrice(maxPrice, product, value);
-                      setMultiBidIncrement(String(getDefaultMultiBidIncrement(nextEffectiveMaxPrice) || ''));
-                    }
+                    updateMultiBidIncrementForInput(maxPrice, bidCurrency, value);
                   }}
                   style={{ display: 'flex', justifyContent: 'flex-end', gap: 18 }}
                 >
@@ -444,30 +563,62 @@ export default function Submit() {
               extra={
                 <Input
                   type="number"
-                  value={(buyoutSelected || buyoutOnly) ? String(getBuyoutSubmitPrice(product) || '') : maxPrice}
+                  value={getDisplayedInputValue()}
                   onChange={(value) => {
                     setMaxPrice(value);
-                    if (strategy === 'multi_bid') {
-                      const nextEffectiveMaxPrice = getSubmitMaxPrice(value, product, storeBidPriceMode);
-                      const nextDefault = getDefaultMultiBidIncrement(nextEffectiveMaxPrice);
-                      setMultiBidIncrement(String(nextDefault || ''));
-                    }
+                    updateMultiBidIncrementForInput(value);
                   }}
-                  placeholder="日元"
+                  placeholder={bidCurrency === 'cny' ? '人民币' : '日元'}
                   disabled={buyoutSelected || buyoutOnly}
                   style={{ width: 100 }}
                 />
               }
             >
-              <span style={{ color: '#999', fontSize: 12 }}>日元</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <button
+                  type="button"
+                  onClick={() => handleCurrencyChange('jpy')}
+                  style={{
+                    border: 0,
+                    background: 'transparent',
+                    padding: 0,
+                    color: bidCurrency === 'jpy' ? '#8b1a1a' : '#999',
+                    fontWeight: bidCurrency === 'jpy' ? 700 : 400
+                  }}
+                >
+                  日元
+                </button>
+                <span style={{ color: '#d9d9d9' }}>|</span>
+                <button
+                  type="button"
+                  disabled={!websiteRate?.rate}
+                  onClick={() => handleCurrencyChange('cny')}
+                  style={{
+                    border: 0,
+                    background: 'transparent',
+                    padding: 0,
+                    color: bidCurrency === 'cny' ? '#8b1a1a' : '#999',
+                    fontWeight: bidCurrency === 'cny' ? 700 : 400,
+                    opacity: websiteRate?.rate ? 1 : 0.45
+                  }}
+                >
+                  人民币
+                </button>
+              </span>
             </List.Item>
-            {isStoreProduct(product) && !buyoutSelected && !buyoutOnly && (
-              <List.Item>
-                <div style={{ textAlign: 'right', color: '#d4380d', fontSize: 13, fontWeight: 600 }}>
-                  实际出价：{getActualBidPrice(maxPrice, product, storeBidPriceMode).toLocaleString('ja-JP')}日元
-                </div>
-              </List.Item>
-            )}
+            <List.Item>
+              <div style={{ textAlign: 'right', color: '#d4380d', fontSize: 13, fontWeight: 600 }}>
+                {renderActualBidText()}
+                {bidCurrency === 'jpy' && websiteRate?.rate ? (
+                  <span style={{ color: '#999', fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
+                    网站汇率 {Number(websiteRate.rate).toFixed(4)}
+                  </span>
+                ) : null}
+                {bidCurrency === 'jpy' && !websiteRate?.rate && websiteRateLoading ? (
+                  <span style={{ color: '#999', fontSize: 12, fontWeight: 400, marginLeft: 8 }}>网站汇率获取中</span>
+                ) : null}
+              </div>
+            </List.Item>
           </List>
 
           <List style={{ marginTop: 12 }}>
@@ -490,7 +641,7 @@ export default function Submit() {
               const nextStrategy = val[0] || 'direct';
               setStrategy(nextStrategy);
               if (nextStrategy === 'multi_bid') {
-                const effectiveMaxPriceForIncrement = getSubmitMaxPrice(maxPrice, product, storeBidPriceMode);
+                const effectiveMaxPriceForIncrement = getSubmitMaxPrice(getInputYenPrice(), product, storeBidPriceMode);
                 setMultiBidIncrement(String(getDefaultMultiBidIncrement(effectiveMaxPriceForIncrement) || ''));
               }
             }}
@@ -516,7 +667,7 @@ export default function Submit() {
               <div style={{ padding: '8px 16px 0', color: '#d4380d', fontSize: 13, lineHeight: 1.5 }}>
                 多次出价标准：最高价不低于{multiBidConfig.minPrice}日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
                 <br />
-                提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(maxPrice, product, storeBidPriceMode))}日元
+                提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(getInputYenPrice(), product, storeBidPriceMode))}日元
               </div>
             </>
           )}

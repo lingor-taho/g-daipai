@@ -28,6 +28,13 @@ const {
   assertBidStrategyAllowed,
   buildClientManualVerificationAlert
 } = require('./task');
+const {
+  calculateWebsiteRate,
+  clearWebsiteRateCache,
+  getWebsiteRate,
+  isWebsiteRateCacheValid,
+  parseBocJpyCashSellRate
+} = require('../services/websiteRate');
 
 function testSubmitUsesAuthenticatedUserId() {
   const input = buildSubmitTaskInput(
@@ -453,6 +460,62 @@ async function testFindTaskByClientRequestIdSkipsEmptyId() {
   assert.equal(called, false);
 }
 
+function testBocJpyCashSellRateParsing() {
+  const html = `
+    <table>
+      <tr><th>货币名称</th><th>现汇买入价</th><th>现钞买入价</th><th>现汇卖出价</th></tr>
+      <tr data-currency='日元'>
+        <td>日元</td>
+        <td>4.2163</td>
+        <td>4.2163</td>
+        <td>4.2518</td>
+        <td>4.2518</td>
+      </tr>
+    </table>
+  `;
+
+  assert.equal(parseBocJpyCashSellRate(html), 4.2518);
+}
+
+function testWebsiteRateCalculationRoundsToFourDecimals() {
+  assert.equal(calculateWebsiteRate(4.2518), 0.0445);
+  assert.equal(calculateWebsiteRate(4.2599), 0.0446);
+}
+
+function testWebsiteRateCacheValidity() {
+  assert.equal(isWebsiteRateCacheValid({ rate: 0.0445, sourceRate: 4.2518, expiresAtMs: 2000 }, 1000), true);
+  assert.equal(isWebsiteRateCacheValid({ rate: 0.0445, sourceRate: 4.2518, expiresAtMs: 1000 }, 1000), false);
+  assert.equal(isWebsiteRateCacheValid({ rate: 0, sourceRate: 4.2518, expiresAtMs: 2000 }, 1000), false);
+}
+
+async function testWebsiteRateProviderUsesCacheUntilExpiry() {
+  clearWebsiteRateCache();
+  let calls = 0;
+  const httpClient = {
+    async get() {
+      calls += 1;
+      return {
+        data: `
+          <tr data-currency='日元'>
+            <td>日元</td><td>4.2163</td><td>4.2163</td><td>4.2518</td><td>4.2518</td>
+          </tr>
+        `
+      };
+    }
+  };
+
+  const first = await getWebsiteRate({ nowMs: 1000, httpClient });
+  const second = await getWebsiteRate({ nowMs: 2000, httpClient });
+  const third = await getWebsiteRate({ nowMs: 1000 + (3 * 60 * 60 * 1000) + 1, httpClient });
+
+  assert.equal(first.rate, 0.0445);
+  assert.equal(first.cacheHit, false);
+  assert.equal(second.cacheHit, true);
+  assert.equal(third.cacheHit, false);
+  assert.equal(calls, 2);
+  clearWebsiteRateCache();
+}
+
 testSubmitUsesAuthenticatedUserId();
 testSubmitAcceptsBuyoutMode();
 testSubmitForcesBuyoutModeForBuyoutOnlyProducts();
@@ -482,9 +545,13 @@ testBidStrategyScopeDefaultsToAll();
 testDirectOnlyUserAllowsOnlyDirectStrategy();
 testClientAdminBypassesActingUserBidStrategyScope();
 testClientManualVerificationAlertOnlyShowsPinForClientAdmin();
+testBocJpyCashSellRateParsing();
+testWebsiteRateCalculationRoundsToFourDecimals();
+testWebsiteRateCacheValidity();
 Promise.all([
   testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope(),
-  testFindTaskByClientRequestIdSkipsEmptyId()
+  testFindTaskByClientRequestIdSkipsEmptyId(),
+  testWebsiteRateProviderUsesCacheUntilExpiry()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import {
   getComparableCurrentPrice,
   getActualBidPrice,
+  getActualBidDisplay,
+  getBidInputYenPrice,
   getBuyoutPrice,
   getBuyoutSubmitPrice,
+  getYenAsCnyAmount,
   getMinimumBidInputRequirement,
   getSubmitMaxPrice,
   getSubmitTaxType,
@@ -26,6 +29,7 @@ function testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual() {
 
   assert.equal(getSubmitTaxType(product, 'tax_before'), 'tax_included');
   assert.equal(getActualBidPrice(1000, product, 'tax_before'), 1100);
+  assert.equal(getActualBidPrice(2247, product, 'tax_before'), 2472);
   assert.equal(getSubmitMaxPrice(1000, product, 'tax_before'), 1100);
 }
 
@@ -43,6 +47,32 @@ function testNormalProductDoesNotApplyStoreMode() {
   assert.equal(getSubmitTaxType(product, 'tax_before'), 'tax_zero');
   assert.equal(getActualBidPrice(1000, product, 'tax_before'), 1000);
   assert.equal(getSubmitMaxPrice(1000, product, 'tax_before'), 1000);
+}
+
+function testRmbBidInputConvertsToYen() {
+  assert.equal(getBidInputYenPrice(100, 'cny', 0.0445), 2247);
+  assert.equal(getBidInputYenPrice(100, 'jpy', 0.0445), 100);
+  assert.equal(getBidInputYenPrice(100, 'cny', 0), 0);
+  assert.equal(getYenAsCnyAmount(2247, 0.0445), 99.99);
+}
+
+function testActualBidDisplaySupportsNormalAndStoreRmb() {
+  assert.deepEqual(
+    getActualBidDisplay(100, { taxType: 'tax_zero' }, 'tax_before', 'cny', 0.0445),
+    { inputYenPrice: 2247, actualYenPrice: 2247, actualCnyAmount: 100 }
+  );
+  assert.deepEqual(
+    getActualBidDisplay(100, { taxType: 'tax_included' }, 'tax_before', 'cny', 0.0445),
+    { inputYenPrice: 2247, actualYenPrice: 2472, actualCnyAmount: 110 }
+  );
+  assert.deepEqual(
+    getActualBidDisplay(100, { taxType: 'tax_included' }, 'tax_after', 'cny', 0.0445),
+    { inputYenPrice: 2247, actualYenPrice: 2247, actualCnyAmount: 100 }
+  );
+  assert.deepEqual(
+    getActualBidDisplay(2247, { taxType: 'tax_zero' }, 'tax_before', 'jpy', 0.0445),
+    { inputYenPrice: 2247, actualYenPrice: 2247, actualCnyAmount: 0 }
+  );
 }
 
 function testBuyoutOnlyProductDetection() {
@@ -112,6 +142,8 @@ testStoreProductDetection();
 testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual();
 testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual();
 testNormalProductDoesNotApplyStoreMode();
+testRmbBidInputConvertsToYen();
+testActualBidDisplaySupportsNormalAndStoreRmb();
 testBuyoutOnlyProductDetection();
 testComparableCurrentPriceAddsTaxForStoreProducts();
 testSubmitMaxPriceMustBeAboveCurrentPrice();
