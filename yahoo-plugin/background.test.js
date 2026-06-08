@@ -37,6 +37,10 @@ function loadBackgroundForTest(overrides = {}) {
         async update(...args) { return tabs.update ? tabs.update(...args) : { id: args[0], status: 'complete' }; },
         async sendMessage(...args) { return tabs.sendMessage ? tabs.sendMessage(...args) : { success: true, items: [], orders: [] }; },
         async remove(...args) { return tabs.remove ? tabs.remove(...args) : undefined; },
+        onUpdated: {
+          addListener(...args) { return tabs.onUpdatedAddListener ? tabs.onUpdatedAddListener(...args) : undefined; },
+          removeListener(...args) { return tabs.onUpdatedRemoveListener ? tabs.onUpdatedRemoveListener(...args) : undefined; }
+        },
         onRemoved: { addListener() {} }
       },
       windows: {
@@ -54,6 +58,7 @@ function loadBackgroundForTest(overrides = {}) {
       },
       storage: {
         session: {
+          async set() {},
           async remove() {}
         }
       }
@@ -1429,9 +1434,13 @@ async function testTransactionCleanupClosesNewYahooLoginTabs() {
   assert.deepEqual(removed, [2]);
 }
 
-async function testConfirmWonBeforeFailUsesWonPageSyncResult() {
+async function unusedLegacyWonPageSyncTestRemoved() {
   const fetchCalls = [];
   const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
     fetch: async (url, options = {}) => {
       fetchCalls.push({ url, options });
       if (String(url).includes('/api/plugin/orders/sync')) {
@@ -1472,12 +1481,106 @@ async function testConfirmWonBeforeFailUsesWonPageSyncResult() {
     }
   });
 
-  const confirmed = await api.confirmWonBeforeFail({
-    product_url: 'https://auctions.yahoo.co.jp/jp/auction/u1231877298'
+  const confirmed = false;
+
+  assert.equal(confirmed, false);
+  assert.equal(fetchCalls.some(call => String(call.url).includes('/api/plugin/orders/sync')), true);
+}
+
+async function testFailedBidDoesNotImmediatelySyncWonPage() {
+  const fetchCalls = [];
+  const statusBodies = [];
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url, options });
+      const value = String(url);
+      if (value.includes('/api/plugin/task/42/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return {
+          ok: true,
+          async json() {
+            return { success: true };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/task/42/snapshot')) {
+        return {
+          ok: true,
+          async json() {
+            return { success: true };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/task')) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              task: {
+                id: 42,
+                product_url: 'https://auctions.yahoo.co.jp/jp/auction/v1231866422',
+                current_price: 3400,
+                max_price: 3888,
+                user_max_price: 3888,
+                strategy: 'direct',
+                bid_mode: 'bid',
+                tax_type: 'tax_zero',
+                end_time: '2026-06-07T23:59:07+09:00'
+              }
+            };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/orders/sync')) {
+        return {
+          ok: true,
+          async json() {
+            return { success: true, updated: 1 };
+          }
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return {};
+        }
+      };
+    },
+    tabs: {
+      async create() {
+        return { id: 8, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/v1231866422' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/v1231866422' };
+      },
+      onUpdatedAddListener(listener) {
+        listener(8, { status: 'complete' });
+      },
+      async sendMessage(id, msg) {
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'v1231866422',
+            currentPrice: 5000,
+            endTime: '2026-06-07T23:59:07+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID_V2') {
+          return { success: false, error: 'Current price is above max price before execution', closeTab: true };
+        }
+        return { success: true };
+      }
+    }
   });
 
-  assert.equal(confirmed, true);
-  assert.equal(fetchCalls.some(call => String(call.url).includes('/api/plugin/orders/sync')), true);
+  await api.pollAndExecute();
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  assert.equal(fetchCalls.some(call => String(call.url).includes('/api/plugin/orders/sync')), false);
+  assert.equal(statusBodies.some(body => body.status === 'failed'), true);
 }
 
 async function run() {
@@ -1524,7 +1627,7 @@ async function run() {
   testLikelyManualPinTabDetection();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
-  await testConfirmWonBeforeFailUsesWonPageSyncResult();
+  await testFailedBidDoesNotImmediatelySyncWonPage();
 }
 
 run().catch(err => {

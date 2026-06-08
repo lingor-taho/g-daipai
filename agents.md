@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-07
+**最后更新**: 2026-06-08
 
 ---
 
@@ -82,7 +82,8 @@ D:/www/g-daipai/
 │   │   ├── DataBatch.tsx        — 数据批处理顶部 Tabs 容器
 │   │   ├── ShippingRefresh.tsx      — 按商品 ID 批量刷新运费
 │   │   ├── ProductTypeRefresh.tsx   — 按商品 ID 批量刷新商品类型
-│   │   └── OrdersResync.tsx         — 按商品 ID 批量刷新落札商品
+│   │   ├── OrdersResync.tsx         — 按商品 ID 批量刷新落札商品
+│   │   └── ProductDataDelete.tsx    — 按商品 ID 批量删除任务、订单、日志、入札缓存
 │   ├── server/
 │   │   ├── index.js         — Express API, CORS, pending task sweep
 │   │   ├── models/index.js  — better-sqlite3 同步封装 + schema 兼容列
@@ -345,6 +346,28 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-05-31 | 多次出价超最高价可能停留在已出价 | `current_price > max_price` 自动失败规则扩展到 `bidding + multi_bid`，避免已出价多次出价任务卡住 |
 | 2026-05-31 | 多次出价最低加价规则不符合 Yahoo 阶梯 | 最低加价改为 Yahoo 阶梯：`<5000=100`、`5000-9999=250`、`10000-49999=500`、`>=50000=1000` |
 | 2026-05-31 | 30 秒超时错误乱码导致显示系统原因 | 插件超时错误改为英文 `Task execution timeout after 30s; task tab closed`；旧乱码超时也归类为“失败：响应超时” |
+| 2026-06-08 | 出价失败后即时落札兜底可能误把关联商品写成成功订单 | 插件出价执行报错时不再立即打开 `/my/won` 做 `confirmWonBeforeFail` 兜底，失败直接标记 `failed`；后续空闲落札同步只抽取同一商品容器内存在 `取引連絡` 链接的记录，避免页面底部推荐/关联商品被误同步为落札订单 |
+
+---
+
+## 2026-06-08 落札误同步修复
+
+### 已实现内容
+
+- 插件出价执行报错后不再调用 `confirmWonBeforeFail()` 立即打开 `/my/won` 兜底确认；失败直接写入 `failed`，便于从失败原因排查真实出价问题。
+- `/my/won` 落札同步抽取时，只接受同一商品容器内存在 `取引連絡` 链接的记录；页面底部推荐商品、关联商品、最近落札推荐等没有 `取引連絡` 的商品链接会被跳过。
+- 后台“数据批处理”新增 `删除商品数据` Tab，接口为 `POST /api/admin/product-data-delete/run`。
+- 删除范围：输入商品 ID 对应的 `tasks`、`orders`、`bid_logs`、`order_status_change_logs`、`bidding_items`；用于清理误同步造成的假成功任务/订单。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+node src\server\routes\admin.orders.test.js
+Set-Location src\admin
+npm run build
+```
 
 ---
 
@@ -412,6 +435,7 @@ git status --short
 - **后台运费更新 Tab**: `D:/www/g-daipai/src/admin/src/ShippingRefresh.tsx`
 - **后台商品类型更新 Tab**: `D:/www/g-daipai/src/admin/src/ProductTypeRefresh.tsx`
 - **后台落札商品更新 Tab**: `D:/www/g-daipai/src/admin/src/OrdersResync.tsx`
+- **后台删除商品数据 Tab**: `D:/www/g-daipai/src/admin/src/ProductDataDelete.tsx`
 - **服务端商品/运费解析**: `D:/www/g-daipai/src/server/routes/proxy.js`
 - **插件调度/空闲同步**: `D:/www/g-daipai/yahoo-plugin/background.js`
 - **Spec**: `D:/www/g-daipai/docs/superpowers/specs/2026-05-11-yahoo-auction-proxy-v2-design.md`

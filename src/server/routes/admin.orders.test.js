@@ -16,6 +16,7 @@ const {
   clearPaymentAlertAndContinue,
   normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig,
+  deleteProductDataByProductId,
   buildGoogleSheetUrl
 } = require('./admin');
 
@@ -309,6 +310,63 @@ async function testClearPaymentAlertAndContinueClearsMessageAndSetsFlag() {
   assert.equal(queries[1].params[0], '1');
 }
 
+async function testDeleteProductDataRemovesTaskOrderAndBiddingAssociations() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      if (/FROM tasks/.test(sql)) {
+        return [{ id: 276 }, { id: 277 }];
+      }
+      if (/FROM orders/.test(sql)) {
+        return [{ id: 67 }, { id: 68 }];
+      }
+      return [];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      if (/order_status_change_logs/.test(sql)) return { rowCount: 3 };
+      if (/bid_logs/.test(sql)) return { rowCount: 2 };
+      if (/orders/.test(sql)) return { rowCount: 2 };
+      if (/bidding_items/.test(sql)) return { rowCount: 1 };
+      if (/tasks/.test(sql)) return { rowCount: 2 };
+      return { rowCount: 0 };
+    }
+  };
+
+  const result = await deleteProductDataByProductId(fakeDb, 'v1231866422');
+
+  assert.equal(result.success, true);
+  assert.equal(result.taskCount, 2);
+  assert.equal(result.orderCount, 2);
+  assert.equal(result.bidLogCount, 2);
+  assert.equal(result.biddingItemCount, 1);
+  assert.equal(result.orderStatusLogCount, 3);
+  assert.equal(calls[0].params[0], 'v1231866422');
+  assert.match(calls[2].sql, /DELETE FROM order_status_change_logs/);
+  assert.match(calls[3].sql, /DELETE FROM bid_logs/);
+  assert.match(calls[4].sql, /DELETE FROM orders/);
+  assert.match(calls[5].sql, /DELETE FROM bidding_items/);
+  assert.match(calls[6].sql, /DELETE FROM tasks/);
+}
+
+async function testDeleteProductDataCanRemoveOrphanBiddingItem() {
+  const fakeDb = {
+    async getAll() {
+      return [];
+    },
+    async query(sql) {
+      return { rowCount: /bidding_items/.test(sql) ? 1 : 0 };
+    }
+  };
+
+  const result = await deleteProductDataByProductId(fakeDb, 'v1231866422');
+
+  assert.equal(result.success, true);
+  assert.equal(result.taskCount, 0);
+  assert.equal(result.biddingItemCount, 1);
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
@@ -330,7 +388,9 @@ testBuildGoogleSheetUrl();
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
   testRequestPaymentSetsFlag(),
-  testClearPaymentAlertAndContinueClearsMessageAndSetsFlag()
+  testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),
+  testDeleteProductDataRemovesTaskOrderAndBiddingAssociations(),
+  testDeleteProductDataCanRemoveOrphanBiddingItem()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

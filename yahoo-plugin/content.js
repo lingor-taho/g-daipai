@@ -970,11 +970,12 @@ function extractOrderHistory() {
     const match = link.href.match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
-    if (seen.has(productId)) continue;
-    seen.add(productId);
     const text = item.textContent || '';
     const contactLink = [...item.querySelectorAll('a')]
       .find(a => /取引連絡/.test(normalizeVisibleText(a.textContent)));
+    if (!contactLink?.href) continue;
+    if (seen.has(productId)) continue;
+    seen.add(productId);
     const trackingMatch = text.match(/(?:\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u53d7\u4ed8\u756a\u53f7|\u4f1d\u7968\u756a\u53f7|tracking)[^\dA-Z]{0,20}([A-Z0-9-]{8,})/i);
     orders.push({
       productId,

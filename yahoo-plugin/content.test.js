@@ -130,9 +130,12 @@ function createTestAnchor(text, href) {
   };
 }
 
-function createOrderContainer(text, linkText, href, priceElements = [], extraLinks = []) {
+function createOrderContainer(text, linkText, href, priceElements = [], extraLinks = undefined) {
   const link = createTestAnchor(linkText, href);
-  const anchors = [link, ...extraLinks.map(item => createTestAnchor(item.text, item.href))];
+  const contactLinks = extraLinks === undefined
+    ? [{ text: '取引連絡', href: `https://contact.auctions.yahoo.co.jp/seller/top?aid=${String(href || '').split('/').pop()}` }]
+    : extraLinks;
+  const anchors = [link, ...contactLinks.map(item => createTestAnchor(item.text, item.href))];
   return {
     textContent: text,
     querySelectorAll(selector) {
@@ -989,6 +992,27 @@ function testOrderHistoryExtractsTransactionUrl() {
   assert.equal(orders[0].transactionUrl, 'https://contact.auctions.yahoo.co.jp/seller/top?aid=c1133337781');
 }
 
+function testOrderHistoryIgnoresAuctionLinksWithoutTransactionContact() {
+  const relatedItem = createOrderContainer(
+    'recently won recommendation 5,000円 商品ID：v1231866422',
+    'related recommendation item',
+    'https://auctions.yahoo.co.jp/jp/auction/v1231866422',
+    ['5,000円'],
+    []
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [relatedItem];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 0);
+}
+
 function testOrderHistoryExtractsUnlabeledWonPriceLine() {
   const orderContainer = createOrderContainer(
     '支払いを完了してください\nMD ゴールデンアックス\n2,530円\nストア\n5/23 22:26\n商品ID：x1230699905',
@@ -1644,6 +1668,7 @@ async function run() {
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
   testOrderHistoryExtractsTransactionUrl();
+  testOrderHistoryIgnoresAuctionLinksWithoutTransactionContact();
   testOrderHistoryExtractsUnlabeledWonPriceLine();
   testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened();
   testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice();

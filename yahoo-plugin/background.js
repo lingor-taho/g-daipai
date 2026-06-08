@@ -469,18 +469,6 @@ async function syncOrderHistory(orders) {
   }
 }
 
-async function confirmWonBeforeFail(task) {
-  const productId = normalizeAuctionId(task?.product_url || task?.product_id || '');
-  if (!productId) return false;
-  const result = await openWonPageForSync().catch(error => {
-    console.warn('[Yahoo Bid] Failed to confirm won page before marking failed:', error?.message || error);
-    return null;
-  });
-  if (!result || Number(result.updated || 0) <= 0) return false;
-  console.warn('[Yahoo Bid] Task looked failed but Yahoo won page confirmed order:', productId, result);
-  return true;
-}
-
 async function syncBiddingItems(items) {
   if (!Array.isArray(items)) return;
   try {
@@ -3014,10 +3002,7 @@ async function pollAndExecute() {
         if (taskTab?.id && e.closeTab) {
           await closeTaskTab(taskTab.id);
         }
-        const confirmedWon = await confirmWonBeforeFail(task);
-        if (!confirmedWon) {
-          await markTaskStatus(task.id, 'failed', e.message);
-        }
+        await markTaskStatus(task.id, 'failed', e.message);
       }
     } else if (taskResponse.canIdleSync) {
       await chrome.storage.session.remove(['currentTask']);
@@ -3072,7 +3057,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   isManualCaptchaTab,
   isLikelyManualPinTab,
   buildManualCaptchaId,
-  confirmWonBeforeFail,
+  pollAndExecute,
   getExpectedPaymentAmountJpy,
   getExpectedPaymentShippingFeeJpy,
   shouldSelectPaymentShippingOption,
