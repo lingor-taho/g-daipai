@@ -290,7 +290,10 @@ export default function OrdersPage() {
   }
 
   function openStoreBundleBackfill(row: any) {
-    if (row?.product_type !== 'store') return;
+    if (row?.product_type !== 'store') {
+      message.info('商城商品才支持同捆补录');
+      return;
+    }
     if (['completed', 'cancelled', 'pending_receipt'].includes(row?.order_status)) {
       message.warning('该订单状态不能做商城同捆补录');
       return;
@@ -301,6 +304,21 @@ export default function OrdersPage() {
       bundleShippingFee: 0
     });
     setStoreBundleOpen(true);
+  }
+
+  function renderOrderStatusTrigger(row: any) {
+    return (
+      <span
+        onDoubleClick={event => {
+          event.stopPropagation();
+          openStoreBundleBackfill(row);
+        }}
+        title={row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : '商城商品才支持同捆补录'}
+        style={{ display: 'inline-block', minWidth: 48, cursor: 'default' }}
+      >
+        {renderOrderStatus(row.order_status) || '-'}
+      </span>
+    );
   }
 
   async function submitStoreBundleBackfill() {
@@ -369,7 +387,7 @@ export default function OrdersPage() {
         onDoubleClick: () => openStoreBundleBackfill(row),
         title: row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : undefined
       }),
-      render: (_: any, row: any) => renderOrderStatus(row.order_status)
+      render: (_: any, row: any) => renderOrderStatusTrigger(row)
     },
     { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 180, ellipsis: true, onCell: () => noWrapCell },
     { title: '最后操作时间', dataIndex: 'updated_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.updated_at || row.created_at) },
