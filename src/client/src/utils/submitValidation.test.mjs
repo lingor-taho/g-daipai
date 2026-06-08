@@ -8,7 +8,7 @@ function toTaxExcludedYen(value, taxType) {
   const v = Number(value || 0);
   if (!Number.isFinite(v) || v <= 0) return 0;
   if (taxType !== 'tax_included' || v < 10) return Math.floor(v);
-  return Math.floor(((v / 1.1) + 1e-6) / 10) * 10;
+  return Math.floor((v / 1.1) + 1e-6);
 }
 
 // 校验：最高价的税前价 >= 商品目前的税前价
@@ -21,6 +21,14 @@ function validateSubmitPrice(submitMaxPrice, currentPrice, submitTaxType) {
 console.log('=== 起拍价出价测试（修改后：支持等于当前价） ===\n');
 
 const tests = [
+  {
+    name: '商城商品 - 税后折税前不按10円取整',
+    submitMaxPrice: 11103, // 税后 11103，税前 10093.636 -> 10093
+    currentPrice: 10093,
+    submitTaxType: 'tax_included',
+    expectedValid: true,
+    reason: '税前价 10093 = 当前价 10093，允许提交'
+  },
   {
     name: '普通商品 - 起拍价出价（等于当前价）',
     submitMaxPrice: 5000,

@@ -81,6 +81,13 @@ export function isSubmitTaxExcludedPriceAtLeastRequiredBid(submitTaxExcludedPric
   return Number(submitTaxExcludedPrice || 0) >= required;
 }
 
+export function getMinimumBidComparableInputPrice({ inputYenPrice, submitTaxExcludedPrice, product, storeBidPriceMode }) {
+  if (isStoreProduct(product) && storeBidPriceMode === 'tax_before') {
+    return Math.floor(Number(inputYenPrice || 0));
+  }
+  return Math.floor(Number(submitTaxExcludedPrice || 0));
+}
+
 export function getMinimumBidInputRequirement(product, storeBidPriceMode) {
   const currentTaxExcludedPrice = Number(product?.currentPrice ?? product?.current_price ?? 0);
   if (!Number.isFinite(currentTaxExcludedPrice) || currentTaxExcludedPrice <= 0) {

@@ -338,12 +338,12 @@ async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
   };
 
   await syncBiddingItems([
-    { productId: 'a123456789', title: 'A', price: '189,431', url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789', status: 'highest' }
+    { productId: 'a123456789', title: 'A', price: '11,103', url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789', status: 'highest' }
   ], fakeDb);
 
-  // INSERT INTO bidding_items 鐨?current_price 鍙傛暟锛堢 5 涓紝0-indexed=4锛夊簲璇ユ槸鎶樺洖绋庡墠鐨?172,210
+  // INSERT INTO bidding_items 鐨?current_price 鍙傛暟锛堢 5 涓紝0-indexed=4锛夊簲璇ユ槸鎶樺洖绋庡墠鐨?10093
   const insertCall = calls.find(c => /INSERT INTO bidding_items/.test(c.sql));
-  assert.equal(insertCall.params[4], 172210);
+  assert.equal(insertCall.params[4], 10093);
 }
 
 function testNormalizeYahooWonTimeTextInfersCurrentYear() {
@@ -641,7 +641,7 @@ async function testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxEx
         buyout_price: null,
         tax_type: 'tax_included',
         shipping_fee_text: null,
-        pending_followup_max_price: 12100,
+        pending_followup_max_price: 11103,
         status: 'bidding',
         end_time: minutesFromNow(60)
       }];
@@ -657,9 +657,9 @@ async function testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxEx
 
   const created = await processPendingFollowupTasks(fakeDb, now);
   assert.equal(created, 1);
-  // 鍚◣鍟嗗搧鍙ｅ緞锛歶ser_max_price 鏄惈绋庡€?12100锛宮ax_price 鏄櫎绋庡€?11000
-  assert.equal(insertParams[9], 11000); // max_price
-  assert.equal(insertParams[10], 12100); // user_max_price
+  // 鍚◣鍟嗗搧鍙ｅ緞锛歶ser_max_price 鏄惈绋庡€?11103锛宮ax_price 鏄櫎绋庡€?10093
+  assert.equal(insertParams[9], 10093); // max_price
+  assert.equal(insertParams[10], 11103); // user_max_price
 }
 
 async function testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup() {

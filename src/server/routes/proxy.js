@@ -535,12 +535,25 @@ function createProductService({
     try {
       const html = await httpFetcher(parsed.standardUrl);
       const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
-      let attemptedShipmentLookup = false;
-      if (isGenericShippingFeeText(data.shippingFeeText)) {
-        const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId);
-        if (shipmentUrls.length) {
-          attemptedShipmentLookup = true;
-          for (const shipmentUrl of shipmentUrls) {
+      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId);
+      const attemptedShipmentLookup = shipmentUrls.length > 0;
+      if (attemptedShipmentLookup) {
+        for (const shipmentUrl of shipmentUrls) {
+          try {
+            const shipmentJson = await httpFetcher(shipmentUrl);
+            const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
+            if (resolvedShipping) {
+              data.shippingFeeText = resolvedShipping;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+      if (isUsefulProduct(data, parsed.auctionId) && attemptedShipmentLookup && isGenericShippingFeeText(data.shippingFeeText)) {
+        try {
+          const freshHtml = await playwrightFetcher(parsed.standardUrl);
+          const freshShipmentUrls = buildYahooShipmentUrls(freshHtml, parsed.auctionId);
+          for (const shipmentUrl of freshShipmentUrls) {
             try {
               const shipmentJson = await httpFetcher(shipmentUrl);
               const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
@@ -550,7 +563,7 @@ function createProductService({
               }
             } catch (_) {}
           }
-        }
+        } catch (_) {}
       }
       if (isUsefulProduct(data, parsed.auctionId)) {
         httpProduct = data;
@@ -568,6 +581,17 @@ function createProductService({
     try {
       const html = await playwrightFetcher(parsed.standardUrl);
       const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
+      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId);
+      for (const shipmentUrl of shipmentUrls) {
+        try {
+          const shipmentJson = await httpFetcher(shipmentUrl);
+          const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
+          if (resolvedShipping) {
+            data.shippingFeeText = resolvedShipping;
+            break;
+          }
+        } catch (_) {}
+      }
       if (isUsefulProduct(data, parsed.auctionId)) {
         const base = httpProduct || data;
         const resolved = {

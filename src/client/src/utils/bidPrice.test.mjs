@@ -8,6 +8,7 @@ import {
   getBuyoutSubmitPrice,
   getYenAsCnyAmount,
   getMinimumBidInputRequirement,
+  getMinimumBidComparableInputPrice,
   getSubmitMaxPrice,
   getSubmitTaxType,
   getYahooMinimumBidIncrement,
@@ -138,6 +139,20 @@ function testMinimumBidInputRequirementUsesSelectedPriceMode() {
   );
 }
 
+function testTaxBeforeStoreMinimumBidUsesRawInputTaxExcludedPrice() {
+  const product = { taxType: 'tax_included', currentPrice: 9841, bidCount: 9 };
+  const comparable = getMinimumBidComparableInputPrice({
+    inputYenPrice: 10093,
+    submitTaxExcludedPrice: 10090,
+    product,
+    storeBidPriceMode: 'tax_before'
+  });
+
+  assert.equal(getMinimumBidInputRequirement(product, 'tax_before').requiredPrice, 10091);
+  assert.equal(comparable, 10093);
+  assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(comparable, product), true);
+}
+
 testStoreProductDetection();
 testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual();
 testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual();
@@ -149,6 +164,7 @@ testComparableCurrentPriceAddsTaxForStoreProducts();
 testSubmitMaxPriceMustBeAboveCurrentPrice();
 testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids();
 testMinimumBidInputRequirementUsesSelectedPriceMode();
+testTaxBeforeStoreMinimumBidUsesRawInputTaxExcludedPrice();
 
 {
   const requirement = getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 4500, bidCount: 1 }, 'tax_after');

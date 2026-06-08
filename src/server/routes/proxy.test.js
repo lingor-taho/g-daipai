@@ -565,6 +565,45 @@ async function testFetchUsesYahooShipmentApiWhenHttpShippingIsGeneric() {
   assert.deepEqual(calls, ['http', 'shipment']);
 }
 
+async function testFetchPrefersYahooShipmentApiOverDescriptionShippingTable() {
+  const calls = [];
+  const service = createProductService({
+    httpFetcher: async (url) => {
+      calls.push(url.includes('/shipments/shopping') ? 'shipment' : 'http');
+      if (url.includes('/shipments/shopping')) {
+        assert.match(url, /prefCode=27/);
+        return JSON.stringify({
+          lowestPrice: 910,
+          methods: [
+            { name: '佐川急便（宅配便）', shippingPrice: 910 }
+          ]
+        });
+      }
+      return `
+        <html>
+          <head><title>Shipping Table Product - Yahoo!オークション</title></head>
+          <body>
+            <span itemprop="price" content="17501"></span>
+            <script id="__NEXT_DATA__" type="application/json">
+              {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"price":17501,"taxinPrice":19251,"aucShoppingItemInfo":{"postageSetId":2,"shoppingSellerId":"riakuro"}}}}}}}}
+            </script>
+            <section>送料 地域 単品送料 北海道 1,570円 関西 910円</section>
+          </body>
+        </html>
+      `;
+    },
+    playwrightFetcher: async () => {
+      throw new Error('should not call playwright');
+    }
+  });
+
+  const result = await service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/v1232498111');
+
+  assert.equal(result.source, 'http');
+  assert.equal(result.data.shippingFeeText, '910円');
+  assert.deepEqual(calls, ['http', 'shipment']);
+}
+
 async function testFetchDoesNotRenderGenericShippingWithoutShipmentApi() {
   const calls = [];
   const service = createProductService({
@@ -751,6 +790,7 @@ async function run() {
   await testFallsBackToPlaywrightWhenHttpFails();
   await testFetchRefreshesBeforeUsingCache();
   await testFetchUsesYahooShipmentApiWhenHttpShippingIsGeneric();
+  await testFetchPrefersYahooShipmentApiOverDescriptionShippingTable();
   await testFetchDoesNotRenderGenericShippingWithoutShipmentApi();
   await testUsesCacheAfterFetchersFail();
   testExtractsUniqueAuctionIdFromProductsListOnly();

@@ -242,8 +242,9 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
 }
 
 function testStoreUserMaxPriceConvertsToTaxExcludedBidMax() {
-  assert.equal(calculateBidMaxPrice(1000, 'tax_included'), 900);
+  assert.equal(calculateBidMaxPrice(1000, 'tax_included'), 909);
   assert.equal(calculateBidMaxPrice(1100, 'tax_included'), 1000);
+  assert.equal(calculateBidMaxPrice(11103, 'tax_included'), 10093);
   assert.equal(calculateBidMaxPrice(9, 'tax_included'), 9);
   assert.equal(calculateBidMaxPrice(1000, 'tax_zero'), 1000);
 }
@@ -265,7 +266,7 @@ function testStoreBuyoutPriceIsAlreadyTaxIncluded() {
     {
       buyoutPrice: 2460,
       userMaxPrice: 2460,
-      bidMaxPrice: 2230
+      bidMaxPrice: 2236
     }
   );
   assert.deepEqual(

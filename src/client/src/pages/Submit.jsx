@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
-import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
+import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import UserNav from '../components/UserNav';
 import TaskList from './TaskList';
@@ -48,7 +48,7 @@ function toTaxExcludedYen(value, taxType) {
   const v = Number(value || 0);
   if (!Number.isFinite(v) || v <= 0) return 0;
   if (taxType !== 'tax_included' || v < 10) return Math.floor(v);
-  return Math.floor(((v / 1.1) + 1e-6) / 10) * 10;
+  return Math.floor((v / 1.1) + 1e-6);
 }
 
 /**
@@ -359,9 +359,12 @@ export default function Submit() {
     // 拍卖次数为 0 可按当前价提交；已有入札时必须满足 Yahoo 最低加价。
     const submitTaxExcludedPrice = toTaxExcludedYen(effectiveMaxPrice, submitTaxType);
     const inputRequirement = getMinimumBidInputRequirement(product, storeBidPriceMode);
-    const inputPriceForRequirement = isStoreProduct(product) && storeBidPriceMode === 'tax_after'
-      ? inputYenPrice
-      : submitTaxExcludedPrice;
+    const inputPriceForRequirement = getMinimumBidComparableInputPrice({
+      inputYenPrice,
+      submitTaxExcludedPrice,
+      product,
+      storeBidPriceMode
+    });
     if (!buyoutSelected && !buyoutOnly && inputPriceForRequirement < inputRequirement.requiredPrice) {
       const reason = inputRequirement.increment > 0
         ? `${inputRequirement.currentLabel}${inputRequirement.currentPrice.toLocaleString('ja-JP')}円+最低加价${inputRequirement.increment.toLocaleString('ja-JP')}円=最低${inputRequirement.requiredPrice.toLocaleString('ja-JP')}円`

@@ -834,7 +834,7 @@ function toTaxExcludedYen(value, taxType) {
   const v = Number(value || 0);
   if (!Number.isFinite(v) || v <= 0) return 0;
   if (taxType !== 'tax_included' || v < 10) return Math.floor(v);
-  return Math.floor(((v / 1.1) + 1e-6) / 10) * 10;
+  return Math.floor((v / 1.1) + 1e-6);
 }
 
 /**
@@ -884,7 +884,7 @@ async function processPendingFollowupTasks(database = db, nowMs = Date.now()) {
     // - user_max_price 是用户视角（含税商品=含税值）
     // - max_price 是 Yahoo 表单接收的除税值
     const followupBidMaxPrice = task.tax_type === 'tax_included' && followupUserMaxPrice >= 10
-      ? Math.floor(((followupUserMaxPrice / 1.1) + 1e-6) / 10) * 10
+      ? Math.floor((followupUserMaxPrice / 1.1) + 1e-6)
       : followupUserMaxPrice;
     const clientRequestId = `followup-${task.id}`;
     // 原子地清空标记，避免被并发触发多次
@@ -957,7 +957,7 @@ async function syncBiddingItems(items, database = db) {
     );
     const taxType = taskTaxRow?.tax_type === 'tax_included' ? 'tax_included' : 'tax_zero';
     const currentPrice = rawPrice && taxType === 'tax_included' && rawPrice >= 10
-      ? Math.floor(((rawPrice / 1.1) + 1e-6) / 10) * 10
+      ? Math.floor((rawPrice / 1.1) + 1e-6)
       : rawPrice;
 
     await database.query(

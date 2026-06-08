@@ -53,7 +53,7 @@ function calculateBidMaxPrice(userMaxPrice, taxType) {
   const value = Number(userMaxPrice || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
   if (normalizeTaxType(taxType) !== 'tax_included' || value < 10) return Math.floor(value);
-  return Math.floor(((value / 1.1) + 1e-6) / 10) * 10;
+  return Math.floor((value / 1.1) + 1e-6);
 }
 
 function getTaxIncludedPrice(price, taxType) {

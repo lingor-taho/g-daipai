@@ -1896,3 +1896,81 @@ npm run build
 ```powershell
 node yahoo-plugin\content.test.js
 ```
+
+---
+
+## 2026-06-08 运费优先 Yahoo shipment API
+
+### 问题
+
+- 部分商城商品页面说明里有卖家自定义运费表，程序按页面文字解析时可能取到第一行地区运费，例如 `v1232498111` 取到北海道 `1,570円`。
+- 同一商品通过 Yahoo shipment API 按当前默认地区 `prefCode=27` 返回真实配送方式 `佐川急便（宅配便） 910円`。
+
+### 已修复内容
+
+- `src/server/routes/proxy.js` 商品抓取改为：只要能从页面构造 Yahoo shipment API URL，就优先调用 shipment API。
+- shipment API 返回有效金额时，覆盖页面说明/表格解析出来的运费。
+- shipment API 参数缺失、请求失败或无有效金额时，仍回退到原有页面解析结果。
+- HTTP 抓取和 Playwright 兜底抓取都应用相同优先级。
+- 新增回归测试覆盖：页面说明表先出现 `1,570円`，但 shipment API 返回 `910円` 时，最终运费必须是 `910円`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\proxy.test.js
+```
+
+### 真实验证
+
+- `v1232498111` 当前服务端抓取结果：`shippingFeeText=910円`。
+
+---
+
+## 2026-06-08 商城税前价最低出价校验修正
+
+### 问题
+
+- 商城商品选择 `税前价` 输入最高出价时，前端先把输入税前价换算成税后实际出价，再在提交校验里把税后价折回税前。
+- 折回函数会按 10 円向下取整，导致用户输入 `10093` 税前价时，实际用于最低出价校验的值变成 `10090`。
+- 例如商品当前税前价 `9841`、已有入札最低加价 `250`，最低可出价应为 `10091`；用户输入 `10093` 本应通过，但旧逻辑误报低于最低可出价。
+
+### 已修复内容
+
+- `src/client/src/utils/bidPrice.js` 新增 `getMinimumBidComparableInputPrice()`。
+- 商城商品 `税前价` 模式下，最低出价校验直接使用用户输入的税前日元，不再进行“税前 -> 税后 -> 税前”的二次换算。
+- `税后价` 模式和普通商品逻辑保持原有口径。
+- 新增回归测试覆盖：`currentPrice=9841`、`bidCount>0`、税前输入 `10093` 时，应满足最低 `10091`。
+
+### 最近验证命令
+
+```powershell
+node src\client\src\utils\bidPrice.test.mjs
+Set-Location src\client
+npm run build
+```
+---
+
+## 2026-06-08 税后折税前不再按 10 円取整
+
+### 问题
+
+- 商城商品含税金额折回税前金额时，旧逻辑使用 `Math.floor((price / 1.1) / 10) * 10`，会额外按 10 円向下取整。
+- Yahoo 出价金额允许末尾为 1 円等非 10 円档金额，因此该取整会把有效价格压低。
+- 例：`11103 / 1.1 = 10093.636...`，正确系统税前价应为 `10093`，旧逻辑会变成 `10090`。
+
+### 已实现内容
+
+- 前台提交页、服务端任务提交、插件 followup 任务、入札中同步的“税后折税前”逻辑统一改为 `Math.floor(price / 1.1 + 1e-6)`。
+- 不再做 `/10` 后再 `*10` 的 10 円档取整。
+- `2460` 含税即決价对应的系统税前出价从 `2230` 调整为 `2236`。
+- 新增/更新回归测试覆盖：`11103 -> 10093`，以及入札中同步和 followup 创建时不再变成 `10090`。
+
+### 最近验证命令
+```powershell
+node src\server\routes\task.test.js
+node src\server\routes\plugin.test.js
+node src\client\src\utils\bidPrice.test.mjs
+node src\client\src\utils\submitValidation.test.mjs
+Set-Location src\client
+npm run build
+```
