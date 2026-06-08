@@ -1440,6 +1440,18 @@ function extractNameValueFromSellerInfoBlock(value) {
   return normalizeNameValue(match[1].replace(/\s*(?:住所|出品者情報を確認する)[\s\S]*$/, ''));
 }
 
+function extractSellerInfoSectionText(value) {
+  const source = String(value || '');
+  const sellerInfoMatch = /出品者情報(?!を確認する)/.exec(source);
+  if (!sellerInfoMatch) return '';
+  let section = source.slice(sellerInfoMatch.index);
+  const nextSection = section.slice('出品者情報'.length).search(/(?:お届け情報|お支払い情報|落札者情報|お届け先)/);
+  if (nextSection >= 0) {
+    section = section.slice(0, '出品者情報'.length + nextSection);
+  }
+  return section;
+}
+
 function extractSellerInfoName(text = getBodyText()) {
   const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
   let inSellerInfo = false;
@@ -1452,12 +1464,11 @@ function extractSellerInfoName(text = getBodyText()) {
       inSellerInfo = false;
     }
     if (!inSellerInfo && !/出品者情報/.test(normalized)) continue;
-    const name = extractNameValueFromSellerInfoBlock(rawText);
+    const name = extractNameValueFromSellerInfoBlock(extractSellerInfoSectionText(rawText) || rawText);
     if (name) return name;
   }
   const source = String(text || '');
-  const sellerBlock = source.match(/出品者情報[\s\S]*?氏名\s*[:：]?\s*([^\n\r]+)(?:[\s\S]*?住所|$)/);
-  return normalizeNameValue(sellerBlock?.[1] || '');
+  return extractNameValueFromSellerInfoBlock(extractSellerInfoSectionText(source));
 }
 
 function hasUnregisteredTrackingNumber(text = getBodyText()) {

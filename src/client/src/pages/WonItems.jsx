@@ -16,6 +16,12 @@ const STRATEGY_LABELS = {
   '10min': '结束前 10 分钟'
 };
 
+const COMPLETED_TAG_STYLE = {
+  background: '#91caff',
+  borderColor: '#91caff',
+  color: '#fff'
+};
+
 function formatJPY(value) {
   const amount = Number(value || 0);
   return amount > 0 ? `${amount.toLocaleString('ja-JP')}円` : '-';
@@ -33,7 +39,7 @@ function renderOrderStatusTag(status) {
   if (status === 'cancelled') return <Tag color="danger">取消</Tag>;
   if (status === 'pending_receipt') return <Tag color="warning">待收货</Tag>;
   if (status === 'pending_shipment') return <Tag color="primary">待发货</Tag>;
-  if (status === 'completed') return <Tag color="success">完了</Tag>;
+  if (status === 'completed') return <Tag style={COMPLETED_TAG_STYLE}>完了</Tag>;
   return null;
 }
 

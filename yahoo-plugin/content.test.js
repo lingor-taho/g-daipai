@@ -1601,6 +1601,30 @@ function testExtractPendingShipmentScanResultFallsBackToSellerInfoName() {
   assert.equal(result.trackingFallback, 'seller_info_name');
 }
 
+function testExtractPendingShipmentScanResultFallsBackToSellerInfoNameInsideFullTradeBlock() {
+  const fullTradeBlock = [
+    '\u53d6\u5f15\u60c5\u5831',
+    '\u304a\u5c4a\u3051\u60c5\u5831 \u6c0f\u540d \uff1a GAO YUN \u4f4f\u6240 \uff1a \u30125580023',
+    '\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 3,390\u5186',
+    '\u843d\u672d\u8005\u60c5\u5831 \u6c0f\u540d \uff1a GAO YUN \u4f4f\u6240 \uff1a \u30125580023',
+    '\u51fa\u54c1\u8005\u60c5\u5831 \u6c0f\u540d \uff1a \u30a8\u30fc\u30b7\u30fc\u3000\u5546\u4e8b \u4f4f\u6240 \uff1a \u3012260**** \u51fa\u54c1\u8005\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b'
+  ].join('\n');
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\uff1a kat********\uff08356\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u65b9\u6cd5\uff1a \u5b9a\u5f62\u5916\u90f5\u4fbf\uff08\u9001\u6599\uff1a390\u5186\uff09',
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [{ textContent: fullTradeBlock }];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, '\u30a8\u30fc\u30b7\u30fc\u3000\u5546\u4e8b');
+  assert.equal(result.trackingFallback, 'seller_info_name');
+}
+
 function testExtractPendingShipmentScanResultFallsBackToSellerName() {
   const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u696d\u8005\uff1a \u65e5\u672c\u90f5\u4fbf');
   const result = api.extractPendingShipmentScanResult();
@@ -1707,6 +1731,7 @@ async function run() {
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
   testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();
   testExtractPendingShipmentScanResultFallsBackToSellerInfoName();
+  testExtractPendingShipmentScanResultFallsBackToSellerInfoNameInsideFullTradeBlock();
   testExtractPendingShipmentScanResultFallsBackToSellerName();
   testExtractPendingShipmentScanResultDetectsCancelled();
 }
