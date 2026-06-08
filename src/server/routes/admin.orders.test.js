@@ -17,7 +17,11 @@ const {
   normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig,
   deleteProductDataByProductId,
-  buildGoogleSheetUrl
+  buildGoogleSheetUrl,
+  parseStoreBundleChildProductIds,
+  backfillStoreBundle,
+  ORDER_STATUS_PENDING_SHIPMENT,
+  ORDER_STATUS_BUNDLE_COMPLETED
 } = require('./admin');
 
 function testShippingFeeParsing() {
@@ -33,6 +37,13 @@ function testBuildGoogleSheetUrl() {
     'https://docs.google.com/spreadsheets/d/1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4/edit?gid=0#gid=0'
   );
   assert.equal(buildGoogleSheetUrl(''), '');
+}
+
+function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {
+  assert.deepEqual(
+    parseStoreBundleChildProductIds('s123456789，S123456780, https://auctions.yahoo.co.jp/jp/auction/s123456781, s123456789'),
+    ['s123456789', 's123456780', 's123456781']
+  );
 }
 
 function testSettleableShippingFeeDetection() {
@@ -351,6 +362,75 @@ async function testDeleteProductDataRemovesTaskOrderAndBiddingAssociations() {
   assert.match(calls[6].sql, /DELETE FROM tasks/);
 }
 
+async function testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted() {
+  const calls = [];
+  const rows = [
+    { order_id: 101, order_status: 'pending_payment', product_id: 's100000001', product_type: 'store' },
+    { order_id: 102, order_status: 'pending_payment', product_id: 's100000002', product_type: 'store' },
+    { order_id: 103, order_status: 'pending_settlement', product_id: 's100000003', product_type: 'store' }
+  ];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      if (/SELECT o\.id AS order_id/.test(sql) && /LOWER\(t\.product_id\)/.test(sql)) return rows;
+      if (/old_status/.test(sql)) return rows.map(row => ({
+        ...row,
+        old_status: row.order_status,
+        product_type: row.product_type,
+        shipping_fee_text: '送料 230円'
+      }));
+      return [];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /INSERT INTO order_status_change_logs/.test(sql) ? 1 : 1 };
+    }
+  };
+
+  const result = await backfillStoreBundle(fakeDb, {
+    mainProductId: 's100000001',
+    childProductIds: 's100000002，s100000003',
+    bundleShippingFee: 780
+  }, { nowMs: 12345 });
+
+  assert.equal(result.mainProductId, 's100000001');
+  assert.deepEqual(result.childProductIds, ['s100000002', 's100000003']);
+  assert.equal(result.bundleShippingFeeText, '780円');
+  assert.equal(result.bundleGroupId, 'store-bundle-s100000001-12345');
+  const mainUpdate = calls.find(call => call.type === 'query' && /WHERE id = \?/.test(call.sql) && /bundle_shipping_fee_text = \?/.test(call.sql));
+  assert.deepEqual(mainUpdate.params, ['store-bundle-s100000001-12345', '780円', ORDER_STATUS_PENDING_SHIPMENT, 101]);
+  const childUpdate = calls.find(call => call.type === 'query' && /WHERE id IN/.test(call.sql));
+  assert.deepEqual(childUpdate.params, ['store-bundle-s100000001-12345', ORDER_STATUS_BUNDLE_COMPLETED, 102, 103]);
+  const auditCalls = calls.filter(call => call.type === 'query' && /INSERT INTO order_status_change_logs/.test(call.sql));
+  assert.equal(auditCalls.length, 3);
+}
+
+async function testBackfillStoreBundleRejectsNormalProduct() {
+  const fakeDb = {
+    async getAll(sql) {
+      if (/LOWER\(t\.product_id\)/.test(sql)) {
+        return [
+          { order_id: 101, order_status: 'pending_payment', product_id: 's100000001', product_type: 'store' },
+          { order_id: 102, order_status: 'pending_payment', product_id: 'a100000002', product_type: 'normal' }
+        ];
+      }
+      return [];
+    },
+    async query() {
+      throw new Error('should not update');
+    }
+  };
+
+  await assert.rejects(
+    () => backfillStoreBundle(fakeDb, {
+      mainProductId: 's100000001',
+      childProductIds: 'a100000002',
+      bundleShippingFee: 780
+    }),
+    /只能补录商城商品/
+  );
+}
+
 async function testDeleteProductDataCanRemoveOrphanBiddingItem() {
   const fakeDb = {
     async getAll() {
@@ -385,11 +465,14 @@ testNormalizeOrderStatusRefreshTargetSupportsBlankAndCompleted();
 testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
 testBuildGoogleSheetUrl();
+testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
   testRequestPaymentSetsFlag(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),
+  testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted(),
+  testBackfillStoreBundleRejectsNormalProduct(),
   testDeleteProductDataRemovesTaskOrderAndBiddingAssociations(),
   testDeleteProductDataCanRemoveOrphanBiddingItem()
 ]).catch(err => {

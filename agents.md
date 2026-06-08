@@ -972,6 +972,38 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-08 商城同捆已付款补录
+
+### 已实现内容
+
+- 后台订单管理新增隐藏入口：双击 `订单状态` 单元格，可打开 `商城同捆已付款补录` 弹窗；页面不新增显眼按钮。
+- 弹窗字段：
+  - 主商品ID：默认使用当前双击订单商品 ID。
+  - 子商品ID：支持全角逗号 `，` 和半角逗号 `,` 分隔。
+  - 同捆运费：整数日元。
+- 新增接口 `POST /api/admin/orders/store-bundle-backfill`。
+- 补录结果：
+  - 主商品 `order_status = pending_shipment`（待发货），`bundle_shipping_fee_text = 输入运费`。
+  - 子商品 `order_status = bundle_completed`（同捆完了），`bundle_shipping_fee_text = 0円`。
+  - 全组写入同一个新的 `bundle_group_id`。
+- 校验规则：
+  - 主商品和子商品都必须存在落札订单，且必须是商城商品。
+  - 主商品不能同时作为子商品。
+  - 不限制同一用户；不同用户同捆允许。
+  - 拒绝 `completed`、`cancelled`、`pending_receipt` 状态订单。
+- 状态日志 source 使用 `admin_store_bundle_backfill`，后台状态来源显示为 `商城同捆补录`。
+- 新增设计文档：`docs/superpowers/specs/2026-06-08-store-bundle-backfill-design.md`。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\admin.orders.test.js
+Set-Location src\admin
+npm run build
+```
+
+---
+
 ## 2026-06-06 同捆扫描输入按钮未点击修复
 
 ### 问题现象

@@ -1,7 +1,7 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, InputNumber, Modal, Space, Switch, Tag, Typography, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Modal, Space, Switch, Tag, Typography, message } from 'antd';
 import { Link } from 'react-router-dom';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
@@ -76,6 +76,7 @@ function renderStatusChangeSource(row: any) {
     scan_waiting_shipping_resolved: '扫描-运费确认',
     payment_status: '付款',
     admin_settle: '后台结算',
+    admin_store_bundle_backfill: '商城同捆补录',
     admin_transaction_start_reset: '后台初始化',
     admin_order_status_refresh: '后台状态刷新',
     unlogged_existing_status: '未记录状态'
@@ -193,6 +194,9 @@ export default function OrdersPage() {
   const [idleFlags, setIdleFlags] = useState<any>(null);
   const [statusLogOpen, setStatusLogOpen] = useState(false);
   const [statusLogRows, setStatusLogRows] = useState<any[]>([]);
+  const [storeBundleOpen, setStoreBundleOpen] = useState(false);
+  const [storeBundleSubmitting, setStoreBundleSubmitting] = useState(false);
+  const [storeBundleForm] = Form.useForm();
 
   async function loadFinanceConfig() {
     const data = await fetchAdminJson('/api/admin/finance-config');
@@ -285,6 +289,41 @@ export default function OrdersPage() {
     }
   }
 
+  function openStoreBundleBackfill(row: any) {
+    if (row?.product_type !== 'store') return;
+    if (['completed', 'cancelled', 'pending_receipt'].includes(row?.order_status)) {
+      message.warning('该订单状态不能做商城同捆补录');
+      return;
+    }
+    storeBundleForm.setFieldsValue({
+      mainProductId: row.product_id,
+      childProductIds: '',
+      bundleShippingFee: 0
+    });
+    setStoreBundleOpen(true);
+  }
+
+  async function submitStoreBundleBackfill() {
+    const values = await storeBundleForm.validateFields();
+    setStoreBundleSubmitting(true);
+    try {
+      const res = await fetch('/api/admin/orders/store-bundle-backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(values)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '商城同捆补录失败');
+      message.success(`补录完成：主商品待发货，子商品 ${data.childProductIds?.length || 0} 个同捆完了`);
+      setStoreBundleOpen(false);
+      setReloadKey(key => key + 1);
+    } catch (e: any) {
+      message.error(e.message || '商城同捆补录失败');
+    } finally {
+      setStoreBundleSubmitting(false);
+    }
+  }
+
   const columns = [
     { title: '用户名', dataIndex: 'username', width: 90, ellipsis: true, onCell: () => noWrapCell },
     {
@@ -321,7 +360,17 @@ export default function OrdersPage() {
     { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 70, onCell: () => noWrapCell },
     { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
     { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
-    { title: '订单状态', dataIndex: 'order_status', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => renderOrderStatus(row.order_status) },
+    {
+      title: '订单状态',
+      dataIndex: 'order_status',
+      width: 90,
+      onCell: (row: any) => ({
+        ...noWrapCell,
+        onDoubleClick: () => openStoreBundleBackfill(row),
+        title: row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : undefined
+      }),
+      render: (_: any, row: any) => renderOrderStatus(row.order_status)
+    },
     { title: '交易开始错误', dataIndex: 'transaction_start_error', width: 180, ellipsis: true, onCell: () => noWrapCell },
     { title: '最后操作时间', dataIndex: 'updated_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.updated_at || row.created_at) },
     { title: '状态来源', dataIndex: 'latest_status_change_source', width: 360, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderStatusChangeSource(row) },
@@ -430,6 +479,45 @@ export default function OrdersPage() {
             );
           }) : <Typography.Text type="secondary">暂无状态日志</Typography.Text>}
         </Space>
+      </Modal>
+
+      <Modal
+        open={storeBundleOpen}
+        title="商城同捆已付款补录"
+        okText="确定补录"
+        cancelText="取消"
+        confirmLoading={storeBundleSubmitting}
+        onOk={submitStoreBundleBackfill}
+        onCancel={() => setStoreBundleOpen(false)}
+        destroyOnClose
+      >
+        <Form form={storeBundleForm} layout="vertical" preserve={false}>
+          <Form.Item
+            name="mainProductId"
+            label="主商品ID"
+            rules={[{ required: true, message: '请输入主商品ID' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="childProductIds"
+            label="子商品ID"
+            tooltip="用逗号分隔，支持全角逗号和半角逗号"
+            rules={[{ required: true, message: '请输入子商品ID' }]}
+          >
+            <Input.TextArea rows={3} placeholder="子商品ID，子商品ID" />
+          </Form.Item>
+          <Form.Item
+            name="bundleShippingFee"
+            label="同捆运费"
+            rules={[{ required: true, message: '请输入同捆运费' }]}
+          >
+            <InputNumber min={0} precision={0} addonAfter="円" style={{ width: '100%' }} />
+          </Form.Item>
+          <Typography.Text type="secondary">
+            确定后：主商品改为待发货，子商品改为同捆完了；同组写入同一个 bundle_group_id，主商品同捆运费使用输入值，子商品同捆运费为 0円。
+          </Typography.Text>
+        </Form>
       </Modal>
 
       <ProTable

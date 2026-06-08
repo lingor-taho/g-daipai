@@ -50,6 +50,9 @@ const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
 const ORDER_STATUS_COMPLETED = 'completed';
 const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
 const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
+const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
+const ORDER_STATUS_PENDING_RECEIPT = 'pending_receipt';
+const ORDER_STATUS_CANCELLED = 'cancelled';
 
 function buildGoogleSheetUrl(spreadsheetId) {
   const id = String(spreadsheetId || '').trim();
@@ -727,6 +730,140 @@ function extractAuctionId(input) {
   return match ? match[0].toLowerCase() : '';
 }
 
+function parseStoreBundleChildProductIds(input) {
+  return [...new Set(String(input || '')
+    .split(/[,，]/)
+    .map(value => extractAuctionId(value) || String(value || '').trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+function normalizeBundleShippingFeeText(value) {
+  const amount = Number(String(value ?? '').replace(/[^\d]/g, ''));
+  if (!Number.isInteger(amount) || amount < 0) {
+    const error = new Error('valid bundle shipping fee is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  return `${amount}円`;
+}
+
+function buildStoreBundleGroupId(mainProductId, nowMs = Date.now()) {
+  return `store-bundle-${String(mainProductId || '').toLowerCase()}-${nowMs}`;
+}
+
+function assertStoreBundleBackfillRows({ mainProductId, childProductIds, rows }) {
+  const ids = [mainProductId, ...childProductIds];
+  const byProductId = new Map((rows || []).map(row => [String(row.product_id || '').toLowerCase(), row]));
+  const missing = ids.filter(id => !byProductId.has(id));
+  if (missing.length) {
+    const error = new Error(`商品不存在或不是落札订单：${missing.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const nonStore = ids.filter(id => byProductId.get(id)?.product_type !== 'store');
+  if (nonStore.length) {
+    const error = new Error(`只能补录商城商品：${nonStore.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const blocked = ids.filter(id => [ORDER_STATUS_COMPLETED, ORDER_STATUS_CANCELLED, ORDER_STATUS_PENDING_RECEIPT].includes(byProductId.get(id)?.order_status));
+  if (blocked.length) {
+    const error = new Error(`这些商品状态不能补录：${blocked.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+async function backfillStoreBundle(database, payload = {}, options = {}) {
+  const mainProductId = extractAuctionId(payload.mainProductId || payload.main_product_id || '');
+  const childProductIds = parseStoreBundleChildProductIds(payload.childProductIds || payload.child_product_ids || '');
+  if (!mainProductId) {
+    const error = new Error('mainProductId is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!childProductIds.length) {
+    const error = new Error('childProductIds is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (childProductIds.includes(mainProductId)) {
+    const error = new Error('主商品不能同时作为子商品');
+    error.statusCode = 400;
+    throw error;
+  }
+  const bundleShippingFeeText = normalizeBundleShippingFeeText(payload.bundleShippingFee ?? payload.bundle_shipping_fee ?? payload.bundleShippingFeeText);
+  const allProductIds = [mainProductId, ...childProductIds];
+  const placeholders = allProductIds.map(() => '?').join(',');
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.order_status,
+            t.product_id,
+            COALESCE(t.product_type, CASE WHEN COALESCE(t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE LOWER(t.product_id) IN (${placeholders})
+       AND t.status = 'success'`,
+    allProductIds
+  );
+  assertStoreBundleBackfillRows({ mainProductId, childProductIds, rows });
+
+  const byProductId = new Map(rows.map(row => [String(row.product_id || '').toLowerCase(), row]));
+  const mainOrderId = byProductId.get(mainProductId).order_id;
+  const childOrderIds = childProductIds.map(id => byProductId.get(id).order_id);
+  const orderIds = [mainOrderId, ...childOrderIds];
+  const bundleGroupId = String(payload.bundleGroupId || '').trim() || buildStoreBundleGroupId(mainProductId, options.nowMs || Date.now());
+  const beforeRows = await getOrderStatusAuditRows(database, orderIds);
+
+  await database.query(
+    `UPDATE orders
+     SET bundle_group_id = ?,
+         bundle_shipping_fee_text = ?,
+         order_status = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [bundleGroupId, bundleShippingFeeText, ORDER_STATUS_PENDING_SHIPMENT, mainOrderId]
+  );
+
+  if (childOrderIds.length) {
+    const childPlaceholders = childOrderIds.map(() => '?').join(',');
+    await database.query(
+      `UPDATE orders
+       SET bundle_group_id = ?,
+           bundle_shipping_fee_text = '0円',
+           order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (${childPlaceholders})`,
+      [bundleGroupId, ORDER_STATUS_BUNDLE_COMPLETED, ...childOrderIds]
+    );
+  }
+
+  const statusesByOrderId = {
+    [mainOrderId]: ORDER_STATUS_PENDING_SHIPMENT,
+    ...Object.fromEntries(childOrderIds.map(id => [id, ORDER_STATUS_BUNDLE_COMPLETED]))
+  };
+  await writeOrderStatusAuditLogs(database, beforeRows, {
+    statusesByOrderId,
+    source: 'admin_store_bundle_backfill',
+    metadata: {
+      mainProductId,
+      childProductIds,
+      bundleShippingFeeText,
+      bundleGroupId
+    }
+  }).catch(() => null);
+
+  return {
+    mainProductId,
+    childProductIds,
+    bundleShippingFeeText,
+    bundleGroupId,
+    mainOrderId,
+    childOrderIds,
+    updated: orderIds.length
+  };
+}
+
 router.post('/orders/settle', async (req, res) => {
   const orderIds = Array.isArray(req.body?.orderIds) ? req.body.orderIds.map(Number).filter(Number.isFinite) : [];
   const rate = Number(req.body?.rate);
@@ -823,6 +960,15 @@ router.post('/orders/settle', async (req, res) => {
     failed: results.filter(item => !item.success).length,
     results
   });
+});
+
+router.post('/orders/store-bundle-backfill', async (req, res) => {
+  try {
+    const result = await backfillStoreBundle(db, req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '商城同捆补录失败' });
+  }
 });
 
 router.get('/finance-config', async (req, res) => {
@@ -1836,11 +1982,14 @@ module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT
 module.exports.ORDER_STATUS_COMPLETED = ORDER_STATUS_COMPLETED;
 module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
 module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
+module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.getEffectiveShippingFeeText = getEffectiveShippingFeeText;
 module.exports.resolveSettlementOrderStatus = resolveSettlementOrderStatus;
 module.exports.normalizeOrderStatusRefreshTarget = normalizeOrderStatusRefreshTarget;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
+module.exports.parseStoreBundleChildProductIds = parseStoreBundleChildProductIds;
+module.exports.backfillStoreBundle = backfillStoreBundle;
 module.exports.deleteProductDataByProductId = deleteProductDataByProductId;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
