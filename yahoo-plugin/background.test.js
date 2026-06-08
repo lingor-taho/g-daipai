@@ -1002,6 +1002,105 @@ async function testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab() {
   assert.deepEqual(calls[0], { orderId: 31, productId: 's31', status: 'success', bundleGroupId: '' });
 }
 
+async function testRunConfirmReceiptJobsWaitsForEnabledReceiveButton() {
+  const statusCalls = [];
+  const sentDebuggerCommands = [];
+  let scriptCall = 0;
+  const snapshots = [
+    {
+      bodyText: '商品を受け取りました。 受け取り連絡',
+      controls: ['受け取り連絡'],
+      hasReceiptCheckbox: true,
+      hasReceiptCheckboxChecked: false,
+      hasReceiptSubmitButton: false,
+      receiptSubmitButtonDisabled: true
+    },
+    {
+      bodyText: '商品を受け取りました。 受け取り連絡',
+      controls: ['受け取り連絡'],
+      hasReceiptCheckbox: true,
+      hasReceiptCheckboxChecked: false,
+      hasReceiptSubmitButton: false,
+      receiptSubmitButtonDisabled: true
+    },
+    {
+      bodyText: '商品を受け取りました。 受け取り連絡',
+      controls: ['受け取り連絡'],
+      hasReceiptCheckbox: true,
+      hasReceiptCheckboxChecked: true,
+      hasReceiptSubmitButton: true,
+      receiptSubmitButtonDisabled: false
+    },
+    {
+      bodyText: 'すべての取引が完了しました',
+      controls: [],
+      hasReceiptCheckbox: false,
+      hasReceiptCheckboxChecked: false,
+      hasReceiptSubmitButton: false,
+      receiptSubmitButtonDisabled: false
+    }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 32, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 32, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; },
+      async update(id) { return { id, windowId: 5, status: 'complete' }; }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        sentDebuggerCommands.push({ command, params });
+      },
+      async detach() {}
+    },
+    windows: {
+      async update() {}
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        scriptCall += 1;
+        if (scriptCall === 2) return [{ result: { success: true } }];
+        if (scriptCall === 4) return [{ result: { success: true, x: 42, y: 24, text: '商品を受け取りました。' } }];
+        if (scriptCall === 6) return [{ result: { success: true, method: 'click', text: '受け取り連絡' } }];
+        const snapshot = snapshots.shift();
+        return [{ result: { success: true, snapshot } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 32,
+                productId: 'x1226734300',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(statusCalls[0].status, 'success');
+  assert.equal(statusCalls[0].productId, 'x1226734300');
+  assert.equal(sentDebuggerCommands.some(item => item.command === 'Input.dispatchMouseEvent'), true);
+}
+
 async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
   const calls = [];
   const actions = [];
@@ -1615,6 +1714,7 @@ async function run() {
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
+  await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();

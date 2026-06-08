@@ -1775,3 +1775,30 @@ node src\client\src\utils\bidPrice.test.mjs
 Set-Location src\client
 npm run build
 ```
+
+---
+
+## 2026-06-08 确认收货按钮点击修正
+
+### 问题
+
+- Yahoo 普通商品受取連絡页同时存在两个 `value="受け取り連絡"` 按钮：
+  - 灰色 `.jsOffReceiveButton / libBtnDisL`，默认显示，点击只会 `javascript:void(0)`。
+  - 红色 `.jsOnReceiveButton`，默认 `display:none`，勾选 `商品を受け取りました。` 后才显示，并带真实 `/buyer/ship?...` 跳转。
+- 插件之前只按按钮文字匹配，可能点到灰色假按钮，导致页面停留在受取連絡页，后台提示 `receipt completion text not found`。
+
+### 已实现内容
+
+- `yahoo-plugin/background.js` 确认收货状态识别新增：
+  - 识别复选框是否已勾选。
+  - 识别 `受け取り連絡` 真实按钮是否可见可用。
+  - 把 `.jsOffReceiveButton / libBtnDisL` 视为不可提交按钮。
+- 复选框普通点击后如果按钮仍未启用，会使用 Chrome debugger 派发真实鼠标点击兜底。
+- 提交按钮点击只选择可见且可用的 `.jsOnReceiveButton`，避免再点灰色假按钮。
+- 新增回归测试覆盖确认收货先遇到灰色按钮、兜底勾选后再点击真实按钮的流程。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+```

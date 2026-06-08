@@ -1440,7 +1440,9 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
     textSample: text.slice(0, 500),
     complete: /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text),
     hasReceiptCheckbox: /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(text) || Boolean(snapshot.hasReceiptCheckbox),
-    hasReceiptSubmitButton: controls.some(value => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(value)) || Boolean(snapshot.hasReceiptSubmitButton)
+    hasReceiptCheckboxChecked: Boolean(snapshot.hasReceiptCheckboxChecked),
+    hasReceiptSubmitButton: controls.some(value => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(value)) || Boolean(snapshot.hasReceiptSubmitButton),
+    receiptSubmitButtonDisabled: Boolean(snapshot.receiptSubmitButtonDisabled)
   };
 }
 
@@ -1459,19 +1461,43 @@ async function getConfirmReceiptPageState(tabId) {
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
         .map(el => getText(el))
         .filter(Boolean);
+      const isVisible = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle?.(el);
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        const rect = el.getBoundingClientRect?.();
+        return !!(rect && rect.width > 0 && rect.height > 0);
+      };
       const checkbox = [...document.querySelectorAll('input[type="checkbox"]')]
         .find(input => {
           const label = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`) : null;
           const container = input.closest('label, li, div, section');
           return /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(getText(label) || getText(container));
         });
+      const receiptButtons = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+        .filter(el => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(getText(el)));
+      const isDisabled = el => Boolean(
+        el?.disabled ||
+        el?.getAttribute?.('disabled') !== null ||
+        el?.getAttribute?.('aria-disabled') === 'true' ||
+        /\b(jsOffReceiveButton|libBtnDisL)\b/.test(String(el?.className || ''))
+      );
+      const activeReceiptButton = receiptButtons.find(el =>
+        isVisible(el) &&
+        !isDisabled(el) &&
+        (/\bjsOnReceiveButton\b/.test(String(el.className || '')) || !/\bjsOffReceiveButton\b/.test(String(el.className || '')))
+      );
+      const visibleReceiptButton = receiptButtons.find(isVisible);
       return {
         success: true,
         snapshot: {
           url: location.href,
           bodyText: normalize(document.body?.textContent || ''),
           controls,
-          hasReceiptCheckbox: Boolean(checkbox)
+          hasReceiptCheckbox: Boolean(checkbox),
+          hasReceiptCheckboxChecked: Boolean(checkbox?.checked),
+          hasReceiptSubmitButton: Boolean(activeReceiptButton),
+          receiptSubmitButtonDisabled: Boolean(visibleReceiptButton && !activeReceiptButton)
         }
       };
     }
@@ -1510,6 +1536,7 @@ async function clickConfirmReceiptCheckbox(tabId) {
       if (typeof PointerEvent !== 'undefined') target.dispatchEvent(new PointerEvent('pointerup', eventOptions));
       target.dispatchEvent(new MouseEvent('mouseup', eventOptions));
       target.click?.();
+      if (!checkbox.checked) checkbox.click?.();
       checkbox.checked = true;
       checkbox.dispatchEvent(new Event('input', { bubbles: true }));
       checkbox.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1517,6 +1544,102 @@ async function clickConfirmReceiptCheckbox(tabId) {
     }
   });
   return injectionResult?.[0]?.result || { success: false, error: 'receipt checkbox click returned no result' };
+}
+
+async function getConfirmReceiptCheckboxClickPoint(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const isVisible = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle?.(el);
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        const rect = el.getBoundingClientRect?.();
+        return !!(rect && rect.width > 0 && rect.height > 0);
+      };
+      const checkbox = [...document.querySelectorAll('input[type="checkbox"]')]
+        .find(input => {
+          const label = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`) : null;
+          const container = input.closest('label, li, div, section, p');
+          return /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(getText(label) || getText(container));
+        });
+      if (!checkbox) return { success: false, error: 'receipt checkbox not found for trusted click' };
+      const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : null;
+      const target = [checkbox, label, checkbox.closest('label, li, div, section, p')].find(isVisible) || checkbox;
+      target.scrollIntoView?.({ block: 'center', inline: 'center' });
+      const rect = target.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return { success: false, error: 'receipt checkbox has no clickable rect' };
+      }
+      return {
+        success: true,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        text: getText(target)
+      };
+    }
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'receipt checkbox point not found' };
+}
+
+async function dispatchTrustedConfirmReceiptCheckboxClick(tab) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for trusted receipt checkbox click' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+
+  const point = await getConfirmReceiptCheckboxClickPoint(tabId);
+  if (!point?.success) return point;
+
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1
+    });
+    await sleep(300);
+    return { success: true, method: 'debuggerMouse', text: point.text };
+  } catch (e) {
+    return { success: false, error: e.message || 'trusted receipt checkbox mouse click failed' };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
 }
 
 async function clickConfirmReceiptSubmit(tabId) {
@@ -1532,8 +1655,31 @@ async function clickConfirmReceiptSubmit(tabId) {
         el?.getAttribute?.('aria-label')
       ].filter(Boolean).join(' '));
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')];
-      const button = controls.find(el => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(getText(el)));
+      const isVisible = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle?.(el);
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        const rect = el.getBoundingClientRect?.();
+        return !!(rect && rect.width > 0 && rect.height > 0);
+      };
+      const isDisabled = el => Boolean(
+        el?.disabled ||
+        el?.getAttribute?.('disabled') !== null ||
+        el?.getAttribute?.('aria-disabled') === 'true' ||
+        /\b(jsOffReceiveButton|libBtnDisL)\b/.test(String(el?.className || ''))
+      );
+      const matches = controls.filter(el => /\u53d7\u3051\u53d6\u308a\u9023\u7d61/.test(getText(el)));
+      const button = matches.find(el => /\bjsOnReceiveButton\b/.test(String(el.className || '')) && isVisible(el) && !isDisabled(el)) ||
+        matches.find(el => isVisible(el) && !isDisabled(el) && !/\bjsOffReceiveButton\b/.test(String(el.className || '')));
       if (!button) return { success: false, error: 'receipt submit button not found' };
+      if (isDisabled(button) || !isVisible(button)) {
+        return { success: false, error: 'receipt submit button disabled' };
+      }
+      const type = String(button.type || '').toLowerCase();
+      if (button.form && typeof button.form.requestSubmit === 'function' && (type === 'submit' || (!type && button.tagName === 'BUTTON'))) {
+        button.form.requestSubmit(button);
+        return { success: true, method: 'requestSubmit', text: getText(button) };
+      }
       const eventOptions = { bubbles: true, cancelable: true, view: window };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
@@ -1543,7 +1689,7 @@ async function clickConfirmReceiptSubmit(tabId) {
       button.dispatchEvent(new MouseEvent('mouseup', eventOptions));
       button.click?.();
       button.dispatchEvent(new MouseEvent('click', eventOptions));
-      return { success: true, text: getText(button) };
+      return { success: true, method: 'click', text: getText(button) };
     }
   });
   return injectionResult?.[0]?.result || { success: false, error: 'receipt submit click returned no result' };
@@ -2860,8 +3006,31 @@ async function executeConfirmReceiptJob(job) {
     if (!checkboxResult?.success) throw new Error(checkboxResult?.error || 'receipt checkbox click failed');
     await sleep(800);
     state = await getConfirmReceiptPageState(tab.id);
-    if (!state?.hasReceiptSubmitButton) {
-      const readyTab = await waitForConfirmReceiptState(tab, nextState => nextState.hasReceiptSubmitButton || nextState.complete, 5000);
+    if (!state?.complete && (!state?.hasReceiptCheckboxChecked || state?.receiptSubmitButtonDisabled)) {
+      const trustedCheckbox = await dispatchTrustedConfirmReceiptCheckboxClick(tab);
+      if (trustedCheckbox?.success) {
+        const readyTab = await waitForConfirmReceiptState(tab, nextState =>
+          nextState.complete ||
+          nextState.hasReceiptCheckboxChecked ||
+          (nextState.hasReceiptSubmitButton && !nextState.receiptSubmitButtonDisabled),
+          5000
+        );
+        if (readyTab) {
+          tab = readyTab;
+          state = readyTab._gdaipaiConfirmReceiptState || await getConfirmReceiptPageState(tab.id);
+        } else {
+          state = await getConfirmReceiptPageState(tab.id);
+        }
+      } else {
+        console.warn('[Yahoo Bid] Trusted receipt checkbox click failed:', trustedCheckbox?.error || trustedCheckbox);
+      }
+    }
+    if (!state?.hasReceiptSubmitButton || state?.receiptSubmitButtonDisabled) {
+      const readyTab = await waitForConfirmReceiptState(tab, nextState =>
+        nextState.complete ||
+        (nextState.hasReceiptSubmitButton && !nextState.receiptSubmitButtonDisabled),
+        5000
+      );
       if (readyTab) {
         tab = readyTab;
         state = readyTab._gdaipaiConfirmReceiptState || await getConfirmReceiptPageState(tab.id);
@@ -2878,6 +3047,9 @@ async function executeConfirmReceiptJob(job) {
     }
     if (!state?.hasReceiptSubmitButton) {
       throw new Error(`receipt submit button not found${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);
+    }
+    if (state?.receiptSubmitButtonDisabled) {
+      throw new Error(`receipt submit button disabled after checkbox click${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);
     }
     const submitResult = await clickConfirmReceiptSubmit(tab.id);
     if (!submitResult?.success) throw new Error(submitResult?.error || 'receipt submit click failed');
