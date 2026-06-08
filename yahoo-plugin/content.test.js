@@ -36,7 +36,7 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
     window: {
       location: {
         origin: 'http://localhost:3001',
-        href: `https://auctions.yahoo.co.jp${pathname}`,
+        href: options.href || `https://auctions.yahoo.co.jp${pathname}`,
         pathname
       },
       addEventListener() {},
@@ -1203,9 +1203,24 @@ function testTransactionPageYahooIdTextDoesNotMeanLoggedOut() {
 }
 
 function testLoginUrlStillMeansLoggedOut() {
-  const api = loadContentForTest('Yahoo! JAPAN ID ??????????', '/login');
+  const api = loadContentForTest('Yahoo! JAPAN ID ??????????', '/login', {
+    href: 'https://login.yahoo.co.jp/config/login'
+  });
 
   assert.equal(api.detectYahooLoginStatus().status, 'failed');
+}
+
+async function testProductPageLoginHintDoesNotShortCircuitBidExecution() {
+  const api = loadContentForTest(
+    '\u5546\u54c1\u60c5\u5831 \u30ed\u30b0\u30a4\u30f3\u304c\u5fc5\u8981\u306a\u6a5f\u80fd\u304c\u3042\u308a\u307e\u3059',
+    '/jp/auction/f1232542390'
+  );
+
+  const result = await api.executeBidV3(9600, { currentPrice: 9341, userMaxPrice: 10560, taxType: 'tax_included' });
+
+  assert.equal(result.success, false);
+  assert.notEqual(result.error, '\u9700\u8981\u767b\u5f55 Yahoo');
+  assert.equal(result.error, 'bid button not found');
 }
 
 function testClickTransactionContactForProduct() {
@@ -1702,6 +1717,9 @@ async function run() {
   testBundleTransactionInfoDetectsQuantityMismatch();
   testBundleTransactionInfoDetectsPopupBundleText();
   testDetectBundleRequestedComplete();
+  testTransactionPageYahooIdTextDoesNotMeanLoggedOut();
+  testLoginUrlStillMeansLoggedOut();
+  await testProductPageLoginHintDoesNotShortCircuitBidExecution();
   testClickTransactionContactForProduct();
   testClickBundleTransactionActionFindsRequestButton();
   testClickBundleTransactionActionIgnoresInstructionText();

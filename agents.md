@@ -1873,3 +1873,26 @@ node yahoo-plugin\content.test.js
 Set-Location src\client
 npm run build
 ```
+
+---
+
+## 2026-06-08 商品页登录误判修正
+
+### 问题
+
+- 商品 `f1232542390` 本地出价时，Yahoo 商品页打开后没有跳转登录页，也没有执行出价，任务直接失败为 `需要登录 Yahoo`。
+- 根因是 `executeBidV3()` 在商品页执行前扫描整页文本，只要页面里出现 `ログイン...必要` / `ログインしてください` 这类普通提示文案，就提前返回登录失败。
+- 业务判断确认：`https://auctions.yahoo.co.jp/jp/auction/{商品ID}` 商品页本身不应做登录失败判断；如果真的未登录，Yahoo 会跳到 `login.yahoo.co.jp` 或账号验证域名，不会停留在商品页。
+
+### 已修复内容
+
+- `yahoo-plugin/content.js` 新增 `isYahooLoginPageUrl()`，出价执行入口只在当前 URL 为 `login.yahoo.co.jp` / `account.edit.yahoo.co.jp` 时返回 `需要登录 Yahoo`。
+- 商品页即使包含登录提示文案，也继续走正常出价按钮查找和点击流程。
+- 保留 `detectYahooLoginStatus()` 对 `/my/won`、入札中、交易页、扫描页等同步流程的登录状态上报逻辑，不影响后台顶部 Yahoo 登录状态显示。
+- 新增回归测试覆盖：商品页文本含 `ログインが必要` 时，不能在出价执行入口直接返回 `需要登录 Yahoo`。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\content.test.js
+```

@@ -295,10 +295,14 @@ function getBodyText() {
   return document.body.textContent || '';
 }
 
+function isYahooLoginPageUrl(href = window.location.href || '') {
+  return /login\.yahoo\.co\.jp|account\.edit\.yahoo\.co\.jp/i.test(href);
+}
+
 function detectYahooLoginStatus() {
   const text = getBodyText();
   const href = window.location.href;
-  const isLoginUrl = /login\.yahoo\.co\.jp|account\.edit\.yahoo\.co\.jp/i.test(href);
+  const isLoginUrl = isYahooLoginPageUrl(href);
   const hasLoginPrompt = /\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044|ログイン.*必要|ログインしてください/i.test(text);
   if (isLoginUrl || hasLoginPrompt) {
     return { status: 'failed', message: '需要登录 Yahoo' };
@@ -531,7 +535,7 @@ async function executeBidV3(maxPrice, options = {}) {
   const strategy = options.strategy || 'direct';
   const bodyText = document.body.textContent || '';
 
-  if (/\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044/.test(bodyText)) {
+  if (isYahooLoginPageUrl()) {
     return { success: false, error: '需要登录 Yahoo' };
   }
 
