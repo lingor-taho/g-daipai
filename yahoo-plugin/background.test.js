@@ -1388,6 +1388,152 @@ async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
   assert.equal(point.rect.width, 284);
 }
 
+async function testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit() {
+  const payPayBenefitSpan = {
+    tagName: 'SPAN',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    disabled: false,
+    getAttribute() { return ''; },
+    closest(selector) {
+      return selector === '#confirm' ? null : null;
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 335, top: 864, width: 288, height: 24 };
+    }
+  };
+  const confirmContainer = { id: 'confirm' };
+  const confirmAnchor = {
+    tagName: 'A',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    disabled: false,
+    getAttribute(name) {
+      if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:1;';
+      return '';
+    },
+    closest(selector) {
+      return selector === '#confirm' ? confirmContainer : null;
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 0, height: 0 };
+    }
+  };
+  const confirmTextSpan = {
+    tagName: 'SPAN',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    disabled: false,
+    getAttribute() { return ''; },
+    closest(selector) {
+      if (selector === '#confirm') return confirmContainer;
+      if (selector.includes('button') || selector.includes('a')) return confirmAnchor;
+      return null;
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 745, top: 531, width: 240, height: 37 };
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            querySelectorAll() {
+              return [payPayBenefitSpan, confirmAnchor, confirmTextSpan];
+            },
+            querySelector(selector) {
+              if (selector === '#confirm [data-cl-params*="_cl_link:confirm"]') return confirmAnchor;
+              return null;
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const point = await api.getPaymentActionClickPoint(99, 'review');
+
+  assert.equal(point.success, true);
+  assert.equal(point.text, '確認する');
+  assert.equal(point.x, 865);
+  assert.equal(point.y, 549.5);
+  assert.equal(point.rect.left, 745);
+}
+
+async function testPaymentReviewClickPointUsesPaymentAmountContextFallback() {
+  const payPayBenefitSpan = {
+    tagName: 'SPAN',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    disabled: false,
+    parentElement: null,
+    getAttribute() { return ''; },
+    closest() { return null; },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 335, top: 864, width: 288, height: 24 };
+    }
+  };
+  const amountContainer = {
+    textContent: 'お支払い金額（税込） 300円 確認する',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    parentElement: null
+  };
+  const orderConfirmSpan = {
+    tagName: 'SPAN',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    disabled: false,
+    parentElement: amountContainer,
+    getAttribute() { return ''; },
+    closest() { return null; },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 745, top: 531, width: 240, height: 37 };
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            body: {},
+            querySelectorAll() {
+              return [payPayBenefitSpan, orderConfirmSpan];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const point = await api.getPaymentActionClickPoint(99, 'review');
+
+  assert.equal(point.success, true);
+  assert.equal(point.x, 865);
+  assert.equal(point.rect.left, 745);
+}
+
 async function testPaymentShippingChangeClickPointFindsButtonAfterHeaderSibling() {
   const makeElement = (order, text, rect = null) => ({
     order,
@@ -1771,6 +1917,8 @@ async function run() {
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
+  await testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit();
+  await testPaymentReviewClickPointUsesPaymentAmountContextFallback();
   await testPaymentShippingChangeClickPointFindsButtonAfterHeaderSibling();
   await testPaymentShippingChangeClickPointUsesShippingSectionRoleButton();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();

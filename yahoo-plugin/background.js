@@ -824,8 +824,29 @@ async function runMainWorldPaymentActionClick(tabId, action) {
         return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
       };
       const isPreferredConfirm = el => actionName === 'review' && /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
+      const hasPaymentAmountContext = el => {
+        if (actionName !== 'review') return false;
+        let node = el;
+        let depth = 0;
+        while (node && node !== document.body && depth < 8) {
+          if (/\u652f\u6255\u3044\u91d1\u984d|\u304a\u652f\u6255\u3044\u91d1\u984d/.test(getText(node))) return true;
+          node = node.parentElement;
+          depth += 1;
+        }
+        return false;
+      };
       const matches = controls.filter(el => pattern.test(getText(el)));
-      const button = matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+      const confirmContainerMatches = actionName === 'review'
+        ? matches.filter(el => el.closest?.('#confirm'))
+        : [];
+      const paymentAmountMatches = actionName === 'review'
+        ? matches.filter(el => hasPaymentAmountContext(el))
+        : [];
+      const button = confirmContainerMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        confirmContainerMatches.find(el => isClickable(el)) ||
+        paymentAmountMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        paymentAmountMatches.find(el => isClickable(el)) ||
+        matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
         matches.find(el => isClickable(el)) ||
         matches[0];
       if (!button) return { success: false, error: 'payment button not found' };
@@ -885,8 +906,24 @@ async function getPaymentActionClickPoint(tabId, action) {
         return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
       };
       const isPreferredConfirm = el => /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
+      const hasPaymentAmountContext = el => {
+        let node = el;
+        let depth = 0;
+        while (node && node !== document.body && depth < 8) {
+          if (/\u652f\u6255\u3044\u91d1\u984d|\u304a\u652f\u6255\u3044\u91d1\u984d/.test(getText(node))) return true;
+          node = node.parentElement;
+          depth += 1;
+        }
+        return false;
+      };
       const matches = controls.filter(el => pattern.test(getText(el)));
-      const button = matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+      const confirmContainerMatches = matches.filter(el => el.closest?.('#confirm'));
+      const paymentAmountMatches = matches.filter(el => hasPaymentAmountContext(el));
+      const button = confirmContainerMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        confirmContainerMatches.find(el => isClickable(el)) ||
+        paymentAmountMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        paymentAmountMatches.find(el => isClickable(el)) ||
+        matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
         matches.find(el => isClickable(el)) ||
         matches[0];
       if (!button) return { success: false, error: 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
