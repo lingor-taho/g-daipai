@@ -601,6 +601,17 @@ async function executeBidV3(maxPrice, options = {}) {
     return closest && isClickableElement(closest) ? closest : null;
   }
 
+  function findBuyoutReviewConfirmButton() {
+    const selector = clickableSelector();
+    const isExactConfirm = el => /^\s*\u78ba\u8a8d\u3059\u308b\s*$/.test(textOf(el));
+    const controls = [...document.querySelectorAll(selector)]
+      .filter(el => isClickableElement(el) && isExactConfirm(el));
+    return controls.find(el => /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''))) ||
+      controls.find(el => String(el.tagName || '').toUpperCase() === 'A') ||
+      controls[0] ||
+      null;
+  }
+
   function findActiveDialog() {
     const dialogs = [
       ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]')
@@ -871,12 +882,7 @@ async function executeBidV3(maxPrice, options = {}) {
     return { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'confirm-clicked' };
   }
 
-  const standaloneConfirmBtn = bidMode === 'buyout' ? findClickable([
-    /\u78ba\u8a8d/,
-    /\u78ba\u8a8d\u753b\u9762/,
-    /\u5165\u672d\u5185\u5bb9/,
-    /\u6b21\u3078/
-  ]) : null;
+  const standaloneConfirmBtn = bidMode === 'buyout' ? findBuyoutReviewConfirmButton() : null;
   if (standaloneConfirmBtn) {
     clickElement(standaloneConfirmBtn);
     await new Promise(resolve => setTimeout(resolve, 1200));

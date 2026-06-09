@@ -914,6 +914,65 @@ async function testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation() {
   assert.equal(finalAgreeButton.clicked, true);
 }
 
+async function testStoreBuyoutReviewSkipsPayPayBenefitConfirmLink() {
+  let stage = 'review';
+  const payPayBenefitLink = createTestElement('\u7279\u5178\u3092\u78ba\u8a8d\u3059\u308b');
+  payPayBenefitLink.tagName = 'A';
+  payPayBenefitLink.href = 'https://www.paypay-card.co.jp/campaign/sign-up/web/yahoo';
+  payPayBenefitLink.click = () => {
+    payPayBenefitLink.clicked = true;
+    stage = 'ad';
+  };
+  const reviewConfirmLink = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  reviewConfirmLink.tagName = 'A';
+  reviewConfirmLink.getAttribute = name => {
+    if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:1;';
+    if (name === 'href') return reviewConfirmLink.href;
+    return '';
+  };
+  reviewConfirmLink.click = () => {
+    reviewConfirmLink.clicked = true;
+    stage = 'final';
+  };
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b');
+  finalAgreeButton.click = () => {
+    finalAgreeButton.clicked = true;
+    stage = 'success';
+  };
+
+  const api = loadContentForTest('', '/order/review?auctionId=q1175609593', {
+    getBodyText: () => {
+      if (stage === 'review') return '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u7a0e\u8fbc\uff09 300\u5186 \u7279\u5178\u3092\u78ba\u8a8d\u3059\u308b \u78ba\u8a8d\u3059\u308b';
+      if (stage === 'final') return '\u78ba\u8a8d \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b';
+      if (stage === 'ad') return '\u7279\u5178\u7533\u3057\u8fbc\u307f';
+      return '\u3053\u306e\u5546\u54c1\u3092\u843d\u672d\u3057\u307e\u3057\u305f';
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') {
+        return [{ textContent: 'var pageData = {"items":{"productID":"q1175609593","price":"273","winPrice":"273","productName":"store buyout"}};' }];
+      }
+      if (selector.includes('button') || selector === 'body *') {
+        if (stage === 'review') return [payPayBenefitLink, reviewConfirmLink];
+        if (stage === 'final') return [finalAgreeButton];
+      }
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(272, {
+    maxPrice: 272,
+    userMaxPrice: 300,
+    bidMode: 'buyout',
+    taxType: 'tax_included',
+    strategy: 'direct'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(payPayBenefitLink.clicked, false);
+  assert.equal(reviewConfirmLink.clicked, true);
+  assert.equal(finalAgreeButton.clicked, true);
+}
+
 async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() {
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
@@ -1745,6 +1804,7 @@ async function run() {
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
   await testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation();
+  await testStoreBuyoutReviewSkipsPayPayBenefitConfirmLink();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
