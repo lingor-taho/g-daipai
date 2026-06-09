@@ -530,7 +530,6 @@ function createProductService({
     }
 
     const cached = cache.get(parsed.auctionId);
-    let httpProduct = null;
 
     try {
       const html = await httpFetcher(parsed.standardUrl);
@@ -549,32 +548,9 @@ function createProductService({
           } catch (_) {}
         }
       }
-      if (isUsefulProduct(data, parsed.auctionId) && attemptedShipmentLookup && isGenericShippingFeeText(data.shippingFeeText)) {
-        try {
-          const freshHtml = await playwrightFetcher(parsed.standardUrl);
-          const freshShipmentUrls = buildYahooShipmentUrls(freshHtml, parsed.auctionId);
-          for (const shipmentUrl of freshShipmentUrls) {
-            try {
-              const shipmentJson = await httpFetcher(shipmentUrl);
-              const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
-              if (resolvedShipping) {
-                data.shippingFeeText = resolvedShipping;
-                break;
-              }
-            } catch (_) {}
-          }
-        } catch (_) {}
-      }
       if (isUsefulProduct(data, parsed.auctionId)) {
-        httpProduct = data;
-        if (!isGenericShippingFeeText(data.shippingFeeText)) {
-          cacheProduct(data);
-          return { success: true, data, source: 'http' };
-        }
-        if (!attemptedShipmentLookup) {
-          cacheProduct(data);
-          return { success: true, data, source: 'http' };
-        }
+        cacheProduct(data);
+        return { success: true, data, source: 'http' };
       }
     } catch (_) {}
 
@@ -593,22 +569,10 @@ function createProductService({
         } catch (_) {}
       }
       if (isUsefulProduct(data, parsed.auctionId)) {
-        const base = httpProduct || data;
-        const resolved = {
-          ...base,
-          shippingFeeText: !isGenericShippingFeeText(data.shippingFeeText)
-            ? data.shippingFeeText
-            : (base.shippingFeeText || data.shippingFeeText)
-        };
-        cacheProduct(resolved);
-        return { success: true, data: resolved, source: 'playwright' };
+        cacheProduct(data);
+        return { success: true, data, source: 'playwright' };
       }
     } catch (_) {}
-
-    if (httpProduct) {
-      cacheProduct(httpProduct);
-      return { success: true, data: httpProduct, source: 'http' };
-    }
 
     if (cached) {
       return { success: true, data: cached, source: 'cache-fallback' };

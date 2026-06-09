@@ -634,6 +634,43 @@ async function testFetchDoesNotRenderGenericShippingWithoutShipmentApi() {
   assert.deepEqual(calls, ['http']);
 }
 
+async function testFetchStopsAfterSingleFailedShipmentLookupForGenericShipping() {
+  const calls = [];
+  const service = createProductService({
+    httpFetcher: async (url) => {
+      calls.push(url.includes('/shipments/') ? 'shipment' : 'http');
+      if (url.includes('/shipments/')) {
+        throw new Error('shipment timeout');
+      }
+      return `
+        <html>
+          <head><title>Generic Shipping Product - Yahoo!</title></head>
+          <body>
+            <span itemprop="price" content="35700"></span>
+            <script id="__NEXT_DATA__" type="application/json">
+              {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{
+                "chargeForShipping":"winner",
+                "shippingInput":"\u53d6\u5f15\u30ca\u30d3\u958b\u59cb\u6642\u306b\u5165\u529b",
+                "shipping":{"methods":[{"name":"\u304a\u3066\u304c\u308b\u914d\u9001","isFlatFee":false}]}
+              }}}}}}}
+            </script>
+          </body>
+        </html>
+      `;
+    },
+    playwrightFetcher: async () => {
+      calls.push('playwright');
+      throw new Error('should not call playwright');
+    }
+  });
+
+  const result = await service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/j1230839418');
+
+  assert.equal(result.source, 'http');
+  assert.equal(result.data.shippingFeeText, '落札者負担');
+  assert.deepEqual(calls, ['http', 'shipment']);
+}
+
 async function testUsesCacheAfterFetchersFail() {
   const service = createProductService({
     httpFetcher: async () => {
@@ -792,6 +829,7 @@ async function run() {
   await testFetchUsesYahooShipmentApiWhenHttpShippingIsGeneric();
   await testFetchPrefersYahooShipmentApiOverDescriptionShippingTable();
   await testFetchDoesNotRenderGenericShippingWithoutShipmentApi();
+  await testFetchStopsAfterSingleFailedShipmentLookupForGenericShipping();
   await testUsesCacheAfterFetchersFail();
   testExtractsUniqueAuctionIdFromProductsListOnly();
   testExtractsMultipleAuctionIdsFromProductsList();
