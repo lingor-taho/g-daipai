@@ -54,6 +54,45 @@ function testSettleableShippingFeeDetection() {
   assert.equal(canSettleShippingFeeText('待定'), false);
 }
 
+function testStoreBidderPaysShippingCanSettleAsFree() {
+  const result = buildOrderSettlement({
+    order: {
+      final_price: 300,
+      tax_type: 'tax_included',
+      product_type: 'store',
+      shipping_fee_text: '送料 落札者負担'
+    },
+    baseConfig: {
+      rate: 0.05,
+      bankFeeJpy: 0,
+      handlingFeeCny: 0,
+      largeAmountFeeCny: 0
+    },
+    userFinanceOverride: null
+  });
+
+  assert.equal(result.shippingFeeJpy, 0);
+  assert.equal(result.payableCny, 15);
+}
+
+function testNormalBidderPaysShippingStillCannotSettle() {
+  assert.throws(() => buildOrderSettlement({
+    order: {
+      final_price: 300,
+      tax_type: 'tax_zero',
+      product_type: 'normal',
+      shipping_fee_text: '送料 落札者負担'
+    },
+    baseConfig: {
+      rate: 0.05,
+      bankFeeJpy: 0,
+      handlingFeeCny: 0,
+      largeAmountFeeCny: 0
+    },
+    userFinanceOverride: null
+  }), /运费无法确认/);
+}
+
 function testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand() {
   const config = {
     rate: 0.05,
@@ -242,6 +281,24 @@ function testMapAdminOrderListItemUsesEffectiveBundleShipping() {
   assert.equal(mapped.can_settle, true);
   assert.equal(mapped.shipping_fee_jpy, 110);
   assert.equal(mapped.bundle_shipping_fee_text, '110\u5186');
+}
+
+function testMapAdminOrderListItemAllowsStoreBidderPaysShipping() {
+  const mapped = mapAdminOrderListItem({
+    id: 99,
+    product_id: 'q1175609593',
+    product_type: 'store',
+    shipping_fee_text: '\u9001\u6599 \u843d\u672d\u8005\u8ca0\u62c5',
+    bundle_shipping_fee_text: '',
+    settled_at: null,
+    username: 'user',
+    product_url: '',
+    final_price: 300,
+    order_status: 'pending_shipment'
+  });
+
+  assert.equal(mapped.effective_shipping_fee_text, '\u9001\u6599 \u843d\u672d\u8005\u8ca0\u62c5');
+  assert.equal(mapped.can_settle, true);
 }
 
 function testSettlementStatusUsesPendingSettlement() {
@@ -469,6 +526,8 @@ async function testDeleteProductDataCanRemoveOrphanBiddingItem() {
 
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
+testStoreBidderPaysShippingCanSettleAsFree();
+testNormalBidderPaysShippingStillCannotSettle();
 testLargeAmountFeeOnlyAppliesAtTaxIncludedThirtyThousand();
 testStoreTaxIncludedThresholdUsesTaxIncludedPrice();
 testSpecialUserConfigOverridesOnlyConfiguredValues();
@@ -478,6 +537,7 @@ testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
+testMapAdminOrderListItemAllowsStoreBidderPaysShipping();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
 testNormalizeOrderStatusRefreshTargetSupportsAllowedTargets();

@@ -180,7 +180,7 @@ function mapAdminOrderListItem(item) {
     product_id: item.product_id || extractAuctionId(item.product_url) || '',
     shipping_fee_text: item.shipping_fee_text || '-',
     effective_shipping_fee_text: effectiveShippingFeeText || '-',
-    can_settle: canSettleShippingFeeText(effectiveShippingFeeText),
+    can_settle: canSettleOrderShippingFee(item),
     shipping_fee_jpy: settled ? parseShippingFeeToNumber(effectiveShippingFeeText) : null,
     bank_fee_jpy: settled ? item.bank_fee_jpy : null,
     handling_fee_cny: settled ? item.handling_fee_cny : null,
@@ -678,6 +678,14 @@ function canSettleShippingFeeText(shippingFeeText) {
   return /(\d[\d,]*)\s*円/.test(text);
 }
 
+function canSettleOrderShippingFee(order = {}) {
+  const effectiveShippingFeeText = getEffectiveShippingFeeText(order);
+  if (String(order.product_type || '') === 'store' && /落札者負担/.test(effectiveShippingFeeText)) {
+    return true;
+  }
+  return canSettleShippingFeeText(effectiveShippingFeeText);
+}
+
 function getEffectiveShippingFeeText(order = {}) {
   const bundleText = String(order.bundle_shipping_fee_text || '').trim();
   if (bundleText) return bundleText;
@@ -692,7 +700,7 @@ function resolveSettlementOrderStatus(currentStatus) {
 
 function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
   const effectiveShippingFeeText = getEffectiveShippingFeeText(order);
-  if (!canSettleShippingFeeText(effectiveShippingFeeText)) {
+  if (!canSettleOrderShippingFee(order)) {
     const error = new Error('该订单运费无法确认，不能结算');
     error.statusCode = 400;
     throw error;
@@ -882,7 +890,7 @@ router.post('/orders/settle', async (req, res) => {
 
   for (const orderId of orderIds) {
     const order = await db.getOne(
-      `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, u.id AS user_id,
+      `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, t.product_type, u.id AS user_id,
               ufo.rate_adjustment,
               ufo.bank_fee_jpy AS user_bank_fee_jpy,
               ufo.handling_fee_cny AS user_handling_fee_cny,
