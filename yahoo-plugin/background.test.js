@@ -1295,10 +1295,18 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
 }
 
 async function testPaymentTrustedClickPointFindsRoleButton() {
+  const amountContainer = {
+    textContent: 'お支払い金額（税込） 300円 確認する',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    parentElement: null
+  };
   const fakeButton = {
     textContent: '確認する',
     value: '',
     title: '',
+    parentElement: amountContainer,
     getAttribute(name) {
       return name === 'aria-label' ? '' : null;
     },
@@ -1313,6 +1321,7 @@ async function testPaymentTrustedClickPointFindsRoleButton() {
         const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
           args: payload.args || [],
           document: {
+            body: {},
             querySelectorAll(selector) {
               assert.match(selector, /\[role="button"\]/);
               return [fakeButton];
@@ -1333,12 +1342,20 @@ async function testPaymentTrustedClickPointFindsRoleButton() {
 }
 
 async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
+  const amountContainer = {
+    textContent: 'お支払い金額（税込） 300円 確認する',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    parentElement: null
+  };
   const hiddenButton = {
     tagName: 'A',
     textContent: '確認する',
     value: '',
     title: '',
     href: '',
+    parentElement: amountContainer,
     getAttribute(name) {
       if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:0;';
       return '';
@@ -1354,6 +1371,7 @@ async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
     value: '',
     title: '',
     href: '',
+    parentElement: amountContainer,
     getAttribute(name) {
       if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:1;';
       return '';
@@ -1369,6 +1387,7 @@ async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
         const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
           args: payload.args || [],
           document: {
+            body: {},
             querySelectorAll() {
               return [hiddenButton, visibleButton];
             }
@@ -1532,6 +1551,45 @@ async function testPaymentReviewClickPointUsesPaymentAmountContextFallback() {
   assert.equal(point.success, true);
   assert.equal(point.x, 865);
   assert.equal(point.rect.left, 745);
+}
+
+async function testPaymentReviewClickPointDoesNotFallbackToPayPayBenefit() {
+  const payPayBenefitSpan = {
+    tagName: 'SPAN',
+    textContent: '確認する',
+    value: '',
+    title: '',
+    href: '',
+    disabled: false,
+    parentElement: null,
+    getAttribute() { return ''; },
+    closest() { return null; },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 335, top: 864, width: 288, height: 24 };
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            body: {},
+            querySelectorAll() {
+              return [payPayBenefitSpan];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const point = await api.getPaymentActionClickPoint(99, 'review');
+
+  assert.equal(point.success, false);
+  assert.match(point.error, /payment review button not found/);
 }
 
 async function testPaymentShippingChangeClickPointFindsButtonAfterHeaderSibling() {
@@ -1919,6 +1977,7 @@ async function run() {
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
   await testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit();
   await testPaymentReviewClickPointUsesPaymentAmountContextFallback();
+  await testPaymentReviewClickPointDoesNotFallbackToPayPayBenefit();
   await testPaymentShippingChangeClickPointFindsButtonAfterHeaderSibling();
   await testPaymentShippingChangeClickPointUsesShippingSectionRoleButton();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();

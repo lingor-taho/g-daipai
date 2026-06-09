@@ -842,14 +842,12 @@ async function runMainWorldPaymentActionClick(tabId, action) {
       const paymentAmountMatches = actionName === 'review'
         ? matches.filter(el => hasPaymentAmountContext(el))
         : [];
-      const button = confirmContainerMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        confirmContainerMatches.find(el => isClickable(el)) ||
-        paymentAmountMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        paymentAmountMatches.find(el => isClickable(el)) ||
-        matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        matches.find(el => isClickable(el)) ||
-        matches[0];
-      if (!button) return { success: false, error: 'payment button not found' };
+      const reviewMatches = [...new Set([...paymentAmountMatches, ...confirmContainerMatches])];
+      const targetMatches = actionName === 'review' ? reviewMatches : matches;
+      const button = targetMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
+        targetMatches.find(el => isClickable(el)) ||
+        targetMatches[0];
+      if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found in order summary' : 'payment button not found' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
       const type = String(button.type || '').toLowerCase();
@@ -881,7 +879,7 @@ async function getPaymentActionClickPoint(tabId, action) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (patternStr) => {
+    func: (patternStr, actionName) => {
       const pattern = new RegExp(patternStr);
       const getText = el => [
         el.textContent,
@@ -907,6 +905,7 @@ async function getPaymentActionClickPoint(tabId, action) {
       };
       const isPreferredConfirm = el => /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
       const hasPaymentAmountContext = el => {
+        if (actionName !== 'review') return false;
         let node = el;
         let depth = 0;
         while (node && node !== document.body && depth < 8) {
@@ -917,16 +916,14 @@ async function getPaymentActionClickPoint(tabId, action) {
         return false;
       };
       const matches = controls.filter(el => pattern.test(getText(el)));
-      const confirmContainerMatches = matches.filter(el => el.closest?.('#confirm'));
-      const paymentAmountMatches = matches.filter(el => hasPaymentAmountContext(el));
-      const button = confirmContainerMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        confirmContainerMatches.find(el => isClickable(el)) ||
-        paymentAmountMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        paymentAmountMatches.find(el => isClickable(el)) ||
-        matches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        matches.find(el => isClickable(el)) ||
-        matches[0];
-      if (!button) return { success: false, error: 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
+      const confirmContainerMatches = actionName === 'review' ? matches.filter(el => el.closest?.('#confirm')) : [];
+      const paymentAmountMatches = actionName === 'review' ? matches.filter(el => hasPaymentAmountContext(el)) : [];
+      const reviewMatches = [...new Set([...paymentAmountMatches, ...confirmContainerMatches])];
+      const targetMatches = actionName === 'review' ? reviewMatches : matches;
+      const button = targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && isClickable(el)) ||
+        targetMatches.find(el => isClickable(el)) ||
+        targetMatches[0];
+      if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found in order summary for trusted click' : 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       const rect = button.getBoundingClientRect?.();
       if (!rect || rect.width <= 0 || rect.height <= 0) {
@@ -941,7 +938,7 @@ async function getPaymentActionClickPoint(tabId, action) {
         candidates: candidates.slice(0, 20)
       };
     },
-    args: [pattern]
+    args: [pattern, action]
   });
   const result = injectionResult?.[0]?.result;
   return result?.success ? result : { success: false, error: result?.error || 'payment button not found for trusted click' };
