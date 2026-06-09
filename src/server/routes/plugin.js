@@ -1433,6 +1433,151 @@ async function syncYahooWonOrders(orders = [], database = db) {
   return { updated, failed: 0, skippedExisting, forcedResync };
 }
 
+function normalizeManualImportProductId(value) {
+  const match = String(value || '').match(/[a-zA-Z]?\d{8,10}/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+function normalizeManualImportYenAmount(value) {
+  const match = String(value || '').match(/(\d[\d,]*)/);
+  return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
+}
+
+function normalizeManualImportDateTime(value) {
+  const text = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return text;
+  if (/^\d{4}-\d{2}-\d{2} /.test(text)) return text;
+  return null;
+}
+
+async function getManualOrderImportJob(database = db) {
+  const batch = await database.getOne(
+    `SELECT *
+     FROM manual_order_import_batches
+     WHERE status = 'requested'
+     ORDER BY datetime(created_at) ASC, id ASC
+     LIMIT 1`
+  );
+  if (!batch) return { job: null };
+  await database.query(
+    `UPDATE manual_order_import_batches
+     SET status = 'scanning', error_msg = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND status = 'requested'`,
+    [batch.id]
+  );
+  return {
+    job: {
+      batchId: batch.id,
+      startDate: batch.start_date,
+      endDate: batch.end_date,
+      maxPages: Math.max(1, Math.min(50, Number(batch.max_pages || 10)))
+    }
+  };
+}
+
+async function updateManualOrderImportStatus(payload = {}, database = db) {
+  const batchId = Number(payload.batchId || payload.batch_id || 0);
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    const err = new Error('batchId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const status = String(payload.status || '').trim();
+  const errorMsg = String(payload.error || '').trim();
+  if (errorMsg || status === 'failed') {
+    await database.query(
+      `UPDATE manual_order_import_batches
+       SET status = 'failed',
+           error_msg = ?,
+           scanned_pages = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [errorMsg || 'manual import scan failed', Number(payload.scannedPages || 0), batchId]
+    );
+    return { failed: true };
+  }
+
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  let candidateCount = 0;
+  let skippedExisting = 0;
+  let scannedCount = 0;
+  for (const item of items) {
+    const productId = normalizeManualImportProductId(item.productId || item.product_id || item.url);
+    if (!productId) continue;
+    scannedCount += 1;
+    const existing = await database.getOne(
+      `SELECT o.id
+       FROM orders o
+       INNER JOIN tasks t ON t.id = o.task_id
+       WHERE t.product_id = ?
+       LIMIT 1`,
+      [productId]
+    );
+    if (existing) {
+      skippedExisting += 1;
+      continue;
+    }
+    await database.query(
+      `INSERT INTO manual_order_import_items
+        (batch_id, product_id, product_url, product_title, product_image_url,
+         final_price, won_at, won_time_text, transaction_url,
+         shipping_fee_text, tax_type, product_type, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(batch_id, product_id) DO UPDATE SET
+         product_url = excluded.product_url,
+         product_title = excluded.product_title,
+         product_image_url = excluded.product_image_url,
+         final_price = excluded.final_price,
+         won_at = excluded.won_at,
+         won_time_text = excluded.won_time_text,
+         transaction_url = excluded.transaction_url,
+         shipping_fee_text = excluded.shipping_fee_text,
+         tax_type = excluded.tax_type,
+         product_type = excluded.product_type,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        batchId,
+        productId,
+        item.productUrl || item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+        item.productTitle || item.title || item.product_title || productId,
+        item.productImageUrl || item.imageUrl || item.product_image_url || '',
+        normalizeManualImportYenAmount(item.finalPrice || item.price || item.final_price),
+        normalizeManualImportDateTime(item.wonAt || item.won_at),
+        item.wonTimeText || item.won_time_text || '',
+        item.transactionUrl || item.transaction_url || '',
+        item.shippingFeeText || item.shipping_fee_text || '',
+        item.taxType || item.tax_type || 'tax_zero',
+        item.productType || item.product_type || 'normal'
+      ]
+    );
+    candidateCount += 1;
+  }
+
+  const totalCandidates = await database.getOne(
+    `SELECT COUNT(*) AS count FROM manual_order_import_items WHERE batch_id = ? AND status = 'pending_user'`,
+    [batchId]
+  );
+  await database.query(
+    `UPDATE manual_order_import_batches
+     SET status = 'ready',
+         scanned_pages = ?,
+         scanned_count = ?,
+         candidate_count = ?,
+         skipped_existing_count = ?,
+         scanned_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      Number(payload.scannedPages || 0),
+      scannedCount,
+      Number(totalCandidates?.count || candidateCount),
+      skippedExisting,
+      batchId
+    ]
+  );
+  return { ready: true, candidateCount: Number(totalCandidates?.count || candidateCount), skippedExisting };
+}
+
 async function getShipmentAlerts(database = db) {
   const row = await database.getOne(
     `SELECT value FROM config WHERE key = ?`,
@@ -2064,6 +2209,24 @@ router.post('/transaction-start/status', async (req, res) => {
 router.get('/scan/jobs', async (req, res) => {
   const result = await getScanJobs(db);
   res.json({ success: true, ...result });
+});
+
+router.get('/manual-order-import/jobs', async (req, res) => {
+  try {
+    const result = await getManualOrderImportJob(db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'manual import jobs failed' });
+  }
+});
+
+router.post('/manual-order-import/status', async (req, res) => {
+  try {
+    const result = await updateManualOrderImportStatus(req.body || {}, db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'manual import update failed' });
+  }
 });
 
 router.post('/scan/status', async (req, res) => {

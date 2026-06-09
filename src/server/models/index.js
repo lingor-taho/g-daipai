@@ -110,6 +110,59 @@ db.prepare(`
   ON order_status_change_logs(order_id, created_at)
 `).run();
 
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS manual_order_import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_date VARCHAR(10) NOT NULL,
+    end_date VARCHAR(10) NOT NULL,
+    max_pages INTEGER DEFAULT 10,
+    status VARCHAR(32) DEFAULT 'requested',
+    error_msg TEXT,
+    scanned_pages INTEGER DEFAULT 0,
+    scanned_count INTEGER DEFAULT 0,
+    candidate_count INTEGER DEFAULT 0,
+    skipped_existing_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    scanned_at DATETIME,
+    confirmed_at DATETIME
+  )
+`).run();
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS manual_order_import_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL,
+    product_id VARCHAR(32) NOT NULL,
+    product_url TEXT,
+    product_title VARCHAR(512),
+    product_image_url TEXT,
+    final_price INTEGER,
+    won_at DATETIME,
+    won_time_text VARCHAR(64),
+    transaction_url TEXT,
+    shipping_fee_text VARCHAR(64),
+    tax_type VARCHAR(32) DEFAULT 'tax_zero',
+    product_type VARCHAR(32) DEFAULT 'normal',
+    assigned_user_id INTEGER,
+    status VARCHAR(32) DEFAULT 'pending_user',
+    task_id INTEGER,
+    order_id INTEGER,
+    error_msg TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (batch_id) REFERENCES manual_order_import_batches(id) ON DELETE CASCADE,
+    FOREIGN KEY (assigned_user_id) REFERENCES users(id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+  )
+`).run();
+
+db.prepare(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_order_import_items_batch_product
+  ON manual_order_import_items(batch_id, product_id)
+`).run();
+
 module.exports = {
   db,
   async query(text, params) {

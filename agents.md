@@ -80,6 +80,7 @@ D:/www/g-daipai/
 │   │   ├── MultiBidSettings.tsx — 多次出价、入札/落札空闲同步配置
 │   │   ├── DataCleanup.tsx      — 清理 30 天无用数据
 │   │   ├── DataBatch.tsx        — 数据批处理顶部 Tabs 容器
+│   │   ├── ManualOrderImport.tsx — 手动落札导入，日期范围、最多翻页、候选订单用户分配
 │   │   ├── ShippingRefresh.tsx      — 按商品 ID 批量刷新运费
 │   │   ├── ProductTypeRefresh.tsx   — 按商品 ID 批量刷新商品类型
 │   │   ├── OrdersResync.tsx         — 按商品 ID 批量刷新落札商品
@@ -363,6 +364,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-09 | 商城即決待发货订单运费 `落札者負担` 导致不能勾选结算 | 后台结算规则增加商城例外：`product_type=store` 且运费文本为 `落札者負担` 时允许结算，并按 0 运费计算；普通商品仍不允许用 `落札者負担` 结算 |
 | 2026-06-09 | 插件 JS 中存在不可恢复乱码字符 | 清理 `background.js` 中已坏掉的 `�/锟斤拷` 字符串，改为英文稳定错误/日志和 `\u5186`；新增 `yahoo-plugin/encoding.test.js`，扫描 `content.js/background.js`，发现 `�` 或 `锟斤拷` 立即失败，避免后续继续混入不可恢复乱码 |
 | 2026-06-09 | 普通付款页未点击 `確認する` 就关闭，提示 `payment expected amount unavailable` | 根因不是 PayPay `特典を確認する` 广告按钮，而是付款前金额校验遇到无金额运费文本时直接失败。业务规则确认：`無料`、`着払い` 对所有商品都按 0 运费计算；`落札者負担` 只作为商城商品特殊规则按 0 运费计算。确认商品 `x1232305352` 是 `着払い`，插件付款校验已对齐该规则。新增截图场景测试，确认 PayPay 特典金额 `51,000円` 不会覆盖真实付款合计 `56,000円` |
+| 2026-06-09 | 需要导入服务器 Chrome 手动落札订单 | 后台新增独立菜单“导入订单”，位置在“数据批处理”下方；页面支持默认昨天到今天、最多翻页默认 10、创建读取批次、候选订单可搜索选择归属用户、确认后写入 `tasks/status=success` 和 `orders/order_status=NULL`。插件在 D 扫描流程最前面优先执行导入批次，从 `/my/won` 最新列表翻页到日期范围之外或达到最大页数，补商品页快照运费/商品类型；正式导入后自动置 `transaction_start_requested=1`，后续从现有交易开始流程继续 |
 
 ---
 
@@ -449,6 +451,7 @@ git status --short
 - **数据库**: `D:/www/g-daipai/data/gdaipai.db`
 - **Schema**: `D:/www/g-daipai/src/db/init.sql`
 - **后台数据批处理**: `D:/www/g-daipai/src/admin/src/DataBatch.tsx`
+- **后台导入订单**: `D:/www/g-daipai/src/admin/src/ManualOrderImport.tsx`
 - **后台运费更新 Tab**: `D:/www/g-daipai/src/admin/src/ShippingRefresh.tsx`
 - **后台商品类型更新 Tab**: `D:/www/g-daipai/src/admin/src/ProductTypeRefresh.tsx`
 - **后台落札商品更新 Tab**: `D:/www/g-daipai/src/admin/src/OrdersResync.tsx`

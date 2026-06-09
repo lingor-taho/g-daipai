@@ -1356,6 +1356,209 @@ async function clearPaymentAlertAndContinue(database = db) {
   return { success: true };
 }
 
+function normalizeImportDate(value, fallback = '') {
+  const text = String(value || fallback || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
+}
+
+function normalizeImportMaxPages(value) {
+  const num = Math.floor(Number(value || 10));
+  if (!Number.isFinite(num) || num <= 0) return 10;
+  return Math.min(50, Math.max(1, num));
+}
+
+function normalizeImportProductId(value) {
+  const match = String(value || '').match(/[a-zA-Z]?\d{8,10}/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+function normalizeImportYenAmount(value) {
+  const match = String(value || '').match(/(\d[\d,]*)/);
+  return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
+}
+
+async function createManualOrderImportBatch(payload = {}, database = db) {
+  const startDate = normalizeImportDate(payload.startDate || payload.start_date);
+  const endDate = normalizeImportDate(payload.endDate || payload.end_date);
+  if (!startDate || !endDate) {
+    const error = new Error('valid startDate and endDate are required');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (startDate > endDate) {
+    const error = new Error('startDate must be <= endDate');
+    error.statusCode = 400;
+    throw error;
+  }
+  const maxPages = normalizeImportMaxPages(payload.maxPages || payload.max_pages);
+  const result = await database.query(
+    `INSERT INTO manual_order_import_batches
+       (start_date, end_date, max_pages, status, created_at, updated_at)
+     VALUES (?, ?, ?, 'requested', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [startDate, endDate, maxPages]
+  );
+  const row = await database.getOne('SELECT last_insert_rowid() AS id');
+  await saveConfigValue(database, 'scan_idle_counter', '999');
+  return { id: row?.id, startDate, endDate, maxPages, requested: result.rowCount || 0 };
+}
+
+async function getManualOrderImportBatch(batchId, database = db) {
+  const id = Number(batchId || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return await database.getOne(
+    `SELECT * FROM manual_order_import_batches WHERE id = ?`,
+    [id]
+  );
+}
+
+async function listManualOrderImportBatches(database = db) {
+  return await database.getAll(
+    `SELECT *
+     FROM manual_order_import_batches
+     ORDER BY datetime(created_at) DESC, id DESC
+     LIMIT 20`
+  );
+}
+
+async function listManualOrderImportItems(batchId, database = db) {
+  return await database.getAll(
+    `SELECT i.*, u.username AS assigned_username
+     FROM manual_order_import_items i
+     LEFT JOIN users u ON u.id = i.assigned_user_id
+     WHERE i.batch_id = ?
+     ORDER BY datetime(COALESCE(i.won_at, i.created_at)) DESC, i.id ASC`,
+    [batchId]
+  );
+}
+
+async function confirmManualOrderImport(batchId, assignments = [], database = db) {
+  const batch = await getManualOrderImportBatch(batchId, database);
+  if (!batch) {
+    const error = new Error('import batch not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!['ready', 'confirmed'].includes(String(batch.status || ''))) {
+    const error = new Error('import batch is not ready');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  for (const item of Array.isArray(assignments) ? assignments : []) {
+    const itemId = Number(item?.itemId || item?.id || 0);
+    const userId = Number(item?.userId || item?.assignedUserId || 0);
+    if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(userId) || userId <= 0) continue;
+    await database.query(
+      `UPDATE manual_order_import_items
+       SET assigned_user_id = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND batch_id = ? AND status = 'pending_user'`,
+      [userId, itemId, batch.id]
+    );
+  }
+
+  const missing = await database.getOne(
+    `SELECT COUNT(*) AS count
+     FROM manual_order_import_items
+     WHERE batch_id = ? AND status = 'pending_user' AND assigned_user_id IS NULL`,
+    [batch.id]
+  );
+  if (Number(missing?.count || 0) > 0) {
+    const error = new Error('all import items must have assigned user');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const items = await database.getAll(
+    `SELECT *
+     FROM manual_order_import_items
+     WHERE batch_id = ? AND status = 'pending_user'
+     ORDER BY id ASC`,
+    [batch.id]
+  );
+  let imported = 0;
+  let skippedExisting = 0;
+
+  for (const item of items) {
+    const productId = normalizeImportProductId(item.product_id);
+    if (!productId || !item.assigned_user_id) continue;
+    const existing = await database.getOne(
+      `SELECT o.id
+       FROM orders o
+       INNER JOIN tasks t ON t.id = o.task_id
+       WHERE t.product_id = ?
+       LIMIT 1`,
+      [productId]
+    );
+    if (existing) {
+      skippedExisting += 1;
+      await database.query(
+        `UPDATE manual_order_import_items
+         SET status = 'skipped_existing', order_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [existing.id, item.id]
+      );
+      continue;
+    }
+    await database.query(
+      `INSERT INTO tasks
+        (user_id, product_id, product_url, product_title, product_image_url,
+         current_price, max_price, user_max_price, tax_type, product_type,
+         strategy, bid_mode, status, shipping_fee_text, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_import', 'manual_import', 'success', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        item.assigned_user_id,
+        productId,
+        item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+        item.product_title || productId,
+        item.product_image_url || '',
+        normalizeImportYenAmount(item.final_price),
+        normalizeImportYenAmount(item.final_price),
+        normalizeImportYenAmount(item.final_price),
+        item.tax_type || 'tax_zero',
+        item.product_type || 'normal',
+        item.shipping_fee_text || ''
+      ]
+    );
+    const taskRow = await database.getOne('SELECT last_insert_rowid() AS id');
+    await database.query(
+      `INSERT INTO orders
+        (task_id, product_title, product_url, final_price, won_at, won_time_text,
+         transaction_url, order_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        taskRow.id,
+        item.product_title || productId,
+        item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+        normalizeImportYenAmount(item.final_price),
+        item.won_at || null,
+        item.won_time_text || null,
+        item.transaction_url || null
+      ]
+    );
+    const orderRow = await database.getOne('SELECT last_insert_rowid() AS id');
+    await database.query(
+      `UPDATE manual_order_import_items
+       SET status = 'imported', task_id = ?, order_id = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [taskRow.id, orderRow.id, item.id]
+    );
+    imported += 1;
+  }
+
+  await database.query(
+    `UPDATE manual_order_import_batches
+     SET status = 'confirmed',
+         skipped_existing_count = COALESCE(skipped_existing_count, 0) + ?,
+         confirmed_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [skippedExisting, batch.id]
+  );
+  await saveConfigValue(database, 'transaction_start_requested', '1');
+  await saveConfigValue(database, 'transaction_start_requested_source', 'manual');
+  return { imported, skippedExisting };
+}
+
 router.post('/scan/request', async (req, res) => {
   const result = await requestScan(db);
   res.json({ success: true, ...result });
@@ -1373,6 +1576,36 @@ router.post('/payment/request', async (req, res) => {
 router.post('/payment/continue', async (req, res) => {
   const result = await clearPaymentAlertAndContinue(db);
   res.json(result);
+});
+
+router.post('/manual-order-import/request', async (req, res) => {
+  try {
+    const result = await createManualOrderImportBatch(req.body || {}, db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'manual order import request failed' });
+  }
+});
+
+router.get('/manual-order-import/batches', async (req, res) => {
+  const items = await listManualOrderImportBatches(db);
+  res.json({ success: true, items });
+});
+
+router.get('/manual-order-import/batches/:id', async (req, res) => {
+  const batch = await getManualOrderImportBatch(req.params.id, db);
+  if (!batch) return res.status(404).json({ error: 'import batch not found' });
+  const items = await listManualOrderImportItems(batch.id, db);
+  res.json({ success: true, batch, items });
+});
+
+router.post('/manual-order-import/batches/:id/confirm', async (req, res) => {
+  try {
+    const result = await confirmManualOrderImport(req.params.id, req.body?.assignments || [], db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'manual order import confirm failed' });
+  }
 });
 
 router.post('/manual-captcha/answer', async (req, res) => {

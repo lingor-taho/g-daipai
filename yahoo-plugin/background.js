@@ -538,6 +538,20 @@ async function updateScanStatus(payload) {
   });
 }
 
+async function fetchManualOrderImportJob() {
+  const res = await apiFetch('/api/plugin/manual-order-import/jobs');
+  const data = await res.json();
+  return data?.job || null;
+}
+
+async function updateManualOrderImportStatus(payload) {
+  await apiFetch('/api/plugin/manual-order-import/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
 async function fetchPaymentJobs() {
   const res = await apiFetch('/api/plugin/payment/jobs');
   const data = await res.json();
@@ -1895,6 +1909,146 @@ async function openWonPageForSync() {
   return null;
 }
 
+function parseYahooWonTimeMs(wonTimeText, nowMs = Date.now()) {
+  const match = String(wonTimeText || '').trim().match(/^(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const now = new Date(nowMs);
+  let date = new Date(now.getFullYear(), Number(match[1]) - 1, Number(match[2]), Number(match[3]), Number(match[4]), 0);
+  if (date.getTime() - nowMs > 24 * 60 * 60 * 1000) {
+    date = new Date(now.getFullYear() - 1, Number(match[1]) - 1, Number(match[2]), Number(match[3]), Number(match[4]), 0);
+  }
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function getLocalDateStartMs(dateText) {
+  const match = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0).getTime();
+}
+
+function getLocalDateEndMs(dateText) {
+  const match = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999).getTime();
+}
+
+async function extractManualImportPage(tabId) {
+  await injectContentScript(tabId).catch(() => {});
+  return await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_ORDER_IMPORT_PAGE' }).catch(error => ({
+    success: false,
+    error: error.message || 'manual import page extraction failed'
+  }));
+}
+
+async function getProductSnapshotForImport(productId, productUrl) {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({
+      url: productUrl || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+      active: false
+    });
+    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+    await sleep(1500);
+    await injectContentScript(tab.id).catch(() => {});
+    const snapshot = await chrome.tabs.sendMessage(tab.id, {
+      type: 'GET_PRODUCT_SNAPSHOT',
+      auctionId: productId
+    }).catch(() => null);
+    return snapshot?.auctionId ? snapshot : null;
+  } finally {
+    if (tab?.id) await closeTabIfExists(tab.id);
+  }
+}
+
+async function executeManualOrderImportJob(job) {
+  const batchId = job?.batchId;
+  const maxPages = Math.max(1, Math.min(50, Number(job?.maxPages || 10)));
+  const startMs = getLocalDateStartMs(job?.startDate);
+  const endMs = getLocalDateEndMs(job?.endDate);
+  if (!batchId || !startMs || !endMs) {
+    throw new Error('manual import job has invalid date range');
+  }
+
+  let tab = null;
+  const itemsByProduct = new Map();
+  let scannedPages = 0;
+  let shouldStop = false;
+  try {
+    tab = await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/won', active: false });
+    for (let page = 0; page < maxPages && !shouldStop; page += 1) {
+      if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+      await sleep(2500);
+      const pageResult = await extractManualImportPage(tab.id);
+      await reportYahooLoginStatus(pageResult?.loginStatus);
+      if (!pageResult?.success) {
+        throw new Error(pageResult?.error || pageResult?.loginStatus?.message || 'manual import page extraction failed');
+      }
+      scannedPages += 1;
+      for (const order of pageResult.orders || []) {
+        const productId = normalizeAuctionId(order.productId || order.url);
+        if (!productId) continue;
+        const wonMs = parseYahooWonTimeMs(order.wonTimeText);
+        if (!wonMs) continue;
+        if (wonMs < startMs) {
+          shouldStop = true;
+          continue;
+        }
+        if (wonMs > endMs) continue;
+        if (itemsByProduct.has(productId)) continue;
+        itemsByProduct.set(productId, {
+          productId,
+          productUrl: order.url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+          productTitle: order.title || productId,
+          finalPrice: order.price || '',
+          wonAt: new Date(wonMs).toISOString(),
+          wonTimeText: order.wonTimeText || '',
+          transactionUrl: order.transactionUrl || ''
+        });
+      }
+      if (shouldStop || !pageResult.nextPageUrl) break;
+      await chrome.tabs.update(tab.id, { url: pageResult.nextPageUrl, active: false });
+    }
+
+    const items = [];
+    for (const item of itemsByProduct.values()) {
+      const snapshot = await getProductSnapshotForImport(item.productId, item.productUrl);
+      items.push({
+        ...item,
+        productTitle: snapshot?.title || item.productTitle,
+        productImageUrl: snapshot?.imageUrl || '',
+        shippingFeeText: snapshot?.shippingFeeText || '',
+        taxType: snapshot?.taxType || 'tax_zero',
+        productType: snapshot?.productType || 'normal'
+      });
+    }
+
+    await updateManualOrderImportStatus({
+      batchId,
+      status: 'ready',
+      scannedPages,
+      items
+    });
+    return { success: true, scannedPages, count: items.length };
+  } catch (error) {
+    await updateManualOrderImportStatus({
+      batchId,
+      status: 'failed',
+      scannedPages,
+      error: error?.message || String(error || 'manual import failed')
+    }).catch(() => {});
+    throw error;
+  } finally {
+    if (tab?.id) await closeTabIfExists(tab.id);
+  }
+}
+
+async function runManualOrderImportJobs() {
+  const job = await fetchManualOrderImportJob();
+  if (!job) return false;
+  await executeManualOrderImportJob(job);
+  return true;
+}
+
 async function openBiddingPageForSync() {
   const [existingTab] = await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/bidding*' });
   const tab = existingTab
@@ -3231,7 +3385,8 @@ async function syncIdleYahooPages() {
   } else if (idleAction?.action === 'confirm_receipt') {
     await runConfirmReceiptJobs();
   } else if (idleAction?.action === 'scan') {
-    await runScanJobs();
+    const imported = await runManualOrderImportJobs();
+    if (!imported) await runScanJobs();
   } else if (idleAction?.action === 'payment') {
     await runPaymentJobs();
   }

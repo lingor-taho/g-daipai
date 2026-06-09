@@ -13,6 +13,7 @@ const menuItemsConfig = [
   { key: '/multi-bid-settings', fullLabel: '系统配置', shortLabel: '系', mobileLabel: '配置' },
   { key: '/data-cleanup', fullLabel: '清理数据', shortLabel: '清', mobileLabel: '清理' },
   { key: '/data-batch', fullLabel: '数据批处理', shortLabel: '批', mobileLabel: '批量' },
+  { key: '/manual-order-import', fullLabel: '导入订单', shortLabel: '导', mobileLabel: '导入' },
   { key: '/special-user-settings', fullLabel: '特殊用户设置', shortLabel: '特', mobileLabel: '特殊' },
   { key: '/orders', fullLabel: '订单管理', shortLabel: '订', mobileLabel: '订单' }
 ];

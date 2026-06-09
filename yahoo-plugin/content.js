@@ -1034,6 +1034,17 @@ function extractOrderHistory() {
   return orders;
 }
 
+function findWonHistoryNextPageUrl() {
+  const links = [...document.querySelectorAll('a[href]')];
+  const next = links.find(a => {
+    if (String(a.getAttribute('rel') || '').toLowerCase() === 'next') return true;
+    const text = normalizeVisibleText(a.textContent || a.getAttribute('aria-label') || a.title || '');
+    if (!/次へ|次の|次ページ|Next|next|›|»/.test(text)) return false;
+    return /\/my\/won/.test(a.href) || /auctions\.yahoo\.co\.jp/.test(a.href);
+  });
+  return next?.href || '';
+}
+
 function extractBiddingItems() {
   function isBiddingStatusText(value) {
     return /\u6700\u9ad8\u984d\u3067\u5165\u672d\u4e2d|\u9ad8\u5024\u66f4\u65b0|\u518d\u5165\u672d\u3059\u308b/.test(String(value || ''));
@@ -1675,6 +1686,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'EXTRACT_ORDER_HISTORY') {
     const loginStatus = detectYahooLoginStatus();
     sendResponse({ success: loginStatus.status === 'ok', orders: loginStatus.status === 'ok' ? extractOrderHistory() : [], loginStatus });
+    return true;
+  }
+
+  if (msg.type === 'EXTRACT_ORDER_IMPORT_PAGE') {
+    const loginStatus = detectYahooLoginStatus();
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      orders: loginStatus.status === 'ok' ? extractOrderHistory() : [],
+      nextPageUrl: loginStatus.status === 'ok' ? findWonHistoryNextPageUrl() : '',
+      loginStatus
+    });
     return true;
   }
 
