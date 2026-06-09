@@ -1875,6 +1875,11 @@ function isLikelyManualPinTab(tab) {
   return /(?:verify|pin|auth|challenge|confirm|security|code)/i.test(url);
 }
 
+function isYahooAuthLevelPinUrl(url) {
+  return /:\/\/login\.yahoo\.co\.jp\/config\/login/i.test(String(url || '')) &&
+    /(?:[?&]auth_lv=1|[?&]src=auc|[?&]done=)/i.test(String(url || ''));
+}
+
 function buildManualVerificationId(type, tab, context = {}) {
   const productId = String(context.productId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'unknown';
   const prefix = type === 'pin' ? 'pin' : 'captcha';
@@ -2005,6 +2010,7 @@ async function fillManualCaptchaAnswer(tabId, answer) {
 async function detectManualPinPage(tab) {
   const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   if (!current?.id || !isLikelyManualPinTab(current)) return false;
+  if (isYahooAuthLevelPinUrl(current.url)) return true;
   const result = await chrome.scripting.executeScript({
     target: { tabId: current.id },
     world: 'MAIN',
@@ -2017,7 +2023,58 @@ async function detectManualPinPage(tab) {
   return !!result?.[0]?.result;
 }
 
+function getDigitKeyEventParams(digit) {
+  const code = `Digit${digit}`;
+  const keyCode = 48 + Number(digit);
+  return { key: digit, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+}
+
+async function dispatchTrustedManualPinKeys(tab, answer) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for manual pin keyboard input' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+  const digits = String(answer || '').replace(/\D/g, '');
+  if (!digits) return { success: false, error: 'pin digits are required' };
+
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    for (const digit of digits) {
+      const keyParams = getDigitKeyEventParams(digit);
+      await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        ...keyParams,
+        text: digit,
+        unmodifiedText: digit
+      });
+      await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        ...keyParams
+      });
+      await sleep(80);
+    }
+    await sleep(300);
+    return { success: true, method: 'debuggerKeyboard', digits: digits.length };
+  } catch (e) {
+    return { success: false, error: e.message || 'manual pin keyboard input failed' };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
 async function fillManualPinAnswer(tabId, answer) {
+  const trustedResult = await dispatchTrustedManualPinKeys(tabId, answer);
+  if (trustedResult?.success) return trustedResult;
+
   const result = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -2052,11 +2109,28 @@ async function fillManualPinAnswer(tabId, answer) {
   return result?.[0]?.result || { success: false, error: 'pin fill script failed' };
 }
 
+async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000) {
+  let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  const startUrl = String(current?.url || '');
+  const startAt = Date.now();
+  while (Date.now() - startAt < timeoutMs && current?.id) {
+    await sleep(1000);
+    current = await chrome.tabs.get(current.id).catch(() => current);
+    const url = String(current?.url || '');
+    if (url && url !== startUrl) break;
+    const captchaPage = isManualCaptchaTab(current);
+    const pinPage = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+    if (!captchaPage && !pinPage) break;
+  }
+  return current || tab;
+}
+
 async function handleManualVerificationIfPresent(tab, context = {}) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   let handled = false;
   let pinAnswer = String(context.pinAnswer || '').trim();
   let canReusePinAfterCaptcha = false;
+  let pinAttempted = Boolean(pinAnswer);
   for (let step = 0; step < 6 && current?.id; step += 1) {
     current = await chrome.tabs.get(current.id).catch(() => current);
     if (isManualCaptchaTab(current)) {
@@ -2076,8 +2150,8 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
       await closeManualCaptchaChallenge(id);
       if (pinAnswer) canReusePinAfterCaptcha = true;
-      await waitForTabComplete(current.id, 15000).catch(() => {});
-      await sleep(2000);
+      current = await waitForManualVerificationPageTransition(current, 20000);
+      await sleep(500);
       continue;
     }
 
@@ -2090,7 +2164,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       await postManualCaptchaChallenge({
         id: pinChallengeId,
         type: 'pin',
-        message: 'Yahoo PIN code verification',
+        message: pinAttempted ? '上次 PIN 码可能错误，请重新输入 PIN 码' : 'Yahoo 需要 PIN 码验证，请输入 PIN 码',
         pageUrl: current.url || '',
         productId: context.productId || '',
         source: context.source || ''
@@ -2099,10 +2173,11 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     }
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
+    pinAttempted = true;
     if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
     canReusePinAfterCaptcha = false;
-    await waitForTabComplete(current.id, 60000).catch(() => {});
-    await sleep(2500);
+    current = await waitForManualVerificationPageTransition(current, 15000);
+    await sleep(500);
   }
   if (current?.id) await injectContentScript(current.id).catch(() => {});
   return { handled, tab: current || tab, pinAnswer };
@@ -3212,6 +3287,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
   dispatchTrustedPaymentActionClick,
+  dispatchTrustedManualPinKeys,
   getPaymentActionClickPoint,
   getPaymentShippingChangeClickPoint,
   isLikelyYahooTransactionTab,

@@ -244,6 +244,57 @@ async function testTrustedBundleClickDispatchesMouseThroughDebugger() {
   assert.equal(commands[1].params.y, 55);
 }
 
+async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
+  const commands = [];
+  let attached = false;
+  let detached = false;
+  let focusedWindow = null;
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, windowId: 9, status: 'complete' };
+      },
+      async update(id, props) {
+        return { id, windowId: 9, active: props.active };
+      }
+    },
+    windows: {
+      async update(id, props) {
+        focusedWindow = { id, props };
+      }
+    },
+    debuggerApi: {
+      async attach(target, version) {
+        attached = target.tabId === 8 && version === '1.3';
+      },
+      async sendCommand(target, command, params) {
+        commands.push({ target, command, params });
+      },
+      async detach(target) {
+        detached = target.tabId === 8;
+      }
+    }
+  });
+
+  const result = await api.dispatchTrustedManualPinKeys({ id: 8, windowId: 9 }, '123456');
+
+  assert.equal(result.success, true);
+  assert.equal(attached, true);
+  assert.equal(detached, true);
+  assert.equal(focusedWindow.props.focused, true);
+  assert.deepEqual(
+    commands.filter(item => item.command === 'Input.dispatchKeyEvent').map(item => `${item.params.type}:${item.params.text || item.params.key}`),
+    [
+      'keyDown:1', 'keyUp:1',
+      'keyDown:2', 'keyUp:2',
+      'keyDown:3', 'keyUp:3',
+      'keyDown:4', 'keyUp:4',
+      'keyDown:5', 'keyUp:5',
+      'keyDown:6', 'keyUp:6'
+    ]
+  );
+}
+
 async function testBidderPaysShippingTransactionClicksDecideAndConfirm() {
   const clickedActions = [];
   let statePhase = 'decide';
@@ -1689,6 +1740,7 @@ async function run() {
   await testBundleStartWaitsForDecideButtonState();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
+  await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
   await testBidderPaysShippingTransactionClicksDecideAndConfirm();
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();

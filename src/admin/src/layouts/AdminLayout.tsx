@@ -300,6 +300,11 @@ export default function AdminLayout() {
                         <Typography.Text type="secondary">
                           {captchaChallenge.productId ? `商品ID：${captchaChallenge.productId}` : 'Yahoo 验证页面'}
                         </Typography.Text>
+                        {captchaChallenge.message ? (
+                          <Typography.Text type="danger">
+                            {captchaChallenge.message}
+                          </Typography.Text>
+                        ) : null}
                         <Input
                           value={captchaAnswer}
                           onChange={event => setCaptchaAnswer(event.target.value)}

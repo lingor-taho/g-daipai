@@ -169,11 +169,11 @@ export default function Submit() {
           setWebsiteRate(nextRate);
           setWebsiteRateError('');
         } else {
-          setWebsiteRateError('网站汇率无效');
+          setWebsiteRateError('人民币出价暂不可用');
         }
       })
       .catch(() => {
-        setWebsiteRateError('网站汇率获取失败');
+        setWebsiteRateError('人民币出价暂不可用');
       })
       .finally(() => {
         setWebsiteRateLoading(false);
@@ -309,7 +309,7 @@ export default function Submit() {
   function handleCurrencyChange(nextCurrency) {
     if (nextCurrency === bidCurrency) return;
     if (nextCurrency === 'cny' && !websiteRate?.rate) {
-      Toast.show({ content: websiteRateLoading ? '网站汇率获取中' : (websiteRateError || '网站汇率获取失败') });
+      Toast.show({ content: websiteRateLoading ? '人民币出价准备中' : (websiteRateError || '人民币出价暂不可用') });
       return;
     }
 
@@ -612,14 +612,6 @@ export default function Submit() {
             <List.Item>
               <div style={{ textAlign: 'right', color: '#d4380d', fontSize: 13, fontWeight: 600 }}>
                 {renderActualBidText()}
-                {bidCurrency === 'jpy' && websiteRate?.rate ? (
-                  <span style={{ color: '#999', fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
-                    网站汇率 {Number(websiteRate.rate).toFixed(4)}
-                  </span>
-                ) : null}
-                {bidCurrency === 'jpy' && !websiteRate?.rate && websiteRateLoading ? (
-                  <span style={{ color: '#999', fontSize: 12, fontWeight: 400, marginLeft: 8 }}>网站汇率获取中</span>
-                ) : null}
               </div>
             </List.Item>
           </List>

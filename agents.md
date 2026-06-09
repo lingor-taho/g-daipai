@@ -349,6 +349,8 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-08 | 出价失败后即时落札兜底可能误把关联商品写成成功订单 | 插件出价执行报错时不再立即打开 `/my/won` 做 `confirmWonBeforeFail` 兜底，失败直接标记 `failed`；后续空闲落札同步只抽取同一商品容器内存在 `取引連絡` 链接的记录，避免页面底部推荐/关联商品被误同步为落札订单 |
 | 2026-06-08 | 后台订单管理商品信息和运费显示不够直观 | 商品 ID 后新增“商品名称”（前 20 字，多余 `...`）和“落札时间”；移除单独“同捆运费”列，有同捆运费时在“运费”列显示 `原运费->同捆运费`，如 `780円->0円` |
 | 2026-06-09 | `落札者負担` 商品抓取过慢 | 商品页已能构造 Yahoo shipment API URL 时最多只尝试一次 shipment API；如果未返回有效金额，直接保留页面解析到的 `落札者負担`，不再继续 Playwright 重复兜底 |
+| 2026-06-09 | 点击 `取引連絡` 后出现 Chrome/Google PIN 浮层导致交易开始卡住 | PIN 页检测支持 `login.yahoo.co.jp/config/login?auth_lv=1...`；PIN 输入改为优先通过 Chrome debugger 发送真实数字键事件；验证码页继续人工录入日文并点击 `続ける`，正确后自动复用上次 PIN 完成二次 PIN |
+| 2026-06-09 | 用户端显示网站汇率数值 | 提交页不再展示 `网站汇率` 数值或加载文案；汇率仍保留为内部人民币辅助出价换算和可用性判断使用 |
 
 ---
 
@@ -845,6 +847,27 @@ npm run build
 
 ---
 
+## 2026-06-09 取引連絡 PIN 与文字验证码处理
+
+### 已实现内容
+
+- 点击 `取引連絡` 后如果跳到 `login.yahoo.co.jp/config/login?auth_lv=1...`，插件会识别为 Yahoo/Chrome PIN 验证页，即使页面 DOM 里没有可操作输入框也会提醒后台输入 PIN。
+- PIN 输入不再只依赖网页 input；优先通过 Chrome debugger 向当前 tab 发送真实数字键事件，适配 Google 密码管理器 PIN 浮层“直接键盘输入数字”的场景。
+- PIN 输入后短轮询页面跳转；如果没进入验证码页或交易页，会再次提醒后台输入 PIN，并显示“上次 PIN 码可能错误，请重新输入 PIN 码”。
+- 文字验证码页保持人工处理：后台显示截图，人工输入图中日文后，插件填入蓝色 `続ける` 按钮上方输入框并点击 `続ける`。
+- 验证码通过后如果再次回到 PIN 页，插件自动复用上次成功输入的 PIN，再次键盘输入，完成后继续原 `取引連絡` 流程。
+- 后台人工验证提示现在会显示插件传来的 `message`，用于展示 PIN 错误重试提示。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+Set-Location src\admin
+npm run build
+```
+
+---
+
 ## 2026-06-08 用户端网站汇率与人民币辅助出价
 
 ### 已实现内容
@@ -855,6 +878,7 @@ npm run build
 - 提交页 `最高出价` 增加 `日元 / 人民币` 切换，默认日元；人民币模式下按 `Math.floor(人民币 / 网站汇率)` 转为日元后再走原有提交逻辑。
 - 人民币只用于页面换算和展示，提交给 `/api/task/submit` 的仍是日元 `max_price`，后续任务、插件出价、落札同步、订单结算都不感知人民币。
 - 个人商品也新增 `实际出价` 展示；人民币模式示例：`实际出价：100人民币 ≈2,247日元`。商城税前价会显示含税后的人民币和日元，例如 `实际出价：110人民币 ≈2,472日元`。
+- 2026-06-09 追加调整：用户端不再展示 `网站汇率` 数值、加载文案或相关字样；汇率继续静默获取并仅作为人民币辅助出价换算和按钮可用性判断使用。
 - 新增设计文档：`docs/superpowers/specs/2026-06-08-website-bid-rate-design.md`。
 - 新增实施计划：`docs/superpowers/plans/2026-06-08-website-bid-rate.md`。
 
@@ -863,6 +887,7 @@ npm run build
 ```powershell
 node src\server\routes\task.test.js
 node src\client\src\utils\bidPrice.test.mjs
+node src\client\src\pages\Submit.display.test.mjs
 Set-Location src\client
 npm run build
 ```
