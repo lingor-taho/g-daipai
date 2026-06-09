@@ -1300,14 +1300,20 @@ async function testPaymentTrustedClickPointFindsRoleButton() {
     value: '',
     title: '',
     getAttribute() { return ''; },
-    parentElement: null
+    parentElement: null,
+    compareDocumentPosition() { return 4; },
+    getBoundingClientRect() {
+      return { left: 100, top: 180, width: 180, height: 20 };
+    }
   };
   const fakeButton = {
+    tagName: 'DIV',
     textContent: '確認する',
     value: '',
     title: '',
     parentElement: amountContainer,
     getAttribute(name) {
+      if (name === 'role') return 'button';
       return name === 'aria-label' ? '' : null;
     },
     scrollIntoView() {},
@@ -1323,6 +1329,7 @@ async function testPaymentTrustedClickPointFindsRoleButton() {
           document: {
             body: {},
             querySelectorAll(selector) {
+              if (String(selector).startsWith('dt,')) return [amountContainer];
               assert.match(selector, /\[role="button"\]/);
               return [fakeButton];
             }
@@ -1347,7 +1354,11 @@ async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
     value: '',
     title: '',
     getAttribute() { return ''; },
-    parentElement: null
+    parentElement: null,
+    compareDocumentPosition() { return 4; },
+    getBoundingClientRect() {
+      return { left: 1036, top: 500, width: 180, height: 20 };
+    }
   };
   const hiddenButton = {
     tagName: 'A',
@@ -1388,7 +1399,8 @@ async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
           args: payload.args || [],
           document: {
             body: {},
-            querySelectorAll() {
+            querySelectorAll(selector) {
+              if (String(selector).startsWith('dt,')) return [amountContainer];
               return [hiddenButton, visibleButton];
             }
           }
@@ -1409,7 +1421,7 @@ async function testPaymentTrustedClickPointSkipsHiddenConfirmAnchor() {
 
 async function testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit() {
   const payPayBenefitSpan = {
-    tagName: 'SPAN',
+    tagName: 'A',
     textContent: '確認する',
     value: '',
     title: '',
@@ -1462,13 +1474,24 @@ async function testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenef
       return { left: 745, top: 531, width: 240, height: 37 };
     }
   };
+  const amountLabel = {
+    textContent: 'お支払い金額（税込）',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    compareDocumentPosition() { return 4; },
+    getBoundingClientRect() {
+      return { left: 745, top: 500, width: 160, height: 20 };
+    }
+  };
   const api = loadBackgroundForTest({
     scripting: {
       async executeScript(payload) {
         const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
           args: payload.args || [],
           document: {
-            querySelectorAll() {
+            querySelectorAll(selector) {
+              if (String(selector).startsWith('dt,')) return [amountLabel];
               return [payPayBenefitSpan, confirmAnchor, confirmTextSpan];
             },
             querySelector(selector) {
@@ -1514,8 +1537,18 @@ async function testPaymentReviewClickPointUsesPaymentAmountContextFallback() {
     getAttribute() { return ''; },
     parentElement: null
   };
+  const amountLabel = {
+    textContent: 'お支払い金額（税込）',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    compareDocumentPosition() { return 4; },
+    getBoundingClientRect() {
+      return { left: 745, top: 500, width: 160, height: 20 };
+    }
+  };
   const orderConfirmSpan = {
-    tagName: 'SPAN',
+    tagName: 'A',
     textContent: '確認する',
     value: '',
     title: '',
@@ -1536,7 +1569,8 @@ async function testPaymentReviewClickPointUsesPaymentAmountContextFallback() {
           args: payload.args || [],
           document: {
             body: {},
-            querySelectorAll() {
+            querySelectorAll(selector) {
+              if (String(selector).startsWith('dt,')) return [amountLabel];
               return [payPayBenefitSpan, orderConfirmSpan];
             }
           }
@@ -1554,6 +1588,21 @@ async function testPaymentReviewClickPointUsesPaymentAmountContextFallback() {
 }
 
 async function testPaymentReviewClickPointDoesNotFallbackToPayPayBenefit() {
+  const outerPaymentPage = {
+    textContent: 'お支払い金額（税込） 300円 PayPayカード入会特典 確認する',
+    parentElement: null
+  };
+  const amountLabel = {
+    textContent: 'お支払い金額（税込）',
+    value: '',
+    title: '',
+    parentElement: outerPaymentPage,
+    getAttribute() { return ''; },
+    compareDocumentPosition() { return 4; },
+    getBoundingClientRect() {
+      return { left: 745, top: 500, width: 160, height: 20 };
+    }
+  };
   const payPayBenefitSpan = {
     tagName: 'SPAN',
     textContent: '確認する',
@@ -1561,7 +1610,7 @@ async function testPaymentReviewClickPointDoesNotFallbackToPayPayBenefit() {
     title: '',
     href: '',
     disabled: false,
-    parentElement: null,
+    parentElement: outerPaymentPage,
     getAttribute() { return ''; },
     closest() { return null; },
     scrollIntoView() {},
@@ -1576,7 +1625,8 @@ async function testPaymentReviewClickPointDoesNotFallbackToPayPayBenefit() {
           args: payload.args || [],
           document: {
             body: {},
-            querySelectorAll() {
+            querySelectorAll(selector) {
+              if (String(selector).startsWith('dt,')) return [amountLabel, outerPaymentPage];
               return [payPayBenefitSpan];
             }
           }

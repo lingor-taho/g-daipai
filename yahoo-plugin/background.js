@@ -818,36 +818,34 @@ async function runMainWorldPaymentActionClick(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span')];
+      const controlSelector = actionName === 'review'
+        ? 'a, button, input[type="button"], input[type="submit"], [role="button"]'
+        : 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const controls = [...document.querySelectorAll(controlSelector)];
       const isClickable = el => {
         const rect = el.getBoundingClientRect?.();
         return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
       };
       const isPreferredConfirm = el => actionName === 'review' && /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
-      const hasPaymentAmountContext = el => {
-        if (actionName !== 'review') return false;
-        let node = el;
-        let depth = 0;
-        while (node && node !== document.body && depth < 8) {
-          if (/\u652f\u6255\u3044\u91d1\u984d|\u304a\u652f\u6255\u3044\u91d1\u984d/.test(getText(node))) return true;
-          node = node.parentElement;
-          depth += 1;
-        }
-        return false;
+      const isReviewControl = el => {
+        const tag = String(el?.tagName || '').toUpperCase();
+        return tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || el?.getAttribute?.('role') === 'button';
       };
+      const hasClickableTarget = el => isClickable(el) ||
+        controls.some(child => child !== el && child.closest?.('a, button, input, [role="button"]') === el && pattern.test(getText(child)) && isClickable(child));
       const matches = controls.filter(el => pattern.test(getText(el)));
-      const confirmContainerMatches = actionName === 'review'
-        ? matches.filter(el => el.closest?.('#confirm'))
+      const reviewAnchorMatches = actionName === 'review'
+        ? matches.filter(el => String(el.tagName || '').toUpperCase() === 'A')
         : [];
-      const paymentAmountMatches = actionName === 'review'
-        ? matches.filter(el => hasPaymentAmountContext(el))
-        : [];
-      const reviewMatches = [...new Set([...paymentAmountMatches, ...confirmContainerMatches])];
-      const targetMatches = actionName === 'review' ? reviewMatches : matches;
-      const button = targetMatches.find(el => isPreferredConfirm(el) && isClickable(el)) ||
-        targetMatches.find(el => isClickable(el)) ||
+      const reviewControlMatches = actionName === 'review' ? matches.filter(isReviewControl) : [];
+      const targetMatches = actionName === 'review'
+        ? (reviewAnchorMatches.length ? reviewAnchorMatches : reviewControlMatches)
+        : matches;
+      const button = targetMatches.find(el => isPreferredConfirm(el) && hasClickableTarget(el)) ||
+        targetMatches.find(el => hasClickableTarget(el)) ||
+        targetMatches.find(el => isPreferredConfirm(el)) ||
         targetMatches[0];
-      if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found in order summary' : 'payment button not found' };
+      if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found: exact anchor/button not found' : 'payment button not found' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
       const type = String(button.type || '').toLowerCase();
@@ -887,7 +885,10 @@ async function getPaymentActionClickPoint(tabId, action) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span')];
+      const controlSelector = actionName === 'review'
+        ? 'a, button, input[type="button"], input[type="submit"], [role="button"]'
+        : 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const controls = [...document.querySelectorAll(controlSelector)];
       const candidates = controls.map(el => {
         const rect = el.getBoundingClientRect?.();
         return {
@@ -904,28 +905,30 @@ async function getPaymentActionClickPoint(tabId, action) {
         return rect && rect.width > 0 && rect.height > 0 && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
       };
       const isPreferredConfirm = el => /_cl_link:confirm/.test(String(el.getAttribute?.('data-cl-params') || ''));
-      const hasPaymentAmountContext = el => {
-        if (actionName !== 'review') return false;
-        let node = el;
-        let depth = 0;
-        while (node && node !== document.body && depth < 8) {
-          if (/\u652f\u6255\u3044\u91d1\u984d|\u304a\u652f\u6255\u3044\u91d1\u984d/.test(getText(node))) return true;
-          node = node.parentElement;
-          depth += 1;
-        }
-        return false;
+      const isReviewControl = el => {
+        const tag = String(el?.tagName || '').toUpperCase();
+        return tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || el?.getAttribute?.('role') === 'button';
       };
+      const hasClickableTarget = el => isClickable(el) ||
+        controls.some(child => child !== el && child.closest?.('a, button, input, [role="button"]') === el && pattern.test(getText(child)) && isClickable(child));
       const matches = controls.filter(el => pattern.test(getText(el)));
-      const confirmContainerMatches = actionName === 'review' ? matches.filter(el => el.closest?.('#confirm')) : [];
-      const paymentAmountMatches = actionName === 'review' ? matches.filter(el => hasPaymentAmountContext(el)) : [];
-      const reviewMatches = [...new Set([...paymentAmountMatches, ...confirmContainerMatches])];
-      const targetMatches = actionName === 'review' ? reviewMatches : matches;
-      const button = targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && isClickable(el)) ||
-        targetMatches.find(el => isClickable(el)) ||
+      const reviewAnchorMatches = actionName === 'review'
+        ? matches.filter(el => String(el.tagName || '').toUpperCase() === 'A')
+        : [];
+      const reviewControlMatches = actionName === 'review' ? matches.filter(isReviewControl) : [];
+      const targetMatches = actionName === 'review'
+        ? (reviewAnchorMatches.length ? reviewAnchorMatches : reviewControlMatches)
+        : matches;
+      const button = targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && hasClickableTarget(el)) ||
+        targetMatches.find(el => hasClickableTarget(el)) ||
+        targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el)) ||
         targetMatches[0];
-      if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found in order summary for trusted click' : 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
+      if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found: exact anchor/button not found for trusted click' : 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
-      const rect = button.getBoundingClientRect?.();
+      const rectTarget = button.getBoundingClientRect?.()?.width > 0 && button.getBoundingClientRect?.()?.height > 0
+        ? button
+        : controls.find(el => el !== button && el.closest?.('a, button, input, [role="button"]') === button && pattern.test(getText(el)) && isClickable(el));
+      const rect = rectTarget?.getBoundingClientRect?.();
       if (!rect || rect.width <= 0 || rect.height <= 0) {
         return { success: false, error: 'payment button has no clickable rect', candidates: candidates.slice(0, 20) };
       }
