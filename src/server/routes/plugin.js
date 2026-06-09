@@ -196,6 +196,7 @@ async function failPricedOutPendingTasks(database = db) {
        AND max_price IS NOT NULL
        AND current_price > 0
        AND max_price > 0
+       AND COALESCE(bid_mode, 'bid') <> 'buyout'
        AND current_price > max_price`,
     ['Current price is above max price before execution']
   );

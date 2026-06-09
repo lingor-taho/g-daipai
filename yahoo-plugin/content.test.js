@@ -873,6 +873,47 @@ async function testStoreBuyoutClicksPurchaseFlow() {
   assert.equal(finalAgreeButton.clicked, true);
 }
 
+async function testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation() {
+  let stage = 'modal';
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b');
+  finalAgreeButton.click = () => {
+    finalAgreeButton.clicked = true;
+    stage = 'success';
+  };
+  const currentPrice = createTestElement('273\u5186');
+
+  const api = loadContentForTest('', '/jp/auction/q1175609593', {
+    getBodyText: () => {
+      if (stage === 'modal') return '\u4fa1\u683c 300\u5186\uff08\u7a0e\u8fbc\uff09 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 301\u5186 \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b';
+      return '\u3053\u306e\u5546\u54c1\u3092\u843d\u672d\u3057\u307e\u3057\u305f';
+    },
+    querySelector(selector) {
+      if (selector === '[class*="priceValue"]' || selector === '[class*="priceFrame"]' || selector === '[class*="currentPrice"]') return currentPrice;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') {
+        return [{ textContent: 'var pageData = {"items":{"productID":"q1175609593","price":"273","winPrice":"273","productName":"store buyout"}};' }];
+      }
+      if (selector.includes('button') || selector === 'body *') {
+        return stage === 'modal' ? [finalAgreeButton] : [];
+      }
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(272, {
+    maxPrice: 272,
+    userMaxPrice: 300,
+    bidMode: 'buyout',
+    taxType: 'tax_included',
+    strategy: 'direct'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(finalAgreeButton.clicked, true);
+}
+
 async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() {
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
@@ -1703,6 +1744,7 @@ async function run() {
   await testDirectBidSubmitConfirmRequestsFormSubmit();
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
+  await testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();

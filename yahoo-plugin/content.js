@@ -779,6 +779,7 @@ async function executeBidV3(maxPrice, options = {}) {
   }
 
   function validateCurrentPrice() {
+    if (bidMode === 'buyout') return null;
     const currentPrice = extractCurrentAuctionPrice();
     // currentPrice 来自 Yahoo HTML price 字段，是税前。numericMaxPrice 也是税前（task.max_price）。
     // 两者同口径直接比较；用 numericUserMaxPrice（税后）会错位。
@@ -789,6 +790,7 @@ async function executeBidV3(maxPrice, options = {}) {
   }
 
   function validateUserMaxBeforeSubmit(bidPrice = numericMaxPrice) {
+    if (bidMode === 'buyout') return null;
     const taxTotal = extractTaxIncludedTotal();
     return validateUserMaxBidLimit(taxTotal, bidPrice, numericUserMaxPrice, taxType);
   }
