@@ -492,7 +492,7 @@ function validateUserMaxBidLimit(taxTotal, bidPrice, userMaxPrice, taxType) {
   return null;
 }
 
-async function waitForBidOutcome(timeoutMs = 8000) {
+async function waitForBidOutcome(timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   let sawRebidRequired = false;
   while (Date.now() < deadline) {
@@ -611,6 +611,22 @@ async function executeBidV3(maxPrice, options = {}) {
       controls.find(el => String(el.tagName || '').toUpperCase() === 'A') ||
       controls[0] ||
       null;
+  }
+
+  function isBuyoutFinalPurchaseButton(el) {
+    return /\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/.test(textOf(el));
+  }
+
+  function findBuyoutFinalPurchaseButton() {
+    const selector = clickableSelector();
+    const modal = findActiveDialog();
+    const modalMatch = modal?.querySelectorAll
+      ? [...modal.querySelectorAll(selector)].find(el => isClickableElement(el) && isBuyoutFinalPurchaseButton(el))
+      : null;
+    if (modalMatch) return modalMatch;
+
+    return [...document.querySelectorAll(selector)]
+      .find(el => isClickableElement(el) && isBuyoutFinalPurchaseButton(el)) || null;
   }
 
   function findActiveDialog() {
@@ -843,17 +859,27 @@ async function executeBidV3(maxPrice, options = {}) {
     }
   }
 
-  const finalAgreePatterns = bidMode === 'buyout'
-    ? [/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/, /\u540c\u610f.*\u8cfc\u5165/, /\u540c\u610f.*\u843d\u672d/, /\u4e0a\u8a18.*\u843d\u672d/]
-    : [/\u540c\u610f.*\u5165\u672d/, /\u4e0a\u8a18.*\u5165\u672d/];
-  const finalAgreeBtn = findClickable(finalAgreePatterns);
+  const finalAgreeBtn = bidMode === 'buyout'
+    ? (findBuyoutFinalPurchaseButton() || findClickable([/\u540c\u610f.*\u843d\u672d/, /\u4e0a\u8a18.*\u843d\u672d/]))
+    : findClickable([/\u540c\u610f.*\u5165\u672d/, /\u4e0a\u8a18.*\u5165\u672d/]);
   if (finalAgreeBtn) {
+    const isBuyoutFinalPurchase = bidMode === 'buyout' && isBuyoutFinalPurchaseButton(finalAgreeBtn);
+    if (isBuyoutFinalPurchase && window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__) {
+      const pendingOutcome = await waitForBidOutcome(10000);
+      return pendingOutcome.success
+        ? { success: true, bidPrice: numericMaxPrice, stage: 'buyout-final-completed-after-wait' }
+        : { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'buyout-final-waiting' };
+    }
     const priceError = validateCurrentPrice();
     if (priceError) return priceError;
     const userMaxError = validateUserMaxBeforeSubmit();
     if (userMaxError) return userMaxError;
+    if (isBuyoutFinalPurchase) window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__ = true;
     clickElement(finalAgreeBtn);
     const outcome = await waitForBidOutcome();
+    if (isBuyoutFinalPurchase && !outcome.success) {
+      return { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'buyout-final-waiting' };
+    }
     if (!outcome.success) return outcome;
     return { success: true, bidPrice: numericMaxPrice, stage: 'final-submitted' };
   }

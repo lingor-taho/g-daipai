@@ -1,10 +1,11 @@
-const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
+﻿const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
 const TRANSACTION_START_ENABLED = globalThis.__G_DAIPAI_TRANSACTION_START_ENABLED__ !== false;
 const PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS = 15000;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
+const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 
 let isRunning = false;
@@ -75,7 +76,7 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const tid = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new Error('��Ʒҳ����س�ʱ'));
+      reject(new Error('Product page load timeout'));
     }, timeoutMs);
 
     function onUpdated(updatedTabId, info) {
@@ -113,7 +114,7 @@ function isMessageChannelClosed(error) {
 
 async function openTaskPage(task) {
   const auctionId = normalizeAuctionId(task.product_url);
-  if (!auctionId) throw new Error('������Ʒ ID ��Ч');
+  if (!auctionId) throw new Error('Invalid product ID');
 
   const targetUrl = `https://auctions.yahoo.co.jp/jp/auction/${auctionId}`;
   await chrome.storage.session.set({
@@ -301,7 +302,7 @@ async function getPageProductSnapshot(tabId, task) {
 async function ensureTaskReadyByCurrentEndTime(tab, task) {
   const snapshot = await getPageProductSnapshot(tab.id, task);
   if (!snapshot?.auctionId) {
-    throw new Error('�޷���ȡ��Ʒ��ǰ��ֹʱ��');
+    throw new Error('Unable to read product end time');
   }
 
   const actualEndTime = snapshot.endTime || task.end_time;
@@ -371,27 +372,29 @@ async function executeTaskInTabV2(tab, task) {
   }
 
   if (result.pendingFinal) {
-    await sleep(3000);
-    await injectContentScript(tab.id);
-    let finalResult;
-    try {
-      finalResult = await sendBidMessageV2(tab.id, task);
-    } catch (e) {
-      if (!isMessageChannelClosed(e)) {
-        throw e;
-      }
-      await sleep(3000);
+    let finalResult = result;
+    for (let attempt = 0; attempt < 3 && finalResult?.pendingFinal; attempt += 1) {
+      await sleep(BID_PENDING_FINAL_RETRY_DELAY_MS);
       await injectContentScript(tab.id);
-      finalResult = await sendBidMessageV2(tab.id, task);
+      try {
+        finalResult = await sendBidMessageV2(tab.id, task);
+      } catch (e) {
+        if (!isMessageChannelClosed(e)) {
+          throw e;
+        }
+        await sleep(3000);
+        await injectContentScript(tab.id);
+        finalResult = await sendBidMessageV2(tab.id, task);
+      }
+      if ((!finalResult?.success || finalResult.pendingFinal) && shouldCloseTaskTab(finalResult)) {
+        await closeTaskTab(tab.id);
+      }
+      if (finalResult?.success && !finalResult.pendingFinal) return finalResult;
+      if (!finalResult?.success) {
+        throw new Error(finalResult?.error || 'final bid confirmation failed');
+      }
     }
-    if ((!finalResult?.success || finalResult.pendingFinal) && shouldCloseTaskTab(finalResult)) {
-      await closeTaskTab(tab.id);
-    }
-
-    if (!finalResult?.success || finalResult.pendingFinal) {
-      throw new Error(finalResult?.error || 'final bid confirmation failed');
-    }
-    return finalResult;
+    throw new Error(finalResult?.error || 'final bid confirmation pending timeout');
   }
 
   return result;
@@ -414,7 +417,7 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
   const imageUrl = extractMeta(html, /<meta[^>]*(?:property|name)="(?:og:image|twitter:image)"[^>]*content="([^"]+)"/);
   const priceText = extractMeta(html, /itemprop="price"[^>]*content="([^"]+)"/) ||
     extractMeta(html, /["']price["']\s*:\s*"?([\d,]+)/) ||
-    extractMeta(html, /class="[^"]*price[^"]*"[^>]*>[\s\S]*?([\d,]+)\s*(?:��|JPY)?/);
+    extractMeta(html, /class="[^"]*price[^"]*"[^>]*>[\s\S]*?([\d,]+)\s*(?:\u5186|JPY)?/);
   const endTime = extractMeta(html, /itemprop="endDate"[^>]*content="([^"]+)"/) ||
     extractMeta(html, /endDate["\s][^"]{0,5}["']([^"']+)["']/);
   const postageText = extractMeta(html, /<div\b[^>]*id=["']itemPostage["'][^>]*>([\s\S]*?)<\/div>/i)
@@ -430,7 +433,7 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
   return {
     auctionId,
     url: standardUrl,
-    title: title || ('��Ʒ ' + auctionId),
+    title: title || ('Product ' + auctionId),
     imageUrl: imageUrl || '',
     currentPrice: priceText ? parseInt(priceText.replace(/,/g, ''), 10) || 0 : 0,
     shippingFeeText,
@@ -3233,7 +3236,7 @@ async function pollAndExecute() {
     const taskResponse = await fetchPendingTask();
     const task = taskResponse.task;
     if (task) {
-      console.log('[Yahoo Bid] ִ������:', task.product_url);
+      console.log('[Yahoo Bid] Executing task:', task.product_url);
       let taskTab = null;
       let taskTimedOut = false;
       try {
@@ -3276,7 +3279,7 @@ async function pollAndExecute() {
           if (!shouldKeepTaskTabOpen(task, result)) {
             await closeTaskTab(tab.id);
           }
-          console.log('[Yahoo Bid] ������ִ��:', task.id, result);
+          console.log('[Yahoo Bid] Task completed:', task.id, result);
         })(), TASK_EXECUTION_TIMEOUT_MS, () => {
           taskTimedOut = true;
           return buildTaskTimeoutError(TASK_EXECUTION_TIMEOUT_MS);
@@ -3379,14 +3382,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest });
       }
     } else {
-      markTaskStatus(taskId, 'failed', result.error || '����ʧ��');
+      markTaskStatus(taskId, 'failed', result.error || 'bid failed');
     }
     pollAndExecute();
   } else if (msg.type === 'PRODUCT_DATA_REMOVED') {
     // Forward product data to server to cache it
     const { data } = msg;
     if (data && data.auctionId) {
-      console.log('[Yahoo Bid] Product data cached:', data.title, '��' + data.currentPrice);
+      console.log('[Yahoo Bid] Product data cached:', data.title, 'JPY ' + data.currentPrice);
     }
   } else if (msg.type === 'ORDER_HISTORY') {
     reportYahooLoginStatus(msg.loginStatus);

@@ -354,6 +354,9 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-09 | 商城即決商品 `q1175609593` 失败显示“低于当前价” | 即決不是最高价出价，而是按页面固定价格点击购买/落札；buyout 任务的价格字段仅用于展示/记录，不再参与 `current_price > max_price` 或税后合计金额高于用户最高价等普通出价失败判断 |
 | 2026-06-09 | 商城购买确认页误点 PayPay `特典を確認する` 导致广告页反复打开 | 后台付款流程和即決购买流程都改为只从真正可点击元素中匹配完整文本严格等于 `確認する` 的按钮/链接，优先 `<a>確認する</a>`；`q1175609593` 走的是 `content.js` 即決购买流程，广告链接完整文本是 `特典を確認する`，不再因相似文案被误点 |
 | 2026-06-09 | 商城即決最终确认弹窗反复点击前一页 `確認する` 导致超时 | `確認する` 精确匹配只用于购买内容确认页；最终弹窗 `購入を確定する` 作为 buyout 最终提交按钮单独识别，点击一次后等待 `購入が完了しました / ご購入ありがとうございます` 等完成文案，不再递归回去重复点前一页按钮 |
+| 2026-06-09 | 商城即決最终确认按钮被重复提交 | 后台 pending final 二次检查等待从 3 秒改为 10 秒；`content.js` 对 buyout 最终 `上記に同意のうえ購入を確定する` 加同页幂等保护，点过一次后只等待完成结果，后续检查不再重复点击同一个最终购买按钮 |
+| 2026-06-09 | 商城即決最终弹窗按钮完整文案不是单独 `購入を確定する` | `content.js` 新增专用 `findBuyoutFinalPurchaseButton()`，最终弹窗只从可点击元素中匹配包含 `購入を確定する` 的提交按钮；前一页 `確認する` 仍只由购买内容确认页专用逻辑处理，普通即決 `落札する` 兜底保留 |
+| 2026-06-09 | 插件 JS 中存在不可恢复乱码字符 | 清理 `background.js` 中已坏掉的 `�/锟斤拷` 字符串，改为英文稳定错误/日志和 `\u5186`；新增 `yahoo-plugin/encoding.test.js`，扫描 `content.js/background.js`，发现 `�` 或 `锟斤拷` 立即失败，避免后续继续混入不可恢复乱码 |
 
 ---
 
@@ -369,6 +372,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 ### 最近验证命令
 
 ```powershell
+node yahoo-plugin\encoding.test.js
 node yahoo-plugin\content.test.js
 node yahoo-plugin\background.test.js
 node src\server\routes\admin.orders.test.js
@@ -1417,6 +1421,8 @@ node yahoo-plugin\background.test.js
 - Yahoo 付款页红色 `確認する` 实际 DOM 可能是 `<a data-cl-params="_cl_link:confirm;_cl_position:1;">確認する</a>`，插件现在优先选择 `data-cl-params` 含 `_cl_link:confirm` 且可见、有尺寸、未 disabled 的匹配元素，避免点到隐藏模板或不可点击的同名节点。
 - 2026-06-09 追加：购买确认页的目标 `確認する` 只从真正可点击元素中匹配完整文本严格等于 `確認する` 的按钮/链接，优先 `<a>確認する</a>`。不要把 `span` 子元素作为付款 `review` 候选，也不要用包含关系或相似文案判断；PayPay 广告链接完整文本为 `特典を確認する`，必须排除。注意 `q1175609593` 这类商城即決商品走 `yahoo-plugin/content.js` 的即決购买流程，不是后台付款任务的 `background.js`。
 - 2026-06-09 追加：`確認する` 精确匹配只适用于购买内容确认页；后续弹窗的 `購入を確定する` 必须作为最终提交按钮单独识别，点击一次后等待购买完成文案，不能再回到前一页 `確認する` 搜索逻辑。
+- 2026-06-09 追加：最终弹窗按钮完整文字可能是 `上記に同意のうえ購入を確定する`；该按钮点过一次后，`content.js` 使用 `window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__` 防止同页重复点击。后台 pending final 检查间隔为 10 秒，不再 3 秒后立刻再次触发。
+- 2026-06-09 追加：商城即決最终弹窗使用专用 `findBuyoutFinalPurchaseButton()`，只匹配可点击元素中包含 `購入を確定する` 的提交按钮；不要把前一页 `<a>確認する</a>` 精确匹配逻辑复用到最终弹窗。普通即決的 `落札する` 仍作为 buyout 兜底保留。
 - 普通付款点击会先补发 `pointerdown/mousedown/pointerup/mouseup/click` 事件。
 - 如果点击 `確認する` 后 5 秒内没有进入下一付款状态，插件会使用 Chrome debugger 的 `Input.dispatchMouseEvent` 对按钮中心点再发送一次真实鼠标点击。
 - 最终确认页 `購入を確定する` 也加入同样真实鼠标点击兜底。

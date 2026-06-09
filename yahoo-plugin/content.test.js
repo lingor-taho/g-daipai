@@ -987,7 +987,7 @@ async function testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm() {
     reviewConfirmClicks += 1;
     stage = 'final';
   };
-  const finalPurchaseButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048 \u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b');
+  const finalPurchaseButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b');
   finalPurchaseButton.click = () => {
     finalPurchaseButton.clicked = true;
     stage = 'success';
@@ -996,7 +996,7 @@ async function testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm() {
   const api = loadContentForTest('', '/order/review?auctionId=q1175609593', {
     getBodyText: () => {
       if (stage === 'review') return '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u7a0e\u8fbc\uff09 300\u5186 \u78ba\u8a8d\u3059\u308b';
-      if (stage === 'final') return '\u8cfc\u5165\u3092\u78ba\u5b9a\u3057\u307e\u3059\u304b\uff1f \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048 \u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b \u78ba\u8a8d\u3059\u308b';
+      if (stage === 'final') return '\u8cfc\u5165\u3092\u78ba\u5b9a\u3057\u307e\u3059\u304b\uff1f \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b \u78ba\u8a8d\u3059\u308b';
       return '\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
     },
     querySelectorAll(selector) {
