@@ -608,7 +608,7 @@ function buildConfirmReceiptFailurePayload(job, error) {
 
 function parseYenAmount(value) {
   const text = String(value || '').replace(/\s+/g, '');
-  if (!text || /\u7121\u6599/.test(text)) return 0;
+  if (!text || /\u7121\u6599|\u7740\u6255\u3044/.test(text)) return 0;
   const match = text.match(/([\d,]+)\s*\u5186/);
   if (!match) return null;
   return Number(match[1].replace(/,/g, '')) || 0;
@@ -632,9 +632,20 @@ function getRandomIntInclusive(min, max, randomFn = getRandomSource()) {
 
 function getExpectedPaymentAmountJpy(job = {}) {
   const finalPrice = Number(job.finalPrice ?? job.final_price ?? 0);
-  const shipping = parseYenAmount(job.effectiveShippingFeeText || job.shippingFeeText || '');
+  const shippingText = job.effectiveShippingFeeText || job.shippingFeeText || '';
+  const shipping = parseYenAmount(shippingText);
   if (!Number.isFinite(finalPrice) || finalPrice <= 0 || shipping === null) return null;
   return finalPrice + shipping;
+}
+
+function getPaymentJobFinalPriceJpy(job = {}) {
+  const finalPrice = Number(job.finalPrice ?? job.final_price ?? 0);
+  return Number.isFinite(finalPrice) && finalPrice > 0 ? finalPrice : null;
+}
+
+function canTreatUnknownPaymentShippingAsZero(job = {}) {
+  const shippingText = String(job.effectiveShippingFeeText || job.shippingFeeText || '');
+  return String(job.productType || job.product_type || '') === 'store' && /\u843d\u672d\u8005\u8ca0\u62c5/.test(shippingText);
 }
 
 function getExpectedPaymentShippingFeeJpy(job = {}) {
@@ -1072,7 +1083,10 @@ function assertPaymentAmountMatches(job, state) {
   const expected = getExpectedPaymentAmountJpy(job);
   const actual = Number(state?.paymentAmountJpy || 0);
   if (expected === null) {
-    throw new Error('payment expected amount unavailable');
+    const finalPrice = getPaymentJobFinalPriceJpy(job);
+    if (canTreatUnknownPaymentShippingAsZero(job) && actual > 0 && finalPrice !== null && actual === finalPrice) return;
+    const shippingText = String(job?.effectiveShippingFeeText || job?.shippingFeeText || '').trim();
+    throw new Error(`payment expected amount unavailable${shippingText ? `: shipping=${shippingText}` : ''}${actual > 0 ? `; found ${actual}\u5186` : ''}`);
   }
   if (actual > 0 && actual !== expected) {
     const shippingSummary = summarizePaymentShippingState(state);
@@ -3336,6 +3350,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   shouldAttemptBundleInputAction,
   buildPaymentPageStateFromSnapshot,
   getRandomIntInclusive,
+  assertPaymentAmountMatches,
   syncIdleYahooPages,
   runTransactionStartJobs,
   runPaymentJobs,

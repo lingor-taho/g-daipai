@@ -496,6 +496,59 @@ function testPaymentPageStateDetectsPaymentMethodFee() {
   assert.equal(state.paymentMethodFeeJpy, 330);
 }
 
+function testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=x1232305352',
+    bodyText: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9\u6255\u3044 PayPay\u30ab\u30fc\u30c9\u5165\u4f1a\u7279\u5178 \u5229\u7528\u5f8c\u306e\u5408\u8a08\u91d1\u984d 51,000\u5186 \u3054\u8cfc\u5165\u5185\u5bb9\u8a73\u7d30 \u843d\u672d\u5408\u8a08\u91d1\u984d 56,000\u5186 \u9001\u6599 0\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u5408\u8a08\uff09 56,000\u5186',
+    controls: ['PayPay\u30a2\u30d7\u30ea\u304b\u3089ID\u9023\u643a\u3059\u308b', '\u7279\u5178\u3092\u78ba\u8a8d\u3059\u308b', '\u78ba\u8a8d\u3059\u308b']
+  });
+
+  assert.equal(state.paymentAmountJpy, 56000);
+  assert.equal(state.hasReviewButton, true);
+}
+
+function testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice() {
+  const api = loadBackgroundForTest();
+
+  assert.doesNotThrow(() => api.assertPaymentAmountMatches(
+    { finalPrice: 56000, productType: 'store', effectiveShippingFeeText: '\u9001\u6599 \u843d\u672d\u8005\u8ca0\u62c5' },
+    { paymentAmountJpy: 56000 }
+  ));
+}
+
+function testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice() {
+  const api = loadBackgroundForTest();
+
+  assert.throws(() => api.assertPaymentAmountMatches(
+    { finalPrice: 56000, effectiveShippingFeeText: '\u9001\u6599 \u843d\u672d\u8005\u8ca0\u62c5' },
+    { paymentAmountJpy: 57000 }
+  ), /payment expected amount unavailable/);
+}
+
+function testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProducts() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.parseYenAmount('\u9001\u6599 \u7121\u6599'), 0);
+  assert.equal(api.parseYenAmount('\u9001\u6599 \u7740\u6255\u3044'), 0);
+  assert.equal(api.getExpectedPaymentAmountJpy({
+    finalPrice: 56000,
+    effectiveShippingFeeText: '\u9001\u6599 \u7121\u6599'
+  }), 56000);
+  assert.equal(api.getExpectedPaymentAmountJpy({
+    finalPrice: 56000,
+    effectiveShippingFeeText: '\u9001\u6599 \u7740\u6255\u3044'
+  }), 56000);
+  assert.doesNotThrow(() => api.assertPaymentAmountMatches(
+    { finalPrice: 56000, productType: 'normal', effectiveShippingFeeText: '\u9001\u6599 \u7121\u6599' },
+    { paymentAmountJpy: 56000 }
+  ));
+  assert.doesNotThrow(() => api.assertPaymentAmountMatches(
+    { finalPrice: 56000, productType: 'normal', effectiveShippingFeeText: '\u9001\u6599 \u7740\u6255\u3044' },
+    { paymentAmountJpy: 56000 }
+  ));
+}
+
 function testShouldSelectPaymentShippingOptionWhenDefaultDiffers() {
   const api = loadBackgroundForTest();
   const state = {
@@ -2006,6 +2059,10 @@ async function run() {
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
   testPaymentPageStateKeepsSelectedShippingOption();
   testPaymentPageStateDetectsPaymentMethodFee();
+  testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
+  testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
+  testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice();
+  testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProducts();
   testShouldSelectPaymentShippingOptionWhenDefaultDiffers();
   testRandomIntInclusiveUsesConfiguredRange();
   await testRunPaymentJobsReportsEmptyQueue();
