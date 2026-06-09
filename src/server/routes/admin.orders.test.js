@@ -196,6 +196,7 @@ function testBuildOrderSettlementPrefersBundleShippingFee() {
 function testResolveSettlementStatusKeepsBundleCompleted() {
   assert.equal(resolveSettlementOrderStatus('pending_payment'), 'pending_settlement');
   assert.equal(resolveSettlementOrderStatus('bundle_completed'), 'bundle_completed');
+  assert.equal(resolveSettlementOrderStatus('pending_shipment'), 'pending_shipment');
 }
 
 function testNormalizeProductTypeForBatchRefresh() {
@@ -251,9 +252,10 @@ function testCompletedOrderStatusConstant() {
   assert.equal(ORDER_STATUS_COMPLETED, 'completed');
 }
 
-function testNormalizeOrderStatusRefreshTargetSupportsBlankAndCompleted() {
+function testNormalizeOrderStatusRefreshTargetSupportsAllowedTargets() {
   assert.equal(normalizeOrderStatusRefreshTarget('blank'), null);
   assert.equal(normalizeOrderStatusRefreshTarget('completed'), ORDER_STATUS_COMPLETED);
+  assert.equal(normalizeOrderStatusRefreshTarget('pending_shipment'), ORDER_STATUS_PENDING_SHIPMENT);
 }
 
 function testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus() {
@@ -302,6 +304,23 @@ async function testRequestPaymentSetsFlag() {
   assert.equal(queries[0].params[0], 'pending_settlement');
   assert.match(queries[1].sql, /payment_requested/);
   assert.equal(queries[1].params[0], '1');
+}
+
+async function testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: /UPDATE orders/.test(sql) ? 0 : 1 };
+    }
+  };
+
+  const result = await requestPayment(fakeDb, [3]);
+
+  assert.equal(result.requested, 0);
+  assert.match(queries[0].sql, /order_status = \?/);
+  assert.equal(queries[0].params[0], 'pending_settlement');
+  assert.equal(queries.length, 1);
 }
 
 async function testClearPaymentAlertAndContinueClearsMessageAndSetsFlag() {
@@ -461,7 +480,7 @@ testAdminOrdersQueryIncludesProductType();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testSettlementStatusUsesPendingSettlement();
 testCompletedOrderStatusConstant();
-testNormalizeOrderStatusRefreshTargetSupportsBlankAndCompleted();
+testNormalizeOrderStatusRefreshTargetSupportsAllowedTargets();
 testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
 testBuildGoogleSheetUrl();
@@ -470,6 +489,7 @@ testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
   testRequestPaymentSetsFlag(),
+  testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),
   testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted(),
   testBackfillStoreBundleRejectsNormalProduct(),

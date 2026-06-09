@@ -331,11 +331,16 @@ function hasBidSuccessText(text = getBodyText()) {
     /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text);
 }
 
+function isBuyoutThankYouPage(pathname = window.location.pathname) {
+  return /\/order\/thank-you\b/.test(pathname);
+}
+
 function isHighestBidderText(text = getBodyText(), pathname = window.location.pathname) {
   const isBidDonePage = /\/jp\/auction\/[a-zA-Z]?\d{8,10}\/bid\/done/.test(pathname);
   if (hasExplicitOutbidText(text)) return false;
   if (isRebidRequiredText(text)) return false;
   return hasBidSuccessText(text) ||
+    isBuyoutThankYouPage(pathname) ||
     (isBidDonePage && /\u6700\u9ad8\u984d\u5165\u672d\u8005/.test(text) && !/\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(text));
 }
 
@@ -497,7 +502,7 @@ async function waitForBidOutcome(timeoutMs = 10000) {
   let sawRebidRequired = false;
   while (Date.now() < deadline) {
     if (isHighestBidderPage()) {
-      return { success: true };
+      return { success: true, autoPaidBuyout: isBuyoutThankYouPage() };
     }
     if (isYahooBidAccessFailureText()) {
       return { success: false, error: 'Yahoo入札失败：オークションにアクセスできませんでした', closeTab: true };
@@ -845,7 +850,7 @@ async function executeBidV3(maxPrice, options = {}) {
   }
 
   if (isHighestBidderPage()) {
-    return { success: true, bidPrice: numericMaxPrice, stage: 'highest-bidder' };
+    return { success: true, bidPrice: numericMaxPrice, autoPaidBuyout: isBuyoutThankYouPage(), stage: 'highest-bidder' };
   }
 
   if (bidMode === 'buyout') {
@@ -867,7 +872,7 @@ async function executeBidV3(maxPrice, options = {}) {
     if (isBuyoutFinalPurchase && window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__) {
       const pendingOutcome = await waitForBidOutcome(10000);
       return pendingOutcome.success
-        ? { success: true, bidPrice: numericMaxPrice, stage: 'buyout-final-completed-after-wait' }
+        ? { success: true, bidPrice: numericMaxPrice, autoPaidBuyout: pendingOutcome.autoPaidBuyout, stage: 'buyout-final-completed-after-wait' }
         : { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'buyout-final-waiting' };
     }
     const priceError = validateCurrentPrice();
@@ -881,7 +886,7 @@ async function executeBidV3(maxPrice, options = {}) {
       return { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'buyout-final-waiting' };
     }
     if (!outcome.success) return outcome;
-    return { success: true, bidPrice: numericMaxPrice, stage: 'final-submitted' };
+    return { success: true, bidPrice: numericMaxPrice, autoPaidBuyout: outcome.autoPaidBuyout, stage: 'final-submitted' };
   }
 
   const priceInput = findPriceInput();

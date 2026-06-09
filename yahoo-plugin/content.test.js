@@ -249,6 +249,34 @@ function testAcceptedBuyoutTextIsSuccess() {
   assert.equal(api.isHighestBidderText(), true);
 }
 
+function testStoreBuyoutThankYouPageIsSuccess() {
+  const api = loadContentForTest(
+    '\u8cfc\u5165\u5185\u5bb9\u306f\u53d6\u5f15\u30ca\u30d3\u3067\u78ba\u8a8d\u3067\u304d\u307e\u3059',
+    '/order/thank-you'
+  );
+
+  assert.equal(api.isOutbidText(), false);
+  assert.equal(api.isHighestBidderText(), true);
+}
+
+async function testStoreBuyoutThankYouExecuteResultMarksAutoPaid() {
+  const api = loadContentForTest(
+    '\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\uff01',
+    '/order/thank-you'
+  );
+
+  const result = await api.executeBidV3(300, {
+    maxPrice: 300,
+    userMaxPrice: 300,
+    bidMode: 'buyout',
+    taxType: 'tax_included',
+    strategy: 'direct'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.autoPaidBuyout, true);
+}
+
 function testSuccessTextWinsOverGenericOutbidWords() {
   const api = loadContentForTest('\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002\u9ad8\u5024\u66f4\u65b0\u306e\u901a\u77e5\u8aac\u660e');
 
@@ -1815,6 +1843,8 @@ async function run() {
   testAcceptedBidTextIsHighestBidder();
   testProductPageHighestBidderNoticeDoesNotSkipNewBid();
   testAcceptedBuyoutTextIsSuccess();
+  testStoreBuyoutThankYouPageIsSuccess();
+  await testStoreBuyoutThankYouExecuteResultMarksAutoPaid();
   testSuccessTextWinsOverGenericOutbidWords();
   testExplicitOutbidWinsOverBidCompletedText();
   testProductTitleDoesNotUseYahooPrefix();

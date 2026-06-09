@@ -3269,12 +3269,12 @@ async function pollAndExecute() {
             // 之前直接 touchTaskSchedule 会把 status 写回 task.status（pending），
             // 导致下一轮轮询又取出来执行，陷入死循环。这里直接标 bidding。
             if (isDirectTask(task)) {
-              await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true });
+              await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true, auto_paid_buyout: result?.autoPaidBuyout ? 1 : 0 });
             } else {
               await touchTaskSchedule(task.id, task.status);
             }
           } else {
-            await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
+            await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest, auto_paid_buyout: result?.autoPaidBuyout ? 1 : 0 });
           }
           if (!shouldKeepTaskTabOpen(task, result)) {
             await closeTaskTab(tab.id);
@@ -3377,9 +3377,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       if (result.noStatus) {
         // 已是最高价且新出价≤自动入札上限，跳过出价。直接标 bidding，避免任务一直停留 processing/pending。
-        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: true });
+        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: true, auto_paid_buyout: result?.autoPaidBuyout ? 1 : 0 });
       } else {
-        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest });
+        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest, auto_paid_buyout: result?.autoPaidBuyout ? 1 : 0 });
       }
     } else {
       markTaskStatus(taskId, 'failed', result.error || 'bid failed');

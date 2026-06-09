@@ -135,7 +135,7 @@ function canAutoSettle(item: any) {
   return Boolean(
     item?.can_settle &&
     !item?.settled_at &&
-    (item?.order_status === 'pending_payment' || item?.order_status === 'bundle_completed')
+    (item?.order_status === 'pending_payment' || item?.order_status === 'bundle_completed' || item?.order_status === 'pending_shipment')
   );
 }
 
@@ -237,7 +237,7 @@ export default function OrdersPage() {
     }
     const selectedRows = currentRows.filter(item => selectedRowKeys.includes(item.id));
     if (selectedRows.some(item => !canAutoSettle(item))) {
-      message.error('只能选择待支付或同捆完了的订单进行结算');
+      message.error('只能选择待支付、待发货或同捆完了的订单进行结算');
       return;
     }
     setSettling(true);
@@ -562,7 +562,7 @@ export default function OrdersPage() {
             const enabled = canAutoSettle(record) || canRequestPayment(record);
             return {
               disabled: !enabled,
-              title: enabled ? undefined : '只能勾选待支付/同捆完了用于结算，或待结算且有应付款用于支付'
+              title: enabled ? undefined : '只能勾选待支付/待发货/同捆完了用于结算，或待结算且有应付款用于支付'
             };
           }
         }}

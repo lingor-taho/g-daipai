@@ -68,10 +68,12 @@ function normalizeOrderStatusRefreshTarget(value) {
   const normalized = String(value || 'completed').trim();
   if (normalized === 'blank') return null;
   if (normalized === ORDER_STATUS_COMPLETED) return ORDER_STATUS_COMPLETED;
+  if (normalized === ORDER_STATUS_PENDING_SHIPMENT) return ORDER_STATUS_PENDING_SHIPMENT;
   throw new Error('invalid orderStatus');
 }
 
 function getOrderStatusRefreshText(orderStatus) {
+  if (orderStatus === ORDER_STATUS_PENDING_SHIPMENT) return '待发货';
   return orderStatus === null ? '为空' : '完了';
 }
 
@@ -683,8 +685,8 @@ function getEffectiveShippingFeeText(order = {}) {
 }
 
 function resolveSettlementOrderStatus(currentStatus) {
-  return currentStatus === ORDER_STATUS_BUNDLE_COMPLETED
-    ? ORDER_STATUS_BUNDLE_COMPLETED
+  return currentStatus === ORDER_STATUS_BUNDLE_COMPLETED || currentStatus === ORDER_STATUS_PENDING_SHIPMENT
+    ? currentStatus
     : ORDER_STATUS_PENDING_SETTLEMENT;
 }
 
@@ -1334,7 +1336,9 @@ async function requestPayment(database = db, orderIds = []) {
        AND total_amount_cny IS NOT NULL`,
     [ORDER_STATUS_PENDING_SETTLEMENT, ...ids, ORDER_STATUS_PENDING_SETTLEMENT]
   );
-  await saveConfigValue(database, 'payment_requested', '1');
+  if ((result.rowCount || 0) > 0) {
+    await saveConfigValue(database, 'payment_requested', '1');
+  }
   return { requested: result.rowCount || 0 };
 }
 

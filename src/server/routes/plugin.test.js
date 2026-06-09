@@ -868,6 +868,51 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
   assert.equal(orderInsert.params[3], 350);
 }
 
+async function testSyncYahooWonOrdersMarksAutoPaidBuyoutPendingShipment() {
+  const calls = [];
+  const tasks = new Map([
+    ['q1175609593', { id: 210, force_orders_resync: 0, buyout_auto_paid: 1 }]
+  ]);
+  const taskRows = new Map([
+    [210, {
+      id: 210,
+      product_id: 'q1175609593',
+      product_title: 'auto paid buyout',
+      product_url: 'https://auctions.yahoo.co.jp/jp/auction/q1175609593'
+    }]
+  ]);
+  const insertedOrders = new Map();
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) return tasks.get(params[0]) || null;
+      if (/SELECT id FROM orders WHERE task_id/.test(sql)) return insertedOrders.get(params[0]) || null;
+      if (/SELECT \* FROM tasks WHERE id/.test(sql)) return taskRows.get(params[0]) || null;
+      return null;
+    },
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [{ order_id: 991, product_id: 'q1175609593', old_status: null }];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      if (/INSERT INTO orders/.test(sql)) {
+        insertedOrders.set(params[0], { id: 991 });
+      }
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    { productId: 'q1175609593', price: '300円', wonTimeText: '6/9 10:02' }
+  ], fakeDb);
+
+  assert.equal(result.updated, 1);
+  const statusUpdate = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql) && /order_status =/.test(call.sql));
+  assert.equal(statusUpdate.params[0], ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(statusUpdate.params[1], 991);
+}
+
 async function testGetScanJobsReturnsWaitingShippingOnly() {
   const calls = [];
   const fakeDb = {
@@ -1494,6 +1539,7 @@ Promise.all([
   testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
+  testSyncYahooWonOrdersMarksAutoPaidBuyoutPendingShipment(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),

@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   last_bid_at DATETIME,
   pending_followup_max_price INTEGER,
   force_orders_resync INTEGER DEFAULT 0,
+  buyout_auto_paid INTEGER DEFAULT 0,
   error_msg TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

@@ -709,7 +709,7 @@ router.post('/idle-action/complete', async (req, res) => {
 
 // PATCH /api/plugin/task/:id/status
 router.patch('/task/:id/status', async (req, res) => {
-  const { status, error_msg, bid_price, no_bid, not_highest } = req.body;
+  const { status, error_msg, bid_price, no_bid, not_highest, auto_paid_buyout } = req.body;
   if (status === 'processing') {
     const result = await claimTaskForProcessing(req.params.id);
     return res.json(result);
@@ -726,13 +726,14 @@ router.patch('/task/:id/status', async (req, res) => {
       `UPDATE tasks
        SET status = ?,
            error_msg = ?,
+           buyout_auto_paid = CASE WHEN ? THEN 1 ELSE COALESCE(buyout_auto_paid, 0) END,
            bid_count = CASE WHEN ? THEN COALESCE(bid_count, 0) ELSE COALESCE(bid_count, 0) + 1 END,
            last_bid_at = CURRENT_TIMESTAMP,
            is_highest_bidder = CASE WHEN ? THEN 0 ELSE 1 END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
          AND status != 'cancelled'`,
-      [status, error_msg || null, no_bid ? 1 : 0, not_highest ? 1 : 0, req.params.id]
+      [status, error_msg || null, auto_paid_buyout ? 1 : 0, no_bid ? 1 : 0, not_highest ? 1 : 0, req.params.id]
     );
     if (result.rowCount > 0 && bid_price) {
       await db.query(
@@ -1396,7 +1397,8 @@ async function syncYahooWonOrders(orders = [], database = db) {
     if (!match) continue;
     const productId = match[0].toLowerCase();
     const task = await database.getOne(
-      `SELECT id, force_orders_resync FROM tasks
+      `SELECT id, force_orders_resync, buyout_auto_paid
+       FROM tasks
        WHERE product_id = ? AND status IN ('bidding', 'success', 'failed')
        ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
        LIMIT 1`,
@@ -1423,6 +1425,29 @@ async function syncYahooWonOrders(orders = [], database = db) {
       wonTimeText: order.wonTimeText,
       transactionUrl: order.transactionUrl
     }, database);
+    if (Number(task.buyout_auto_paid || 0) === 1) {
+      const syncedOrder = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
+      if (syncedOrder?.id) {
+        const beforeRows = await getOrderStatusAuditRows(database, [syncedOrder.id]);
+        const statusResult = await database.query(
+          `UPDATE orders
+           SET order_status = ?,
+               transaction_started_at = CURRENT_TIMESTAMP,
+               transaction_start_error = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?
+             AND (order_status IS NULL OR order_status = '')`,
+          [ORDER_STATUS_PENDING_SHIPMENT, syncedOrder.id]
+        );
+        if (statusResult.rowCount) {
+          await writeOrderStatusAuditLogs(database, beforeRows, {
+            status: ORDER_STATUS_PENDING_SHIPMENT,
+            source: 'auto_paid_buyout',
+            metadata: { productId }
+          });
+        }
+      }
+    }
     if (order.trackingNumber) {
       await database.query('UPDATE orders SET tracking_number = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?', [order.trackingNumber, task.id]);
     }

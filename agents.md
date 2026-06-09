@@ -356,6 +356,10 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-09 | 商城即決最终确认弹窗反复点击前一页 `確認する` 导致超时 | `確認する` 精确匹配只用于购买内容确认页；最终弹窗 `購入を確定する` 作为 buyout 最终提交按钮单独识别，点击一次后等待 `購入が完了しました / ご購入ありがとうございます` 等完成文案，不再递归回去重复点前一页按钮 |
 | 2026-06-09 | 商城即決最终确认按钮被重复提交 | 后台 pending final 二次检查等待从 3 秒改为 10 秒；`content.js` 对 buyout 最终 `上記に同意のうえ購入を確定する` 加同页幂等保护，点过一次后只等待完成结果，后续检查不再重复点击同一个最终购买按钮 |
 | 2026-06-09 | 商城即決最终弹窗按钮完整文案不是单独 `購入を確定する` | `content.js` 新增专用 `findBuyoutFinalPurchaseButton()`，最终弹窗只从可点击元素中匹配包含 `購入を確定する` 的提交按钮；前一页 `確認する` 仍只由购买内容确认页专用逻辑处理，普通即決 `落札する` 兜底保留 |
+| 2026-06-09 | 商城即決成功页 `/order/thank-you` 未识别导致显示“失败：系统原因”且 tab 不关闭 | `content.js` 把 `/order/thank-you` 明确识别为 buyout 成功页；真实页文案为 `購入が完了しました！`，识别成功后后台会按正常成功流程关闭任务 tab |
+| 2026-06-09 | 商城即決无同捆勾选框时自动付款完成但订单应付款未计算 | 新增 `tasks.buyout_auto_paid` 标记：`/order/thank-you` 自动付款完成后，落札同步创建订单时直接设为 `pending_shipment`（待发货）；后台订单管理允许 `pending_shipment` 订单结算，结算只写应付款/费用字段，状态保持待发货不回退到待结算 |
+| 2026-06-09 | 待发货订单结算后误进入支付流程风险 | 支付入口继续只允许 `pending_settlement` 且有应付款的订单；后台支付请求接口如果没有命中任何 `pending_settlement` 订单，不再写 `payment_requested=1`，避免待发货订单误触发付款任务 |
+| 2026-06-09 | 后台批处理订单状态更新缺少“待发货” | “数据批处理 / 订单状态更新”下拉新增 `待发货`，后端 `order-status-refresh` 白名单允许 `pending_shipment`，用于手动修正已付款的商城即決订单 |
 | 2026-06-09 | 插件 JS 中存在不可恢复乱码字符 | 清理 `background.js` 中已坏掉的 `�/锟斤拷` 字符串，改为英文稳定错误/日志和 `\u5186`；新增 `yahoo-plugin/encoding.test.js`，扫描 `content.js/background.js`，发现 `�` 或 `锟斤拷` 立即失败，避免后续继续混入不可恢复乱码 |
 
 ---
@@ -1423,6 +1427,9 @@ node yahoo-plugin\background.test.js
 - 2026-06-09 追加：`確認する` 精确匹配只适用于购买内容确认页；后续弹窗的 `購入を確定する` 必须作为最终提交按钮单独识别，点击一次后等待购买完成文案，不能再回到前一页 `確認する` 搜索逻辑。
 - 2026-06-09 追加：最终弹窗按钮完整文字可能是 `上記に同意のうえ購入を確定する`；该按钮点过一次后，`content.js` 使用 `window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__` 防止同页重复点击。后台 pending final 检查间隔为 10 秒，不再 3 秒后立刻再次触发。
 - 2026-06-09 追加：商城即決最终弹窗使用专用 `findBuyoutFinalPurchaseButton()`，只匹配可点击元素中包含 `購入を確定する` 的提交按钮；不要把前一页 `<a>確認する</a>` 精确匹配逻辑复用到最终弹窗。普通即決的 `落札する` 仍作为 buyout 兜底保留。
+- 2026-06-09 追加：商城即決购买完成后的真实 URL 为 `/order/thank-you?auctionId=...`，页面显示 `購入が完了しました！`。该 URL 必须视为成功结果；否则后台 pending final 超时会写失败且异常分支不一定关闭 tab。
+- 2026-06-09 追加：商城即決无同捆勾选框时，`確認する -> 上記に同意のうえ購入を確定する -> /order/thank-you` 表示 Yahoo 已自动付款完成，订单状态应为 `pending_shipment`（待发货），不是待收货。后台仍允许选择 `pending_shipment` 订单点击结算来计算用户应付款，结算后保持 `pending_shipment`。
+- 2026-06-09 追加：`pending_shipment` 只能用于后台结算计算应付款，不能进入“支付”流程。支付按钮/支付任务仍只接受 `pending_settlement`；如果支付请求没有命中 `pending_settlement` 行，不设置 `payment_requested`。
 - 普通付款点击会先补发 `pointerdown/mousedown/pointerup/mouseup/click` 事件。
 - 如果点击 `確認する` 后 5 秒内没有进入下一付款状态，插件会使用 Chrome debugger 的 `Input.dispatchMouseEvent` 对按钮中心点再发送一次真实鼠标点击。
 - 最终确认页 `購入を確定する` 也加入同样真实鼠标点击兜底。
