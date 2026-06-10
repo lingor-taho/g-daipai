@@ -2289,7 +2289,7 @@ async function dispatchTrustedManualPinKeys(tab, answer) {
   if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
   const digits = String(answer || '').replace(/\D/g, '');
   if (!digits) return { success: false, error: 'pin digits are required' };
-  return dispatchTrustedManualPinInput(tabId, digits, { preferInsertText: true });
+  return dispatchTrustedManualPinInput(tabId, digits, { preferKeyboard: true });
 }
 
 async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
@@ -2308,42 +2308,48 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
 
   const target = { tabId };
   let attached = false;
-  let insertTextError = null;
+  let keyboardError = null;
   try {
     await chrome.debugger.attach(target, '1.3');
     attached = true;
-    if (options.preferInsertText !== false) {
+    if (options.preferKeyboard !== false) {
       try {
-        console.log('[Yahoo Bid] Sending manual PIN via debugger insertText, digits:', pinDigits.length);
-        await chrome.debugger.sendCommand(target, 'Input.insertText', { text: pinDigits });
+        console.log('[Yahoo Bid] Sending manual PIN via debugger real keyboard, digits:', pinDigits.length);
+        for (const digit of pinDigits) {
+          const keyParams = getDigitKeyEventParams(digit);
+          await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+            type: 'rawKeyDown',
+            ...keyParams
+          });
+          await sleep(30);
+          await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+            type: 'char',
+            ...keyParams,
+            text: digit,
+            unmodifiedText: digit
+          });
+          await sleep(30);
+          await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            ...keyParams
+          });
+          await sleep(100);
+        }
         await sleep(300);
-        return { success: true, method: 'debuggerInsertText', digits: pinDigits.length };
+        return { success: true, method: 'debuggerRealKeyboard', digits: pinDigits.length };
       } catch (e) {
-        insertTextError = e;
-        console.warn('[Yahoo Bid] Manual PIN insertText failed, falling back to digit keys:', e.message || e);
+        keyboardError = e;
+        console.warn('[Yahoo Bid] Manual PIN real keyboard failed, falling back to insertText:', e.message || e);
       }
     }
-    console.log('[Yahoo Bid] Sending manual PIN via debugger digit keys, digits:', pinDigits.length);
-    for (const digit of pinDigits) {
-      const keyParams = getDigitKeyEventParams(digit);
-      await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        ...keyParams,
-        text: digit,
-        unmodifiedText: digit
-      });
-      await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        ...keyParams
-      });
-      await sleep(80);
-    }
+    console.log('[Yahoo Bid] Sending manual PIN via debugger insertText fallback, digits:', pinDigits.length);
+    await chrome.debugger.sendCommand(target, 'Input.insertText', { text: pinDigits });
     await sleep(300);
     return {
       success: true,
-      method: 'debuggerKeyboard',
+      method: 'debuggerInsertText',
       digits: pinDigits.length,
-      insertTextError: insertTextError?.message || ''
+      keyboardError: keyboardError?.message || ''
     };
   } catch (e) {
     return { success: false, error: e.message || 'manual pin keyboard input failed' };
@@ -2504,15 +2510,15 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     pinAttempted = true;
     if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
     canReusePinAfterCaptcha = false;
-    if (fillResult.method === 'debuggerInsertText') {
+    if (fillResult.method === 'debuggerRealKeyboard') {
       current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds);
-      const stillPinAfterInsertText = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
-      if (stillPinAfterInsertText) {
-        console.warn('[Yahoo Bid] PIN page still open after insertText; retrying with debugger digit keys');
-        const beforeKeyboardRetryTabIds = await getTabIds().catch(() => new Set());
-        const keyboardResult = await dispatchTrustedManualPinInput(current.id, pinAnswer, { preferInsertText: false });
-        if (!keyboardResult?.success) throw new Error(keyboardResult?.error || 'manual pin keyboard retry failed');
-        current = await waitForManualVerificationPageTransition(current, 15000, beforeKeyboardRetryTabIds);
+      const stillPinAfterKeyboard = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+      if (stillPinAfterKeyboard) {
+        console.warn('[Yahoo Bid] PIN page still open after real keyboard; retrying with insertText fallback');
+        const beforeInsertTextRetryTabIds = await getTabIds().catch(() => new Set());
+        const insertTextResult = await dispatchTrustedManualPinInput(current.id, pinAnswer, { preferKeyboard: false });
+        if (!insertTextResult?.success) throw new Error(insertTextResult?.error || 'manual pin insertText retry failed');
+        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds);
       }
     } else {
       current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds);

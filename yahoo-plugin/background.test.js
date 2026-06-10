@@ -278,7 +278,7 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
     }
   });
 
-  const result = await api.dispatchTrustedManualPinInput({ id: 8, windowId: 9 }, '123456', { preferInsertText: false });
+  const result = await api.dispatchTrustedManualPinKeys({ id: 8, windowId: 9 }, '123456');
 
   assert.equal(result.success, true);
   assert.equal(attached, true);
@@ -287,17 +287,17 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
   assert.deepEqual(
     commands.filter(item => item.command === 'Input.dispatchKeyEvent').map(item => `${item.params.type}:${item.params.text || item.params.key}`),
     [
-      'keyDown:1', 'keyUp:1',
-      'keyDown:2', 'keyUp:2',
-      'keyDown:3', 'keyUp:3',
-      'keyDown:4', 'keyUp:4',
-      'keyDown:5', 'keyUp:5',
-      'keyDown:6', 'keyUp:6'
+      'rawKeyDown:1', 'char:1', 'keyUp:1',
+      'rawKeyDown:2', 'char:2', 'keyUp:2',
+      'rawKeyDown:3', 'char:3', 'keyUp:3',
+      'rawKeyDown:4', 'char:4', 'keyUp:4',
+      'rawKeyDown:5', 'char:5', 'keyUp:5',
+      'rawKeyDown:6', 'char:6', 'keyUp:6'
     ]
   );
 }
 
-async function testManualPinUsesDebuggerInsertTextBeforeKeyboardFallback() {
+async function testManualPinUsesRealKeyboardBeforeInsertTextFallback() {
   const commands = [];
   const api = loadBackgroundForTest({
     tabs: {
@@ -320,11 +320,12 @@ async function testManualPinUsesDebuggerInsertTextBeforeKeyboardFallback() {
   const result = await api.dispatchTrustedManualPinKeys({ id: 8, windowId: 9 }, '123456');
 
   assert.equal(result.success, true);
-  assert.equal(commands[0].command, 'Input.insertText');
-  assert.equal(commands[0].params.text, '123456');
+  assert.equal(commands[0].command, 'Input.dispatchKeyEvent');
+  assert.equal(commands[0].params.type, 'rawKeyDown');
+  assert.equal(commands.some(item => item.command === 'Input.insertText'), false);
 }
 
-async function testManualPinContinuesKeyboardInputWhenInsertTextFails() {
+async function testManualPinFallsBackToInsertTextWhenRealKeyboardFails() {
   const commands = [];
   const api = loadBackgroundForTest({
     tabs: {
@@ -339,7 +340,7 @@ async function testManualPinContinuesKeyboardInputWhenInsertTextFails() {
       async attach() {},
       async sendCommand(target, command, params) {
         commands.push({ command, params });
-        if (command === 'Input.insertText') throw new Error('insert text unavailable');
+        if (command === 'Input.dispatchKeyEvent') throw new Error('keyboard unavailable');
       },
       async detach() {}
     }
@@ -349,7 +350,7 @@ async function testManualPinContinuesKeyboardInputWhenInsertTextFails() {
 
   assert.equal(result.success, true);
   assert.equal(commands.some(item => item.command === 'Input.insertText'), true);
-  assert.equal(commands.filter(item => item.command === 'Input.dispatchKeyEvent' && item.params.type === 'keyDown').length, 6);
+  assert.equal(commands.filter(item => item.command === 'Input.dispatchKeyEvent' && item.params.type === 'rawKeyDown').length, 1);
 }
 
 async function testBidderPaysShippingTransactionClicksDecideAndConfirm() {
@@ -2009,7 +2010,7 @@ async function testManualPinRefreshesPageBeforeEnteringAnswer() {
     debuggerApi: {
       async attach() {},
       async sendCommand(target, command, params) {
-        if (command === 'Input.dispatchKeyEvent' && params.type === 'keyDown') {
+        if (command === 'Input.dispatchKeyEvent' && params.type === 'char') {
           keyTexts.push(params.text);
         }
         if (keyTexts.join('') === '123456') {
@@ -2071,7 +2072,7 @@ async function testManualVerificationTransitionPrefersNewPinTabAfterCaptcha() {
 async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
   let stage = 'captcha';
   const challengeTypes = [];
-  const insertedPins = [];
+  const typedPins = [];
   const api = loadBackgroundForTest({
     tabs: {
       async get(id) {
@@ -2116,8 +2117,10 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
     debuggerApi: {
       async attach() {},
       async sendCommand(target, command, params) {
-        if (command === 'Input.insertText') {
-          insertedPins.push(params.text);
+        if (command === 'Input.dispatchKeyEvent' && params.type === 'char') {
+          typedPins.push(params.text);
+        }
+        if (typedPins.join('') === '123456') {
           stage = 'done';
         }
       },
@@ -2146,7 +2149,7 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
 
   assert.equal(result.handled, true);
   assert.deepEqual(challengeTypes, ['captcha']);
-  assert.deepEqual(insertedPins, ['123456']);
+  assert.equal(typedPins.join(''), '123456');
 }
 
 function testYahooLoginPageCountsAsTransactionTab() {
@@ -2335,8 +2338,8 @@ async function run() {
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
-  await testManualPinUsesDebuggerInsertTextBeforeKeyboardFallback();
-  await testManualPinContinuesKeyboardInputWhenInsertTextFails();
+  await testManualPinUsesRealKeyboardBeforeInsertTextFallback();
+  await testManualPinFallsBackToInsertTextWhenRealKeyboardFails();
   await testBidderPaysShippingTransactionClicksDecideAndConfirm();
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
