@@ -1659,6 +1659,10 @@ async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) 
         node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
         node.click?.();
         node.dispatchEvent(new MouseEvent('click', eventOptions));
+        if (typeof KeyboardEvent !== 'undefined') {
+          node.dispatchEvent(new KeyboardEvent('keydown', { ...eventOptions, key: 'Enter', code: 'Enter' }));
+          node.dispatchEvent(new KeyboardEvent('keyup', { ...eventOptions, key: 'Enter', code: 'Enter' }));
+        }
       }
       return { success: true, checkedCount: checkboxes.length, text: getText(button) };
     }
@@ -1842,22 +1846,31 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
 
   const applyResult = await waitForStoreConfirmationCheckboxes(editTab.id);
   if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
-  let applyClick = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
-  if (!applyClick?.success) {
-    const jsApply = await checkAllStoreConfirmationItemsAndApply(editTab.id, true);
-    if (!jsApply?.success) return { success: false, error: jsApply?.error || applyClick?.error || 'store confirmation apply click failed', tab: editTab };
-    applyClick = { success: true, method: 'jsClick', text: jsApply.text };
-  }
-  try {
-    const reviewTab = await waitForPaymentStateAcrossTabs(editTab, nextState =>
+
+  const waitForReviewAfterApply = timeoutMs => waitForPaymentStateAcrossTabs(editTab, nextState =>
       nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
       previousTabIds,
-      15000
+      timeoutMs
     );
+
+  const jsApply = await checkAllStoreConfirmationItemsAndApply(editTab.id, true);
+  if (!jsApply?.success) return { success: false, error: jsApply?.error || 'store confirmation apply click failed', tab: editTab };
+  try {
+    const reviewTab = await waitForReviewAfterApply(8000);
     await injectContentScript(reviewTab.id).catch(() => {});
     return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
-  } catch (e) {
-    return { success: false, error: `store confirmation review page did not return after ${applyClick.method || 'click'}: ${e.message || e}`, tab: editTab };
+  } catch (jsError) {
+    const trustedApply = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
+    if (!trustedApply?.success) {
+      return { success: false, error: `store confirmation review page did not return after js click; trusted=${trustedApply?.error || 'failed'}: ${jsError.message || jsError}`, tab: editTab };
+    }
+    try {
+      const reviewTab = await waitForReviewAfterApply(15000);
+      await injectContentScript(reviewTab.id).catch(() => {});
+      return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
+    } catch (trustedError) {
+      return { success: false, error: `store confirmation review page did not return after js+trusted click: ${trustedError.message || trustedError}`, tab: editTab };
+    }
   }
 }
 

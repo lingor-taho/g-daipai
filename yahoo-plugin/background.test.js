@@ -1758,6 +1758,7 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
   const calls = [];
   const actions = [];
   let storeApplyChecks = 0;
+  let storeApplySubmits = 0;
   let trustedMouseCommands = 0;
   const tabUpdates = [];
   const states = [
@@ -1811,7 +1812,8 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
           return [{ result: { success: true, x: 700, y: 280, text: payload.args?.[0] === 'apply' ? '\u5909\u66f4\u3059\u308b' : '\u5909\u66f4' } }];
         }
         if (funcText.includes('store confirmation apply button not found')) {
-          storeApplyChecks += 1;
+          if (payload.args?.[0]) storeApplySubmits += 1;
+          else storeApplyChecks += 1;
           return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b', applyReady: !payload.args?.[0] } }];
         }
         if (payload.args && payload.args.length >= 2) {
@@ -1843,7 +1845,8 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
   await api.runPaymentJobs();
 
   assert.equal(storeApplyChecks, 1);
-  assert.equal(trustedMouseCommands, 3);
+  assert.equal(storeApplySubmits, 1);
+  assert.equal(trustedMouseCommands, 0);
   assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), true);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 19);
@@ -1853,6 +1856,7 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
 async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
   const calls = [];
   let trustedMouseCommands = 0;
+  let storeApplySubmits = 0;
   const tabUpdates = [];
   const states = [
     {
@@ -1904,6 +1908,7 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
           return [{ result: { success: true, x: 700, y: 280, text: payload.args?.[0] === 'apply' ? '\u5909\u66f4\u3059\u308b' : '\u5909\u66f4' } }];
         }
         if (funcText.includes('store confirmation apply button not found')) {
+          if (payload.args?.[0]) storeApplySubmits += 1;
           return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b', applyReady: !payload.args?.[0] } }];
         }
         if (payload.args && payload.args.length >= 2) {
@@ -1933,7 +1938,8 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
 
   await api.runPaymentJobs();
 
-  assert.equal(trustedMouseCommands, 3);
+  assert.equal(storeApplySubmits, 1);
+  assert.equal(trustedMouseCommands, 0);
   assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), true);
   assert.equal(calls[0].orderId, 20);
   assert.equal(calls[0].status, 'success');
