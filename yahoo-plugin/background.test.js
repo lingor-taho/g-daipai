@@ -755,7 +755,8 @@ async function testStoreConfirmationApplyUsesConfirmUpdateSelector() {
   const api = loadBackgroundForTest({
     scripting: {
       async executeScript(payload) {
-        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
           document: {
             body: {},
             querySelector(selector) {
@@ -1676,8 +1677,8 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
 async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
   const calls = [];
   const actions = [];
-  let storeChangeClicks = 0;
-  let storeApplyClicks = 0;
+  let storeApplyChecks = 0;
+  let trustedMouseCommands = 0;
   const states = [
     {
       success: true,
@@ -1721,13 +1722,12 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
         const payload = args[0] || {};
         const funcText = String(payload.func || '');
         if (payload.files) return undefined;
-        if (funcText.includes('store confirmation change button not found')) {
-          storeChangeClicks += 1;
-          return [{ result: { success: true, text: '\u5909\u66f4' } }];
+        if (funcText.includes('click point not found')) {
+          return [{ result: { success: true, x: 700, y: 280, text: payload.args?.[0] === 'apply' ? '\u5909\u66f4\u3059\u308b' : '\u5909\u66f4' } }];
         }
         if (funcText.includes('store confirmation apply button not found')) {
-          storeApplyClicks += 1;
-          return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b' } }];
+          storeApplyChecks += 1;
+          return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b', applyReady: !payload.args?.[0] } }];
         }
         if (payload.args && payload.args.length >= 2) {
           actions.push(payload.args[1]);
@@ -1735,6 +1735,13 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
         }
         return [{ result: states.shift() || { success: true, state: { complete: true } } }];
       }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command) {
+        if (command === 'Input.dispatchMouseEvent') trustedMouseCommands += 1;
+      },
+      async detach() {}
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
@@ -1750,8 +1757,8 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
 
   await api.runPaymentJobs();
 
-  assert.equal(storeChangeClicks, 1);
-  assert.equal(storeApplyClicks, 1);
+  assert.equal(storeApplyChecks, 1);
+  assert.equal(trustedMouseCommands, 6);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 19);
   assert.equal(calls[0].status, 'success');

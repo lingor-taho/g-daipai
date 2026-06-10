@@ -1546,7 +1546,7 @@ async function clickStoreConfirmationChange(tabId) {
       const clickElement = el => {
         const target = clickTargetFor(el);
         const eventOptions = { bubbles: true, cancelable: true, view: window };
-        for (const node of [el, target].filter(Boolean)) {
+        for (const node of [...new Set([el, target].filter(Boolean))]) {
           node.scrollIntoView?.({ block: 'center', inline: 'center' });
           node.focus?.();
           if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
@@ -1587,11 +1587,12 @@ async function clickStoreConfirmationChange(tabId) {
   return injectionResult?.[0]?.result || { success: false, error: 'store confirmation change click returned no result' };
 }
 
-async function checkAllStoreConfirmationItemsAndApply(tabId) {
+async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: () => {
+    args: [clickApply],
+    func: shouldClickApply => {
       const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
       const getText = el => normalize([
         el?.textContent,
@@ -1628,8 +1629,9 @@ async function checkAllStoreConfirmationItemsAndApply(tabId) {
       const button = document.querySelector('#confirm a[data-cl-params*="_cl_link:update"], #confirm button, #confirm input[type="submit"], #confirm [role="button"]') ||
         controls.find(el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el)));
       if (!button) return { success: false, error: 'store confirmation apply button not found', checkedCount: checkboxes.length };
+      if (!shouldClickApply) return { success: true, checkedCount: checkboxes.length, text: getText(button), applyReady: true };
       const target = button.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || button;
-      for (const node of [button, target].filter(Boolean)) {
+      for (const node of [...new Set([button, target].filter(Boolean))]) {
         node.scrollIntoView?.({ block: 'center', inline: 'center' });
         node.focus?.();
         if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
@@ -1734,57 +1736,40 @@ async function completeStoreConfirmationItems(tab, state) {
   if (!tab?.id || !state?.hasStoreConfirmationSection) return { success: true, tab, state };
 
   const previousTabIds = await getTabIds();
-  const changeResult = await clickStoreConfirmationChange(tab.id);
+  let changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
+  if (!changeResult?.success) {
+    changeResult = await clickStoreConfirmationChange(tab.id);
+  }
   if (!changeResult?.success) return { success: false, error: changeResult?.error || 'store confirmation change click failed', tab };
   let editTab = null;
   try {
     editTab = await waitForPaymentStateAcrossTabs(tab, nextState =>
       nextState.hasStoreConfirmationEditPage,
       previousTabIds,
-      8000
+      15000
     );
   } catch (e) {
-    const trustedChange = await dispatchTrustedStoreConfirmationClick(tab, 'change');
-    if (!trustedChange?.success) {
-      return { success: false, error: `store confirmation edit page did not appear: ${e.message || e}; trustedChange=${trustedChange?.error || 'failed'}`, tab };
-    }
-    try {
-      editTab = await waitForPaymentStateAcrossTabs(tab, nextState =>
-        nextState.hasStoreConfirmationEditPage,
-        previousTabIds,
-        15000
-      );
-    } catch (afterTrustedError) {
-      return { success: false, error: `store confirmation edit page did not appear after trusted click: ${afterTrustedError.message || afterTrustedError}`, tab };
-    }
+    return { success: false, error: `store confirmation edit page did not appear after ${changeResult.method || changeResult.text || 'click'}: ${e.message || e}`, tab };
   }
 
-  const applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id);
+  const applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
   if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
+  let applyClick = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
+  if (!applyClick?.success) {
+    const jsApply = await checkAllStoreConfirmationItemsAndApply(editTab.id, true);
+    if (!jsApply?.success) return { success: false, error: jsApply?.error || applyClick?.error || 'store confirmation apply click failed', tab: editTab };
+    applyClick = { success: true, method: 'jsClick', text: jsApply.text };
+  }
   try {
     const reviewTab = await waitForPaymentStateAcrossTabs(editTab, nextState =>
       nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
       previousTabIds,
-      8000
+      15000
     );
     await injectContentScript(reviewTab.id).catch(() => {});
     return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
   } catch (e) {
-    const trustedApply = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
-    if (!trustedApply?.success) {
-      return { success: false, error: `store confirmation review page did not return: ${e.message || e}; trustedApply=${trustedApply?.error || 'failed'}`, tab: editTab };
-    }
-    try {
-      const reviewTab = await waitForPaymentStateAcrossTabs(editTab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
-        previousTabIds,
-        15000
-      );
-      await injectContentScript(reviewTab.id).catch(() => {});
-      return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
-    } catch (afterTrustedError) {
-      return { success: false, error: `store confirmation review page did not return after trusted click: ${afterTrustedError.message || afterTrustedError}`, tab: editTab };
-    }
+    return { success: false, error: `store confirmation review page did not return after ${applyClick.method || 'click'}: ${e.message || e}`, tab: editTab };
   }
 }
 
@@ -3589,6 +3574,8 @@ async function executePaymentJob(job, paymentBatch = {}) {
   let tab = null;
   const beforeTabIds = await getTabIds();
   const maxPageStaySeconds = Math.max(1, Math.floor(Number(paymentBatch.paymentPageStaySeconds ?? job.paymentPageStaySeconds ?? 3)));
+  let storeConfirmationStarted = false;
+  let storeConfirmationCompleted = false;
   try {
     tab = await openTransactionPage(job);
     let state = await getPaymentPageState(tab.id);
@@ -3674,11 +3661,13 @@ async function executePaymentJob(job, paymentBatch = {}) {
     }
     if (!state?.hasReviewButton) throw new Error('payment review button not found');
     if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+      storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state);
       if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
       tab = storeResult.tab;
       state = storeResult.state;
       storeConfirmationHandled = true;
+      storeConfirmationCompleted = true;
     }
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
@@ -3719,7 +3708,11 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (state?.complete) return { success: true };
     throw new Error('payment completion text not found');
   } finally {
-    await closeTabsForTransactionFlow(tab, beforeTabIds);
+    if (!storeConfirmationStarted || storeConfirmationCompleted) {
+      await closeTabsForTransactionFlow(tab, beforeTabIds);
+    } else {
+      console.warn('[Yahoo Bid] Payment tab left open for store confirmation diagnosis:', tab?.id, tab?.url);
+    }
   }
 }
 

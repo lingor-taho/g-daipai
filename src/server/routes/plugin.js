@@ -2228,6 +2228,11 @@ function summarizePaymentError(errorText) {
     return actionLabel ? `${actionLabel}后页面未跳转` : '点击确认后页面未跳转';
   }
   if (/payment completion page did not appear/i.test(text)) return '提交支付后未出现完成页';
+  if (/store confirmation change button not found/i.test(text)) return '店铺确认事项：未找到変更按钮';
+  if (/store confirmation apply button not found/i.test(text)) return '店铺确认事项：未找到変更する按钮';
+  if (/store confirmation edit page did not appear/i.test(text)) return '店铺确认事项：点击変更后未进入编辑页';
+  if (/store confirmation review page did not return/i.test(text)) return '店铺确认事项：点击変更する后未返回付款确认页';
+  if (/store confirmation .*click point not found/i.test(text)) return '店铺确认事项：未找到真实点击位置';
   if (/payment expected amount unavailable/i.test(text)) return '未识别到页面应付金额';
   const amountMismatch = text.match(/payment amount mismatch:\s*expected\s*([^,;]+),\s*found\s*([^,;]+)/i);
   if (amountMismatch) return `付款金额不一致（应付 ${amountMismatch[1].trim()}，页面 ${amountMismatch[2].trim()}）`;

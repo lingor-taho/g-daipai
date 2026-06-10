@@ -381,6 +381,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 付款失败后台提醒过长 | `/api/plugin/payment/status` 保存 `payment_alert_message` 前会摘要化错误，只保留商品 ID 和核心原因；过滤 `url/controls/candidates/synthetic/trusted` 等调试字段。类似 `action=review; wait=payment next page did not appear` 会显示为 `确认付款后页面未跳转`，便于手机端查看 |
 | 2026-06-10 | 商品 `j1232680017` 付款点击确认后仍停留在 review 页 | 根因是 review 页存在 `ストアからの確認事項`，需要先点该区块右侧 `変更`，在编辑页把所有 checkbox 勾选后点击红色 `変更する` 返回 review 页，再继续点击右侧 `確認する`。插件付款流程已在 review 确认前增加该前置步骤，每个订单本轮只处理一次，避免重复进入确认事项页面 |
 | 2026-06-10 | 店铺确认事项按钮按文本/区块扫描仍可能找不到或 JS click 不生效 | 根据真实 DOM 固定优先使用 `#cartopt a[data-cl-params*="_cl_link:cartopt"]` 点击 review 页 `変更`，使用 `#confirm a[data-cl-params*="_cl_link:update"]` 点击确认事项页红色 `変更する`；如果普通 JS click 后未进入下一页/未返回 review，会用 Chrome debugger 按元素中心点补一次真实鼠标点击，避免页面迅速关闭前实际没有完成变更 |
+| 2026-06-10 | 店铺确认事项页面仍快速关闭，疑似未实际点击 `変更` | 店铺确认事项改为 Chrome debugger 真实鼠标点击优先：先按 `#cartopt` 的 `変更` 中心点真实点击进入编辑页；编辑页先只勾选所有 checkbox，不再先 JS 点击提交，再按 `#confirm` 的 `変更する` 中心点真实点击。若该子流程失败，本轮付款 tab 暂不关闭，便于现场观察停留页面；后台失败原因也按店铺确认事项细分显示 |
 
 ---
 
