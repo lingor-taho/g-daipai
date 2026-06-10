@@ -1755,6 +1755,119 @@ async function waitForStoreConfirmationFormReady(tabId, timeoutMs = 15000, stabl
     : (lastResult || { success: false, error: 'store confirmation readiness wait failed' });
 }
 
+async function getStoreConfirmationCheckboxClickPoints(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const pickRect = (checkbox, label) => {
+        checkbox.scrollIntoView?.({ block: 'center', inline: 'center' });
+        const checkboxRect = checkbox.getBoundingClientRect?.();
+        if (checkboxRect && checkboxRect.width > 0 && checkboxRect.height > 0) return { element: checkbox, rect: checkboxRect };
+        const labelRect = label?.getBoundingClientRect?.();
+        if (labelRect && labelRect.width > 0 && labelRect.height > 0) return { element: label, rect: labelRect };
+        const container = checkbox.closest?.('label, li, div, section, p, dd');
+        const containerRect = container?.getBoundingClientRect?.();
+        if (containerRect && containerRect.width > 0 && containerRect.height > 0) return { element: container, rect: containerRect };
+        return null;
+      };
+      const points = [...document.querySelectorAll('input[type="checkbox"]')]
+        .filter(input => !input.disabled)
+        .map((checkbox, index) => {
+          const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : checkbox.closest?.('label');
+          const picked = pickRect(checkbox, label);
+          if (!picked) return null;
+          const { rect } = picked;
+          return {
+            index,
+            checked: Boolean(checkbox.checked),
+            x: rect.left + Math.min(Math.max(rect.width / 2, 6), Math.max(rect.width - 6, 6)),
+            y: rect.top + rect.height / 2,
+            rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+            text: getText(label || picked.element || checkbox)
+          };
+        })
+        .filter(Boolean);
+      if (!points.length) return { success: false, error: 'store confirmation checkbox click points not found' };
+      return { success: true, points };
+    }
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'store confirmation checkbox click points not found' };
+}
+
+async function dispatchTrustedStoreConfirmationCheckboxes(tab) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for store confirmation checkbox click' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+
+  let pointResult = await getStoreConfirmationCheckboxClickPoints(tabId);
+  const waitUntil = Date.now() + 8000;
+  while (!pointResult?.success && Date.now() < waitUntil) {
+    await sleep(500);
+    pointResult = await getStoreConfirmationCheckboxClickPoints(tabId);
+  }
+  if (!pointResult?.success) return pointResult;
+
+  const target = { tabId };
+  let attached = false;
+  const clickAt = async point => {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1
+    });
+  };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    for (const point of pointResult.points) {
+      if (point.checked) {
+        await clickAt(point);
+        await sleep(300);
+      }
+      await clickAt(point);
+      await sleep(500);
+    }
+    return { success: true, method: 'debuggerMouseCheckbox', clickedCount: pointResult.points.length };
+  } catch (e) {
+    return { success: false, error: e.message || 'store confirmation checkbox trusted click failed' };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
 async function clickStoreConfirmationApplyButton(tabId) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
@@ -1956,7 +2069,10 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
 
   const readyResult = await waitForStoreConfirmationFormReady(editTab.id);
   if (!readyResult?.success) return { success: false, error: readyResult?.error || 'store confirmation form not ready', tab: editTab };
-  const applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
+  let applyResult = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
+  if (!applyResult?.success) {
+    applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
+  }
   if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
   await sleep(1200);
 
@@ -4218,6 +4334,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   checkAllStoreConfirmationItemsAndApply,
   getStoreConfirmationFormReadiness,
   waitForStoreConfirmationFormReady,
+  getStoreConfirmationCheckboxClickPoints,
+  dispatchTrustedStoreConfirmationCheckboxes,
   clickStoreConfirmationApplyButton,
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
