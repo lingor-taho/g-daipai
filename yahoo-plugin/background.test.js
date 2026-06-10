@@ -1811,6 +1811,13 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
         if (funcText.includes('click point not found')) {
           return [{ result: { success: true, x: 700, y: 280, text: payload.args?.[0] === 'apply' ? '\u5909\u66f4\u3059\u308b' : '\u5909\u66f4' } }];
         }
+        if (funcText.includes('hasSkeleton')) {
+          return [{ result: { success: true, readyState: 'complete', checkboxCount: 2, checkedCount: 0, hasApplyButton: true, buttonText: '\u5909\u66f4\u3059\u308b', hasStoreOptionText: true, hasSkeleton: false, textLength: 300 } }];
+        }
+        if (funcText.includes('store confirmation apply button not found') && !funcText.includes('checkedCount')) {
+          storeApplySubmits += 1;
+          return [{ result: { success: true, text: '\u5909\u66f4\u3059\u308b' } }];
+        }
         if (funcText.includes('store confirmation apply button not found')) {
           if (payload.args?.[0]) storeApplySubmits += 1;
           else storeApplyChecks += 1;
@@ -1906,6 +1913,13 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
         if (payload.files) return undefined;
         if (funcText.includes('click point not found')) {
           return [{ result: { success: true, x: 700, y: 280, text: payload.args?.[0] === 'apply' ? '\u5909\u66f4\u3059\u308b' : '\u5909\u66f4' } }];
+        }
+        if (funcText.includes('hasSkeleton')) {
+          return [{ result: { success: true, readyState: 'complete', checkboxCount: 2, checkedCount: 0, hasApplyButton: true, buttonText: '\u5909\u66f4\u3059\u308b', hasStoreOptionText: true, hasSkeleton: false, textLength: 300 } }];
+        }
+        if (funcText.includes('store confirmation apply button not found') && !funcText.includes('checkedCount')) {
+          storeApplySubmits += 1;
+          return [{ result: { success: true, text: '\u5909\u66f4\u3059\u308b' } }];
         }
         if (funcText.includes('store confirmation apply button not found')) {
           if (payload.args?.[0]) storeApplySubmits += 1;

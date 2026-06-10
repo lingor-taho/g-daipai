@@ -387,6 +387,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 店铺确认事项 review 页 `変更` 按钮仍不稳定 | 不再依赖 review 页点击 `変更`；发现店铺确认事项后，插件直接按商品 ID 导航到 `https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId={productId}`。到变更页后等待 `#confirm a[data-cl-params*="_cl_link:update"]`，勾选所有 checkbox，再点击红色 `変更する` 返回付款确认页 |
 | 2026-06-10 | 店铺确认事项变更页已打开但 checkbox 没有被勾选 | 变更页 checkbox/`変更する` 也是 Yahoo 前端后渲染；插件现在会等待最多 15 秒直到至少出现 1 个 `input[type="checkbox"]` 和提交按钮。不再要求 checkbox input 本身可见，隐藏 input 也会处理：点击 label/容器和 input，使用原生 checked setter 设置为 true，并派发 `input/change` 事件，覆盖 React 受控组件场景 |
 | 2026-06-10 | 店铺确认事项 checkbox 已勾选但没有提交 `変更する` | 变更页提交改为 DOM 提交优先：勾选后直接对 `#confirm a[data-cl-params*="_cl_link:update"]` 执行 focus、mouse、click 和 Enter 键事件，并以返回 review/下一步页面作为成功条件；如果未返回，再用 Chrome debugger 真实鼠标点击按钮中心点兜底 |
+| 2026-06-10 | 店铺确认事项页面一出现就勾选，Yahoo 前端状态未初始化导致提交仍认为未选择 | 变更页处理拆成只读等待、勾选、延迟、提交 4 步：先等 `document.readyState=complete`、checkbox/`変更する`/页面文本稳定且无骨架加载约 1.8 秒，再触发 checkbox；若 checkbox 已视觉选中，会先重置再最终选中，避免 DOM checked 与 React 内部状态不一致。勾选后等待 1.2 秒再单独点击 `変更する` |
 
 ---
 
