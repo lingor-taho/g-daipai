@@ -2056,6 +2056,15 @@ async function testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts() {
       if (String(url).includes('/api/plugin/config')) {
         return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
       }
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
       if (String(url).includes('/api/plugin/idle-action/next')) {
         throw new Error('idle action should not be fetched during manual verification flow');
       }
@@ -2068,6 +2077,68 @@ async function testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts() {
   await api.syncIdleYahooPages();
 
   assert.equal(fetchCalls.some(url => url.includes('/api/plugin/idle-action/next')), false);
+}
+
+async function testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen() {
+  const challengeTypes = [];
+  let captchaDone = false;
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        if (captchaDone) return [];
+        return [
+          { id: 21, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 },
+          { id: 22, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Faucpay.yahoo.co.jp%2Fdetail-front%2FPaymentDetailItem', status: 'complete', active: false, windowId: 3 }
+        ];
+      },
+      async get(id) {
+        if (captchaDone) return { id, url: 'https://aucpay.yahoo.co.jp/detail-front/PaymentDetailItem', status: 'complete', active: true, windowId: 3 };
+        if (id === 21) return { id: 21, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 };
+        return { id, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1', status: 'complete', windowId: 3 };
+      },
+      async update(id, props) {
+        return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async captureVisibleTab() {
+        return 'data:image/png;base64,abc';
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        if (String(payload.func || '').includes('captchaAnswer')) {
+          captchaDone = true;
+          return [{ result: { success: true } }];
+        }
+        return [{ result: { success: false } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        challengeTypes.push(body.type);
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not be fetched during manual captcha handling');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.equal(challengeTypes.includes('captcha'), true);
+  assert.equal(challengeTypes.includes('pin'), false);
 }
 
 async function testManualPinRefreshesPageBeforeEnteringAnswer() {
@@ -2541,6 +2612,7 @@ async function run() {
   testLikelyManualPinTabDetection();
   await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
+  await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
   await testManualVerificationTransitionPrefersNewPinTabAfterCaptcha();
   await testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin();

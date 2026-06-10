@@ -375,6 +375,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | PIN 输入失败时可能空 PIN 直接回车导致 Yahoo passkey 登录失败 | 服务端系统级 PIN 输入不再发送 Enter，也不再使用 `SendKeys.SendWait($pin)`；改为点击 PIN 框后只逐位模拟数字键，让 Chrome PIN 浮层自行校验，避免“未输入数字但回车提交空 PIN” |
 | 2026-06-10 | PIN 输入成功进入验证码后立刻又回到 PIN 页 | 修复验证跳转选择优先级：如果当前 tab 已经是 `login.yahoo.co.jp/ncaptcha` 验证码页，即使旁边还有旧的 active PIN tab，也继续停留并处理当前验证码；只有新开的 PIN tab 才优先用于验证码通过后的二次 PIN |
 | 2026-06-10 | 到达文字验证码页后 tab 被关闭，又重新打开新的 PIN 页 | `closeTabsForTransactionFlow()` / `closeTabsForScanFlow()` 清理交易/扫描临时 tab 时会二次读取 tab URL，跳过 `PIN/文字验证码` 手动验证 tab；即使验证码 tab 已记录在 `_gdaipaiCreatedTabIds` 中，也不再被 finally 清理关闭 |
+| 2026-06-10 | 验证码页保留后仍新开 PIN，后台继续要求输入 PIN | 空闲入口发现已打开 `login.yahoo.co.jp/ncaptcha` 时，不再只暂停或优先处理 PIN；会激活验证码 tab 并调用 `handleManualVerificationIfPresent()` 截图提交 `type=captcha` 挑战到后台，覆盖旧 PIN 提示，同时阻断后续非出价 idle 任务继续打开新 PIN |
 
 ---
 
@@ -393,6 +394,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 - 服务端 `manual-pin/type` 脚本会激活目标 Chrome 窗口，点击 PIN 输入区域，使用 Win32 `keybd_event` 逐位输入 PIN 数字；不发送 Enter，避免空输入直接提交导致 passkey 登录失败。
 - `findManualVerificationTransitionTab()` 现在区分“新开的 PIN”和“旧 active PIN”：验证码通过后新开 PIN 仍会优先处理；但当前 tab 已经进入验证码时，不会被旧 PIN tab 抢回。
 - 交易/扫描/付款 finally 清理 tab 时，手动验证页不再按普通 Yahoo 登录 tab 关闭；关闭前会通过 `chrome.tabs.get(id)` 再确认当前 URL，若是 `login.yahoo.co.jp/ncaptcha` 或 PIN 页则保留，避免验证码页被关掉后重新触发 PIN。
+- 空闲入口发现验证码 tab 时会优先进入验证码处理，发后台 `type=captcha` 图片挑战并等待人工输入；只有没有验证码 tab 时才保留单个 PIN tab 并暂停其他非出价任务。
 
 ### 最近验证命令
 

@@ -2156,6 +2156,17 @@ async function pauseIdleWorkForOpenManualPin() {
     manualVerificationFlowActive = false;
   }
   if (!manualVerificationFlowActive) return false;
+  const captcha = captchaTabs.find(tab => tab.active) || captchaTabs[0] || null;
+  if (captcha?.id) {
+    console.warn('[Yahoo Bid] Manual captcha tab is active; handling captcha before other idle work:', captcha.id);
+    await chrome.tabs.update(captcha.id, { active: true }).catch(() => {});
+    await handleManualVerificationIfPresent(captcha, {
+      source: 'idle_manual_verification'
+    }).catch(error => {
+      console.warn('[Yahoo Bid] Manual captcha handling failed during idle pause:', error?.message || error);
+    });
+    return true;
+  }
   const keep = pinTabs.length ? await keepSingleManualPinTab(pinTabs) : (captchaTabs.find(tab => tab.active) || captchaTabs[0] || null);
   console.warn('[Yahoo Bid] Manual verification flow is active; idle non-bid work paused:', keep?.id || '');
   return true;
