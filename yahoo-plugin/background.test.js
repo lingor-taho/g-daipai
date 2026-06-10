@@ -665,6 +665,175 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
   assert.equal(editState.hasStoreConfirmationEditPage, true);
 }
 
+async function testStoreConfirmationChangeUsesCartoptSelector() {
+  let clicked = false;
+  const changeLink = {
+    tagName: 'A',
+    textContent: '\u5909\u66f4',
+    value: '',
+    title: '',
+    getAttribute(name) {
+      return name === 'aria-label' ? '' : null;
+    },
+    closest(selector) {
+      return String(selector).includes('a') ? this : null;
+    },
+    scrollIntoView() {},
+    focus() {},
+    dispatchEvent() {},
+    click() { clicked = true; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          document: {
+            querySelector(selector) {
+              if (selector.includes('#cartopt')) return changeLink;
+              return null;
+            },
+            querySelectorAll(selector) {
+              if (String(selector).includes('h1')) return [];
+              return [changeLink];
+            }
+          },
+          window: {},
+          MouseEvent: function MouseEvent() {},
+          PointerEvent: function PointerEvent() {},
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.clickStoreConfirmationChange(19);
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'cartoptSelector');
+  assert.equal(clicked, true);
+}
+
+async function testStoreConfirmationApplyUsesConfirmUpdateSelector() {
+  let applyClicked = false;
+  const checkboxA = {
+    id: 'agree-a',
+    checked: false,
+    disabled: false,
+    getBoundingClientRect() { return { width: 10, height: 10 }; },
+    closest() { return this; },
+    scrollIntoView() {},
+    click() { this.checked = true; },
+    dispatchEvent() {}
+  };
+  const checkboxB = {
+    id: 'agree-b',
+    checked: false,
+    disabled: false,
+    getBoundingClientRect() { return { width: 10, height: 10 }; },
+    closest() { return this; },
+    scrollIntoView() {},
+    click() { this.checked = true; },
+    dispatchEvent() {}
+  };
+  const applyLink = {
+    tagName: 'A',
+    textContent: '\u5909\u66f4\u3059\u308b',
+    value: '',
+    title: '',
+    getAttribute(name) {
+      return name === 'aria-label' ? '' : null;
+    },
+    closest(selector) {
+      return String(selector).includes('a') ? this : null;
+    },
+    scrollIntoView() {},
+    focus() {},
+    dispatchEvent() {},
+    click() { applyClicked = true; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          document: {
+            body: {},
+            querySelector(selector) {
+              if (String(selector).startsWith('label')) return null;
+              if (selector.includes('#confirm')) return applyLink;
+              return null;
+            },
+            querySelectorAll(selector) {
+              if (selector === 'input[type="checkbox"]') return [checkboxA, checkboxB];
+              return [applyLink];
+            }
+          },
+          window: { getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) },
+          CSS: { escape: value => value },
+          Event: function Event() {},
+          MouseEvent: function MouseEvent() {},
+          PointerEvent: function PointerEvent() {}
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.checkAllStoreConfirmationItemsAndApply(19);
+
+  assert.equal(result.success, true);
+  assert.equal(result.checkedCount, 2);
+  assert.equal(checkboxA.checked, true);
+  assert.equal(checkboxB.checked, true);
+  assert.equal(applyClicked, true);
+}
+
+async function testStoreConfirmationTrustedClickPointsUseRealSelectors() {
+  const cartoptLink = {
+    textContent: '\u5909\u66f4',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    scrollIntoView() {},
+    getBoundingClientRect() { return { left: 580, top: 220, width: 40, height: 20 }; }
+  };
+  const confirmUpdateLink = {
+    textContent: '\u5909\u66f4\u3059\u308b',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    scrollIntoView() {},
+    getBoundingClientRect() { return { left: 590, top: 258, width: 240, height: 38 }; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            querySelector(selector) {
+              if (String(selector).includes('#cartopt')) return cartoptLink;
+              if (String(selector).includes('#confirm')) return confirmUpdateLink;
+              return null;
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const changePoint = await api.getStoreConfirmationClickPoint(19, 'change');
+  const applyPoint = await api.getStoreConfirmationClickPoint(19, 'apply');
+
+  assert.equal(changePoint.success, true);
+  assert.equal(changePoint.x, 600);
+  assert.equal(changePoint.y, 230);
+  assert.equal(applyPoint.success, true);
+  assert.equal(applyPoint.x, 710);
+  assert.equal(applyPoint.y, 277);
+}
+
 function testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice() {
   const api = loadBackgroundForTest();
 
@@ -2749,6 +2918,10 @@ async function run() {
   testPaymentPageStateKeepsSelectedShippingOption();
   testPaymentPageStateDetectsPaymentMethodFee();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
+  testPaymentPageStateDetectsStoreConfirmationSection();
+  await testStoreConfirmationChangeUsesCartoptSelector();
+  await testStoreConfirmationApplyUsesConfirmUpdateSelector();
+  await testStoreConfirmationTrustedClickPointsUseRealSelectors();
   testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
   testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice();
   testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProducts();
