@@ -3069,26 +3069,32 @@ async function runTransactionStartJobs(options = {}) {
 
 async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
   const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
-  if (tab?.id) ids.add(tab.id);
+  if (tab?.id && !isManualVerificationTab(tab)) ids.add(tab.id);
   const tabs = await chrome.tabs.query({}).catch(() => []);
   for (const candidate of tabs) {
     if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
+    if (isManualVerificationTab(candidate)) continue;
     if (isLikelyYahooTransactionTab(candidate)) ids.add(candidate.id);
   }
   for (const id of ids) {
+    const current = await chrome.tabs.get(id).catch(() => null);
+    if (current && isManualVerificationTab(current)) continue;
     await closeTabIfExists(id);
   }
 }
 
 async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
   const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
-  if (tab?.id) ids.add(tab.id);
+  if (tab?.id && !isManualVerificationTab(tab)) ids.add(tab.id);
   const tabs = await chrome.tabs.query({}).catch(() => []);
   for (const candidate of tabs) {
     if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
+    if (isManualVerificationTab(candidate)) continue;
     if (isLikelyYahooTransactionTab(candidate)) ids.add(candidate.id);
   }
   for (const id of ids) {
+    const current = await chrome.tabs.get(id).catch(() => null);
+    if (current && isManualVerificationTab(current)) continue;
     await closeTabIfExists(id);
   }
 }

@@ -2286,6 +2286,55 @@ async function testTransactionCleanupClosesNewYahooLoginTabs() {
   assert.deepEqual(removed, [2]);
 }
 
+async function testTransactionCleanupKeepsManualVerificationTabsOpen() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [
+          { id: 2, url: 'https://login.yahoo.co.jp/config/login?.src=auc' },
+          { id: 3, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc' },
+          { id: 4, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Faucpay.yahoo.co.jp%2Fdetail-front%2FPaymentDetailItem' }
+        ];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+
+  await api.closeTabsForTransactionFlow(null, new Set());
+
+  assert.deepEqual(removed, [2]);
+}
+
+async function testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (id === 3) return { id: 3, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc' };
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' };
+      },
+      async query() {
+        return [
+          { id: 3, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc' }
+        ];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+
+  await api.closeTabsForTransactionFlow(
+    { id: 3, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', _gdaipaiCreatedTabIds: [3] },
+    new Set()
+  );
+
+  assert.deepEqual(removed, []);
+}
+
 async function unusedLegacyWonPageSyncTestRemoved() {
   const fetchCalls = [];
   const api = loadBackgroundForTest({
@@ -2498,6 +2547,8 @@ async function run() {
   await testManualVerificationReusesPinWhenCaptchaReturnsToPinPage();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
+  await testTransactionCleanupKeepsManualVerificationTabsOpen();
+  await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
 }
 
