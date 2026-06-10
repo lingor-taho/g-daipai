@@ -2149,6 +2149,31 @@ async function testManualVerificationTransitionPrefersNewPinTabAfterCaptcha() {
   assert.equal(result.id, 9);
 }
 
+async function testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin() {
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' };
+        if (id === 9) return { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true };
+        return { id, url: 'about:blank', status: 'complete' };
+      },
+      async query() {
+        return [
+          { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' },
+          { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true }
+        ];
+      }
+    }
+  });
+
+  const result = await api.findManualVerificationTransitionTab(
+    { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' },
+    new Set([7, 9])
+  );
+
+  assert.equal(result.id, 7);
+}
+
 async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
   let stage = 'captcha';
   const challengeTypes = [];
@@ -2469,6 +2494,7 @@ async function run() {
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
   await testManualVerificationTransitionPrefersNewPinTabAfterCaptcha();
+  await testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin();
   await testManualVerificationReusesPinWhenCaptchaReturnsToPinPage();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();

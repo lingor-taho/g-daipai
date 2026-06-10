@@ -2477,6 +2477,9 @@ async function findManualVerificationTransitionTab(current, previousTabIds = new
   if (newPins.length) return newPins.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
   const newVerificationTabs = candidates.filter(tab => !previous.has(tab.id));
   if (newVerificationTabs.length) return newVerificationTabs.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+  if (currentTab?.id && isManualCaptchaTab(currentTab)) return currentTab;
+  const activeCaptcha = candidates.find(tab => tab.active && isManualCaptchaTab(tab));
+  if (activeCaptcha) return activeCaptcha;
   const activePin = candidates.find(tab => tab.active && isLikelyManualPinTab(tab));
   if (activePin) return activePin;
   const activeVerification = candidates.find(tab => tab.active);
