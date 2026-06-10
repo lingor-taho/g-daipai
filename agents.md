@@ -389,6 +389,8 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 店铺确认事项 checkbox 已勾选但没有提交 `変更する` | 变更页提交改为 DOM 提交优先：勾选后直接对 `#confirm a[data-cl-params*="_cl_link:update"]` 执行 focus、mouse、click 和 Enter 键事件，并以返回 review/下一步页面作为成功条件；如果未返回，再用 Chrome debugger 真实鼠标点击按钮中心点兜底 |
 | 2026-06-10 | 店铺确认事项页面一出现就勾选，Yahoo 前端状态未初始化导致提交仍认为未选择 | 变更页处理拆成只读等待、勾选、延迟、提交 4 步：先等 `document.readyState=complete`、checkbox/`変更する`/页面文本稳定且无骨架加载约 1.8 秒，再触发 checkbox；若 checkbox 已视觉选中，会先重置再最终选中，避免 DOM checked 与 React 内部状态不一致。勾选后等待 1.2 秒再单独点击 `変更する` |
 | 2026-06-10 | 店铺确认事项 checkbox 视觉勾选但按钮仍不可提交，手工取消再勾选可提交 | checkbox 勾选改为 Chrome debugger 真实鼠标点击：读取每个 `input[type="checkbox"]`/label 的屏幕坐标后发送 `mouseMoved/mousePressed/mouseReleased`。若 checkbox 已显示选中，会先真实点击取消再真实点击选中，强制 Yahoo 前端收到与人工操作一致的交互事件；JS 设置 checked 仅保留为 debugger 不可用时兜底 |
+| 2026-06-10 | 后台订单管理需要跨页自动选中和 CSV 导出 | 订单管理表格复选框不再限制状态，结算/支付状态检查延后到按钮点击时处理；首次勾选订单时按该订单用户跨页选中 `won_at` 从昨天到今天的所有订单，并缓存跨页订单数据。新增导出 CSV，字段为落札日期、用户名、商品链接、商品标题、落札价、运费、总价；导出只看原始 `shipping_fee_text`，遇到 `落札者負担/着払い` 弹窗输入本次导出运费，不写数据库且不使用同捆运费 |
+| 2026-06-10 | 用户端管理员/代理切换用户下拉不支持搜索 | `src/client/src/components/UserNav.jsx` 将原 `Picker` 切换为 `Popup + SearchBar + List`，点击“当前账号”后弹出可搜索用户列表，按用户名和用户等级过滤；选中后继续复用原 `acting-user-change`、localStorage 和页面刷新逻辑 |
 
 ---
 

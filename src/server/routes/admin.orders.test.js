@@ -5,6 +5,7 @@ const {
   canSettleShippingFeeText,
   buildOrderSettlement,
   buildAdminOrdersListQuery,
+  buildAdminOrdersUserWonDateRangeQuery,
   mapAdminOrderListItem,
   resolveSettlementOrderStatus,
   ORDER_STATUS_PENDING_SETTLEMENT,
@@ -252,6 +253,21 @@ function testAdminOrdersQueryIncludesProductType() {
   assert.match(query.sql, /t\.product_type/);
   assert.match(query.sql, /ORDER BY datetime\(COALESCE\(o\.won_at, t\.updated_at\)\) DESC, t\.id DESC/);
   assert.deepEqual(query.params, [10, 0]);
+}
+
+function testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly() {
+  const query = buildAdminOrdersUserWonDateRangeQuery({
+    userId: 12,
+    fromDate: '2026-06-09',
+    toDate: '2026-06-10'
+  });
+
+  assert.match(query.sql, /u\.id = \?/);
+  assert.match(query.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) >= \?/);
+  assert.match(query.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) <= \?/);
+  assert.doesNotMatch(query.sql, /created_at/);
+  assert.doesNotMatch(query.sql, /LIMIT/);
+  assert.deepEqual(query.params, [12, '2026-06-09', '2026-06-10']);
 }
 
 function testMapAdminOrderListItemUsesEffectiveBundleShipping() {
@@ -536,6 +552,7 @@ testBuildOrderSettlementPrefersBundleShippingFee();
 testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
+testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testMapAdminOrderListItemAllowsStoreBidderPaysShipping();
 testSettlementStatusUsesPendingSettlement();

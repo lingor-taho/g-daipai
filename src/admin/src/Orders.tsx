@@ -1,7 +1,7 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Modal, Space, Switch, Tag, Typography, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Modal, Space, Tag, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
 function formatJPY(value: number | string | null | undefined) {
@@ -31,6 +31,31 @@ function formatDateTime(value: string | null | undefined) {
   }).formatToParts(date);
   const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second}`;
+}
+
+function formatDateOnly(value: string | null | undefined) {
+  const raw = String(value || '').trim();
+  const direct = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (direct) return direct[1];
+  const formatted = formatDateTime(raw);
+  return formatted === '-' ? '-' : formatted.slice(0, 10);
+}
+
+function formatLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getYesterdayTodayDateRange() {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  return {
+    fromDate: formatLocalDateKey(yesterday),
+    toDate: formatLocalDateKey(today)
+  };
 }
 
 function truncateText(value: string | null | undefined, maxLength = 20) {
@@ -147,6 +172,33 @@ function canRequestPayment(item: any) {
   );
 }
 
+function parseCsvShippingFee(value: any) {
+  const text = String(value || '').trim();
+  if (!text || text === '-' || /無料/.test(text)) return 0;
+  const match = text.match(/([\d,]+)\s*円/);
+  if (match) return Number(match[1].replace(/,/g, '')) || 0;
+  const numeric = Number(text.replace(/[,\s円]/g, ''));
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function needsCsvShippingInput(row: any) {
+  return /落札者負担|着払い/.test(String(row?.shipping_fee_text || ''));
+}
+
+function csvEscape(value: any) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+async function fetchSameUserWonDateRangeOrders(params: { userId: number; fromDate: string; toDate: string }) {
+  const query = new URLSearchParams({
+    userId: String(params.userId),
+    fromDate: params.fromDate,
+    toDate: params.toDate
+  });
+  return fetchAdminJson(`/api/admin/orders/user-won-date-range?${query.toString()}`);
+}
+
 async function settleOrders(values: { orderIds: Key[]; rate: number }) {
   const res = await fetch('/api/admin/orders/settle', {
     method: 'POST',
@@ -175,18 +227,60 @@ export default function OrdersPage() {
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [settlementRate, setSettlementRate] = useState<number | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
-  const [autoSelectNonBidderPays, setAutoSelectNonBidderPays] = useState(false);
+  const [selectedRowsMap, setSelectedRowsMap] = useState<Record<string, any>>({});
+  const [firstRangeSelectDone, setFirstRangeSelectDone] = useState(false);
   const [currentRows, setCurrentRows] = useState<any[]>([]);
   const [idleFlags, setIdleFlags] = useState<any>(null);
   const [statusLogOpen, setStatusLogOpen] = useState(false);
   const [statusLogRows, setStatusLogRows] = useState<any[]>([]);
   const [storeBundleOpen, setStoreBundleOpen] = useState(false);
   const [storeBundleSubmitting, setStoreBundleSubmitting] = useState(false);
+  const [csvShippingOpen, setCsvShippingOpen] = useState(false);
+  const [csvShippingRows, setCsvShippingRows] = useState<any[]>([]);
+  const [csvShippingOverrides, setCsvShippingOverrides] = useState<Record<string, number | null>>({});
   const [storeBundleForm] = Form.useForm();
 
   useEffect(() => {
     fetchAdminJson('/api/admin/idle-flags').then(setIdleFlags).catch(() => {});
   }, []);
+
+  function cacheRows(rows: any[]) {
+    setSelectedRowsMap(prev => {
+      const next = { ...prev };
+      for (const row of rows || []) {
+        if (row?.id !== undefined && row?.id !== null) next[String(row.id)] = row;
+      }
+      return next;
+    });
+  }
+
+  function getSelectedRows() {
+    const currentMap = new Map(currentRows.map(row => [String(row.id), row]));
+    return selectedRowKeys
+      .map(key => selectedRowsMap[String(key)] || currentMap.get(String(key)))
+      .filter(Boolean);
+  }
+
+  async function maybeAutoSelectSameUserWonDateRange(record: any) {
+    if (firstRangeSelectDone || !record?.user_id) return;
+    setFirstRangeSelectDone(true);
+    const range = getYesterdayTodayDateRange();
+    try {
+      const data = await fetchSameUserWonDateRangeOrders({
+        userId: Number(record.user_id),
+        fromDate: range.fromDate,
+        toDate: range.toDate
+      });
+      const rows = data.items || [];
+      cacheRows(rows);
+      setSelectedRowKeys(prev => Array.from(new Set([...prev, ...rows.map((item: any) => item.id)])));
+      if (rows.length) {
+        message.success(`已自动选中该用户 ${range.fromDate} 至 ${range.toDate} 的订单 ${rows.length} 条`);
+      }
+    } catch (e: any) {
+      message.error(e.message || '自动选中同用户订单失败');
+    }
+  }
 
   async function handleSettle() {
     if (!settlementRate || settlementRate <= 0) {
@@ -197,7 +291,11 @@ export default function OrdersPage() {
       message.error('请选择要结算的订单');
       return;
     }
-    const selectedRows = currentRows.filter(item => selectedRowKeys.includes(item.id));
+    const selectedRows = getSelectedRows();
+    if (selectedRows.length !== selectedRowKeys.length) {
+      message.error('部分已选订单数据未加载，请刷新后重试');
+      return;
+    }
     if (selectedRows.some(item => !canAutoSettle(item))) {
       message.error('只能选择待支付、待发货或同捆完了的订单进行结算');
       return;
@@ -223,7 +321,11 @@ export default function OrdersPage() {
       message.error('请选择要支付的订单');
       return;
     }
-    const selectedRows = currentRows.filter(item => selectedRowKeys.includes(item.id));
+    const selectedRows = getSelectedRows();
+    if (selectedRows.length !== selectedRowKeys.length) {
+      message.error('部分已选订单数据未加载，请刷新后重试');
+      return;
+    }
     if (selectedRows.some(item => !canRequestPayment(item))) {
       message.error('只能选择待结算且应付款不为空的订单');
       return;
@@ -239,6 +341,70 @@ export default function OrdersPage() {
     } finally {
       setPaymentSubmitting(false);
     }
+  }
+
+  function downloadCsv(rows: any[], shippingOverrides: Record<string, number | null>) {
+    const headers = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '总价'];
+    const lines = rows.map(row => {
+      const finalPrice = Number(row.final_price || 0);
+      const shippingFee = needsCsvShippingInput(row)
+        ? Number(shippingOverrides[String(row.id)] || 0)
+        : parseCsvShippingFee(row.shipping_fee_text);
+      const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
+      const productUrl = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
+      return [
+        formatDateOnly(row.won_at),
+        row.username || '',
+        productUrl,
+        row.product_title || '',
+        finalPrice,
+        shippingFee,
+        finalPrice + shippingFee
+      ].map(csvEscape).join(',');
+    });
+    const csv = `\ufeff${headers.join(',')}\r\n${lines.join('\r\n')}`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orders-${formatLocalDateKey(new Date())}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleExportCsv() {
+    if (selectedRowKeys.length === 0) {
+      message.error('请选择要导出的订单');
+      return;
+    }
+    const selectedRows = getSelectedRows();
+    if (selectedRows.length !== selectedRowKeys.length) {
+      message.error('部分已选订单数据未加载，请刷新后重试');
+      return;
+    }
+    const inputRows = selectedRows.filter(needsCsvShippingInput);
+    if (inputRows.length) {
+      setCsvShippingRows(inputRows);
+      setCsvShippingOverrides(Object.fromEntries(inputRows.map(row => [String(row.id), csvShippingOverrides[String(row.id)] ?? null])));
+      setCsvShippingOpen(true);
+      return;
+    }
+    downloadCsv(selectedRows, {});
+  }
+
+  function confirmCsvExportWithShipping() {
+    const missing = csvShippingRows.filter(row => {
+      const value = csvShippingOverrides[String(row.id)];
+      return value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < 0;
+    });
+    if (missing.length) {
+      message.error('请填写所有待确认运费');
+      return;
+    }
+    downloadCsv(getSelectedRows(), csvShippingOverrides);
+    setCsvShippingOpen(false);
   }
 
   async function showStatusLogs(orderId: number) {
@@ -379,20 +545,11 @@ export default function OrdersPage() {
         <Space wrap className="admin-mobile-action-space">
           <Typography.Text>本次结算汇率</Typography.Text>
           <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
-          <Switch
-            checked={autoSelectNonBidderPays}
-            checkedChildren="已勾选"
-            unCheckedChildren="未勾选"
-            onChange={checked => {
-              setAutoSelectNonBidderPays(checked);
-              setSelectedRowKeys(checked ? currentRows.filter(item => canAutoSettle(item)).map(item => item.id) : []);
-            }}
-          />
-          <Typography.Text>勾选待支付/同捆完了订单</Typography.Text>
           <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
           <Button loading={paymentSubmitting} onClick={handlePaymentRequest}>支付</Button>
+          <Button onClick={handleExportCsv}>导出CSV</Button>
           <Typography.Text type="secondary">
-            已选择 {selectedRowKeys.length} 条；每次进入页面默认不勾选订单。
+            已选择 {selectedRowKeys.length} 条；首次勾选会自动选中该用户昨天到今天的落札订单。
           </Typography.Text>
         </Space>
       </Card>
@@ -475,6 +632,41 @@ export default function OrdersPage() {
         </Form>
       </Modal>
 
+      <Modal
+        open={csvShippingOpen}
+        title="填写导出用运费"
+        okText="导出CSV"
+        cancelText="取消"
+        onOk={confirmCsvExportWithShipping}
+        onCancel={() => setCsvShippingOpen(false)}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Typography.Text type="secondary">
+            以下订单原始运费为落札者負担或着払い，请填写本次 CSV 使用的运费。该运费不会写入数据库。
+          </Typography.Text>
+          {csvShippingRows.map(row => (
+            <Card key={row.id} size="small">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Typography.Text strong>{row.product_id || row.id} {truncateText(row.product_title, 30)}</Typography.Text>
+                <Typography.Text type="secondary">原运费：{row.shipping_fee_text || '-'}</Typography.Text>
+                <InputNumber
+                  min={0}
+                  precision={0}
+                  addonAfter="円"
+                  style={{ width: '100%' }}
+                  value={csvShippingOverrides[String(row.id)]}
+                  onChange={value => setCsvShippingOverrides(prev => ({
+                    ...prev,
+                    [String(row.id)]: value === null ? null : Number(value)
+                  }))}
+                />
+              </Space>
+            </Card>
+          ))}
+        </Space>
+      </Modal>
+
       <ProTable
         key={reloadKey}
         columns={columns}
@@ -483,25 +675,30 @@ export default function OrdersPage() {
             const data = await fetchAdminJson('/api/admin/orders?' + new URLSearchParams(params));
             const rows = data.items || [];
             setCurrentRows(rows);
-            setSelectedRowKeys(autoSelectNonBidderPays ? rows.filter((item: any) => canAutoSettle(item)).map((item: any) => item.id) : []);
+            cacheRows(rows);
             return { data: rows, total: data.total || 0 };
           } catch {
             setCurrentRows([]);
-            setSelectedRowKeys([]);
             return { data: [], total: 0 };
           }
         }}
         rowKey="id"
         rowSelection={{
           selectedRowKeys,
-          onChange: keys => setSelectedRowKeys(keys),
-          getCheckboxProps: (record: any) => {
-            const enabled = canAutoSettle(record) || canRequestPayment(record);
-            return {
-              disabled: !enabled,
-              title: enabled ? undefined : '只能勾选待支付/待发货/同捆完了用于结算，或待结算且有应付款用于支付'
-            };
-          }
+          onChange: (keys, rows) => {
+            cacheRows(rows as any[]);
+            setSelectedRowKeys(keys);
+          },
+          onSelect: (record: any, selected: boolean) => {
+            cacheRows([record]);
+            if (selected) maybeAutoSelectSameUserWonDateRange(record);
+          },
+          onSelectAll: (selected: boolean, rows: any[]) => {
+            cacheRows(rows);
+            if (selected && rows?.[0]) maybeAutoSelectSameUserWonDateRange(rows[0]);
+          },
+          preserveSelectedRowKeys: true,
+          getCheckboxProps: () => ({})
         }}
         search={false}
         scroll={{ x: 1460 }}

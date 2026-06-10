@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Button, Picker, Toast } from 'antd-mobile';
+import { Button, List, Popup, SearchBar, Toast } from 'antd-mobile';
 import { getActingUsers } from '../utils/api';
 import { runDeduped } from '../utils/requestDedupe';
 
@@ -32,6 +32,7 @@ export default function UserNav() {
   const [users, setUsers] = useState([]);
   const [selectedId, setSelectedId] = useState(localStorage.getItem('actingUserId') || '');
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState('');
 
   async function loadActingUsers() {
     try {
@@ -56,12 +57,13 @@ export default function UserNav() {
 
   const selectedUser = users.find(user => String(user.id) === String(selectedId));
   const showSwitcher = users.length > 1 || Number(selectedUser?.user_level || localStorage.getItem('userLevel') || 1) >= 3;
-  const pickerColumns = [
-    users.map(user => ({
-      label: `${user.username}（${levelLabels[user.user_level] || '用户'}）`,
-      value: String(user.id)
-    }))
-  ];
+  const normalizedKeyword = searchKeyword.trim().toLowerCase();
+  const filteredUsers = normalizedKeyword
+    ? users.filter(user => {
+      const label = `${user.username || ''} ${levelLabels[user.user_level] || ''}`.toLowerCase();
+      return label.includes(normalizedKeyword);
+    })
+    : users;
 
   function selectUser(nextId) {
     const user = users.find(item => String(item.id) === String(nextId));
@@ -69,6 +71,11 @@ export default function UserNav() {
     saveActingUser(user);
     setSelectedId(String(user.id));
     emitActingUserChange(user);
+  }
+
+  function closeUserPicker() {
+    setPickerVisible(false);
+    setSearchKeyword('');
   }
 
   function logout() {
@@ -92,7 +99,10 @@ export default function UserNav() {
 
       {showSwitcher && (
         <div
-          onClick={() => setPickerVisible(true)}
+          onClick={() => {
+            setSearchKeyword('');
+            setPickerVisible(true);
+          }}
           style={{
             marginBottom: 10,
             padding: '10px 12px',
@@ -132,13 +142,51 @@ export default function UserNav() {
         ))}
       </div>
 
-      <Picker
-        columns={pickerColumns}
+      <Popup
         visible={pickerVisible}
-        value={[selectedId]}
-        onClose={() => setPickerVisible(false)}
-        onConfirm={value => selectUser(value[0])}
-      />
+        onMaskClick={closeUserPicker}
+        bodyStyle={{
+          borderTopLeftRadius: 12,
+          borderTopRightRadius: 12,
+          maxHeight: '70vh',
+          overflow: 'hidden'
+        }}
+      >
+        <div style={{ padding: 12, borderBottom: '1px solid #f0f0f0' }}>
+          <SearchBar
+            placeholder="搜索用户"
+            value={searchKeyword}
+            onChange={setSearchKeyword}
+          />
+        </div>
+        <div style={{ maxHeight: '58vh', overflowY: 'auto' }}>
+          {filteredUsers.length ? (
+            <List>
+              {filteredUsers.map(user => {
+                const active = String(user.id) === String(selectedId);
+                return (
+                  <List.Item
+                    key={user.id}
+                    clickable
+                    extra={active ? '✓' : null}
+                    onClick={() => {
+                      selectUser(user.id);
+                      closeUserPicker();
+                    }}
+                  >
+                    <div style={{ fontWeight: active ? 700 : 500 }}>{user.username}</div>
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 3 }}>
+                      {levelLabels[user.user_level] || '用户'}
+                    </div>
+                  </List.Item>
+                );
+              })}
+            </List>
+          ) : (
+            <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>未找到用户</div>
+          )}
+        </div>
+      </Popup>
     </>
   );
 }

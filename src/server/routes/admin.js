@@ -171,6 +171,55 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
   };
 }
 
+function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
+  return {
+    sql: `SELECT o.id,
+            o.task_id,
+            o.product_title,
+            COALESCE(o.product_url, t.product_url) AS product_url,
+            o.final_price,
+            o.won_at,
+            o.won_time_text,
+            o.order_status,
+            o.bundle_shipping_fee_text,
+            o.transaction_url,
+            o.transaction_start_error,
+            o.shipping_company,
+            o.tracking_number,
+            o.settled_at,
+            o.updated_at,
+            o.jpy_to_cny_rate,
+            o.bank_fee_jpy,
+            o.handling_fee_cny,
+            o.large_amount_fee_cny,
+            o.large_amount_fee_applied,
+            o.tax_included_final_price,
+            o.has_user_finance_override,
+            o.total_amount_cny,
+            t.product_id,
+            t.shipping_fee_text,
+            t.tax_type,
+            t.product_type,
+            u.id AS user_id,
+            u.username,
+            ufo.rate_adjustment,
+            ufo.bank_fee_jpy AS user_bank_fee_jpy,
+            ufo.handling_fee_cny AS user_handling_fee_cny,
+            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN users u ON t.user_id = u.id
+     LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
+     WHERE t.status = 'success'
+       AND u.id = ?
+       AND o.won_at IS NOT NULL
+       AND substr(COALESCE(o.won_at, ''), 1, 10) >= ?
+       AND substr(COALESCE(o.won_at, ''), 1, 10) <= ?
+     ORDER BY datetime(o.won_at) DESC, o.id DESC`,
+    params: [userId, fromDate, toDate]
+  };
+}
+
 function mapAdminOrderListItem(item) {
   const settled = Boolean(item.settled_at);
   const effectiveShippingFeeText = getEffectiveShippingFeeText(item);
@@ -521,6 +570,21 @@ router.get('/orders', async (req, res) => {
   `);
   const mappedItems = items.map(mapAdminOrderListItem);
   res.json({ items: mappedItems, total: countResult?.total || 0 });
+});
+
+router.get('/orders/user-won-date-range', async (req, res) => {
+  const userId = Number(req.query.userId || 0);
+  const fromDate = String(req.query.fromDate || '').trim();
+  const toDate = String(req.query.toDate || '').trim();
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'valid userId is required' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return res.status(400).json({ error: 'valid fromDate and toDate are required' });
+  }
+  const query = buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate });
+  const items = await db.getAll(query.sql, query.params);
+  res.json({ items: items.map(mapAdminOrderListItem), total: items.length });
 });
 
 router.get('/orders/:id/status-logs', async (req, res) => {
@@ -2220,6 +2284,7 @@ module.exports = router;
 module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
 module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
+module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
