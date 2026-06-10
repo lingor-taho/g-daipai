@@ -2380,9 +2380,20 @@ async function focusManualPinTabForSystemInput(tabId) {
   if (!tabId) return;
   const currentTab = await chrome.tabs.get(tabId).catch(() => null);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await chrome.windows.update(currentTab.windowId, { focused: true, state: 'normal' }).catch(() => {
+      return chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    });
   }
-  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await chrome.tabs.update(tabId, { active: true, highlighted: true }).catch(() => {
+    return chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  });
+  await sleep(300);
+  const latestTab = await chrome.tabs.get(tabId).catch(() => null);
+  if (latestTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(latestTab.windowId, { focused: true, state: 'normal' }).catch(() => {
+      return chrome.windows.update(latestTab.windowId, { focused: true }).catch(() => {});
+    });
+  }
   await sleep(500);
 }
 

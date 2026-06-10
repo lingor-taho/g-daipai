@@ -300,13 +300,21 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
 async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
   const fetchCalls = [];
   const debuggerCommands = [];
+  const windowUpdates = [];
+  const tabUpdates = [];
   const api = loadBackgroundForTest({
     tabs: {
       async get(id) {
         return { id, windowId: 9, status: 'complete' };
       },
       async update(id, props) {
+        tabUpdates.push({ id, props });
         return { id, windowId: 9, active: props.active };
+      }
+    },
+    windows: {
+      async update(id, props) {
+        windowUpdates.push({ id, props });
       }
     },
     debuggerApi: {
@@ -331,6 +339,8 @@ async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
   assert.equal(result.method, 'systemSendKeys');
   assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/manual-pin/type') && /123456/.test(call.body)), true);
   assert.equal(debuggerCommands.length, 0);
+  assert.equal(windowUpdates.some(update => update.id === 9 && update.props.focused === true && update.props.state === 'normal'), true);
+  assert.equal(tabUpdates.some(update => update.id === 8 && update.props.active === true && update.props.highlighted === true), true);
 }
 
 async function testManualPinFallsBackToDebuggerWhenSystemKeyboardFails() {
