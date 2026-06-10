@@ -254,7 +254,7 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
   const api = loadBackgroundForTest({
     tabs: {
       async get(id) {
-        return { id, windowId: 9, status: 'complete' };
+        return { id, windowId: 9, status: 'complete', title: 'Yahoo PIN Window' };
       },
       async update(id, props) {
         return { id, windowId: 9, active: props.active };
@@ -305,7 +305,7 @@ async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
   const api = loadBackgroundForTest({
     tabs: {
       async get(id) {
-        return { id, windowId: 9, status: 'complete' };
+        return { id, windowId: 9, status: 'complete', title: 'Yahoo PIN Window' };
       },
       async update(id, props) {
         tabUpdates.push({ id, props });
@@ -338,6 +338,7 @@ async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
   assert.equal(result.success, true);
   assert.equal(result.method, 'systemSendKeys');
   assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/manual-pin/type') && /123456/.test(call.body)), true);
+  assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/manual-pin/type') && /Yahoo PIN Window/.test(call.body)), true);
   assert.equal(debuggerCommands.length, 0);
   assert.equal(windowUpdates.some(update => update.id === 9 && update.props.focused === true && update.props.state === 'normal'), true);
   assert.equal(tabUpdates.some(update => update.id === 8 && update.props.active === true && update.props.highlighted === true), true);

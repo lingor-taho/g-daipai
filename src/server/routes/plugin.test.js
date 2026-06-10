@@ -1168,16 +1168,17 @@ function testNormalizeManualPinCodeKeepsDigitsOnly() {
   assert.equal(normalizeManualPinCode('123456789012345'), '123456789012');
 }
 
-function testBuildWindowsSendKeysScriptTypesPinAndEnter() {
+function testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly() {
   const script = buildWindowsSendKeysScript('123456');
-  assert.match(script, /System\.Windows\.Forms/);
-  assert.match(script, /SendWait\(\$pin\)/);
-  assert.match(script, /SendWait\('\{ENTER\}'\)/);
+  assert.match(script, /SetCursorPos/);
+  assert.match(script, /mouse_event/);
+  assert.match(script, /keybd_event/);
   assert.match(script, /\$pin = '123456'/);
   assert.doesNotMatch(script, /123456;|\$pin = 123456/);
+  assert.doesNotMatch(script, /\{ENTER\}|VK_RETURN|0x0D/);
 }
 
-async function testTypeManualPinWithSystemKeyboardUsesPowerShellSendKeys() {
+async function testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput() {
   const calls = [];
   const result = await typeManualPinWithSystemKeyboard('123456', {
     platform: 'win32',
@@ -1520,7 +1521,7 @@ testIdleActionUsesScanPaymentConfirmReceiptPriority();
 testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
 testNormalizeManualPinCodeKeepsDigitsOnly();
-testBuildWindowsSendKeysScriptTypesPinAndEnter();
+testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly();
 Promise.all([
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
   testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
@@ -1553,7 +1554,7 @@ Promise.all([
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
-  testTypeManualPinWithSystemKeyboardUsesPowerShellSendKeys()
+  testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

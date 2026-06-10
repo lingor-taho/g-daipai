@@ -69,21 +69,57 @@ function quotePowerShellString(value) {
   return `'${String(value || '').replace(/'/g, "''")}'`;
 }
 
-function buildWindowsSendKeysScript(pinCode) {
+function buildWindowsSendKeysScript(pinCode, options = {}) {
   const pin = normalizeManualPinCode(pinCode);
+  const windowTitle = String(options.windowTitle || '').trim().slice(0, 200);
+  const preferredTitles = [
+    windowTitle,
+    '再認証 - Yahoo! JAPAN',
+    'Yahoo! JAPAN',
+    'Google 密码管理工具',
+    'Google Password Manager',
+    'Chrome'
+  ].filter(Boolean);
+  const nativeInputType = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class GDaipaiNativeInput {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+}
+'@`;
   return [
     "$ErrorActionPreference = 'Stop'",
-    'Add-Type -AssemblyName System.Windows.Forms',
+    nativeInputType,
     '$shell = New-Object -ComObject WScript.Shell',
-    "$activated = $shell.AppActivate('Google 密码管理工具')",
-    "if (-not $activated) { $activated = $shell.AppActivate('Google Password Manager') }",
-    "if (-not $activated) { $activated = $shell.AppActivate('Chrome') }",
-    'Start-Sleep -Milliseconds 300',
+    `$targetTitle = ${quotePowerShellString(windowTitle)}`,
+    `$titleCandidates = @(${preferredTitles.map(quotePowerShellString).join(', ')})`,
+    '$chromeWindows = @(Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })',
+    '$targetWindow = $null',
+    "if ($targetTitle) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($targetTitle) } | Select-Object -First 1 }",
+    "if (-not $targetWindow) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -match 'Yahoo|再認証|Chrome' } | Sort-Object StartTime -Descending | Select-Object -First 1 }",
+    '$activated = $false',
+    'if ($targetWindow) { [GDaipaiNativeInput]::SetForegroundWindow($targetWindow.MainWindowHandle) | Out-Null; $activated = $true }',
+    'foreach ($title in $titleCandidates) { if (-not $activated -and $title) { $activated = $shell.AppActivate($title) } }',
+    "if (-not $activated) { throw 'Chrome window activation failed before PIN input' }",
+    'Start-Sleep -Milliseconds 600',
+    '$handle = [GDaipaiNativeInput]::GetForegroundWindow()',
+    '$rect = New-Object GDaipaiNativeInput+RECT',
+    '$clicked = $false',
+    'if ([GDaipaiNativeInput]::GetWindowRect($handle, [ref]$rect)) { $width = [Math]::Max(1, $rect.Right - $rect.Left); $x = [int]($rect.Left + ($width / 2) - 160); $y = [int]($rect.Top + 220); [GDaipaiNativeInput]::SetCursorPos($x, $y) | Out-Null; Start-Sleep -Milliseconds 120; [GDaipaiNativeInput]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [GDaipaiNativeInput]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero); $clicked = $true }',
+    'Start-Sleep -Milliseconds 250',
     `$pin = ${quotePowerShellString(pin)}`,
-    '[System.Windows.Forms.SendKeys]::SendWait($pin)',
-    'Start-Sleep -Milliseconds 100',
-    "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
-  ].join('; ');
+    'foreach ($char in $pin.ToCharArray()) { $vk = [byte][int][char]$char; [GDaipaiNativeInput]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [GDaipaiNativeInput]::keybd_event($vk, 0, 0x0002, [UIntPtr]::Zero); Start-Sleep -Milliseconds 120 }',
+    'Start-Sleep -Milliseconds 700',
+    "Write-Output ('typed=' + $pin.Length + '; clicked=' + $clicked + '; activated=' + $activated)"
+  ].join('\n');
 }
 
 function typeManualPinWithSystemKeyboard(pinCode, options = {}) {
@@ -100,7 +136,7 @@ function typeManualPinWithSystemKeyboard(pinCode, options = {}) {
     return Promise.reject(error);
   }
   const execFileImpl = options.execFileImpl || execFile;
-  const script = buildWindowsSendKeysScript(pin);
+  const script = buildWindowsSendKeysScript(pin, { windowTitle: options.windowTitle });
   const args = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script];
   return new Promise((resolve, reject) => {
     execFileImpl('powershell.exe', args, {
@@ -2366,7 +2402,9 @@ router.post('/manual-captcha/close', async (req, res) => {
 
 router.post('/manual-pin/type', async (req, res) => {
   try {
-    const result = await typeManualPinWithSystemKeyboard(req.body?.pin || req.body?.answer || '');
+    const result = await typeManualPinWithSystemKeyboard(req.body?.pin || req.body?.answer || '', {
+      windowTitle: req.body?.windowTitle || req.body?.title || ''
+    });
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(error.statusCode || 500).json({

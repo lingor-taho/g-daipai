@@ -605,14 +605,17 @@ async function closeManualCaptchaChallenge(id) {
   }).catch(() => null);
 }
 
-async function typeManualPinWithSystemKeyboard(answer) {
+async function typeManualPinWithSystemKeyboard(answer, context = {}) {
   const pin = String(answer || '').replace(/\D/g, '');
   if (!pin) return { success: false, error: 'pin digits are required' };
   try {
     const res = await apiFetch('/api/plugin/manual-pin/type', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin })
+      body: JSON.stringify({
+        pin,
+        windowTitle: String(context.windowTitle || context.title || '').slice(0, 200)
+      })
     });
     const result = await res.json().catch(() => ({ success: res.ok }));
     return result?.success
@@ -2377,7 +2380,7 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
 }
 
 async function focusManualPinTabForSystemInput(tabId) {
-  if (!tabId) return;
+  if (!tabId) return null;
   const currentTab = await chrome.tabs.get(tabId).catch(() => null);
   if (currentTab?.windowId && chrome.windows?.update) {
     await chrome.windows.update(currentTab.windowId, { focused: true, state: 'normal' }).catch(() => {
@@ -2395,11 +2398,12 @@ async function focusManualPinTabForSystemInput(tabId) {
     });
   }
   await sleep(500);
+  return latestTab || currentTab;
 }
 
 async function fillManualPinAnswer(tabId, answer) {
-  await focusManualPinTabForSystemInput(tabId);
-  const systemResult = await typeManualPinWithSystemKeyboard(answer);
+  const pinTab = await focusManualPinTabForSystemInput(tabId);
+  const systemResult = await typeManualPinWithSystemKeyboard(answer, { windowTitle: pinTab?.title || '' });
   if (systemResult?.success) return systemResult;
   console.warn('[Yahoo Bid] System keyboard PIN input failed, falling back to debugger:', systemResult?.error || systemResult);
 
