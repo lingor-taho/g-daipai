@@ -1547,6 +1547,22 @@ async function clickStoreConfirmationChange(tabId) {
       const controls = [...document.querySelectorAll(controlSelector)];
       const textElements = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')];
       const clickTargetFor = el => el?.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || el;
+      const findStoreConfirmationChange = () => {
+        const direct = document.querySelector('#cartopt a[data-cl-params*="_cl_link:cartopt"], #cartopt a');
+        if (direct) return direct;
+        const header = [...document.querySelectorAll('header')].find(item =>
+          [...item.querySelectorAll('h1,h2,h3,h4,span')].some(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)))
+        );
+        const headerChange = header
+          ? [...header.querySelectorAll(controlSelector)].find(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)))
+          : null;
+        if (headerChange) return headerChange;
+        const title = [...document.querySelectorAll('h1,h2,h3,h4,span')].find(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)));
+        const container = title?.closest?.('section, li, div');
+        return container
+          ? [...container.querySelectorAll(controlSelector)].find(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)))
+          : null;
+      };
       const clickElement = el => {
         const target = clickTargetFor(el);
         const eventOptions = { bubbles: true, cancelable: true, view: window };
@@ -1562,10 +1578,10 @@ async function clickStoreConfirmationChange(tabId) {
         }
         return target || el;
       };
-      const directCartoptChange = document.querySelector('#cartopt a[data-cl-params*="_cl_link:cartopt"], #cartopt a');
+      const directCartoptChange = findStoreConfirmationChange();
       if (directCartoptChange) {
         const clicked = clickElement(directCartoptChange);
-        return { success: true, text: getText(directCartoptChange), clickedText: getText(clicked), method: 'cartoptSelector' };
+        return { success: true, text: getText(directCartoptChange), clickedText: getText(clicked), method: 'storeConfirmationSelector' };
       }
       const headers = textElements.filter(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)));
       const changeControls = controls.filter(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)));
@@ -1667,7 +1683,24 @@ async function getStoreConfirmationClickPoint(tabId, action) {
       const selector = actionName === 'apply'
         ? '#confirm a[data-cl-params*="_cl_link:update"], #confirm button, #confirm input[type="submit"], #confirm [role="button"]'
         : '#cartopt a[data-cl-params*="_cl_link:cartopt"], #cartopt a';
-      const target = document.querySelector(selector);
+      const controlSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const findStoreConfirmationChange = () => {
+        const direct = document.querySelector(selector);
+        if (direct || actionName === 'apply') return direct;
+        const header = [...document.querySelectorAll('header')].find(item =>
+          [...item.querySelectorAll('h1,h2,h3,h4,span')].some(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)))
+        );
+        const headerChange = header
+          ? [...header.querySelectorAll(controlSelector)].find(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)))
+          : null;
+        if (headerChange) return headerChange;
+        const title = [...document.querySelectorAll('h1,h2,h3,h4,span')].find(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)));
+        const container = title?.closest?.('section, li, div');
+        return container
+          ? [...container.querySelectorAll(controlSelector)].find(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)))
+          : null;
+      };
+      const target = findStoreConfirmationChange();
       if (!target) return { success: false, error: `store confirmation ${actionName} click point not found` };
       target.scrollIntoView?.({ block: 'center', inline: 'center' });
       const rect = target.getBoundingClientRect?.();
@@ -1697,7 +1730,12 @@ async function dispatchTrustedStoreConfirmationClick(tab, action) {
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
 
-  const point = await getStoreConfirmationClickPoint(tabId, action);
+  let point = await getStoreConfirmationClickPoint(tabId, action);
+  const waitUntil = Date.now() + 15000;
+  while (!point?.success && Date.now() < waitUntil) {
+    await sleep(500);
+    point = await getStoreConfirmationClickPoint(tabId, action);
+  }
   if (!point?.success) return point;
 
   const target = { tabId };
@@ -1736,14 +1774,36 @@ async function dispatchTrustedStoreConfirmationClick(tab, action) {
   }
 }
 
-async function completeStoreConfirmationItems(tab, state) {
+function buildStoreOptionsUrl(tab, job = {}) {
+  const productId = normalizeAuctionId(job.productId || job.productUrl || job.transactionUrl || '');
+  if (productId) return `https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=${productId}`;
+  try {
+    const url = new URL(tab?.url || '');
+    const auctionId = normalizeAuctionId(url.searchParams.get('auctionId') || '');
+    if (auctionId) return `https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=${auctionId}`;
+  } catch (e) {
+    // Fall through to empty result.
+  }
+  return '';
+}
+
+async function openStoreOptionsPage(tab, job = {}) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for store options navigation' };
+  const url = buildStoreOptionsUrl(tab, job);
+  if (!url) return { success: false, error: 'store options auctionId unavailable' };
+  const updated = await chrome.tabs.update(tabId, { url, active: true }).catch(e => ({ _error: e }));
+  if (updated?._error) return { success: false, error: updated._error.message || 'store options navigation failed' };
+  return { success: true, tab: updated || { ...tab, id: tabId, url }, url, method: 'directUrl' };
+}
+
+async function completeStoreConfirmationItems(tab, state, job = {}) {
   if (!tab?.id || !state?.hasStoreConfirmationSection) return { success: true, tab, state };
 
   const previousTabIds = await getTabIds();
-  let changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
-  if (!changeResult?.success) {
-    changeResult = await clickStoreConfirmationChange(tab.id);
-  }
+  let changeResult = await openStoreOptionsPage(tab, job);
+  if (!changeResult?.success) changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
+  if (!changeResult?.success) changeResult = await clickStoreConfirmationChange(tab.id);
   if (!changeResult?.success) return { success: false, error: changeResult?.error || 'store confirmation change click failed', tab };
   let editTab = null;
   try {
@@ -3649,15 +3709,24 @@ async function executePaymentJob(job, paymentBatch = {}) {
       state = result.state;
     }
 
-    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton) {
+    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton && !state?.hasStoreConfirmationSection) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton || nextState.hasStoreConfirmationSection,
         15000
       );
       if (reviewTab) {
         tab = reviewTab;
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
+    }
+    if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+      storeConfirmationStarted = true;
+      const storeResult = await completeStoreConfirmationItems(tab, state, job);
+      if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
+      tab = storeResult.tab;
+      state = storeResult.state;
+      storeConfirmationHandled = true;
+      storeConfirmationCompleted = true;
     }
     if (!entryClicks && !state?.hasReviewButton && !state?.alreadyPaid && !state?.complete) {
       throw new Error('payment entry button not found');
@@ -3665,9 +3734,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
 
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
-    if (!state?.hasReviewButton) {
+    if (!state?.hasReviewButton && !state?.hasStoreConfirmationSection) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton || nextState.hasStoreConfirmationSection,
         15000
       );
       if (reviewTab) {
@@ -3675,10 +3744,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
-    if (!state?.hasReviewButton) throw new Error('payment review button not found');
     if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
-      const storeResult = await completeStoreConfirmationItems(tab, state);
+      const storeResult = await completeStoreConfirmationItems(tab, state, job);
       if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
       tab = storeResult.tab;
       state = storeResult.state;
@@ -3687,7 +3755,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
     }
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
-    if (!state?.hasReviewButton) throw new Error('payment review button not found after store confirmation');
+    if (!state?.hasReviewButton) {
+      throw new Error(storeConfirmationHandled ? 'payment review button not found after store confirmation' : 'payment review button not found');
+    }
     state = await ensurePaymentShippingOption(tab, job, state);
     state = await waitForExpectedPaymentAmount(tab, job, state);
     assertPaymentAmountMatches(job, state);
@@ -4010,6 +4080,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   checkAllStoreConfirmationItemsAndApply,
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
+  buildStoreOptionsUrl,
+  openStoreOptionsPage,
   completeStoreConfirmationItems,
   getRandomIntInclusive,
   assertPaymentAmountMatches,
