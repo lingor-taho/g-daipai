@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-09
+**最后更新**: 2026-06-10
 
 ---
 
@@ -365,8 +365,24 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-09 | 插件 JS 中存在不可恢复乱码字符 | 清理 `background.js` 中已坏掉的 `�/锟斤拷` 字符串，改为英文稳定错误/日志和 `\u5186`；新增 `yahoo-plugin/encoding.test.js`，扫描 `content.js/background.js`，发现 `�` 或 `锟斤拷` 立即失败，避免后续继续混入不可恢复乱码 |
 | 2026-06-09 | 普通付款页未点击 `確認する` 就关闭，提示 `payment expected amount unavailable` | 根因不是 PayPay `特典を確認する` 广告按钮，而是付款前金额校验遇到无金额运费文本时直接失败。业务规则确认：`無料`、`着払い` 对所有商品都按 0 运费计算；`落札者負担` 只作为商城商品特殊规则按 0 运费计算。确认商品 `x1232305352` 是 `着払い`，插件付款校验已对齐该规则。新增截图场景测试，确认 PayPay 特典金额 `51,000円` 不会覆盖真实付款合计 `56,000円` |
 | 2026-06-09 | 需要导入服务器 Chrome 手动落札订单 | 后台新增独立菜单“导入订单”，位置在“数据批处理”下方；页面支持默认昨天到今天、最多翻页默认 10、创建读取批次、候选订单可搜索选择归属用户、确认后写入 `tasks/status=success` 和 `orders/order_status=NULL`。插件在 D 扫描流程最前面优先执行导入批次，从 `/my/won` 最新列表翻页到日期范围之外或达到最大页数，补商品页快照运费/商品类型；正式导入后自动置 `transaction_start_requested=1`，后续从现有交易开始流程继续 |
+| 2026-06-10 | 服务器上累积多个 Yahoo/Chrome PIN 窗口，且过期 PIN 页输入无动作 | `background.js` 把 `login.yahoo.co.jp/config/login?auth_lv=1...` 纳入 PIN 页识别；空闲非出价任务开始前如果已有 PIN 页，会暂停入札/落札/交易/扫描/付款/收货等 idle 流程，只保留一个 PIN tab 并关闭重复 PIN tab，出价任务仍按原轮询优先执行；后台提交 PIN 后，插件会先刷新 PIN 页、等待约 2 秒，再通过 Chrome debugger 发送数字键，避免超时错误页吞掉输入 |
 
 ---
+
+## 2026-06-10 PIN 窗口处理修复
+
+### 已实现内容
+
+- `isLikelyManualPinTab()` 现在识别 `login.yahoo.co.jp/config/login?auth_lv=1&done=...`，避免图 3 这类 PIN 页被全局扫描漏掉。
+- `syncIdleYahooPages()` 在执行任何空闲非出价工作前先检查已打开的 PIN tab；发现 PIN tab 时暂停本轮 idle 工作，并关闭重复 PIN tab，只保留一个窗口供后台输入 PIN。
+- `handleManualVerificationIfPresent()` 拿到后台 PIN 后，先刷新当前 PIN 页并等待约 2 秒，再调用原有 debugger 数字键输入逻辑，避免图 1 的“请求已超时”页面无法接收 PIN。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\encoding.test.js
+```
 
 ## 2026-06-08 落札误同步修复
 

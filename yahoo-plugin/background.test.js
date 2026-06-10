@@ -35,6 +35,7 @@ function loadBackgroundForTest(overrides = {}) {
         async create(...args) { return tabs.create ? tabs.create(...args) : { id: 1 }; },
         async get(...args) { return tabs.get ? tabs.get(...args) : { id: args[0], status: 'complete' }; },
         async update(...args) { return tabs.update ? tabs.update(...args) : { id: args[0], status: 'complete' }; },
+        async reload(...args) { return tabs.reload ? tabs.reload(...args) : undefined; },
         async sendMessage(...args) { return tabs.sendMessage ? tabs.sendMessage(...args) : { success: true, items: [], orders: [] }; },
         async remove(...args) { return tabs.remove ? tabs.remove(...args) : undefined; },
         onUpdated: {
@@ -1857,9 +1858,99 @@ function testLikelyManualPinTabDetection() {
   const api = loadBackgroundForTest();
 
   assert.equal(api.isLikelyManualPinTab({ url: 'https://login.yahoo.co.jp/config/verify?.src=pay' }), true);
+  assert.equal(api.isLikelyManualPinTab({ url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418' }), true);
   assert.equal(api.isLikelyManualPinTab({ url: 'https://account.edit.yahoo.co.jp/verify' }), true);
   assert.equal(api.isLikelyManualPinTab({ url: 'https://contact.auctions.yahoo.co.jp/buyer/top' }), false);
   assert.equal(api.isLikelyManualPinTab({ url: 'https://login.yahoo.co.jp/ncaptcha?fido=1' }), false);
+}
+
+async function testIdleSyncSkipsNonBidWorkWhenManualPinTabExists() {
+  const removed = [];
+  const fetchCalls = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [
+          { id: 21, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true },
+          { id: 22, url: 'https://login.yahoo.co.jp/config/verify?.src=pay', status: 'complete' },
+          { id: 23, url: 'https://example.com/' }
+        ];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    },
+    fetch: async (url) => {
+      fetchCalls.push(String(url));
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not be fetched while PIN is open');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.deepEqual([...new Set(removed)], [22]);
+  assert.equal(fetchCalls.some(url => url.includes('/api/plugin/idle-action/next')), false);
+}
+
+async function testManualPinRefreshesPageBeforeEnteringAnswer() {
+  let currentUrl = 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418';
+  let reloadCount = 0;
+  const keyTexts = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, url: currentUrl, status: 'complete', windowId: 3 };
+      },
+      async update(id, update) {
+        return { id, url: currentUrl, status: 'complete', windowId: 3, active: update?.active };
+      },
+      async reload(id) {
+        assert.equal(id, 7);
+        reloadCount += 1;
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        if (command === 'Input.dispatchKeyEvent' && params.type === 'keyDown') {
+          keyTexts.push(params.text);
+        }
+        if (keyTexts.join('') === '123456') {
+          currentUrl = 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1230839418';
+        }
+      },
+      async detach() {}
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        assert.equal(body.type, 'pin');
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: '123456' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  const result = await api.handleManualVerificationIfPresent(
+    { id: 7, url: currentUrl, status: 'complete', windowId: 3 },
+    { productId: 'j1230839418', source: 'test' }
+  );
+
+  assert.equal(result.handled, true);
+  assert.equal(reloadCount, 1);
+  assert.equal(keyTexts.join(''), '123456');
 }
 
 function testYahooLoginPageCountsAsTransactionTab() {
@@ -2091,6 +2182,8 @@ async function run() {
   testBuildPaymentFailurePayloadIncludesProductId();
   testManualCaptchaTabDetection();
   testLikelyManualPinTabDetection();
+  await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
+  await testManualPinRefreshesPageBeforeEnteringAnswer();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
   await testFailedBidDoesNotImmediatelySyncWonPage();

@@ -2080,6 +2080,7 @@ function isLikelyManualPinTab(tab) {
   const url = String(tab?.url || '');
   if (!url || isManualCaptchaTab(tab)) return false;
   if (!/:\/\/(?:login|account\.edit)\.yahoo\.co\.jp\//i.test(url)) return false;
+  if (isYahooAuthLevelPinUrl(url)) return true;
   return /(?:verify|pin|auth|challenge|confirm|security|code)/i.test(url);
 }
 
@@ -2092,6 +2093,34 @@ function buildManualVerificationId(type, tab, context = {}) {
   const productId = String(context.productId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'unknown';
   const prefix = type === 'pin' ? 'pin' : 'captcha';
   return `${prefix}-${productId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function getOpenManualPinTabs() {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  return tabs.filter(isLikelyManualPinTab);
+}
+
+async function keepSingleManualPinTab(tabs) {
+  const pinTabs = Array.isArray(tabs) ? tabs.filter(isLikelyManualPinTab) : [];
+  if (!pinTabs.length) return null;
+  const keep = pinTabs.find(tab => tab.active) || pinTabs[0];
+  for (const tab of pinTabs) {
+    if (tab.id && tab.id !== keep.id) {
+      await closeTabIfExists(tab.id);
+    }
+  }
+  if (keep?.id) {
+    await chrome.tabs.update(keep.id, { active: true }).catch(() => {});
+  }
+  return keep;
+}
+
+async function pauseIdleWorkForOpenManualPin() {
+  const pinTabs = await getOpenManualPinTabs();
+  if (!pinTabs.length) return false;
+  const keep = await keepSingleManualPinTab(pinTabs);
+  console.warn('[Yahoo Bid] Manual PIN tab is open; idle non-bid work paused:', keep?.id || '');
+  return true;
 }
 
 function buildManualCaptchaId(tab, context = {}) {
@@ -2317,6 +2346,24 @@ async function fillManualPinAnswer(tabId, answer) {
   return result?.[0]?.result || { success: false, error: 'pin fill script failed' };
 }
 
+async function refreshManualPinPageBeforeAnswer(tab) {
+  let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  if (!current?.id) return tab;
+  const pinDetected = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+  if (!pinDetected) return current;
+  await chrome.tabs.update(current.id, { active: true }).catch(() => {});
+  if (chrome.tabs.reload) {
+    await chrome.tabs.reload(current.id).catch(() => {});
+  } else if (current.url) {
+    await chrome.tabs.update(current.id, { url: current.url, active: true }).catch(() => {});
+  }
+  await waitForTabComplete(current.id, 10000).catch(() => {});
+  await sleep(2000);
+  current = await chrome.tabs.get(current.id).catch(() => current);
+  await injectContentScript(current.id).catch(() => {});
+  return current;
+}
+
 async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   const startUrl = String(current?.url || '');
@@ -2379,6 +2426,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       });
       pinAnswer = await waitForManualCaptchaAnswer(pinChallengeId);
     }
+    current = await refreshManualPinPageBeforeAnswer(current);
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
     pinAttempted = true;
@@ -3373,6 +3421,9 @@ async function syncIdleYahooPages() {
   if (now - lastIdleSyncAt < idleSyncIntervalMs) {
     return;
   }
+  if (await pauseIdleWorkForOpenManualPin()) {
+    return;
+  }
   lastIdleSyncAt = now;
   await openBiddingPageForSync();
   await openWonPageForSync();
@@ -3514,6 +3565,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildPaymentFailurePayload,
   isManualCaptchaTab,
   isLikelyManualPinTab,
+  pauseIdleWorkForOpenManualPin,
+  handleManualVerificationIfPresent,
   buildManualCaptchaId,
   pollAndExecute,
   getExpectedPaymentAmountJpy,
