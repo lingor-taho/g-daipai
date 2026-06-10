@@ -385,6 +385,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 店铺确认事项 review 页停留，`変更` 没进入编辑页 | 付款页状态识别新增 DOM 标记：`#cartopt` 直接判定存在店铺确认事项，`#confirm a[data-cl-params*="_cl_link:update"]` 判定编辑页。点击 `#cartopt` 后如果 15 秒未进入编辑页，会再执行一次主页面 DOM 点击同一按钮并继续等待，失败时保留 tab 并返回 `store confirmation edit page did not appear after trusted+js click` 方便定位 |
 | 2026-06-10 | 查看源代码里没有 `変更`，说明按钮由 Yahoo 前端后渲染 | 模拟确认：源 HTML 只有 `ストアからの確認事項`，没有 `変更`；插件不能在 document complete 后立刻找按钮。店铺确认事项点击点现在会最多等待 15 秒，直到实时 DOM 出现 `#cartopt` 或标题 header/container 附近的 `変更` 后再点击；若状态里已有店铺确认事项，不再先要求识别到右侧 `確認する` |
 | 2026-06-10 | 店铺确认事项 review 页 `変更` 按钮仍不稳定 | 不再依赖 review 页点击 `変更`；发现店铺确认事项后，插件直接按商品 ID 导航到 `https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId={productId}`。到变更页后等待 `#confirm a[data-cl-params*="_cl_link:update"]`，勾选所有 checkbox，再点击红色 `変更する` 返回付款确认页 |
+| 2026-06-10 | 店铺确认事项变更页已打开但 checkbox 没有被勾选 | 变更页 checkbox/`変更する` 也是 Yahoo 前端后渲染；插件现在会等待最多 15 秒直到至少出现 1 个 `input[type="checkbox"]` 和提交按钮。不再要求 checkbox input 本身可见，隐藏 input 也会处理：点击 label/容器和 input，使用原生 checked setter 设置为 true，并派发 `input/change` 事件，覆盖 React 受控组件场景 |
 
 ---
 

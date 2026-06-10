@@ -789,7 +789,10 @@ async function testStoreConfirmationApplyUsesConfirmUpdateSelector() {
               return [applyLink];
             }
           },
-          window: { getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) },
+          window: {
+            getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+            HTMLInputElement: { prototype: {} }
+          },
           CSS: { escape: value => value },
           Event: function Event() {},
           MouseEvent: function MouseEvent() {},
@@ -807,6 +810,63 @@ async function testStoreConfirmationApplyUsesConfirmUpdateSelector() {
   assert.equal(checkboxA.checked, true);
   assert.equal(checkboxB.checked, true);
   assert.equal(applyClicked, true);
+}
+
+async function testStoreConfirmationApplyChecksHiddenInputs() {
+  const checkbox = {
+    id: 'agree-hidden',
+    checked: false,
+    disabled: false,
+    closest() { return this; },
+    scrollIntoView() {},
+    click() { this.clicked = true; },
+    dispatchEvent() {}
+  };
+  const applyLink = {
+    textContent: '\u5909\u66f4\u3059\u308b',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    closest() { return this; },
+    scrollIntoView() {},
+    focus() {},
+    dispatchEvent() {},
+    click() {}
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            body: {},
+            querySelector(selector) {
+              if (String(selector).startsWith('label')) return null;
+              if (selector.includes('#confirm')) return applyLink;
+              return null;
+            },
+            querySelectorAll(selector) {
+              if (selector === 'input[type="checkbox"]') return [checkbox];
+              return [applyLink];
+            }
+          },
+          window: { HTMLInputElement: { prototype: {} } },
+          CSS: { escape: value => value },
+          Event: function Event() {},
+          MouseEvent: function MouseEvent() {},
+          PointerEvent: function PointerEvent() {}
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.checkAllStoreConfirmationItemsAndApply(19, false);
+
+  assert.equal(result.success, true);
+  assert.equal(result.checkedCount, 1);
+  assert.equal(checkbox.checked, true);
+  assert.equal(checkbox.clicked, true);
 }
 
 async function testStoreConfirmationTrustedClickPointsUseRealSelectors() {
@@ -3044,6 +3104,7 @@ async function run() {
   testBuildStoreOptionsUrlUsesProductId();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
+  await testStoreConfirmationApplyChecksHiddenInputs();
   await testStoreConfirmationTrustedClickPointsUseRealSelectors();
   testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
   testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice();

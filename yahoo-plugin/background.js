@@ -1620,28 +1620,27 @@ async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) 
         el?.title,
         el?.getAttribute?.('aria-label')
       ].filter(Boolean).join(' '));
-      const isVisible = el => {
-        if (!el) return false;
-        let node = el;
-        while (node && node !== document.body) {
-          const style = window.getComputedStyle?.(node);
-          if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
-          node = node.parentElement;
-        }
-        const rect = el.getBoundingClientRect?.();
-        return !rect || rect.width > 0 || rect.height > 0;
-      };
       const eventOptions = { bubbles: true, cancelable: true, view: window };
       const checkboxes = [...document.querySelectorAll('input[type="checkbox"]')]
-        .filter(input => !input.disabled && isVisible(input));
+        .filter(input => !input.disabled);
+      const setChecked = checkbox => {
+        const proto = window.HTMLInputElement?.prototype;
+        const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'checked') : null;
+        if (descriptor?.set) {
+          descriptor.set.call(checkbox, true);
+        } else {
+          checkbox.checked = true;
+        }
+      };
       for (const checkbox of checkboxes) {
         const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : null;
-        const target = label || checkbox.closest('label, li, div, section, p') || checkbox;
+        const target = label || checkbox.closest('label, li, div, section, p, dd') || checkbox;
         target.scrollIntoView?.({ block: 'center', inline: 'center' });
         if (!checkbox.checked) {
           (target || checkbox).click?.();
+          checkbox.click?.();
         }
-        checkbox.checked = true;
+        setChecked(checkbox);
         checkbox.dispatchEvent(new Event('input', { bubbles: true }));
         checkbox.dispatchEvent(new Event('change', { bubbles: true }));
       }
@@ -1665,6 +1664,19 @@ async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) 
     }
   });
   return injectionResult?.[0]?.result || { success: false, error: 'store confirmation apply returned no result' };
+}
+
+async function waitForStoreConfirmationCheckboxes(tabId, timeoutMs = 15000) {
+  const startAt = Date.now();
+  let lastResult = null;
+  while (Date.now() - startAt < timeoutMs) {
+    lastResult = await checkAllStoreConfirmationItemsAndApply(tabId, false);
+    if (lastResult?.success && Number(lastResult.checkedCount || 0) > 0) return lastResult;
+    await sleep(500);
+  }
+  return lastResult?.success
+    ? { success: false, error: 'store confirmation checkboxes not found', checkedCount: lastResult.checkedCount || 0 }
+    : (lastResult || { success: false, error: 'store confirmation checkbox wait failed' });
 }
 
 async function getStoreConfirmationClickPoint(tabId, action) {
@@ -1828,7 +1840,7 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
     }
   }
 
-  const applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
+  const applyResult = await waitForStoreConfirmationCheckboxes(editTab.id);
   if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
   let applyClick = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
   if (!applyClick?.success) {
@@ -4078,6 +4090,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildPaymentPageStateFromSnapshot,
   clickStoreConfirmationChange,
   checkAllStoreConfirmationItemsAndApply,
+  waitForStoreConfirmationCheckboxes,
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
   buildStoreOptionsUrl,
