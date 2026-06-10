@@ -243,7 +243,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 后台现在按屏幕宽度响应式切换：
 
 - 桌面端（`>=768px`）保持原来的左侧菜单和 20px 内容间距。
-- 手机端（`<768px`）隐藏左侧菜单，底部固定 8 项导航：任务、用户、账号、配置、清理、批量、特殊、订单。
+- 手机端（`<768px`）隐藏左侧菜单，底部固定单行横向滚动导航：任务、账号、配置、清理、批量、导入、特殊、订单。
 - 手机端顶部高度压缩为 52px，显示后台标题、Yahoo 登录状态、当前用户和退出按钮。
 - 手机端内容区全宽，padding 改为 10px，并预留底部导航安全距离。
 - 订单管理页手机端操作区改为纵向/换行布局，表格保留横向滚动，不强行压缩列。
@@ -262,11 +262,11 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 完整名称 | 折叠显示 |
 |---------|---------|
 | 任务报表 | 任 |
-| 用户账号管理 | 用 |
-| 服务器账号 | 服 |
+| 账号管理 | 账 |
 | 系统配置 | 系 |
 | 清理数据 | 清 |
 | 数据批处理 | 批 |
+| 导入订单 | 导 |
 | 特殊用户设置 | 特 |
 | 订单管理 | 订 |
 
@@ -377,6 +377,8 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 到达文字验证码页后 tab 被关闭，又重新打开新的 PIN 页 | `closeTabsForTransactionFlow()` / `closeTabsForScanFlow()` 清理交易/扫描临时 tab 时会二次读取 tab URL，跳过 `PIN/文字验证码` 手动验证 tab；即使验证码 tab 已记录在 `_gdaipaiCreatedTabIds` 中，也不再被 finally 清理关闭 |
 | 2026-06-10 | 验证码页保留后仍新开 PIN，后台继续要求输入 PIN | 空闲入口发现已打开 `login.yahoo.co.jp/ncaptcha` 时，不再只暂停或优先处理 PIN；会激活验证码 tab 并调用 `handleManualVerificationIfPresent()` 截图提交 `type=captcha` 挑战到后台，覆盖旧 PIN 提示，同时阻断后续非出价 idle 任务继续打开新 PIN |
 | 2026-06-10 | 验证码页出现后数分钟内后台仍停留 PIN 提示 | `syncIdleYahooPages()` 先处理已打开的 PIN/验证码 tab，再检查 `lastIdleSyncAt` 空闲同步间隔；手动验证不再被 idle 间隔节流挡住，避免验证码页已存在但插件不截图、不覆盖后台 PIN 提示 |
+| 2026-06-10 | 后台菜单和订单参数位置需要调整 | 后台“用户账号管理”和“服务器账号”合并为“账号管理”，页面用 Tabs 展示两个功能；手机底部菜单改为单行横向滚动；订单管理顶部银行手续费/手续费/大金额费用参数移动到“特殊用户设置”页顶部，保存接口和功能不变 |
+| 2026-06-10 | 付款失败后台提醒过长 | `/api/plugin/payment/status` 保存 `payment_alert_message` 前会摘要化错误，只保留商品 ID 和核心原因；过滤 `url/controls/candidates/synthetic/trusted` 等调试字段。类似 `action=review; wait=payment next page did not appear` 会显示为 `确认付款后页面未跳转`，便于手机端查看 |
 
 ---
 

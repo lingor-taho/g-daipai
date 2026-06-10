@@ -37,6 +37,7 @@ const {
   buildDaipaiSheetRow,
   getOrdersForSheetAppend,
   getPaymentJobs,
+  summarizePaymentError,
   updatePaymentStatus,
   updateConfirmReceiptStatus,
   randomIntInclusive,
@@ -1459,7 +1460,42 @@ async function testUpdatePaymentStatusFailureWritesAlertAndClearsFlag() {
   assert.match(calls[1].sql, /INSERT OR REPLACE INTO config/);
   assert.equal(calls[1].params[0], 'payment_alert_message');
   assert.match(calls[1].params[1], /p6/);
-  assert.match(calls[1].params[1], /button not found/);
+  assert.match(calls[1].params[1], /页面按钮未找到/);
+}
+
+function testSummarizePaymentErrorRemovesDebugDetails() {
+  const raw = 'action=review; synthetic=success:click:確認する; trusted=success:debuggerMouse:確認する; wait=payment next page did not appear; url=https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017; controls=ファンキー？ モンキー？; candidates=[{"text":"確認する","rect":{"height":13}}]';
+  const summary = summarizePaymentError(raw);
+
+  assert.equal(summary, '确认付款后页面未跳转');
+  assert.equal(summary.includes('https://'), false);
+  assert.equal(summary.includes('controls='), false);
+  assert.equal(summary.includes('candidates='), false);
+  assert.equal(summary.includes('synthetic='), false);
+  assert.equal(summary.includes('trusted='), false);
+}
+
+async function testUpdatePaymentStatusFailureWritesConciseAlert() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+  const raw = 'action=review; synthetic=success:click:確認する; trusted=success:debuggerMouse:確認する; wait=payment next page did not appear; url=https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017; controls=Yahoo JAPAN Help Search; candidates=[{"text":"確認する"}]';
+
+  await updatePaymentStatus({ orderId: 6, productId: 'j1232680017', error: raw }, fakeDb);
+
+  const alert = calls[1].params[1];
+  assert.match(alert, /j1232680017/);
+  assert.match(alert, /确认付款后页面未跳转/);
+  assert.equal(alert.includes('https://'), false);
+  assert.equal(alert.includes('controls='), false);
+  assert.equal(alert.includes('candidates='), false);
+  assert.equal(alert.includes('synthetic='), false);
+  assert.equal(alert.includes('trusted='), false);
+  assert.ok(alert.length < 80);
 }
 
 async function testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating() {
@@ -1522,6 +1558,7 @@ testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
 testNormalizeManualPinCodeKeepsDigitsOnly();
 testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly();
+testSummarizePaymentErrorRemovesDebugDetails();
 Promise.all([
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
   testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
@@ -1553,6 +1590,7 @@ Promise.all([
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
+  testUpdatePaymentStatusFailureWritesConciseAlert(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
   testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput()
 ]).catch(err => {

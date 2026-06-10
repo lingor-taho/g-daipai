@@ -2,6 +2,7 @@ import { ProTable } from '@ant-design/pro-components';
 import { useEffect, useState } from 'react';
 import { Button, Form, InputNumber, Modal, Select, Space, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
+import FinanceConfig from './FinanceConfig';
 
 async function saveOverride(values: any, id?: number) {
   const url = id ? `/api/admin/user-finance-overrides/${id}` : '/api/admin/user-finance-overrides';
@@ -112,6 +113,7 @@ export default function SpecialUserSettingsPage() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <FinanceConfig />
       <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>特殊用户设置</Typography.Title>
         <Button type="primary" onClick={openCreate}>新增设置</Button>

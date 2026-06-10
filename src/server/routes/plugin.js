@@ -2207,6 +2207,53 @@ async function savePaymentConfigValue(database, key, value) {
   );
 }
 
+function getPaymentActionLabel(errorText) {
+  const match = String(errorText || '').match(/(?:^|;\s*)action=([^;]+)/i);
+  const action = match ? match[1].trim().toLowerCase() : '';
+  if (!action) return '';
+  if (action.includes('review')) return '确认付款';
+  if (action.includes('final')) return '提交支付';
+  if (action.includes('shipping')) return '选择运费';
+  if (action.includes('transaction')) return '填写交易信息';
+  if (action.includes('payment') || action.includes('purchase')) return '进入付款流程';
+  return '';
+}
+
+function summarizePaymentError(errorText) {
+  const text = String(errorText || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '付款失败';
+
+  const actionLabel = getPaymentActionLabel(text);
+  if (/payment next page did not appear/i.test(text)) {
+    return actionLabel ? `${actionLabel}后页面未跳转` : '点击确认后页面未跳转';
+  }
+  if (/payment completion page did not appear/i.test(text)) return '提交支付后未出现完成页';
+  if (/payment expected amount unavailable/i.test(text)) return '未识别到页面应付金额';
+  const amountMismatch = text.match(/payment amount mismatch:\s*expected\s*([^,;]+),\s*found\s*([^,;]+)/i);
+  if (amountMismatch) return `付款金额不一致（应付 ${amountMismatch[1].trim()}，页面 ${amountMismatch[2].trim()}）`;
+  if (/payment amount mismatch/i.test(text)) return '付款金额不一致';
+  if (/payment review button not found/i.test(text)) return '未找到付款确认按钮';
+  if (/payment finalize button not found/i.test(text)) return '未找到最终支付按钮';
+  if (/shipping option .* not selectable/i.test(text)) return '未能选择匹配的运费选项';
+  if (/transaction info input flow failed/i.test(text)) return '交易信息输入流程失败';
+  if (/button not found/i.test(text)) return actionLabel ? `${actionLabel}按钮未找到` : '页面按钮未找到';
+
+  const compact = text
+    .replace(/;\s*(?:url|controls|candidates|rect|html|body|pageSample|visibleState|options|stateSummary|candidateSummary)=.*$/i, '')
+    .replace(/(?:^|;\s*)(?:synthetic|trusted)=[^;]*/gi, '')
+    .replace(/(?:^|;\s*)action=([^;]+)/i, (_match, action) => {
+      const label = getPaymentActionLabel(`action=${action}`);
+      return label ? `${label}：` : '';
+    })
+    .replace(/[;；]\s*/g, '，')
+    .replace(/，+/g, '，')
+    .replace(/^，|，$/g, '')
+    .trim();
+
+  if (!compact) return '付款失败';
+  return compact.length > 60 ? `${compact.slice(0, 60)}...` : compact;
+}
+
 async function updatePaymentStatus(payload = {}, database = db) {
   if (payload.empty === true) {
     await savePaymentConfigValue(database, 'payment_requested', '0');
@@ -2216,8 +2263,9 @@ async function updatePaymentStatus(payload = {}, database = db) {
   const error = String(payload.error || '').trim();
   if (error) {
     const productId = String(payload.productId || '').trim() || '-';
+    const reason = summarizePaymentError(error);
     await savePaymentConfigValue(database, 'payment_requested', '0');
-    await savePaymentConfigValue(database, 'payment_alert_message', `付款失败：商品ID ${productId}，原因：${error}`);
+    await savePaymentConfigValue(database, 'payment_alert_message', `付款失败：商品ID ${productId}，原因：${reason}`);
     return { paymentRequested: 0 };
   }
 
@@ -2534,6 +2582,7 @@ module.exports.addPendingShipmentAlert = addPendingShipmentAlert;
 module.exports.autoCloseShipmentAlerts = autoCloseShipmentAlerts;
 module.exports.getShipmentAlerts = getShipmentAlerts;
 module.exports.getPaymentJobs = getPaymentJobs;
+module.exports.summarizePaymentError = summarizePaymentError;
 module.exports.updatePaymentStatus = updatePaymentStatus;
 module.exports.normalizeReceiptColorConfig = normalizeReceiptColorConfig;
 module.exports.getConfirmReceiptJobs = getConfirmReceiptJobs;

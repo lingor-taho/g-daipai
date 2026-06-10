@@ -8,8 +8,7 @@ const { Header, Content, Sider } = Layout;
 
 const menuItemsConfig = [
   { key: '/tasks', fullLabel: '任务报表', shortLabel: '任', mobileLabel: '任务' },
-  { key: '/users', fullLabel: '用户账号管理', shortLabel: '用', mobileLabel: '用户' },
-  { key: '/server-accounts', fullLabel: '服务器账号', shortLabel: '服', mobileLabel: '账号' },
+  { key: '/accounts', fullLabel: '账号管理', shortLabel: '账', mobileLabel: '账号' },
   { key: '/multi-bid-settings', fullLabel: '系统配置', shortLabel: '系', mobileLabel: '配置' },
   { key: '/data-cleanup', fullLabel: '清理数据', shortLabel: '清', mobileLabel: '清理' },
   { key: '/data-batch', fullLabel: '数据批处理', shortLabel: '批', mobileLabel: '批量' },

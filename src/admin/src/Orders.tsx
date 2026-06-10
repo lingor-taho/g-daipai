@@ -2,7 +2,6 @@
 import type { Key } from 'react';
 import { useEffect, useState } from 'react';
 import { Button, Card, Form, Input, InputNumber, Modal, Space, Switch, Tag, Typography, message } from 'antd';
-import { Link } from 'react-router-dom';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
 function formatJPY(value: number | string | null | undefined) {
@@ -148,17 +147,6 @@ function canRequestPayment(item: any) {
   );
 }
 
-async function saveFinanceConfig(values: any) {
-  const res = await fetch('/api/admin/finance-config', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(values)
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '保存失败');
-  return data;
-}
-
 async function settleOrders(values: { orderIds: Key[]; rate: number }) {
   const res = await fetch('/api/admin/orders/settle', {
     method: 'POST',
@@ -182,9 +170,7 @@ async function requestPayment(orderIds: Key[]) {
 }
 
 export default function OrdersPage() {
-  const [form] = Form.useForm();
   const [reloadKey, setReloadKey] = useState(0);
-  const [saving, setSaving] = useState(false);
   const [settling, setSettling] = useState(false);
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [settlementRate, setSettlementRate] = useState<number | null>(null);
@@ -198,33 +184,9 @@ export default function OrdersPage() {
   const [storeBundleSubmitting, setStoreBundleSubmitting] = useState(false);
   const [storeBundleForm] = Form.useForm();
 
-  async function loadFinanceConfig() {
-    const data = await fetchAdminJson('/api/admin/finance-config');
-    form.setFieldsValue({ 
-      bankFeeJpy: data.bankFeeJpy,
-      handlingFeeCny: data.handlingFeeCny,
-      largeAmountFeeCny: data.largeAmountFeeCny
-    });
-  }
-
   useEffect(() => {
-    loadFinanceConfig().catch(() => {});
     fetchAdminJson('/api/admin/idle-flags').then(setIdleFlags).catch(() => {});
   }, []);
-
-  async function handleSaveConfig() {
-    const values = await form.validateFields();
-    setSaving(true);
-    try {
-      await saveFinanceConfig(values);
-      message.success('参数已保存');
-      setReloadKey(key => key + 1);
-    } catch (e: any) {
-      message.error(e.message || '保存失败');
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleSettle() {
     if (!settlementRate || settlementRate <= 0) {
@@ -413,31 +375,6 @@ export default function OrdersPage() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card>
-        <Form form={form} layout="inline" className="admin-mobile-form" onFinish={handleSaveConfig}>
-          <Form.Item name="bankFeeJpy" label="银行手续费(日元)" rules={[{ required: true, message: '请输入银行手续费' }]}>
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item name="handlingFeeCny" label="手续费(RMB)" rules={[{ required: true, message: '请输入手续费' }]}>
-            <InputNumber min={0} step={0.01} precision={2} />
-          </Form.Item>
-          <Form.Item name="largeAmountFeeCny" label="大金额费用(RMB)" rules={[{ required: true, message: '请输入大金额费用' }]}>
-            <InputNumber min={0} step={0.01} precision={2} />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={saving}>保存参数</Button>
-          </Form.Item>
-          <Form.Item>
-            <Link to="/special-user-settings">
-              <Button>特殊用户设置</Button>
-            </Link>
-          </Form.Item>
-          <Typography.Text type="secondary">
-            应付款在点击结算后写入订单；汇率使用本次结算输入值，特殊用户设置会覆盖对应费用参数。
-          </Typography.Text>
-        </Form>
-      </Card>
-
       <Card>
         <Space wrap className="admin-mobile-action-space">
           <Typography.Text>本次结算汇率</Typography.Text>

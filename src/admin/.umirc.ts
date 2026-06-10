@@ -14,8 +14,9 @@ export default {
       routes: [
         { path: '/', redirect: '/tasks' },
         { path: '/tasks', component: '@/Tasks' },
-        { path: '/users', component: '@/Users' },
-        { path: '/server-accounts', component: '@/Accounts' },
+        { path: '/accounts', component: '@/AccountManagement' },
+        { path: '/users', redirect: '/accounts' },
+        { path: '/server-accounts', redirect: '/accounts' },
         { path: '/multi-bid-settings', component: '@/MultiBidSettings' },
         { path: '/data-cleanup', component: '@/DataCleanup' },
         { path: '/data-batch', component: '@/DataBatch' },
@@ -27,6 +28,5 @@ export default {
         { path: '/orders', component: '@/Orders' },
       ],
     },
-    { path: '/accounts', redirect: '/server-accounts' },
   ],
 }

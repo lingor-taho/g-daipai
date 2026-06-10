@@ -78,12 +78,24 @@ body,
     bottom: 0;
     left: 0;
     z-index: 1000;
-    display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
     padding-bottom: env(safe-area-inset-bottom);
     border-top: 1px solid #e5e7eb;
     background: #fff;
     box-shadow: 0 -4px 14px rgba(15, 23, 42, 0.08);
+  }
+
+  .admin-bottom-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-bottom-nav-link {
+    flex: 0 0 64px;
   }
 
   .admin-mobile-form.ant-form-inline {
