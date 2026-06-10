@@ -3580,10 +3580,10 @@ async function runConfirmReceiptJobs() {
 async function syncIdleYahooPages() {
   await refreshPluginConfig();
   const now = Date.now();
-  if (now - lastIdleSyncAt < idleSyncIntervalMs) {
+  if (await pauseIdleWorkForOpenManualPin()) {
     return;
   }
-  if (await pauseIdleWorkForOpenManualPin()) {
+  if (now - lastIdleSyncAt < idleSyncIntervalMs) {
     return;
   }
   lastIdleSyncAt = now;

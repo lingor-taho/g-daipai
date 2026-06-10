@@ -376,6 +376,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | PIN 输入成功进入验证码后立刻又回到 PIN 页 | 修复验证跳转选择优先级：如果当前 tab 已经是 `login.yahoo.co.jp/ncaptcha` 验证码页，即使旁边还有旧的 active PIN tab，也继续停留并处理当前验证码；只有新开的 PIN tab 才优先用于验证码通过后的二次 PIN |
 | 2026-06-10 | 到达文字验证码页后 tab 被关闭，又重新打开新的 PIN 页 | `closeTabsForTransactionFlow()` / `closeTabsForScanFlow()` 清理交易/扫描临时 tab 时会二次读取 tab URL，跳过 `PIN/文字验证码` 手动验证 tab；即使验证码 tab 已记录在 `_gdaipaiCreatedTabIds` 中，也不再被 finally 清理关闭 |
 | 2026-06-10 | 验证码页保留后仍新开 PIN，后台继续要求输入 PIN | 空闲入口发现已打开 `login.yahoo.co.jp/ncaptcha` 时，不再只暂停或优先处理 PIN；会激活验证码 tab 并调用 `handleManualVerificationIfPresent()` 截图提交 `type=captcha` 挑战到后台，覆盖旧 PIN 提示，同时阻断后续非出价 idle 任务继续打开新 PIN |
+| 2026-06-10 | 验证码页出现后数分钟内后台仍停留 PIN 提示 | `syncIdleYahooPages()` 先处理已打开的 PIN/验证码 tab，再检查 `lastIdleSyncAt` 空闲同步间隔；手动验证不再被 idle 间隔节流挡住，避免验证码页已存在但插件不截图、不覆盖后台 PIN 提示 |
 
 ---
 
@@ -395,6 +396,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 - `findManualVerificationTransitionTab()` 现在区分“新开的 PIN”和“旧 active PIN”：验证码通过后新开 PIN 仍会优先处理；但当前 tab 已经进入验证码时，不会被旧 PIN tab 抢回。
 - 交易/扫描/付款 finally 清理 tab 时，手动验证页不再按普通 Yahoo 登录 tab 关闭；关闭前会通过 `chrome.tabs.get(id)` 再确认当前 URL，若是 `login.yahoo.co.jp/ncaptcha` 或 PIN 页则保留，避免验证码页被关掉后重新触发 PIN。
 - 空闲入口发现验证码 tab 时会优先进入验证码处理，发后台 `type=captcha` 图片挑战并等待人工输入；只有没有验证码 tab 时才保留单个 PIN tab 并暂停其他非出价任务。
+- PIN/验证码检查顺序高于 `lastIdleSyncAt` 空闲同步节流；即使刚执行过一次 idle，同一轮出现验证码也会立即提交后台图片。
 
 ### 最近验证命令
 

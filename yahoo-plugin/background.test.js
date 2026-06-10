@@ -2141,6 +2141,73 @@ async function testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen() {
   assert.equal(challengeTypes.includes('pin'), false);
 }
 
+async function testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle() {
+  let phase = 'normal';
+  let captchaDone = false;
+  const challengeTypes = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        if (phase === 'captcha' && !captchaDone) {
+          return [
+            { id: 31, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 }
+          ];
+        }
+        return [];
+      },
+      async get(id) {
+        if (phase === 'captcha' && !captchaDone) {
+          return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 };
+        }
+        return { id, url: 'https://aucpay.yahoo.co.jp/detail-front/PaymentDetailItem', status: 'complete', active: true, windowId: 3 };
+      },
+      async update(id, props) {
+        return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async captureVisibleTab() {
+        return 'data:image/png;base64,abc';
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        if (String(payload.func || '').includes('captchaAnswer')) {
+          captchaDone = true;
+          return [{ result: { success: true } }];
+        }
+        return [{ result: { success: false } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 60 }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        challengeTypes.push(body.type);
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        return { async json() { return { action: 'none' }; } };
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+  phase = 'captcha';
+  await api.syncIdleYahooPages();
+
+  assert.equal(challengeTypes.includes('captcha'), true);
+  assert.equal(challengeTypes.includes('pin'), false);
+}
+
 async function testManualPinRefreshesPageBeforeEnteringAnswer() {
   let currentUrl = 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418';
   let reloadCount = 0;
@@ -2613,6 +2680,7 @@ async function run() {
   await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
+  await testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
   await testManualVerificationTransitionPrefersNewPinTabAfterCaptcha();
   await testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin();
