@@ -12,6 +12,7 @@ let isRunning = false;
 let fetchFailureCount = 0;
 let idleSyncIntervalMs = 5 * 60 * 1000;
 let lastIdleSyncAt = 0;
+let manualVerificationFlowActive = false;
 const managedTaskTabs = new Set();
 const managedTaskTabsByTaskId = new Map();
 
@@ -2076,6 +2077,10 @@ function isManualCaptchaTab(tab) {
   return /:\/\/login\.yahoo\.co\.jp\/ncaptcha/i.test(url);
 }
 
+function isManualVerificationTab(tab) {
+  return isManualCaptchaTab(tab) || isLikelyManualPinTab(tab);
+}
+
 function isLikelyManualPinTab(tab) {
   const url = String(tab?.url || '');
   if (!url || isManualCaptchaTab(tab)) return false;
@@ -2100,6 +2105,11 @@ async function getOpenManualPinTabs() {
   return tabs.filter(isLikelyManualPinTab);
 }
 
+async function getOpenManualVerificationTabs() {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  return tabs.filter(isManualVerificationTab);
+}
+
 async function keepSingleManualPinTab(tabs) {
   const pinTabs = Array.isArray(tabs) ? tabs.filter(isLikelyManualPinTab) : [];
   if (!pinTabs.length) return null;
@@ -2116,10 +2126,17 @@ async function keepSingleManualPinTab(tabs) {
 }
 
 async function pauseIdleWorkForOpenManualPin() {
-  const pinTabs = await getOpenManualPinTabs();
-  if (!pinTabs.length) return false;
-  const keep = await keepSingleManualPinTab(pinTabs);
-  console.warn('[Yahoo Bid] Manual PIN tab is open; idle non-bid work paused:', keep?.id || '');
+  const verificationTabs = await getOpenManualVerificationTabs();
+  const pinTabs = verificationTabs.filter(isLikelyManualPinTab);
+  const captchaTabs = verificationTabs.filter(isManualCaptchaTab);
+  if (verificationTabs.length) {
+    manualVerificationFlowActive = true;
+  } else if (manualVerificationFlowActive) {
+    manualVerificationFlowActive = false;
+  }
+  if (!manualVerificationFlowActive) return false;
+  const keep = pinTabs.length ? await keepSingleManualPinTab(pinTabs) : (captchaTabs.find(tab => tab.active) || captchaTabs[0] || null);
+  console.warn('[Yahoo Bid] Manual verification flow is active; idle non-bid work paused:', keep?.id || '');
   return true;
 }
 
@@ -2272,6 +2289,15 @@ async function dispatchTrustedManualPinKeys(tab, answer) {
   if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
   const digits = String(answer || '').replace(/\D/g, '');
   if (!digits) return { success: false, error: 'pin digits are required' };
+  return dispatchTrustedManualPinInput(tabId, digits, { preferInsertText: true });
+}
+
+async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
+  const tabId = tab?.id || tab;
+  const pinDigits = String(digits || '').replace(/\D/g, '');
+  if (!tabId) return { success: false, error: 'tabId is required for manual pin keyboard input' };
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+  if (!pinDigits) return { success: false, error: 'pin digits are required' };
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
@@ -2282,10 +2308,23 @@ async function dispatchTrustedManualPinKeys(tab, answer) {
 
   const target = { tabId };
   let attached = false;
+  let insertTextError = null;
   try {
     await chrome.debugger.attach(target, '1.3');
     attached = true;
-    for (const digit of digits) {
+    if (options.preferInsertText !== false) {
+      try {
+        console.log('[Yahoo Bid] Sending manual PIN via debugger insertText, digits:', pinDigits.length);
+        await chrome.debugger.sendCommand(target, 'Input.insertText', { text: pinDigits });
+        await sleep(300);
+        return { success: true, method: 'debuggerInsertText', digits: pinDigits.length };
+      } catch (e) {
+        insertTextError = e;
+        console.warn('[Yahoo Bid] Manual PIN insertText failed, falling back to digit keys:', e.message || e);
+      }
+    }
+    console.log('[Yahoo Bid] Sending manual PIN via debugger digit keys, digits:', pinDigits.length);
+    for (const digit of pinDigits) {
       const keyParams = getDigitKeyEventParams(digit);
       await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
         type: 'keyDown',
@@ -2300,7 +2339,12 @@ async function dispatchTrustedManualPinKeys(tab, answer) {
       await sleep(80);
     }
     await sleep(300);
-    return { success: true, method: 'debuggerKeyboard', digits: digits.length };
+    return {
+      success: true,
+      method: 'debuggerKeyboard',
+      digits: pinDigits.length,
+      insertTextError: insertTextError?.message || ''
+    };
   } catch (e) {
     return { success: false, error: e.message || 'manual pin keyboard input failed' };
   } finally {
@@ -2364,14 +2408,38 @@ async function refreshManualPinPageBeforeAnswer(tab) {
   return current;
 }
 
-async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000) {
+async function findManualVerificationTransitionTab(current, previousTabIds = new Set()) {
+  const currentTab = current?.id ? await chrome.tabs.get(current.id).catch(() => current) : current;
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  const previous = previousTabIds instanceof Set ? previousTabIds : new Set(previousTabIds || []);
+  const candidates = [];
+  if (currentTab?.id && isManualVerificationTab(currentTab)) candidates.push(currentTab);
+  for (const tab of tabs) {
+    if (!tab?.id || !isManualVerificationTab(tab)) continue;
+    if (!candidates.some(candidate => candidate.id === tab.id)) candidates.push(tab);
+  }
+  if (!candidates.length) return currentTab || current;
+  const newPins = candidates.filter(tab => !previous.has(tab.id) && isLikelyManualPinTab(tab));
+  if (newPins.length) return newPins.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+  const newVerificationTabs = candidates.filter(tab => !previous.has(tab.id));
+  if (newVerificationTabs.length) return newVerificationTabs.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+  const activePin = candidates.find(tab => tab.active && isLikelyManualPinTab(tab));
+  if (activePin) return activePin;
+  const activeVerification = candidates.find(tab => tab.active);
+  if (activeVerification) return activeVerification;
+  return currentTab || candidates[0];
+}
+
+async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, previousTabIds = null) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  const previous = previousTabIds instanceof Set ? previousTabIds : await getTabIds().catch(() => new Set());
   const startUrl = String(current?.url || '');
   const startAt = Date.now();
   while (Date.now() - startAt < timeoutMs && current?.id) {
     await sleep(1000);
-    current = await chrome.tabs.get(current.id).catch(() => current);
+    current = await findManualVerificationTransitionTab(current, previous);
     const url = String(current?.url || '');
+    if (current?.id && current.id !== tab?.id) break;
     if (url && url !== startUrl) break;
     const captchaPage = isManualCaptchaTab(current);
     const pinPage = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
@@ -2389,6 +2457,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
   for (let step = 0; step < 6 && current?.id; step += 1) {
     current = await chrome.tabs.get(current.id).catch(() => current);
     if (isManualCaptchaTab(current)) {
+      manualVerificationFlowActive = true;
       handled = true;
       const id = buildManualVerificationId('captcha', current, context);
       const imageDataUrl = await captureManualCaptchaImage(current);
@@ -2401,17 +2470,19 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
         source: context.source || ''
       });
       const answer = await waitForManualCaptchaAnswer(id);
+      const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
       const fillResult = await fillManualCaptchaAnswer(current.id, answer);
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
       await closeManualCaptchaChallenge(id);
       if (pinAnswer) canReusePinAfterCaptcha = true;
-      current = await waitForManualVerificationPageTransition(current, 20000);
+      current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds);
       await sleep(500);
       continue;
     }
 
     const pinDetected = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
     if (!pinDetected) break;
+    manualVerificationFlowActive = true;
     handled = true;
     let pinChallengeId = '';
     if (!pinAnswer || !canReusePinAfterCaptcha) {
@@ -2427,13 +2498,30 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       pinAnswer = await waitForManualCaptchaAnswer(pinChallengeId);
     }
     current = await refreshManualPinPageBeforeAnswer(current);
+    const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
     pinAttempted = true;
     if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
     canReusePinAfterCaptcha = false;
-    current = await waitForManualVerificationPageTransition(current, 15000);
+    if (fillResult.method === 'debuggerInsertText') {
+      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds);
+      const stillPinAfterInsertText = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+      if (stillPinAfterInsertText) {
+        console.warn('[Yahoo Bid] PIN page still open after insertText; retrying with debugger digit keys');
+        const beforeKeyboardRetryTabIds = await getTabIds().catch(() => new Set());
+        const keyboardResult = await dispatchTrustedManualPinInput(current.id, pinAnswer, { preferInsertText: false });
+        if (!keyboardResult?.success) throw new Error(keyboardResult?.error || 'manual pin keyboard retry failed');
+        current = await waitForManualVerificationPageTransition(current, 15000, beforeKeyboardRetryTabIds);
+      }
+    } else {
+      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds);
+    }
     await sleep(500);
+  }
+  const openVerificationTabs = await getOpenManualVerificationTabs().catch(() => []);
+  if (!openVerificationTabs.length) {
+    manualVerificationFlowActive = false;
   }
   if (current?.id) await injectContentScript(current.id).catch(() => {});
   return { handled, tab: current || tab, pinAnswer };
@@ -3548,6 +3636,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   dispatchTrustedBundleActionClick,
   dispatchTrustedPaymentActionClick,
   dispatchTrustedManualPinKeys,
+  dispatchTrustedManualPinInput,
+  findManualVerificationTransitionTab,
   getPaymentActionClickPoint,
   getPaymentShippingChangeClickPoint,
   isLikelyYahooTransactionTab,

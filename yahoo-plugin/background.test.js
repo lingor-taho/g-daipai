@@ -36,6 +36,7 @@ function loadBackgroundForTest(overrides = {}) {
         async get(...args) { return tabs.get ? tabs.get(...args) : { id: args[0], status: 'complete' }; },
         async update(...args) { return tabs.update ? tabs.update(...args) : { id: args[0], status: 'complete' }; },
         async reload(...args) { return tabs.reload ? tabs.reload(...args) : undefined; },
+        async captureVisibleTab(...args) { return tabs.captureVisibleTab ? tabs.captureVisibleTab(...args) : 'data:image/png;base64,'; },
         async sendMessage(...args) { return tabs.sendMessage ? tabs.sendMessage(...args) : { success: true, items: [], orders: [] }; },
         async remove(...args) { return tabs.remove ? tabs.remove(...args) : undefined; },
         onUpdated: {
@@ -277,7 +278,7 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
     }
   });
 
-  const result = await api.dispatchTrustedManualPinKeys({ id: 8, windowId: 9 }, '123456');
+  const result = await api.dispatchTrustedManualPinInput({ id: 8, windowId: 9 }, '123456', { preferInsertText: false });
 
   assert.equal(result.success, true);
   assert.equal(attached, true);
@@ -294,6 +295,61 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
       'keyDown:6', 'keyUp:6'
     ]
   );
+}
+
+async function testManualPinUsesDebuggerInsertTextBeforeKeyboardFallback() {
+  const commands = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, windowId: 9, status: 'complete' };
+      },
+      async update(id, props) {
+        return { id, windowId: 9, active: props.active };
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        commands.push({ command, params });
+      },
+      async detach() {}
+    }
+  });
+
+  const result = await api.dispatchTrustedManualPinKeys({ id: 8, windowId: 9 }, '123456');
+
+  assert.equal(result.success, true);
+  assert.equal(commands[0].command, 'Input.insertText');
+  assert.equal(commands[0].params.text, '123456');
+}
+
+async function testManualPinContinuesKeyboardInputWhenInsertTextFails() {
+  const commands = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, windowId: 9, status: 'complete' };
+      },
+      async update(id, props) {
+        return { id, windowId: 9, active: props.active };
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        commands.push({ command, params });
+        if (command === 'Input.insertText') throw new Error('insert text unavailable');
+      },
+      async detach() {}
+    }
+  });
+
+  const result = await api.dispatchTrustedManualPinKeys({ id: 8, windowId: 9 }, '123456');
+
+  assert.equal(result.success, true);
+  assert.equal(commands.some(item => item.command === 'Input.insertText'), true);
+  assert.equal(commands.filter(item => item.command === 'Input.dispatchKeyEvent' && item.params.type === 'keyDown').length, 6);
 }
 
 async function testBidderPaysShippingTransactionClicksDecideAndConfirm() {
@@ -1898,6 +1954,41 @@ async function testIdleSyncSkipsNonBidWorkWhenManualPinTabExists() {
   assert.equal(fetchCalls.some(url => url.includes('/api/plugin/idle-action/next')), false);
 }
 
+async function testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts() {
+  let phase = 'pin';
+  const fetchCalls = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        if (phase === 'pin') {
+          return [
+            { id: 21, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true }
+          ];
+        }
+        return [
+          { id: 21, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: true }
+        ];
+      }
+    },
+    fetch: async (url) => {
+      fetchCalls.push(String(url));
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not be fetched during manual verification flow');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+  phase = 'captcha';
+  await api.syncIdleYahooPages();
+
+  assert.equal(fetchCalls.some(url => url.includes('/api/plugin/idle-action/next')), false);
+}
+
 async function testManualPinRefreshesPageBeforeEnteringAnswer() {
   let currentUrl = 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418';
   let reloadCount = 0;
@@ -1951,6 +2042,111 @@ async function testManualPinRefreshesPageBeforeEnteringAnswer() {
   assert.equal(result.handled, true);
   assert.equal(reloadCount, 1);
   assert.equal(keyTexts.join(''), '123456');
+}
+
+async function testManualVerificationTransitionPrefersNewPinTabAfterCaptcha() {
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' };
+        return { id, url: 'about:blank', status: 'complete' };
+      },
+      async query() {
+        return [
+          { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' },
+          { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true }
+        ];
+      }
+    }
+  });
+
+  const result = await api.findManualVerificationTransitionTab(
+    { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' },
+    new Set([7])
+  );
+
+  assert.equal(result.id, 9);
+}
+
+async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
+  let stage = 'captcha';
+  const challengeTypes = [];
+  const insertedPins = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 };
+        if (id === 9 && stage === 'pin') {
+          return { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', windowId: 3 };
+        }
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1230839418', status: 'complete', windowId: 3 };
+      },
+      async query() {
+        if (stage === 'pin') {
+          return [
+            { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' },
+            { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true }
+          ];
+        }
+        if (stage === 'done') {
+          return [];
+        }
+        return [
+          { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: true }
+        ];
+      },
+      async update(id, props) {
+        return { id, url: stage === 'pin' ? 'https://login.yahoo.co.jp/config/login?auth_lv=1' : 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3, active: props?.active };
+      },
+      async reload() {},
+      async captureVisibleTab() {
+        return 'data:image/png;base64,';
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        if (String(payload.func || '').includes('captchaAnswer')) {
+          stage = 'pin';
+          return [{ result: { success: true } }];
+        }
+        return [{ result: { success: false } }];
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        if (command === 'Input.insertText') {
+          insertedPins.push(params.text);
+          stage = 'done';
+        }
+      },
+      async detach() {}
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        challengeTypes.push(body.type);
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  const result = await api.handleManualVerificationIfPresent(
+    { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 },
+    { productId: 'j1230839418', source: 'test', pinAnswer: '123456' }
+  );
+
+  assert.equal(result.handled, true);
+  assert.deepEqual(challengeTypes, ['captcha']);
+  assert.deepEqual(insertedPins, ['123456']);
 }
 
 function testYahooLoginPageCountsAsTransactionTab() {
@@ -2139,6 +2335,8 @@ async function run() {
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
+  await testManualPinUsesDebuggerInsertTextBeforeKeyboardFallback();
+  await testManualPinContinuesKeyboardInputWhenInsertTextFails();
   await testBidderPaysShippingTransactionClicksDecideAndConfirm();
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
@@ -2183,7 +2381,10 @@ async function run() {
   testManualCaptchaTabDetection();
   testLikelyManualPinTabDetection();
   await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
+  await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
+  await testManualVerificationTransitionPrefersNewPinTabAfterCaptcha();
+  await testManualVerificationReusesPinWhenCaptchaReturnsToPinPage();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
   await testFailedBidDoesNotImmediatelySyncWonPage();
