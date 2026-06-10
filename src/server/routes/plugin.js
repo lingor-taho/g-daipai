@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { execFile } = require('child_process');
 const db = require('../models');
 const { isYahooLoginError } = require('../services/yahooLoginStatus');
 const {
@@ -58,6 +59,67 @@ function parseTimeMs(value) {
   }
   const time = Date.parse(input);
   return Number.isFinite(time) ? time : null;
+}
+
+function normalizeManualPinCode(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 12);
+}
+
+function quotePowerShellString(value) {
+  return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function buildWindowsSendKeysScript(pinCode) {
+  const pin = normalizeManualPinCode(pinCode);
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$shell = New-Object -ComObject WScript.Shell',
+    "$activated = $shell.AppActivate('Google 密码管理工具')",
+    "if (-not $activated) { $activated = $shell.AppActivate('Google Password Manager') }",
+    "if (-not $activated) { $activated = $shell.AppActivate('Chrome') }",
+    'Start-Sleep -Milliseconds 300',
+    `$pin = ${quotePowerShellString(pin)}`,
+    '[System.Windows.Forms.SendKeys]::SendWait($pin)',
+    'Start-Sleep -Milliseconds 100',
+    "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
+  ].join('; ');
+}
+
+function typeManualPinWithSystemKeyboard(pinCode, options = {}) {
+  const pin = normalizeManualPinCode(pinCode);
+  if (!pin) {
+    const error = new Error('valid pin is required');
+    error.statusCode = 400;
+    return Promise.reject(error);
+  }
+  const platform = options.platform || process.platform;
+  if (platform !== 'win32') {
+    const error = new Error('system keyboard PIN input is only supported on Windows');
+    error.statusCode = 400;
+    return Promise.reject(error);
+  }
+  const execFileImpl = options.execFileImpl || execFile;
+  const script = buildWindowsSendKeysScript(pin);
+  const args = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script];
+  return new Promise((resolve, reject) => {
+    execFileImpl('powershell.exe', args, {
+      windowsHide: true,
+      timeout: Number(options.timeoutMs || 8000)
+    }, (error, stdout, stderr) => {
+      if (error) {
+        const wrapped = new Error(stderr || error.message || 'system keyboard PIN input failed');
+        wrapped.statusCode = 500;
+        reject(wrapped);
+        return;
+      }
+      resolve({
+        success: true,
+        digits: pin.length,
+        stdout: String(stdout || '').trim()
+      });
+    });
+  });
 }
 
 function getStrategyLeadMs(task) {
@@ -2302,6 +2364,18 @@ router.post('/manual-captcha/close', async (req, res) => {
   res.json({ success: true, ...result });
 });
 
+router.post('/manual-pin/type', async (req, res) => {
+  try {
+    const result = await typeManualPinWithSystemKeyboard(req.body?.pin || req.body?.answer || '');
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'manual PIN system keyboard input failed'
+    });
+  }
+});
+
 router.post('/yahoo-login/status', async (req, res) => {
   const status = req.body?.status === 'ok' ? 'ok' : 'failed';
   const message = req.body?.message || (status === 'ok' ? '' : '需要登录 Yahoo');
@@ -2365,6 +2439,9 @@ router.get('/config', async (req, res) => {
 
 module.exports = router;
 module.exports.getStrategyLeadMs = getStrategyLeadMs;
+module.exports.normalizeManualPinCode = normalizeManualPinCode;
+module.exports.buildWindowsSendKeysScript = buildWindowsSendKeysScript;
+module.exports.typeManualPinWithSystemKeyboard = typeManualPinWithSystemKeyboard;
 module.exports.getMultiBidStartMs = getMultiBidStartMs;
 module.exports.getMultiBidIntervalMs = getMultiBidIntervalMs;
 module.exports.getIdleBidGuardMs = getIdleBidGuardMs;

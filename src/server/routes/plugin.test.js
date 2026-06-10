@@ -41,6 +41,9 @@ const {
   updateConfirmReceiptStatus,
   randomIntInclusive,
   getPaymentJobLimitRange,
+  normalizeManualPinCode,
+  buildWindowsSendKeysScript,
+  typeManualPinWithSystemKeyboard,
   ORDER_STATUS_PENDING_PAYMENT,
   ORDER_STATUS_WAITING_SHIPPING,
   ORDER_STATUS_PENDING_BUNDLE,
@@ -1159,6 +1162,39 @@ function testPaymentJobLimitRangeAndRandomSelection() {
   assert.equal(randomIntInclusive(2, 5, () => 0.9999), 5);
 }
 
+function testNormalizeManualPinCodeKeepsDigitsOnly() {
+  assert.equal(normalizeManualPinCode(' 12-34 56 '), '123456');
+  assert.equal(normalizeManualPinCode('abc'), '');
+  assert.equal(normalizeManualPinCode('123456789012345'), '123456789012');
+}
+
+function testBuildWindowsSendKeysScriptTypesPinAndEnter() {
+  const script = buildWindowsSendKeysScript('123456');
+  assert.match(script, /System\.Windows\.Forms/);
+  assert.match(script, /SendWait\(\$pin\)/);
+  assert.match(script, /SendWait\('\{ENTER\}'\)/);
+  assert.match(script, /\$pin = '123456'/);
+  assert.doesNotMatch(script, /123456;|\$pin = 123456/);
+}
+
+async function testTypeManualPinWithSystemKeyboardUsesPowerShellSendKeys() {
+  const calls = [];
+  const result = await typeManualPinWithSystemKeyboard('123456', {
+    platform: 'win32',
+    execFileImpl(file, args, options, callback) {
+      calls.push({ file, args, options });
+      callback(null, '', '');
+    }
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.digits, 6);
+  assert.equal(calls[0].file, 'powershell.exe');
+  assert.equal(calls[0].args.includes('-STA'), true);
+  assert.equal(calls[0].args.includes('-Command'), true);
+  assert.equal(calls[0].options.windowsHide, true);
+}
+
 async function testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached() {
   const queries = [];
   const fakeDb = {
@@ -1483,6 +1519,8 @@ testPaymentIdleActionUsesFlagAfterScanPriority();
 testIdleActionUsesScanPaymentConfirmReceiptPriority();
 testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
+testNormalizeManualPinCodeKeepsDigitsOnly();
+testBuildWindowsSendKeysScriptTypesPinAndEnter();
 Promise.all([
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
   testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
@@ -1514,7 +1552,8 @@ Promise.all([
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
-  testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating()
+  testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
+  testTypeManualPinWithSystemKeyboardUsesPowerShellSendKeys()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

@@ -605,6 +605,24 @@ async function closeManualCaptchaChallenge(id) {
   }).catch(() => null);
 }
 
+async function typeManualPinWithSystemKeyboard(answer) {
+  const pin = String(answer || '').replace(/\D/g, '');
+  if (!pin) return { success: false, error: 'pin digits are required' };
+  try {
+    const res = await apiFetch('/api/plugin/manual-pin/type', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin })
+    });
+    const result = await res.json().catch(() => ({ success: res.ok }));
+    return result?.success
+      ? { success: true, method: 'systemSendKeys', digits: result.digits || pin.length }
+      : { success: false, error: result?.error || 'system keyboard PIN input failed' };
+  } catch (e) {
+    return { success: false, error: e.message || 'system keyboard PIN input failed' };
+  }
+}
+
 function buildPaymentFailurePayload(job, error) {
   return {
     orderId: job?.orderId,
@@ -2358,7 +2376,22 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
   }
 }
 
+async function focusManualPinTabForSystemInput(tabId) {
+  if (!tabId) return;
+  const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(500);
+}
+
 async function fillManualPinAnswer(tabId, answer) {
+  await focusManualPinTabForSystemInput(tabId);
+  const systemResult = await typeManualPinWithSystemKeyboard(answer);
+  if (systemResult?.success) return systemResult;
+  console.warn('[Yahoo Bid] System keyboard PIN input failed, falling back to debugger:', systemResult?.error || systemResult);
+
   const trustedResult = await dispatchTrustedManualPinKeys(tabId, answer);
   if (trustedResult?.success) return trustedResult;
 
@@ -3643,6 +3676,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   dispatchTrustedPaymentActionClick,
   dispatchTrustedManualPinKeys,
   dispatchTrustedManualPinInput,
+  fillManualPinAnswer,
   findManualVerificationTransitionTab,
   getPaymentActionClickPoint,
   getPaymentShippingChangeClickPoint,

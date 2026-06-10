@@ -297,6 +297,75 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
   );
 }
 
+async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
+  const fetchCalls = [];
+  const debuggerCommands = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, windowId: 9, status: 'complete' };
+      },
+      async update(id, props) {
+        return { id, windowId: 9, active: props.active };
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        debuggerCommands.push({ command, params });
+      },
+      async detach() {}
+    },
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), body: options.body || '' });
+      if (String(url).includes('/api/plugin/manual-pin/type')) {
+        return { async json() { return { success: true, digits: 6 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  const result = await api.fillManualPinAnswer(8, '123456');
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'systemSendKeys');
+  assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/manual-pin/type') && /123456/.test(call.body)), true);
+  assert.equal(debuggerCommands.length, 0);
+}
+
+async function testManualPinFallsBackToDebuggerWhenSystemKeyboardFails() {
+  const debuggerCommands = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, windowId: 9, status: 'complete' };
+      },
+      async update(id, props) {
+        return { id, windowId: 9, active: props.active };
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        debuggerCommands.push({ command, params });
+      },
+      async detach() {}
+    },
+    fetch: async (url) => {
+      if (String(url).includes('/api/plugin/manual-pin/type')) {
+        return { async json() { return { success: false, error: 'sendkeys failed' }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  const result = await api.fillManualPinAnswer(8, '123456');
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'debuggerRealKeyboard');
+  assert.equal(debuggerCommands.some(item => item.command === 'Input.dispatchKeyEvent'), true);
+}
+
 async function testManualPinUsesRealKeyboardBeforeInsertTextFallback() {
   const commands = [];
   const api = loadBackgroundForTest({
@@ -2338,6 +2407,8 @@ async function run() {
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
+  await testManualPinUsesSystemKeyboardEndpointBeforeDebugger();
+  await testManualPinFallsBackToDebuggerWhenSystemKeyboardFails();
   await testManualPinUsesRealKeyboardBeforeInsertTextFallback();
   await testManualPinFallsBackToInsertTextWhenRealKeyboardFails();
   await testBidderPaysShippingTransactionClicksDecideAndConfirm();

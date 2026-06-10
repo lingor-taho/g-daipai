@@ -370,6 +370,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | PIN 成功后进入验证码，验证码后又出现新 PIN 页导致反复要求输入 PIN | 手动验证跳转不再只盯当前 tab；验证码/PIN 提交后会扫描本轮新开的 Yahoo 验证 tab，并优先切到新 PIN tab。若同一轮已有后台 PIN，会继续复用该 PIN 处理验证码后的二次 PIN，不再把它当成新的独立 PIN 挑战 |
 | 2026-06-10 | 验证码阶段没有 PIN tab，空闲任务又打开新的 PIN 页造成循环 | 新增手动验证流程锁：只要出现 PIN 或验证码 tab，就标记 `manualVerificationFlowActive`；在 PIN/验证码整轮流程结束、没有任何验证 tab 前，所有入札/落札/交易/扫描/付款/收货等非出价 idle 任务都暂停，避免验证码页面期间重新触发新的 PIN |
 | 2026-06-10 | Chrome 密码管理工具 PIN 浮层不接收 `Input.insertText` | PIN 输入改为默认模拟真实键盘：每个数字通过 Chrome debugger 发送 `rawKeyDown -> char -> keyUp`；`Input.insertText` 只作为真实键盘失败或页面仍停留 PIN 时的备用路径 |
+| 2026-06-10 | Chrome debugger 真实键盘事件仍无法输入 Google 密码管理工具 PIN 浮层 | 新增服务端系统级输入接口 `POST /api/plugin/manual-pin/type`，由 Windows API Server 调用 `powershell.exe -STA` + `System.Windows.Forms.SendKeys.SendWait()` 向当前前台 Chrome/PIN 浮层发送 PIN 和 Enter；插件刷新并激活 PIN tab 后优先调用该接口，失败时才退回 Chrome debugger 输入 |
 
 ---
 
@@ -383,6 +384,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 - PIN 输入路径默认模拟真实键盘，每个数字发送 `rawKeyDown -> char -> keyUp`；若真实键盘发送失败或短时间内仍停留在 PIN 页，再用 `Input.insertText` 作为备用，不依赖后台再次提交。
 - 验证码/PIN 提交后的跳转会扫描同一轮新开的 Yahoo 验证 tab；如果验证码后出现新的 PIN tab，插件会切过去并复用本轮已有 PIN，避免后台反复弹新的 PIN 输入要求。
 - 空闲非出价任务入口现在使用 `manualVerificationFlowActive` 流程锁；只要当前仍有 PIN 或验证码 tab，就不再执行新的 idle action，直到整轮手动验证流程结束。
+- Chrome 密码管理工具 PIN 浮层属于浏览器级安全 UI，Chrome debugger 键盘事件可能无法穿透；插件现在优先调用 API Server 的系统级 SendKeys 输入。生产要求 API Server 与服务器 Chrome 运行在同一 Windows 交互桌面会话中，否则系统级按键无法投递到 Chrome。
 
 ### 最近验证命令
 
