@@ -646,6 +646,25 @@ function testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd() {
   assert.equal(state.hasReviewButton, true);
 }
 
+function testPaymentPageStateDetectsStoreConfirmationSection() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
+    bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u5e74\u9f62\u78ba\u8a8d \u79c1\u306f33\u6b73\u3067\u3059 \u5fc5\u9808 \u9818\u53ce\u66f8 \u4e0d\u8981 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u7a0e\u8fbc\uff09 43,320\u5186',
+    controls: ['\u5909\u66f4', '\u78ba\u8a8d\u3059\u308b']
+  });
+  const editState = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://buy.auctions.yahoo.co.jp/order/store-confirmation?auctionId=j1232680017',
+    bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002 \u5e74\u9f62\u78ba\u8a8d \u5fc5\u9808',
+    controls: ['\u5909\u66f4\u3059\u308b']
+  });
+
+  assert.equal(state.hasStoreConfirmationSection, true);
+  assert.equal(state.hasStoreConfirmationEditPage, false);
+  assert.equal(editState.hasStoreConfirmationSection, true);
+  assert.equal(editState.hasStoreConfirmationEditPage, true);
+}
+
 function testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice() {
   const api = loadBackgroundForTest();
 
@@ -1482,6 +1501,90 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
 
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 17);
+  assert.equal(calls[0].status, 'success');
+}
+
+async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
+  const calls = [];
+  const actions = [];
+  let storeChangeClicks = 0;
+  let storeApplyClicks = 0;
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
+        hasReviewButton: true,
+        hasStoreConfirmationSection: true,
+        paymentAmountJpy: 43320
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/store-confirmation?auctionId=j1232680017',
+        hasStoreConfirmationSection: true,
+        hasStoreConfirmationEditPage: true,
+        paymentAmountJpy: 41800
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
+        hasReviewButton: true,
+        hasStoreConfirmationSection: true,
+        paymentAmountJpy: 43320
+      }
+    },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=j1232680017', hasFinalizeButton: true, paymentAmountJpy: 43320 } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=j1232680017', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 19, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' }; },
+      async query() { return [{ id: 19, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (funcText.includes('store confirmation change button not found')) {
+          storeChangeClicks += 1;
+          return [{ result: { success: true, text: '\u5909\u66f4' } }];
+        }
+        if (funcText.includes('store confirmation apply button not found')) {
+          storeApplyClicks += 1;
+          return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b' } }];
+        }
+        if (payload.args && payload.args.length >= 2) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 19, productId: 'j1232680017', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(storeChangeClicks, 1);
+  assert.equal(storeApplyClicks, 1);
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].orderId, 19);
   assert.equal(calls[0].status, 'success');
 }
 
@@ -2666,6 +2769,7 @@ async function run() {
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
+  await testRunPaymentJobsCompletesStoreConfirmationBeforeReview();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
   await testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit();

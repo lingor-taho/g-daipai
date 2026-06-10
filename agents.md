@@ -379,6 +379,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 验证码页出现后数分钟内后台仍停留 PIN 提示 | `syncIdleYahooPages()` 先处理已打开的 PIN/验证码 tab，再检查 `lastIdleSyncAt` 空闲同步间隔；手动验证不再被 idle 间隔节流挡住，避免验证码页已存在但插件不截图、不覆盖后台 PIN 提示 |
 | 2026-06-10 | 后台菜单和订单参数位置需要调整 | 后台“用户账号管理”和“服务器账号”合并为“账号管理”，页面用 Tabs 展示两个功能；手机底部菜单改为单行横向滚动；订单管理顶部银行手续费/手续费/大金额费用参数移动到“特殊用户设置”页顶部，保存接口和功能不变 |
 | 2026-06-10 | 付款失败后台提醒过长 | `/api/plugin/payment/status` 保存 `payment_alert_message` 前会摘要化错误，只保留商品 ID 和核心原因；过滤 `url/controls/candidates/synthetic/trusted` 等调试字段。类似 `action=review; wait=payment next page did not appear` 会显示为 `确认付款后页面未跳转`，便于手机端查看 |
+| 2026-06-10 | 商品 `j1232680017` 付款点击确认后仍停留在 review 页 | 根因是 review 页存在 `ストアからの確認事項`，需要先点该区块右侧 `変更`，在编辑页把所有 checkbox 勾选后点击红色 `変更する` 返回 review 页，再继续点击右侧 `確認する`。插件付款流程已在 review 确认前增加该前置步骤，每个订单本轮只处理一次，避免重复进入确认事项页面 |
 
 ---
 

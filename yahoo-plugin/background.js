@@ -732,6 +732,8 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
   const hasPlacementDefaultModal = /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(bodyText);
   const hasStoreBundlePurchaseNotice = /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d\u3067\u304d\u308b\u5546\u54c1/.test(bodyText);
+  const hasStoreConfirmationSection = /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText);
+  const hasStoreConfirmationEditPage = hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/);
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
   return {
@@ -741,6 +743,8 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     controlsSample: controls.slice(0, 20),
     paymentAmountJpy,
     paymentMethodFeeJpy,
+    hasStoreConfirmationSection,
+    hasStoreConfirmationEditPage,
     shippingOptions,
     selectedShippingAmountJpy: selectedShippingOption ? selectedShippingOption.amountJpy : null,
     alreadyPaid,
@@ -1520,6 +1524,151 @@ async function waitForExpectedPaymentAmount(tab, job, state) {
     latest = await getPaymentPageState(tab.id);
   }
   return latest;
+}
+
+async function clickStoreConfirmationChange(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const isFollowing = (first, second) => Boolean(first?.compareDocumentPosition?.(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const controlSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const controls = [...document.querySelectorAll(controlSelector)];
+      const textElements = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')];
+      const clickTargetFor = el => el?.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || el;
+      const clickElement = el => {
+        const target = clickTargetFor(el);
+        const eventOptions = { bubbles: true, cancelable: true, view: window };
+        for (const node of [el, target].filter(Boolean)) {
+          node.scrollIntoView?.({ block: 'center', inline: 'center' });
+          node.focus?.();
+          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+          node.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+          node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+          node.click?.();
+          node.dispatchEvent(new MouseEvent('click', eventOptions));
+        }
+        return target || el;
+      };
+      const headers = textElements.filter(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)));
+      const changeControls = controls.filter(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)));
+      const stopKeywords = /\u30e1\u30fc\u30eb\u914d\u4fe1\u767b\u9332|\u30b9\u30c8\u30a2\u3078\u306e\u8981\u671b|\u304a\u652f\u6255\u3044\u65b9\u6cd5|\u914d\u9001\u65b9\u6cd5|\u3054\u8acb\u6c42\u5148|\u3054\u8cfc\u5165\u5185\u5bb9/;
+
+      for (const header of headers) {
+        const section = header.closest?.('section, li, div');
+        const sectionChange = section
+          ? [...section.querySelectorAll(controlSelector)].find(el => /^\s*\u5909\u66f4\s*$/.test(getText(el)))
+          : null;
+        const target = sectionChange || (() => {
+          const nextStop = textElements.find(el => el !== header && isFollowing(header, el) && stopKeywords.test(getText(el)));
+          return changeControls.find(el => isFollowing(header, el) && (!nextStop || isFollowing(el, nextStop)));
+        })();
+        if (target) {
+          const clicked = clickElement(target);
+          return { success: true, text: getText(target), clickedText: getText(clicked) };
+        }
+      }
+      return { success: false, error: 'store confirmation change button not found' };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'store confirmation change click returned no result' };
+}
+
+async function checkAllStoreConfirmationItemsAndApply(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const isVisible = el => {
+        if (!el) return false;
+        let node = el;
+        while (node && node !== document.body) {
+          const style = window.getComputedStyle?.(node);
+          if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+          node = node.parentElement;
+        }
+        const rect = el.getBoundingClientRect?.();
+        return !rect || rect.width > 0 || rect.height > 0;
+      };
+      const eventOptions = { bubbles: true, cancelable: true, view: window };
+      const checkboxes = [...document.querySelectorAll('input[type="checkbox"]')]
+        .filter(input => !input.disabled && isVisible(input));
+      for (const checkbox of checkboxes) {
+        const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : null;
+        const target = label || checkbox.closest('label, li, div, section, p') || checkbox;
+        target.scrollIntoView?.({ block: 'center', inline: 'center' });
+        if (!checkbox.checked) {
+          (target || checkbox).click?.();
+        }
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span')];
+      const button = controls.find(el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el)));
+      if (!button) return { success: false, error: 'store confirmation apply button not found', checkedCount: checkboxes.length };
+      const target = button.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || button;
+      for (const node of [button, target].filter(Boolean)) {
+        node.scrollIntoView?.({ block: 'center', inline: 'center' });
+        node.focus?.();
+        if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+        node.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+        if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+        node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+        node.click?.();
+        node.dispatchEvent(new MouseEvent('click', eventOptions));
+      }
+      return { success: true, checkedCount: checkboxes.length, text: getText(button) };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'store confirmation apply returned no result' };
+}
+
+async function completeStoreConfirmationItems(tab, state) {
+  if (!tab?.id || !state?.hasStoreConfirmationSection) return { success: true, tab, state };
+
+  const previousTabIds = await getTabIds();
+  const changeResult = await clickStoreConfirmationChange(tab.id);
+  if (!changeResult?.success) return { success: false, error: changeResult?.error || 'store confirmation change click failed', tab };
+  let editTab = null;
+  try {
+    editTab = await waitForPaymentStateAcrossTabs(tab, nextState =>
+      nextState.hasStoreConfirmationEditPage,
+      previousTabIds,
+      10000
+    );
+  } catch (e) {
+    return { success: false, error: `store confirmation edit page did not appear: ${e.message || e}`, tab };
+  }
+
+  const applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id);
+  if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
+  try {
+    const reviewTab = await waitForPaymentStateAcrossTabs(editTab, nextState =>
+      nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+      previousTabIds,
+      10000
+    );
+    await injectContentScript(reviewTab.id).catch(() => {});
+    return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
+  } catch (e) {
+    return { success: false, error: `store confirmation review page did not return: ${e.message || e}`, tab: editTab };
+  }
 }
 
 function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
@@ -3326,6 +3475,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
   try {
     tab = await openTransactionPage(job);
     let state = await getPaymentPageState(tab.id);
+    let storeConfirmationHandled = false;
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
 
@@ -3406,6 +3556,16 @@ async function executePaymentJob(job, paymentBatch = {}) {
       }
     }
     if (!state?.hasReviewButton) throw new Error('payment review button not found');
+    if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+      const storeResult = await completeStoreConfirmationItems(tab, state);
+      if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
+      tab = storeResult.tab;
+      state = storeResult.state;
+      storeConfirmationHandled = true;
+    }
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
+    if (!state?.hasReviewButton) throw new Error('payment review button not found after store confirmation');
     state = await ensurePaymentShippingOption(tab, job, state);
     state = await waitForExpectedPaymentAmount(tab, job, state);
     assertPaymentAmountMatches(job, state);
@@ -3720,6 +3880,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildScanStatusPayload,
   shouldAttemptBundleInputAction,
   buildPaymentPageStateFromSnapshot,
+  completeStoreConfirmationItems,
   getRandomIntInclusive,
   assertPaymentAmountMatches,
   syncIdleYahooPages,
