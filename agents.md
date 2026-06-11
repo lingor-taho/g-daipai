@@ -2090,3 +2090,59 @@ node src\client\src\utils\submitValidation.test.mjs
 Set-Location src\client
 npm run build
 ```
+---
+
+## 2026-06-11 维护性整理规划
+
+### 当前状态
+
+- 本阶段目标是提升代码可读性、可维护性和后续扩展安全性，重点解决同一业务规则多处重复、同一配置多处读取和状态常量分散的问题。
+- 当前只进入规划阶段，尚未改动业务代码、数据库结构、API 路径、接口返回字段、插件轮询顺序或订单/任务状态流转。
+- 已确认 `agents.md`、`Android-app.md` 文件本身为 UTF-8 正常中文；此前 PowerShell 默认输出编码导致终端显示乱码，不代表文件损坏。
+- 注册流程按实际业务为后台分配用户；本轮维护性整理不把 App 套壳作为实施范围。
+
+### 业务规则确认
+
+- 改动前必须保证现有流程不变化、不影响已有数据、不引入已实现功能的新 bug。
+- 第一优先级是行为保持型抽取：先新增共享常量/纯规则函数和测试，再逐步替换重复实现。
+- 禁止在本阶段修改 `data/gdaipai.db`、运行生产数据清理/批处理/删除类接口、调整 SQLite schema 或改变任何现有状态值。
+
+### 下一步计划
+
+- 正式计划文档：`docs/superpowers/plans/2026-06-11-maintainability-rule-boundaries.md`。
+- 推荐先执行计划中的 Task 1-4：
+  - 建立当前回归基线。
+  - 提取订单状态、税类型、商品类型、任务状态、Yahoo 低价规则等常量。
+  - 提取价格换算规则。
+  - 提取出价规则，并消除 `src/server/routes/task.js` 反向依赖 `src/server/routes/plugin.js`。
+- 后台“清理数据”已纳入规划：当前行为保持不变，只清理超过保留天数的 `failed/cancelled/bidding` 任务及关联日志/缓存，成功落札数据不清理。后续如果要扩大到长期无效的 `pending/processing` 等状态，必须另做 dry-run 统计、明确状态/年龄规则、排除真实成功订单，并先在 SQLite 备份上验证。
+- 每个小阶段必须运行对应 focused tests，阶段结束运行：
+
+```powershell
+npm run regression
+```
+
+---
+
+## 2026-06-11 服务器备份与恢复脚本
+
+### 已实现内容
+
+- 项目根目录新增 `备份.bat`：关闭服务后双击执行，确认后自动创建 `backups/g-daipai-backup-YYYYMMDD-HHMMSS.zip`。
+- 项目根目录新增 `恢复.bat`：关闭服务后双击执行，自动列出 `backups` 下已有 `g-daipai-backup-*.zip`，输入序号选择恢复。
+- 恢复前会自动生成一份当前状态备份：`backups/g-daipai-before-restore-YYYYMMDD-HHMMSS.zip`，用于恢复操作失败或选错备份时回退。
+- 备份内容包括程序源码、配置文件、SQLite 数据库、插件文件和文档。
+- 为避免备份包过大和递归打包，脚本排除：`backups`、`.git`、各级 `node_modules`、前端/后台 `dist`、`*.log`、`*.tmp`。
+- 脚本内容使用纯 ASCII 提示，避免 Windows `cmd.exe` 在不同代码页下解析 UTF-8 中文批处理内容出错；文件名保留中文。
+
+### 使用注意
+
+- 执行备份/恢复前必须先关闭 API Server、前端 dev server、后台 dev server，以及服务器 Chrome 插件相关 Chrome 窗口，避免 SQLite 写入中复制。
+- 恢复不会删除 `backups`、`.git`、`node_modules`、`dist`，主要恢复源代码、配置和数据库。当前维护性整理不改依赖，因此不备份 `node_modules` 不影响回退。
+
+### 最近验证命令
+
+```powershell
+cmd /c "echo N|备份.bat"
+cmd /c "echo N|恢复.bat"
+```
