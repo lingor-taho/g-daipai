@@ -94,6 +94,15 @@ function renderTransactionStartLastRun(log: any) {
   return `最近执行：${source} ${time}，取到 ${total} 单，商城直接待支付 ${storeUpdated} 单，插件任务 ${jobs} 单，回写 ${results.length} 次（成功 ${successResults}，失败 ${failedResults}，未更新 ${noUpdateResults}）${errorText}`;
 }
 
+function renderManualOrderImportFlag(flags: any) {
+  if (!flags) return '-';
+  const requested = Number(flags.manualOrderImportRequested || 0);
+  const scanning = Number(flags.manualOrderImportScanning || 0);
+  const ready = Number(flags.manualOrderImportReady || 0);
+  if (!requested && !scanning && !ready) return '0';
+  return `待读取 ${requested}，读取中 ${scanning}，待确认 ${ready}`;
+}
+
 function renderStatusChangeSource(row: any) {
   const sourceMap: Record<string, string> = {
     transaction_start_jobs_store: '交易开始-商城',
@@ -574,6 +583,7 @@ export default function OrdersPage() {
         <Space wrap size={16} className="admin-mobile-flag-space">
           <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
           <Typography.Text>扫描计数：{idleFlags?.scanFlag ?? '-'} / {idleFlags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
+          <Typography.Text>导入flag：{renderManualOrderImportFlag(idleFlags)}</Typography.Text>
           <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
           <Typography.Text>确认收货flag：{idleFlags?.confirmReceiptFlag ?? '-'}</Typography.Text>
           <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>

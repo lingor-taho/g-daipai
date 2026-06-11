@@ -492,6 +492,9 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const now = new Date(nowMs);
   const nowHour = config.nowHour ?? now.getHours();
   const today = config.today || getLocalDateKey(nowMs);
+  if (Number(config.manualOrderImportPending || 0) > 0) {
+    return { action: 'scan', today, manualOrderImportPending: Number(config.manualOrderImportPending || 0) };
+  }
   const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
   const transactionRequested = Number(config.transactionStartRequested || 0) === 1;
   if (transactionRequested || shouldAutoRequestTransactionStart({ ...config, transactionStartHour }, nowMs)) {
@@ -587,7 +590,17 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const updatedAt = Object.fromEntries(rows.map(row => [row.key, row.updated_at]));
+  let manualOrderImportPending = 0;
+  if (typeof database.getOne === 'function') {
+    const pendingImport = await database.getOne(
+      `SELECT COUNT(*) AS count
+       FROM manual_order_import_batches
+       WHERE status = 'requested'`
+    );
+    manualOrderImportPending = Number(pendingImport?.count || 0);
+  }
   return {
+    manualOrderImportPending,
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
     transactionStartHourUpdatedAt: updatedAt.transaction_start_hour || '',
     transactionStartRequested: Number(values.transaction_start_requested || 0),

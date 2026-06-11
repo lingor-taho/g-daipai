@@ -1752,6 +1752,14 @@ router.get('/idle-flags', async (req, res) => {
   }) ? 1 : 0;
   const scanEveryIdleRuns = Math.max(1, Number(values.scan_every_idle_runs || 5));
   const scanIdleCounter = Math.max(0, Number(values.scan_idle_counter || 0));
+  const manualImportSummary = await db.getOne(
+    `SELECT
+       SUM(CASE WHEN status = 'requested' THEN 1 ELSE 0 END) AS requested,
+       SUM(CASE WHEN status = 'scanning' THEN 1 ELSE 0 END) AS scanning,
+       SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready
+     FROM manual_order_import_batches
+     WHERE status IN ('requested', 'scanning', 'ready')`
+  );
 
   res.json({
     success: true,
@@ -1766,6 +1774,10 @@ router.get('/idle-flags', async (req, res) => {
     confirmReceiptAlertMessage: values.confirm_receipt_alert_message || '',
     scanFlag: scanIdleCounter,
     scanEveryIdleRuns,
+    manualOrderImportFlag: Number(manualImportSummary?.requested || 0) + Number(manualImportSummary?.scanning || 0),
+    manualOrderImportRequested: Number(manualImportSummary?.requested || 0),
+    manualOrderImportScanning: Number(manualImportSummary?.scanning || 0),
+    manualOrderImportReady: Number(manualImportSummary?.ready || 0),
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
     paymentAlertMessage: values.payment_alert_message || '',
     captchaChallenge: await getCaptchaChallenge(db),

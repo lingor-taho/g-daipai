@@ -396,6 +396,8 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-11 | 后续开发计划重新确认 | 生产环境暂未发现 `/my/won` 落札同步、默认信用卡付款、交易 tab 关闭问题；出价/查询 worker 隔离和批处理危险操作收口先保留以后讨论。PIN/验证码仍待继续处理：当前进入验证码页面后没有把验证码图片返回后台，并且还会再次打开 PIN 页面。待收货补表格页面说明不再写死 `-代拍表-`，改为读取当前 Google 工作表名称配置 |
 | 2026-06-11 | 增加自动化回归入口 | 根目录新增 `npm run regression` / `npm run test:regression`，串行执行 Google Sheets 配置测试、后台订单测试、插件路由测试、Yahoo 插件 content/background/encoding 测试，以及后台和用户端生产构建，用于发布前确认现有流程没有被改坏 |
 | 2026-06-11 | 导入订单点击“读取落札商品”报 `invalid config key` | 根因是 `createManualOrderImportBatch()` 创建批次后会写 `scan_idle_counter=999` 以便插件优先执行导入扫描，但 `saveConfigValue()` 白名单只允许付款相关 key。已放行导入流程需要的 `scan_idle_counter`、`transaction_start_requested`、`transaction_start_requested_source`，并补充测试覆盖创建导入批次不会再因配置 key 失败 |
+| 2026-06-11 | 导入订单等待插件读取但扫描 Flag 增加后仍未执行 | 导入读取从“普通 scan action 内优先执行”提升为后端 idle 调度优先级：只要存在 `manual_order_import_batches.status='requested'` 的批次，`/api/plugin/idle-action/next` 就直接返回 `scan` action，且优先于交易开始、扫描时间窗口和扫描计数；现有插件收到 scan 后仍按原逻辑先执行导入，导入无任务才执行普通扫描 |
+| 2026-06-11 | 后台订单管理缺少导入任务状态可视化 | `/api/admin/idle-flags` 新增返回手动导入批次计数：待读取 `requested`、读取中 `scanning`、待确认 `ready`；订单管理顶部状态条在“扫描计数”后显示“导入flag：待读取 x，读取中 y，待确认 z”，便于判断导入是否已被插件领取 |
 
 ---
 

@@ -416,6 +416,16 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   assert.equal(ORDER_STATUS_WAITING_SHIPPING, 'waiting_shipping');
   assert.equal(ORDER_STATUS_PENDING_BUNDLE, 'pending_bundle');
   assert.equal(getNextIdleAction({
+    manualOrderImportPending: 1,
+    transactionStartRequested: 1,
+    scanIdleCounter: 0,
+    scanEveryIdleRuns: 5,
+    scanStartHour: 1,
+    scanEndHour: 2,
+    nowHour: 10,
+    today: '2026-06-01'
+  }).action, 'scan');
+  assert.equal(getNextIdleAction({
     transactionStartRequested: 1,
     scanIdleCounter: 5,
     scanEveryIdleRuns: 5,
