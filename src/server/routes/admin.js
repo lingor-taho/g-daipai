@@ -1526,6 +1526,16 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     const itemId = Number(item?.itemId || item?.id || 0);
     const userId = Number(item?.userId || item?.assignedUserId || 0);
     if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(userId) || userId <= 0) continue;
+    const assignableUser = await database.getOne(
+      `SELECT id FROM users
+       WHERE id = ? AND role = 'user' AND COALESCE(user_level, 1) < 3`,
+      [userId]
+    );
+    if (!assignableUser) {
+      const error = new Error('assigned user must be normal or agent user');
+      error.statusCode = 400;
+      throw error;
+    }
     await database.query(
       `UPDATE manual_order_import_items
        SET assigned_user_id = ?, updated_at = CURRENT_TIMESTAMP
@@ -2290,6 +2300,7 @@ module.exports.parseStoreBundleChildProductIds = parseStoreBundleChildProductIds
 module.exports.backfillStoreBundle = backfillStoreBundle;
 module.exports.deleteProductDataByProductId = deleteProductDataByProductId;
 module.exports.createManualOrderImportBatch = createManualOrderImportBatch;
+module.exports.confirmManualOrderImport = confirmManualOrderImport;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;

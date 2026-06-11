@@ -400,6 +400,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-11 | 后台订单管理缺少导入任务状态可视化 | `/api/admin/idle-flags` 新增返回手动导入批次计数：待读取 `requested`、读取中 `scanning`、待确认 `ready`；订单管理顶部状态条在“扫描计数”后显示“导入flag：待读取 x，读取中 y，待确认 z”，便于判断导入是否已被插件领取 |
 | 2026-06-11 | 导入订单读取失败 `normalizeVisibleText is not defined` | 根因是 `content.js` 的 `findWonHistoryNextPageUrl()` 使用 `normalizeVisibleText()` 判断 `/my/won` 下一页链接，但该 helper 只定义在 `extractOrderHistory()` 局部作用域内；导入扫描调用 `extractOrderHistory()` 后继续调用翻页函数时抛 ReferenceError。已将 `normalizeVisibleText()` 提升为 content 顶层共享函数，并新增测试覆盖落札历史下一页链接提取 |
 | 2026-06-11 | 订单管理手机端结算汇率输入框换行 | 订单管理顶部操作区手机端将“本次结算汇率”和输入框包成 `admin-orders-rate-row` 两列布局，保持同一行显示；结算、支付、导出按钮仍保持手机端全宽纵向排列 |
+| 2026-06-11 | 导入订单归属用户下拉 PC/手机显示不一致 | 手动导入订单页归属用户下拉对齐代拍账号切换样式：第一行用户名、第二行 `普通用户/代理用户`；不显示管理员用户，也不显示 `等级N`。确认导入后 `orders.order_status` 继续写 `NULL` 空状态，后端额外校验禁止将导入订单分配给管理员等级用户 |
 
 ---
 

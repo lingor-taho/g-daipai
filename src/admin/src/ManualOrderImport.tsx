@@ -20,6 +20,11 @@ function statusTag(status?: string) {
   return <Tag>{status || '-'}</Tag>;
 }
 
+function getAssignableUserTypeText(levelValue: any) {
+  const level = Number(levelValue || 1);
+  return level === 2 ? '代理用户' : '普通用户';
+}
+
 export default function ManualOrderImportPage() {
   const [form] = Form.useForm();
   const [batchId, setBatchId] = useState<number | null>(null);
@@ -131,10 +136,17 @@ export default function ManualOrderImportPage() {
     }
   }
 
-  const userOptions = useMemo(() => users.map(user => ({
-    value: user.id,
-    label: `${user.username}（等级${user.user_level || 1}）`
-  })), [users]);
+  const userOptions = useMemo(() => users
+    .filter(user => Number(user.user_level || 1) < 3)
+    .map(user => {
+      const userTypeText = getAssignableUserTypeText(user.user_level);
+      return {
+        value: user.id,
+        label: user.username,
+        userTypeText,
+        searchText: `${user.username} ${userTypeText}`
+      };
+    }), [users]);
 
   const columns = [
     {
@@ -161,9 +173,15 @@ export default function ManualOrderImportPage() {
           showSearch
           style={{ width: 200 }}
           placeholder="选择用户"
-          optionFilterProp="label"
+          optionFilterProp="searchText"
           value={assignments[row.id]}
           options={userOptions}
+          optionRender={(option: any) => (
+            <Space direction="vertical" size={0}>
+              <span>{option.data.label}</span>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>{option.data.userTypeText}</Typography.Text>
+            </Space>
+          )}
           onChange={value => setAssignments(prev => ({ ...prev, [row.id]: value }))}
         />
       ) : (row.assigned_username || row.assigned_user_id || '-')

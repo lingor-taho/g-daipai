@@ -13,6 +13,7 @@ const {
   normalizeProductType,
   parseShippingFeeToNumber,
   createManualOrderImportBatch,
+  confirmManualOrderImport,
   requestScan,
   requestPayment,
   clearPaymentAlertAndContinue,
@@ -392,6 +393,24 @@ async function testCreateManualOrderImportBatchDoesNotMutateScanCounter() {
   assert.equal(queries.length, 1);
 }
 
+async function testConfirmManualOrderImportRejectsAdminUserAssignment() {
+  const fakeDb = {
+    async getOne(sql) {
+      if (/FROM manual_order_import_batches/.test(sql)) return { id: 9, status: 'ready' };
+      if (/FROM users/.test(sql)) return null;
+      throw new Error(`unexpected getOne: ${sql}`);
+    },
+    async query() {
+      throw new Error('should not update import assignment');
+    }
+  };
+
+  await assert.rejects(
+    () => confirmManualOrderImport(9, [{ itemId: 1, userId: 3 }], fakeDb),
+    /assigned user must be normal or agent user/
+  );
+}
+
 async function testRequestPaymentSetsFlag() {
   const queries = [];
   const fakeDb = {
@@ -597,6 +616,7 @@ testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
   testCreateManualOrderImportBatchDoesNotMutateScanCounter(),
+  testConfirmManualOrderImportRejectsAdminUserAssignment(),
   testRequestPaymentSetsFlag(),
   testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),
