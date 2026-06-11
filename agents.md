@@ -401,6 +401,9 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-11 | 导入订单读取失败 `normalizeVisibleText is not defined` | 根因是 `content.js` 的 `findWonHistoryNextPageUrl()` 使用 `normalizeVisibleText()` 判断 `/my/won` 下一页链接，但该 helper 只定义在 `extractOrderHistory()` 局部作用域内；导入扫描调用 `extractOrderHistory()` 后继续调用翻页函数时抛 ReferenceError。已将 `normalizeVisibleText()` 提升为 content 顶层共享函数，并新增测试覆盖落札历史下一页链接提取 |
 | 2026-06-11 | 订单管理手机端结算汇率输入框换行 | 订单管理顶部操作区手机端将“本次结算汇率”和输入框包成 `admin-orders-rate-row` 两列布局，保持同一行显示；结算、支付、导出按钮仍保持手机端全宽纵向排列 |
 | 2026-06-11 | 导入订单归属用户下拉 PC/手机显示不一致 | 手动导入订单页归属用户下拉对齐代拍账号切换样式：第一行用户名、第二行 `普通用户/代理用户`；不显示管理员用户，也不显示 `等级N`。确认导入后 `orders.order_status` 继续写 `NULL` 空状态，后端额外校验禁止将导入订单分配给管理员等级用户 |
+| 2026-06-11 | 导入订单完成后仍自动刷新且无候选显示“待确认/待分配用户” | 导入页自动刷新改为只在 `requested/scanning` 时运行，完成后“刷新”仅作为手动按钮；`ready + candidate_count=0` 显示“读取完成（无新订单）”，禁用确认导入并提示跳过已存在数量。订单管理导入 flag 将 `ready` 拆为“待确认”和“已完成无新订单”，避免无候选批次继续显示待确认。验证：`node src/admin/src/manualOrderImportState.test.js`、`node src/server/routes/admin.orders.test.js`、`cd src/admin && npm run build` |
+| 2026-06-11 | 导入订单 flag 和候选列表职责混淆 | 业务规则重新确认：`导入flag` 只表示插件读取队列是否还有任务，点击“读取落札商品”后为 `1`，插件把候选数据读取完成后恢复 `0`；候选列表的分配用户/填写运费/确认导入属于后续人工处理，不再影响导入队列 flag。订单管理顶部只显示 `导入flag：0/1`。确认导入时只导入已分配用户的候选订单，未分配候选直接跳过，不再阻断整批；候选运费可在导入页表格内编辑并随导入保存。验证：`node src/admin/src/manualOrderImportState.test.js`、`node src/server/routes/admin.orders.test.js`、`cd src/admin && npm run build` |
+| 2026-06-11 | 导入订单运费输入框显示范围过宽，刷新按钮含义不清 | 导入页待处理候选只有原始运费为 `落札者負担` 或 `着払い` 时显示运费输入框，固定金额/免费等明确运费只展示文本，不再允许编辑；按钮文案改为“刷新当前列表”，功能仅为重新拉取当前批次状态和候选列表，不会重新创建读取队列或重新扫描 Yahoo。验证：`node src/admin/src/manualOrderImportState.test.js`、`node src/server/routes/admin.orders.test.js`、`cd src/admin && npm run build` |
 
 ---
 

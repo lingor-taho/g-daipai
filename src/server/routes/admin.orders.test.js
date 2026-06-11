@@ -22,6 +22,7 @@ const {
   deleteProductDataByProductId,
   buildGoogleSheetUrl,
   parseStoreBundleChildProductIds,
+  normalizeManualOrderImportSummary,
   backfillStoreBundle,
   ORDER_STATUS_PENDING_SHIPMENT,
   ORDER_STATUS_BUNDLE_COMPLETED
@@ -47,6 +48,62 @@ function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {
     parseStoreBundleChildProductIds('s123456789，S123456780, https://auctions.yahoo.co.jp/jp/auction/s123456781, s123456789'),
     ['s123456789', 's123456780', 's123456781']
   );
+}
+
+function testManualOrderImportSummarySeparatesEmptyReadyBatches() {
+  assert.deepEqual(
+    normalizeManualOrderImportSummary({
+      requested: 2,
+      scanning: 0,
+      ready: 0,
+      ready_empty: 1
+    }),
+    {
+      flag: 1,
+      requested: 2,
+      scanning: 0,
+      ready: 0,
+      readyEmpty: 1
+    }
+  );
+}
+
+async function testConfirmManualOrderImportSkipsUnassignedItems() {
+  const queries = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      if (/FROM manual_order_import_batches/.test(sql)) return { id: 9, status: 'ready' };
+      if (/COUNT\(\*\) AS count/.test(sql)) return { count: 1 };
+      if (/FROM orders o/.test(sql)) return null;
+      if (/last_insert_rowid/.test(sql)) return { id: queries.length };
+      throw new Error(`unexpected getOne: ${sql} ${JSON.stringify(params || [])}`);
+    },
+    async getAll(sql) {
+      if (/FROM manual_order_import_items/.test(sql)) {
+        return [
+          {
+            id: 1,
+            product_id: 'a100000001',
+            assigned_user_id: 8,
+            final_price: 1200,
+            product_title: 'assigned item'
+          }
+        ];
+      }
+      return [];
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await confirmManualOrderImport(9, [], fakeDb);
+
+  assert.equal(result.imported, 1);
+  assert.equal(result.skippedUnassigned, 1);
+  assert.equal(queries.some(query => /INSERT INTO tasks/.test(query.sql)), true);
+  assert.equal(queries.some(query => /status = 'confirmed'/.test(query.sql)), true);
 }
 
 function testSettleableShippingFeeDetection() {
@@ -612,11 +669,13 @@ testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
 testBuildGoogleSheetUrl();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
+testManualOrderImportSummarySeparatesEmptyReadyBatches();
 
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
   testCreateManualOrderImportBatchDoesNotMutateScanCounter(),
   testConfirmManualOrderImportRejectsAdminUserAssignment(),
+  testConfirmManualOrderImportSkipsUnassignedItems(),
   testRequestPaymentSetsFlag(),
   testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),

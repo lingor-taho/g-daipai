@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Form, Input, InputNumber, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
+import {
+  getManualOrderImportStatusView,
+  shouldEditManualImportShippingFee,
+  shouldAutoRefreshManualOrderImportBatch
+} from './manualOrderImportState';
 
 function formatLocalDate(offsetDays = 0) {
   const date = new Date();
@@ -11,13 +16,9 @@ function formatLocalDate(offsetDays = 0) {
   return `${year}-${month}-${day}`;
 }
 
-function statusTag(status?: string) {
-  if (status === 'requested') return <Tag color="blue">等待插件读取</Tag>;
-  if (status === 'scanning') return <Tag color="gold">插件读取中</Tag>;
-  if (status === 'ready') return <Tag color="green">待分配用户</Tag>;
-  if (status === 'confirmed') return <Tag color="purple">已导入</Tag>;
-  if (status === 'failed') return <Tag color="red">读取失败</Tag>;
-  return <Tag>{status || '-'}</Tag>;
+function statusTag(batch?: any) {
+  const view = getManualOrderImportStatusView(batch);
+  return <Tag color={view.color}>{view.label}</Tag>;
 }
 
 function getAssignableUserTypeText(levelValue: any) {
@@ -35,6 +36,7 @@ export default function ManualOrderImportPage() {
   const [requesting, setRequesting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [assignments, setAssignments] = useState<Record<number, number>>({});
+  const [shippingEdits, setShippingEdits] = useState<Record<number, string>>({});
 
   async function loadUsers() {
     const data = await fetchAdminJson('/api/admin/users/options');
@@ -47,9 +49,9 @@ export default function ManualOrderImportPage() {
     if (latest?.id) setBatchId(latest.id);
   }
 
-  async function loadBatch(id = batchId) {
+  async function loadBatch(id = batchId, options: { silent?: boolean } = {}) {
     if (!id) return;
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     try {
       const data = await fetchAdminJson(`/api/admin/manual-order-import/batches/${id}`);
       setBatch(data.batch || null);
@@ -62,10 +64,19 @@ export default function ManualOrderImportPage() {
         }
         return next;
       });
+      setShippingEdits(current => {
+        const next = { ...current };
+        for (const item of nextItems) {
+          if (next[item.id] === undefined) next[item.id] = item.shipping_fee_text || '';
+        }
+        return next;
+      });
+      return data.batch || null;
     } catch (e: any) {
       message.error(e.message || '加载导入批次失败');
+      return null;
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   }
 
@@ -76,9 +87,20 @@ export default function ManualOrderImportPage() {
 
   useEffect(() => {
     if (!batchId) return;
-    loadBatch(batchId);
-    const timer = window.setInterval(() => loadBatch(batchId), 5000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function refreshBatch(silent = false) {
+      const nextBatch = await loadBatch(batchId, { silent });
+      if (cancelled || !shouldAutoRefreshManualOrderImportBatch(nextBatch)) return;
+      timer = window.setTimeout(() => refreshBatch(true), 5000);
+    }
+
+    refreshBatch();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [batchId]);
 
   async function requestImport(values: any) {
@@ -98,6 +120,7 @@ export default function ManualOrderImportPage() {
       message.success('已创建导入读取任务，插件会在扫描阶段优先执行');
       setBatchId(data.id);
       setAssignments({});
+      setShippingEdits({});
     } catch (e: any) {
       message.error(e.message || '创建导入任务失败');
     } finally {
@@ -107,13 +130,8 @@ export default function ManualOrderImportPage() {
 
   async function confirmImport() {
     const pending = items.filter(item => item.status === 'pending_user');
-    const missing = pending.filter(item => !assignments[item.id]);
     if (!pending.length) {
       message.warning('没有可确认导入的候选订单');
-      return;
-    }
-    if (missing.length) {
-      message.warning('请先给所有候选订单选择归属用户');
       return;
     }
     setConfirming(true);
@@ -122,12 +140,16 @@ export default function ManualOrderImportPage() {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          assignments: pending.map(item => ({ itemId: item.id, userId: assignments[item.id] }))
+          assignments: pending.map(item => ({
+            itemId: item.id,
+            userId: assignments[item.id],
+            shippingFeeText: shippingEdits[item.id] ?? item.shipping_fee_text ?? ''
+          }))
         })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '确认导入失败');
-      message.success(`已导入 ${data.imported || 0} 条，跳过已存在 ${data.skippedExisting || 0} 条`);
+      message.success(`已导入 ${data.imported || 0} 条，未分配跳过 ${data.skippedUnassigned || 0} 条，已存在跳过 ${data.skippedExisting || 0} 条`);
       await loadBatch();
     } catch (e: any) {
       message.error(e.message || '确认导入失败');
@@ -162,7 +184,19 @@ export default function ManualOrderImportPage() {
     },
     { title: '落札价', dataIndex: 'final_price', width: 90, render: (v: any) => v ? `${Number(v).toLocaleString()}円` : '-' },
     { title: '落札时间', dataIndex: 'won_time_text', width: 120 },
-    { title: '运费', dataIndex: 'shipping_fee_text', width: 110, render: (v: any) => v || '-' },
+    {
+      title: '运费',
+      dataIndex: 'shipping_fee_text',
+      width: 160,
+      render: (v: any, row: any) => row.status === 'pending_user' && shouldEditManualImportShippingFee(v) ? (
+        <Input
+          style={{ width: 140 }}
+          placeholder="运费"
+          value={shippingEdits[row.id] ?? v ?? ''}
+          onChange={event => setShippingEdits(prev => ({ ...prev, [row.id]: event.target.value }))}
+        />
+      ) : (v || '-')
+    },
     { title: '类型', dataIndex: 'product_type', width: 80, render: (v: any) => v === 'store' ? <Tag color="red">商城</Tag> : <Tag color="green">普通</Tag> },
     {
       title: '归属用户',
@@ -186,8 +220,19 @@ export default function ManualOrderImportPage() {
         />
       ) : (row.assigned_username || row.assigned_user_id || '-')
     },
-    { title: '状态', dataIndex: 'status', width: 110, render: (v: any) => v === 'pending_user' ? <Tag color="blue">待分配</Tag> : v === 'imported' ? <Tag color="green">已导入</Tag> : <Tag>{v || '-'}</Tag> }
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 110,
+      render: (v: any) => {
+        if (v === 'pending_user') return <Tag color="blue">待分配</Tag>;
+        if (v === 'imported') return <Tag color="green">已导入</Tag>;
+        if (v === 'skipped_unassigned') return <Tag>未分配跳过</Tag>;
+        return <Tag>{v || '-'}</Tag>;
+      }
+    }
   ];
+  const batchStatusView = getManualOrderImportStatusView(batch);
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -212,7 +257,7 @@ export default function ManualOrderImportPage() {
           </Form.Item>
           {batchId ? (
             <Form.Item>
-              <Button onClick={() => loadBatch()} loading={loading}>刷新</Button>
+              <Button onClick={() => loadBatch()} loading={loading}>刷新当前列表</Button>
             </Form.Item>
           ) : null}
         </Form>
@@ -223,8 +268,8 @@ export default function ManualOrderImportPage() {
 
       {batch ? (
         <Card
-          title={<Space>当前批次 #{batch.id} {statusTag(batch.status)}</Space>}
-          extra={<Button type="primary" onClick={confirmImport} loading={confirming} disabled={batch.status !== 'ready'}>确认导入</Button>}
+          title={<Space>当前批次 #{batch.id} {statusTag(batch)}</Space>}
+          extra={<Button type="primary" onClick={confirmImport} loading={confirming} disabled={!batchStatusView.canConfirm}>确认导入</Button>}
         >
           <Space wrap style={{ marginBottom: 12 }}>
             <Typography.Text>日期：{batch.start_date} 至 {batch.end_date}</Typography.Text>
@@ -233,12 +278,18 @@ export default function ManualOrderImportPage() {
             <Typography.Text>候选：{batch.candidate_count || 0}</Typography.Text>
             <Typography.Text>跳过已存在：{batch.skipped_existing_count || 0}</Typography.Text>
           </Space>
+          {batchStatusView.isCompleteWithoutCandidates ? (
+            <Typography.Paragraph type="secondary">
+              读取已完成，本次没有新的待分配订单；已存在订单跳过 {batch.skipped_existing_count || 0} 条。
+            </Typography.Paragraph>
+          ) : null}
           {batch.error_msg ? <Typography.Paragraph type="danger">错误：{batch.error_msg}</Typography.Paragraph> : null}
           <Table
             rowKey="id"
             loading={loading}
             columns={columns}
             dataSource={items}
+            locale={{ emptyText: batchStatusView.emptyText || undefined }}
             pagination={{ pageSize: 20 }}
             scroll={{ x: 980 }}
           />

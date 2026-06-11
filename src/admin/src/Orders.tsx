@@ -3,6 +3,7 @@ import type { Key } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Form, Input, InputNumber, Modal, Space, Tag, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
+import { formatManualOrderImportFlag } from './manualOrderImportState';
 
 function formatJPY(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') return '';
@@ -96,11 +97,7 @@ function renderTransactionStartLastRun(log: any) {
 
 function renderManualOrderImportFlag(flags: any) {
   if (!flags) return '-';
-  const requested = Number(flags.manualOrderImportRequested || 0);
-  const scanning = Number(flags.manualOrderImportScanning || 0);
-  const ready = Number(flags.manualOrderImportReady || 0);
-  if (!requested && !scanning && !ready) return '0';
-  return `待读取 ${requested}，读取中 ${scanning}，待确认 ${ready}`;
+  return formatManualOrderImportFlag(flags);
 }
 
 function renderStatusChangeSource(row: any) {

@@ -1509,6 +1509,18 @@ async function listManualOrderImportItems(batchId, database = db) {
   );
 }
 
+function normalizeManualOrderImportSummary(summary = {}) {
+  const requested = Number(summary?.requested || 0);
+  const scanning = Number(summary?.scanning || 0);
+  return {
+    flag: requested + scanning > 0 ? 1 : 0,
+    requested,
+    scanning,
+    ready: Number(summary?.ready || 0),
+    readyEmpty: Number(summary?.ready_empty || summary?.readyEmpty || 0)
+  };
+}
+
 async function confirmManualOrderImport(batchId, assignments = [], database = db) {
   const batch = await getManualOrderImportBatch(batchId, database);
   if (!batch) {
@@ -1525,7 +1537,19 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
   for (const item of Array.isArray(assignments) ? assignments : []) {
     const itemId = Number(item?.itemId || item?.id || 0);
     const userId = Number(item?.userId || item?.assignedUserId || 0);
-    if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(userId) || userId <= 0) continue;
+    const shippingFeeText = String(item?.shippingFeeText ?? item?.shipping_fee_text ?? '').trim();
+    if (!Number.isInteger(itemId) || itemId <= 0) continue;
+    if (!Number.isInteger(userId) || userId <= 0) {
+      if (shippingFeeText) {
+        await database.query(
+          `UPDATE manual_order_import_items
+           SET shipping_fee_text = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND batch_id = ? AND status = 'pending_user'`,
+          [shippingFeeText, itemId, batch.id]
+        );
+      }
+      continue;
+    }
     const assignableUser = await database.getOne(
       `SELECT id FROM users
        WHERE id = ? AND role = 'user' AND COALESCE(user_level, 1) < 3`,
@@ -1538,28 +1562,32 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     }
     await database.query(
       `UPDATE manual_order_import_items
-       SET assigned_user_id = ?, updated_at = CURRENT_TIMESTAMP
+       SET assigned_user_id = ?, shipping_fee_text = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND batch_id = ? AND status = 'pending_user'`,
-      [userId, itemId, batch.id]
+      [userId, shippingFeeText, itemId, batch.id]
     );
   }
 
-  const missing = await database.getOne(
+  const unassigned = await database.getOne(
     `SELECT COUNT(*) AS count
      FROM manual_order_import_items
      WHERE batch_id = ? AND status = 'pending_user' AND assigned_user_id IS NULL`,
     [batch.id]
   );
-  if (Number(missing?.count || 0) > 0) {
-    const error = new Error('all import items must have assigned user');
-    error.statusCode = 400;
-    throw error;
+  const skippedUnassigned = Number(unassigned?.count || 0);
+  if (skippedUnassigned > 0) {
+    await database.query(
+      `UPDATE manual_order_import_items
+       SET status = 'skipped_unassigned', updated_at = CURRENT_TIMESTAMP
+       WHERE batch_id = ? AND status = 'pending_user' AND assigned_user_id IS NULL`,
+      [batch.id]
+    );
   }
 
   const items = await database.getAll(
     `SELECT *
      FROM manual_order_import_items
-     WHERE batch_id = ? AND status = 'pending_user'
+     WHERE batch_id = ? AND status = 'pending_user' AND assigned_user_id IS NOT NULL
      ORDER BY id ASC`,
     [batch.id]
   );
@@ -1644,7 +1672,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
   );
   await saveConfigValue(database, 'transaction_start_requested', '1');
   await saveConfigValue(database, 'transaction_start_requested_source', 'manual');
-  return { imported, skippedExisting };
+  return { imported, skippedExisting, skippedUnassigned };
 }
 
 router.post('/scan/request', async (req, res) => {
@@ -1765,10 +1793,12 @@ router.get('/idle-flags', async (req, res) => {
     `SELECT
        SUM(CASE WHEN status = 'requested' THEN 1 ELSE 0 END) AS requested,
        SUM(CASE WHEN status = 'scanning' THEN 1 ELSE 0 END) AS scanning,
-       SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready
+       SUM(CASE WHEN status = 'ready' AND COALESCE(candidate_count, 0) > 0 THEN 1 ELSE 0 END) AS ready,
+       SUM(CASE WHEN status = 'ready' AND COALESCE(candidate_count, 0) = 0 THEN 1 ELSE 0 END) AS ready_empty
      FROM manual_order_import_batches
      WHERE status IN ('requested', 'scanning', 'ready')`
   );
+  const manualImportFlags = normalizeManualOrderImportSummary(manualImportSummary);
 
   res.json({
     success: true,
@@ -1783,10 +1813,11 @@ router.get('/idle-flags', async (req, res) => {
     confirmReceiptAlertMessage: values.confirm_receipt_alert_message || '',
     scanFlag: scanIdleCounter,
     scanEveryIdleRuns,
-    manualOrderImportFlag: Number(manualImportSummary?.requested || 0) + Number(manualImportSummary?.scanning || 0),
-    manualOrderImportRequested: Number(manualImportSummary?.requested || 0),
-    manualOrderImportScanning: Number(manualImportSummary?.scanning || 0),
-    manualOrderImportReady: Number(manualImportSummary?.ready || 0),
+    manualOrderImportFlag: manualImportFlags.flag,
+    manualOrderImportRequested: manualImportFlags.requested,
+    manualOrderImportScanning: manualImportFlags.scanning,
+    manualOrderImportReady: manualImportFlags.ready,
+    manualOrderImportReadyEmpty: manualImportFlags.readyEmpty,
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
     paymentAlertMessage: values.payment_alert_message || '',
     captchaChallenge: await getCaptchaChallenge(db),
@@ -2301,6 +2332,7 @@ module.exports.backfillStoreBundle = backfillStoreBundle;
 module.exports.deleteProductDataByProductId = deleteProductDataByProductId;
 module.exports.createManualOrderImportBatch = createManualOrderImportBatch;
 module.exports.confirmManualOrderImport = confirmManualOrderImport;
+module.exports.normalizeManualOrderImportSummary = normalizeManualOrderImportSummary;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
