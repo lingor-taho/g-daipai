@@ -25,6 +25,24 @@ body,
   color: #1677ff;
 }
 
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-a > td {
+  background: #edf7ff !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-b > td {
+  background: #fff2e0 !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-a:hover > td,
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-a.ant-table-row-selected > td {
+  background: #dff0ff !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-b:hover > td,
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-b.ant-table-row-selected > td {
+  background: #ffe8bf !important;
+}
+
 .admin-bottom-nav-full {
   max-width: 100%;
   overflow: hidden;

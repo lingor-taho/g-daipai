@@ -1,6 +1,6 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Form, Input, InputNumber, Modal, Space, Tag, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 
@@ -69,6 +69,10 @@ function renderShippingText(row: any) {
   const bundleShipping = String(row.bundle_shipping_fee_text || '').trim();
   if (!bundleShipping) return shipping;
   return `${shipping}->${bundleShipping}`;
+}
+
+function getBundleGroupId(row: any) {
+  return String(row?.bundle_group_id || '').trim();
 }
 
 function renderTransactionStartLastRun(log: any) {
@@ -239,6 +243,18 @@ export default function OrdersPage() {
   const [csvShippingRows, setCsvShippingRows] = useState<any[]>([]);
   const [csvShippingOverrides, setCsvShippingOverrides] = useState<Record<string, number | null>>({});
   const [storeBundleForm] = Form.useForm();
+
+  const bundleRowClassMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    let colorIndex = 0;
+    for (const row of currentRows) {
+      const groupId = getBundleGroupId(row);
+      if (!groupId || map[groupId]) continue;
+      map[groupId] = colorIndex % 2 === 0 ? 'admin-bundle-row-a' : 'admin-bundle-row-b';
+      colorIndex += 1;
+    }
+    return map;
+  }, [currentRows]);
 
   useEffect(() => {
     fetchAdminJson('/api/admin/idle-flags').then(setIdleFlags).catch(() => {});
@@ -669,6 +685,7 @@ export default function OrdersPage() {
 
       <ProTable
         key={reloadKey}
+        className="admin-orders-table"
         columns={columns}
         request={async (params: any) => {
           try {
@@ -683,6 +700,10 @@ export default function OrdersPage() {
           }
         }}
         rowKey="id"
+        rowClassName={(record: any) => {
+          const groupId = getBundleGroupId(record);
+          return groupId ? bundleRowClassMap[groupId] || 'admin-bundle-row-a' : '';
+        }}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys, rows) => {

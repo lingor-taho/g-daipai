@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-10
+**最后更新**: 2026-06-11
 
 ---
 
@@ -391,6 +391,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 店铺确认事项 checkbox 视觉勾选但按钮仍不可提交，手工取消再勾选可提交 | checkbox 勾选改为 Chrome debugger 真实鼠标点击：读取每个 `input[type="checkbox"]`/label 的屏幕坐标后发送 `mouseMoved/mousePressed/mouseReleased`。若 checkbox 已显示选中，会先真实点击取消再真实点击选中，强制 Yahoo 前端收到与人工操作一致的交互事件；JS 设置 checked 仅保留为 debugger 不可用时兜底 |
 | 2026-06-10 | 后台订单管理需要跨页自动选中和 CSV 导出 | 订单管理表格复选框不再限制状态，结算/支付状态检查延后到按钮点击时处理；首次勾选订单时按该订单用户跨页选中 `won_at` 从昨天到今天的所有订单，并缓存跨页订单数据。新增导出 CSV，字段为落札日期、用户名、商品链接、商品标题、落札价、运费、总价；导出只看原始 `shipping_fee_text`，遇到 `落札者負担/着払い` 弹窗输入本次导出运费，不写数据库且不使用同捆运费 |
 | 2026-06-10 | 用户端管理员/代理切换用户下拉不支持搜索 | `src/client/src/components/UserNav.jsx` 将原 `Picker` 切换为 `Popup + SearchBar + List`，点击“当前账号”后弹出可搜索用户列表，按用户名和用户等级过滤；选中后继续复用原 `acting-user-change`、localStorage 和页面刷新逻辑 |
+| 2026-06-11 | 后台订单管理同捆商品缺少组背景色 | 订单管理表格按 `bundle_group_id` 给同捆商品行标浅色背景；同一组保持同色，当前页相邻同捆组在两种浅色间交替，便于和 Google 表格一样区分同捆组 |
 
 ---
 
