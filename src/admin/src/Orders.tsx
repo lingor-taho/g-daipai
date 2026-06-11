@@ -568,8 +568,10 @@ export default function OrdersPage() {
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card>
         <Space wrap className="admin-mobile-action-space">
-          <Typography.Text>本次结算汇率</Typography.Text>
-          <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
+          <span className="admin-orders-rate-row">
+            <Typography.Text>本次结算汇率</Typography.Text>
+            <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
+          </span>
           <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
           <Button loading={paymentSubmitting} onClick={handlePaymentRequest}>支付</Button>
           <Button onClick={handleExportCsv}>导出CSV</Button>

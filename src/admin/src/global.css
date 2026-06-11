@@ -151,6 +151,22 @@ body,
     width: 100%;
   }
 
+  .admin-orders-rate-row {
+    display: grid;
+    width: 100%;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+
+  .admin-orders-rate-row .ant-typography {
+    white-space: nowrap;
+  }
+
+  .admin-orders-rate-row .ant-input-number {
+    width: 100%;
+  }
+
   .admin-mobile-flag-space {
     gap: 8px !important;
   }

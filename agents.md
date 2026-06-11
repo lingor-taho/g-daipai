@@ -399,6 +399,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-11 | 导入订单等待插件读取但扫描 Flag 增加后仍未执行 | 导入读取从“普通 scan action 内优先执行”提升为后端 idle 调度优先级：只要存在 `manual_order_import_batches.status='requested'` 的批次，`/api/plugin/idle-action/next` 就直接返回 `scan` action，且优先于交易开始、扫描时间窗口和扫描计数；现有插件收到 scan 后仍按原逻辑先执行导入，导入无任务才执行普通扫描。创建导入批次不再修改普通扫描计数 |
 | 2026-06-11 | 后台订单管理缺少导入任务状态可视化 | `/api/admin/idle-flags` 新增返回手动导入批次计数：待读取 `requested`、读取中 `scanning`、待确认 `ready`；订单管理顶部状态条在“扫描计数”后显示“导入flag：待读取 x，读取中 y，待确认 z”，便于判断导入是否已被插件领取 |
 | 2026-06-11 | 导入订单读取失败 `normalizeVisibleText is not defined` | 根因是 `content.js` 的 `findWonHistoryNextPageUrl()` 使用 `normalizeVisibleText()` 判断 `/my/won` 下一页链接，但该 helper 只定义在 `extractOrderHistory()` 局部作用域内；导入扫描调用 `extractOrderHistory()` 后继续调用翻页函数时抛 ReferenceError。已将 `normalizeVisibleText()` 提升为 content 顶层共享函数，并新增测试覆盖落札历史下一页链接提取 |
+| 2026-06-11 | 订单管理手机端结算汇率输入框换行 | 订单管理顶部操作区手机端将“本次结算汇率”和输入框包成 `admin-orders-rate-row` 两列布局，保持同一行显示；结算、支付、导出按钮仍保持手机端全宽纵向排列 |
 
 ---
 
