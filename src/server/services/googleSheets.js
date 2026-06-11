@@ -13,7 +13,8 @@ const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150];
 let cachedToken = null;
 let runtimeConfig = {
   googleSheetId: '',
-  googleCredentialPath: ''
+  googleCredentialPath: '',
+  googleSheetName: ''
 };
 
 function base64Url(input) {
@@ -36,7 +37,7 @@ function isGoogleSheetsConfigured() {
 function getSheetConfig() {
   return {
     spreadsheetId: runtimeConfig.googleSheetId || process.env.GOOGLE_SHEETS_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID,
-    sheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || DEFAULT_SHEET_NAME
+    sheetName: runtimeConfig.googleSheetName || process.env.GOOGLE_SHEETS_SHEET_NAME || DEFAULT_SHEET_NAME
   };
 }
 
@@ -55,10 +56,12 @@ function extractSpreadsheetId(value) {
 function applyGoogleSheetsConfig(config = {}) {
   const nextSheetId = extractSpreadsheetId(config.googleSheetId || config.spreadsheetId || config.googleSheetUrl || '');
   const nextCredentialPath = String(config.googleCredentialPath || config.credentialPath || '').trim();
+  const nextSheetName = String(config.googleSheetName || config.sheetName || '').trim();
   const credentialChanged = nextCredentialPath !== runtimeConfig.googleCredentialPath;
   runtimeConfig = {
     googleSheetId: nextSheetId,
-    googleCredentialPath: nextCredentialPath
+    googleCredentialPath: nextCredentialPath,
+    googleSheetName: nextSheetName
   };
   if (credentialChanged) cachedToken = null;
   return { ...runtimeConfig };
@@ -67,12 +70,13 @@ function applyGoogleSheetsConfig(config = {}) {
 async function applyGoogleSheetsConfigFromDb(database) {
   if (!database?.getAll) return { ...runtimeConfig };
   const rows = await database.getAll(
-    "SELECT key, value FROM config WHERE key IN ('google_sheets_spreadsheet_id', 'google_application_credentials')"
+    "SELECT key, value FROM config WHERE key IN ('google_sheets_spreadsheet_id', 'google_application_credentials', 'google_sheets_sheet_name')"
   );
   const values = Object.fromEntries((rows || []).map(row => [row.key, row.value]));
   return applyGoogleSheetsConfig({
     googleSheetId: values.google_sheets_spreadsheet_id || '',
-    googleCredentialPath: values.google_application_credentials || ''
+    googleCredentialPath: values.google_application_credentials || '',
+    googleSheetName: values.google_sheets_sheet_name || ''
   });
 }
 

@@ -56,14 +56,16 @@ async function testApplyConfigFromDbOverridesEnv() {
     async getAll() {
       return [
         { key: 'google_sheets_spreadsheet_id', value: 'sheet-from-db' },
-        { key: 'google_application_credentials', value: 'config/db-service-account.json' }
+        { key: 'google_application_credentials', value: 'config/db-service-account.json' },
+        { key: 'google_sheets_sheet_name', value: '-custom-sheet-' }
       ];
     }
   };
   await applyGoogleSheetsConfigFromDb(fakeDb);
   assert.equal(getSheetConfig().spreadsheetId, 'sheet-from-db');
+  assert.equal(getSheetConfig().sheetName, '-custom-sheet-');
   assert.equal(getGoogleSheetsCredentialPath(), path.resolve('config/db-service-account.json'));
-  applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '' });
+  applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
 }
 
 async function run() {

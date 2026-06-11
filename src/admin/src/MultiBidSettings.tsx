@@ -43,23 +43,12 @@ async function requestScan() {
   return data;
 }
 
-async function resetTransactionStartOrders() {
-  const res = await fetch('/api/admin/transaction-start/reset-orders', {
-    method: 'POST',
-    headers: authHeaders()
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '初始化失败');
-  return data;
-}
-
 export default function MultiBidSettingsPage() {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [requestingConfirmReceipt, setRequestingConfirmReceipt] = useState(false);
   const [requestingScan, setRequestingScan] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const [googleConfigEditable, setGoogleConfigEditable] = useState(false);
 
   useEffect(() => {
@@ -81,6 +70,7 @@ export default function MultiBidSettingsPage() {
           paymentJobLimitMax: data.paymentJobLimitMax ?? data.paymentJobLimit ?? 3,
           paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3,
           googleSheetUrl: data.googleSheetUrl || '',
+          googleSheetName: data.googleSheetName || '-代拍表-',
           googleCredentialPath: data.googleCredentialPath || '',
           googleConfigEditable: false
         });
@@ -140,18 +130,6 @@ export default function MultiBidSettingsPage() {
     }
   }
 
-  async function handleResetTransactionStartOrders() {
-    setResetting(true);
-    try {
-      const data = await resetTransactionStartOrders();
-      message.success(`已初始化 ${data.reset || 0} 条订单状态`);
-    } catch (e: any) {
-      message.error(e.message || '初始化失败');
-    } finally {
-      setResetting(false);
-    }
-  }
-
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Form
@@ -175,6 +153,7 @@ export default function MultiBidSettingsPage() {
           paymentJobLimitMax: 3,
           paymentPageStaySeconds: 3,
           googleSheetUrl: '',
+          googleSheetName: '-代拍表-',
           googleCredentialPath: '',
           googleConfigEditable: false
         }}
@@ -238,7 +217,6 @@ export default function MultiBidSettingsPage() {
           <Form.Item label="手动执行交易开始">
             <Space wrap>
               <Button loading={requesting} onClick={handleRequestTransactionStart}>加入执行队列</Button>
-              <Button danger loading={resetting} onClick={handleResetTransactionStartOrders}>初始化订单状态</Button>
             </Space>
           </Form.Item>
         </Card>
@@ -327,6 +305,13 @@ export default function MultiBidSettingsPage() {
             label="Google表格地址"
           >
             <Input disabled={!googleConfigEditable} />
+          </Form.Item>
+          <Form.Item
+            name="googleSheetName"
+            label="Google工作表名称"
+            rules={[{ required: googleConfigEditable, message: '请输入Google工作表名称' }]}
+          >
+            <Input disabled={!googleConfigEditable} placeholder="-代拍表-" />
           </Form.Item>
           <Form.Item
             name="googleCredentialPath"

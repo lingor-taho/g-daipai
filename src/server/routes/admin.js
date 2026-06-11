@@ -1198,6 +1198,7 @@ async function getMultiBidConfig() {
     paymentJobLimitMax: Math.max(paymentJobLimitMin, paymentJobLimitMax),
     paymentPageStaySeconds: normalizePositiveIntegerConfig(values.payment_page_stay_seconds, 3),
     googleSheetUrl: buildGoogleSheetUrl(getSheetConfig().spreadsheetId),
+    googleSheetName: getSheetConfig().sheetName,
     googleCredentialPath: getGoogleSheetsCredentialPath()
   };
 }
@@ -1229,6 +1230,7 @@ router.put('/multi-bid-config', async (req, res) => {
   const paymentPageStaySeconds = normalizePositiveIntegerConfig(req.body.paymentPageStaySeconds ?? 3, 3);
   const googleConfigEditable = req.body.googleConfigEditable === true;
   const googleSheetId = extractSpreadsheetId(req.body.googleSheetUrl || '');
+  const googleSheetName = String(req.body.googleSheetName || '').trim();
   const googleCredentialPath = String(req.body.googleCredentialPath || '').trim();
   if (!Number.isFinite(startHours) || startHours <= 0) {
     return res.status(400).json({ error: 'valid startHours is required' });
@@ -1266,6 +1268,9 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (googleConfigEditable && !googleSheetId) {
     return res.status(400).json({ error: 'valid googleSheetUrl is required' });
+  }
+  if (googleConfigEditable && !googleSheetName) {
+    return res.status(400).json({ error: 'valid googleSheetName is required' });
   }
   if (googleConfigEditable && !googleCredentialPath) {
     return res.status(400).json({ error: 'valid googleCredentialPath is required' });
@@ -1336,12 +1341,16 @@ router.put('/multi-bid-config', async (req, res) => {
       [googleSheetId]
     );
     await db.query(
+      `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('google_sheets_sheet_name', ?, CURRENT_TIMESTAMP)`,
+      [googleSheetName]
+    );
+    await db.query(
       `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('google_application_credentials', ?, CURRENT_TIMESTAMP)`,
       [googleCredentialPath]
     );
-    applyGoogleSheetsConfig({ googleSheetId, googleCredentialPath });
+    applyGoogleSheetsConfig({ googleSheetId, googleSheetName, googleCredentialPath });
   }
-  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds });
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds, googleSheetName });
 });
 
 router.post('/transaction-start/request', async (req, res) => {
