@@ -392,7 +392,10 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-06-10 | 后台订单管理需要跨页自动选中和 CSV 导出 | 订单管理表格复选框不再限制状态，结算/支付状态检查延后到按钮点击时处理；首次勾选订单时按该订单用户跨页选中 `won_at` 从昨天到今天的所有订单，并缓存跨页订单数据。新增导出 CSV，字段为落札日期、用户名、商品链接、商品标题、落札价、运费、总价；导出只看原始 `shipping_fee_text`，遇到 `落札者負担/着払い` 弹窗输入本次导出运费，不写数据库且不使用同捆运费 |
 | 2026-06-10 | 用户端管理员/代理切换用户下拉不支持搜索 | `src/client/src/components/UserNav.jsx` 将原 `Picker` 切换为 `Popup + SearchBar + List`，点击“当前账号”后弹出可搜索用户列表，按用户名和用户等级过滤；选中后继续复用原 `acting-user-change`、localStorage 和页面刷新逻辑 |
 | 2026-06-11 | 后台订单管理同捆商品缺少组背景色 | 订单管理表格按 `bundle_group_id` 给同捆商品行标浅色背景；同一组保持同色，当前页相邻同捆组在两种浅色间交替，便于和 Google 表格一样区分同捆组 |
-| 2026-06-11 | 系统配置中初始化订单状态入口风险较高，Google 表格页签名不可配置 | 后台“系统配置 / 交易开始任务”移除“初始化订单状态”按钮；Google 表格配置新增“Google工作表名称”，保存到 `config.google_sheets_sheet_name`，后端追加/查找 Google 表格时优先使用该配置，未配置时继续兼容 `GOOGLE_SHEETS_SHEET_NAME` 和默认 `-代拍表-` |
+| 2026-06-11 | 系统配置中初始化订单状态入口风险较高，Google 表格页签名不可配置 | 后台“系统配置 / 交易开始任务”彻底取消“初始化订单状态”功能：前端按钮和后端 `/api/admin/transaction-start/reset-orders` 接口均移除。Google 表格配置新增“Google工作表名称”，保存到 `config.google_sheets_sheet_name`，后端追加/查找 Google 表格时优先使用该配置，未配置时继续兼容 `GOOGLE_SHEETS_SHEET_NAME` 和默认 `-代拍表-` |
+| 2026-06-11 | 后续开发计划重新确认 | 生产环境暂未发现 `/my/won` 落札同步、默认信用卡付款、交易 tab 关闭问题；出价/查询 worker 隔离和批处理危险操作收口先保留以后讨论。PIN/验证码仍待继续处理：当前进入验证码页面后没有把验证码图片返回后台，并且还会再次打开 PIN 页面。待收货补表格页面说明不再写死 `-代拍表-`，改为读取当前 Google 工作表名称配置 |
+| 2026-06-11 | 增加自动化回归入口 | 根目录新增 `npm run regression` / `npm run test:regression`，串行执行 Google Sheets 配置测试、后台订单测试、插件路由测试、Yahoo 插件 content/background/encoding 测试，以及后台和用户端生产构建，用于发布前确认现有流程没有被改坏 |
+| 2026-06-11 | 导入订单点击“读取落札商品”报 `invalid config key` | 根因是 `createManualOrderImportBatch()` 创建批次后会写 `scan_idle_counter=999` 以便插件优先执行导入扫描，但 `saveConfigValue()` 白名单只允许付款相关 key。已放行导入流程需要的 `scan_idle_counter`、`transaction_start_requested`、`transaction_start_requested_source`，并补充测试覆盖创建导入批次不会再因配置 key 失败 |
 
 ---
 
@@ -546,7 +549,7 @@ git status --short
 - `/my/won` 落札同步尝试抽取每个商品的 `取引連絡` 链接，保存到 `orders.transaction_url`。
 - 后台配置页已改为“入札、落札、交易开始、扫描、付款、收货配置”。
 - 后台新增“手动执行交易开始”按钮：`POST /api/admin/transaction-start/request`。
-- 后台新增“初始化订单状态”按钮：`POST /api/admin/transaction-start/reset-orders`。
+- 后台曾新增“初始化订单状态”按钮；2026-06-11 已彻底取消该功能，前端按钮和后端 `/api/admin/transaction-start/reset-orders` 接口均已移除。
 - 后台订单管理页新增 `交易开始flag`、`扫描flag`、`交易开始错误`，并显示新状态 `等待运费`、`待同捆`。
 - 插件空闲同步流程已预留交易开始、扫描、付款、确认收货；扫描/付款/确认收货尚未实现。
 

@@ -1390,7 +1390,13 @@ async function requestScan(database = db) {
 }
 
 async function saveConfigValue(database, key, value) {
-  const allowedKeys = new Set(['payment_requested', 'payment_alert_message']);
+  const allowedKeys = new Set([
+    'payment_requested',
+    'payment_alert_message',
+    'scan_idle_counter',
+    'transaction_start_requested',
+    'transaction_start_requested_source'
+  ]);
   if (!allowedKeys.has(key)) {
     throw new Error('invalid config key');
   }
@@ -1693,44 +1699,6 @@ router.post('/manual-captcha/answer', async (req, res) => {
 router.post('/manual-captcha/close', async (req, res) => {
   const result = await closeCaptchaChallenge(db, req.body?.id || '');
   res.json({ success: true, ...result });
-});
-
-router.post('/transaction-start/reset-orders', async (req, res) => {
-  const beforeRows = await db.getAll(
-    `SELECT o.id AS order_id, o.order_status AS old_status, t.product_id
-     FROM orders o
-     INNER JOIN tasks t ON o.task_id = t.id
-     WHERE o.settled_at IS NULL
-       AND (
-         o.order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle')
-         OR o.transaction_start_error IS NOT NULL
-         OR o.bundle_group_id IS NOT NULL
-         OR o.transaction_started_at IS NOT NULL
-       )`
-  );
-  const result = await db.query(
-    `UPDATE orders
-     SET order_status = NULL,
-         bundle_group_id = NULL,
-         transaction_started_at = NULL,
-         transaction_start_error = NULL,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE settled_at IS NULL
-       AND (
-         order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle')
-         OR transaction_start_error IS NOT NULL
-         OR bundle_group_id IS NOT NULL
-         OR transaction_started_at IS NOT NULL
-       )`
-  );
-  if (result.rowCount) {
-    await writeOrderStatusAuditLogs(db, beforeRows, {
-      status: null,
-      source: 'admin_transaction_start_reset',
-      metadata: { reset: result.rowCount || 0 }
-    }).catch(() => null);
-  }
-  res.json({ success: true, reset: result.rowCount || 0 });
 });
 
 router.get('/idle-flags', async (req, res) => {
@@ -2310,6 +2278,7 @@ module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.parseStoreBundleChildProductIds = parseStoreBundleChildProductIds;
 module.exports.backfillStoreBundle = backfillStoreBundle;
 module.exports.deleteProductDataByProductId = deleteProductDataByProductId;
+module.exports.createManualOrderImportBatch = createManualOrderImportBatch;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;

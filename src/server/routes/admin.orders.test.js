@@ -12,6 +12,7 @@ const {
   ORDER_STATUS_COMPLETED,
   normalizeProductType,
   parseShippingFeeToNumber,
+  createManualOrderImportBatch,
   requestScan,
   requestPayment,
   clearPaymentAlertAndContinue,
@@ -361,6 +362,37 @@ async function testRequestScanSetsCounterToConfiguredEveryRuns() {
   assert.equal(queries[0].params[0], '7');
 }
 
+async function testCreateManualOrderImportBatchPrimesScanCounter() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    },
+    async getOne(sql) {
+      assert.match(sql, /last_insert_rowid/);
+      return { id: 4 };
+    }
+  };
+
+  const result = await createManualOrderImportBatch({
+    startDate: '2026-06-10',
+    endDate: '2026-06-11',
+    maxPages: 10
+  }, fakeDb);
+
+  assert.deepEqual(result, {
+    id: 4,
+    startDate: '2026-06-10',
+    endDate: '2026-06-11',
+    maxPages: 10,
+    requested: 1
+  });
+  assert.match(queries[0].sql, /manual_order_import_batches/);
+  assert.match(queries[1].sql, /scan_idle_counter/);
+  assert.equal(queries[1].params[0], '999');
+}
+
 async function testRequestPaymentSetsFlag() {
   const queries = [];
   const fakeDb = {
@@ -565,6 +597,7 @@ testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
+  testCreateManualOrderImportBatchPrimesScanCounter(),
   testRequestPaymentSetsFlag(),
   testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),

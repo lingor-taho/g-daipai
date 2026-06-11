@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Card, Form, InputNumber, Space, Table, Tag, Typography, message } from 'antd';
-import { authHeaders } from './utils/auth';
+import { authHeaders, fetchAdminJson } from './utils/auth';
 
 type BackfillResult = {
   orderId: number;
@@ -29,8 +29,8 @@ const text = {
   appendedRows: '\u8ffd\u52a0\u884c\u6570',
   updatedRange: '\u8868\u683c\u8303\u56f4',
   note: '\u8bf4\u660e',
-  description:
-    '\u5c06\u8ba2\u5355\u72b6\u6001\u5df2\u7ecf\u662f\u201c\u5f85\u6536\u8d27\u201d\u4e14\u5c1a\u672a\u5199\u5165 Google \u8868\u683c\u7684\u8ba2\u5355\u6279\u91cf\u8ffd\u52a0\u5230\u201c-\u4ee3\u62cd\u8868-\u201d\u3002\u5b57\u6bb5\u4e3a\uff1a\u843d\u672d\u65e5\u671f\u3001\u7528\u6237\u540d\u3001\u5546\u54c1\u94fe\u63a5\u3001\u5546\u54c1\u6807\u9898\u3001\u843d\u672d\u4ef7\u3001\u8fd0\u8d39\u3001\u540c\u6346\u8fd0\u8d39\u3001\u603b\u4ef7\u3001\u7269\u6d41\u3001\u5355\u53f7\u3002\u7cfb\u7edf\u5185\u901a\u8fc7 google_sheet_appended_at \u9632\u6b62\u91cd\u590d\u8ffd\u52a0\uff1b\u5982\u679c\u8868\u683c\u5916\u90e8\u5df2\u6709\u624b\u5de5\u884c\uff0c\u5f53\u524d\u4e0d\u4f1a\u8bfb\u53d6\u8868\u683c\u505a\u4e8c\u6b21\u53bb\u91cd\u3002\u8868\u5934\u4e3a\u7a7a\u65f6\u4f1a\u81ea\u52a8\u5199\u5165\u8868\u5934\u3002'
+  description: (sheetName: string) =>
+    `将订单状态已经是“待收货”且尚未写入 Google 表格的订单批量追加到“${sheetName || '-代拍表-'}”。字段为：落札日期、用户名、商品链接、商品标题、落札价、运费、同捆运费、总价、物流、单号。系统内通过 google_sheet_appended_at 防止重复追加；如果表格外部已有手工行，当前不会读取表格做二次去重。表头为空时会自动写入表头。`
 };
 
 async function runReceiptSheetBackfill(limit: number) {
@@ -48,6 +48,13 @@ export default function ReceiptSheetBackfillPage() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<BackfillResult[]>([]);
+  const [sheetName, setSheetName] = useState('-代拍表-');
+
+  useEffect(() => {
+    fetchAdminJson('/api/admin/multi-bid-config')
+      .then(data => setSheetName(data.googleSheetName || '-代拍表-'))
+      .catch(() => {});
+  }, []);
 
   async function handleRun() {
     const values = await form.validateFields();
@@ -76,7 +83,7 @@ export default function ReceiptSheetBackfillPage() {
           >
             <InputNumber min={1} max={500} style={{ width: 180 }} />
           </Form.Item>
-          <Typography.Paragraph type="secondary">{text.description}</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{text.description(sheetName)}</Typography.Paragraph>
           <Button type="primary" htmlType="submit" loading={loading}>{text.start}</Button>
         </Form>
       </Card>
