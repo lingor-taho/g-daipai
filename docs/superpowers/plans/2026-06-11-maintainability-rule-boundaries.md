@@ -1364,3 +1364,38 @@ Because this plan is behavior-preserving and does not change data:
 ## Execution Options
 
 Recommended execution mode: implement Tasks 1-4 first, then stop for review. Tasks 5-7 should be a second checkpoint. Tasks 8-9 should only proceed after at least one production-like run confirms the extracted server rules are stable.
+
+---
+
+## Later Add-On: Gradual Product Table Introduction
+
+This add-on is intentionally after the current maintainability refactor. It is not part of Tasks 1-11 because it changes the database model and read/write paths.
+
+Target model:
+
+```text
+products 1 --- N tasks
+products 1 --- 0/1 orders
+orders   N --- 0/1 source task
+```
+
+Recommended direction:
+
+- Add a `products` table as the authoritative product snapshot store.
+- Keep existing product columns on `tasks` during the transition for compatibility.
+- On first product fetch or task submit, upsert `products` with stable product information such as title, image, tax type, product type, shipping text, buyout price, and end time.
+- Plugin snapshot/scanning flows should update real-time product fields such as `current_price`, `bid_count`, `end_time`, and scan timestamps in `products`.
+- `tasks` should eventually focus on user, strategy, max price, bid mode, status, error, and followup fields.
+- `orders` should directly reference `product_id` and optionally keep `task_id` for the source/success task.
+- User-facing lists should eventually compose data from `products + latest task + order`, instead of relying on duplicated product fields in the latest task row.
+- Cleanup should continue preserving real won-order data. Failed/cancelled/stale task cleanup can be expanded later with a dry-run count and explicit product/order preservation rules.
+
+Recommended execution order after this plan:
+
+1. Finish rule/status/config/cleanup-policy centralization.
+2. Add `products` table and migration/backfill plan.
+3. Dual-write product fields to both `products` and existing `tasks` columns.
+4. Switch read paths gradually, starting with low-risk list queries.
+5. Switch plugin snapshot updates to `products`.
+6. Switch order sync to write `orders.product_id` as a first-class relation.
+7. Only after production-like verification, reduce reliance on duplicated task product fields.

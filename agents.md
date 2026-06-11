@@ -2175,3 +2175,37 @@ npm run regression
 ```
 
 验证结果：以上命令均通过。
+
+### 后续补充目标：商品表渐进引入
+
+- 用户确认长期目标采用 `products / tasks / orders` 更清晰的数据模型：`products 1:N tasks`，`products 1:0/1 orders`，`orders` 可保留 `task_id` 指向来源/成功任务。
+- 该目标优先级排在当前维护性整理之后，当前阶段不改数据库、不做迁移、不切换读写路径。
+- 推荐后续作为单独计划执行：
+  1. 新增 `products` 表作为商品权威快照表。
+  2. 任务提交/商品抓取时 upsert `products`，同时继续写 `tasks` 旧商品字段保持兼容。
+  3. 插件商品快照/扫描流程逐步改为更新 `products.current_price / bid_count / end_time / last_scanned_at` 等实时字段。
+  4. 用户端和后台列表逐步改为从 `products + latest task + order` 组合展示。
+  5. `orders` 直接关联 `product_id`，并可保留 `task_id` 表示来源任务。
+  6. 清理策略继续保护真实成功落札订单；扩展清理长期无效任务前必须先 dry-run 统计并明确保留规则。
+
+---
+
+## 2026-06-11 维护性整理第二部分实施记录
+
+### 已实现内容
+
+- 新增 `src/shared/shippingRules.cjs`，集中运费文本标准化、运费金额解析、订单是否可结算、同捆运费优先规则。
+- 新增 `src/shared/payableRules.cjs`，集中后台订单应付款公式和 Google 表格应付款公式。
+- 新增对应测试：`src/shared/shippingRules.test.cjs`、`src/shared/payableRules.test.cjs`。
+- `src/server/routes/admin.js` 改为引用共享运费和应付款规则，保留原有导出名 `calculateOrderPayable`、`canSettleShippingFeeText`、`parseShippingFeeToNumber`。
+- `src/server/routes/plugin.js` 改为引用共享 `normalizeShippingFeeText`、`parseShippingFeeToNumber`、`calculateSheetPayable`、`applySheetUserFinance`。
+- 现有规则保持不变：`無料`、`着払い`、`落札者負担` 按 0 运费解析；普通商品 `落札者負担` 不允许结算；商城商品 `落札者負担` 允许按 0 运费结算；大金额费用按税后落札金额 `>=30000円` 生效。
+
+### 最近验证命令
+
+```powershell
+node src\shared\shippingRules.test.cjs; node src\shared\payableRules.test.cjs; node src\server\routes\admin.orders.test.js; node src\server\routes\plugin.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。

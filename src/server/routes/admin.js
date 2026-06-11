@@ -57,6 +57,15 @@ const {
 const {
   taxExcludedToTaxIncluded
 } = require('../../shared/priceRules.cjs');
+const {
+  parseShippingFeeToNumber,
+  canSettleShippingFeeText,
+  canSettleOrderShippingFee,
+  getEffectiveShippingFeeText
+} = require('../../shared/shippingRules.cjs');
+const {
+  calculateOrderPayable
+} = require('../../shared/payableRules.cjs');
 
 function buildGoogleSheetUrl(spreadsheetId) {
   const id = String(spreadsheetId || '').trim();
@@ -708,53 +717,6 @@ function applyUserFinanceConfig(baseConfig = {}, userConfig = null) {
   };
 }
 
-function calculateOrderPayable({ finalPrice, taxType, shippingFeeText, config }) {
-  const finalPriceValue = Number(finalPrice || 0);
-  const shippingFee = parseShippingFeeToNumber(shippingFeeText);
-  const rate = Number(config?.rate || 0);
-  const bankFeeJpy = Number(config?.bankFeeJpy || 0);
-  const handlingFeeCny = Number(config?.handlingFeeCny || 0);
-  const taxIncludedFinalPrice = getTaxIncludedFinalPrice(finalPriceValue, taxType);
-  const largeAmountFeeApplied = taxIncludedFinalPrice >= 30000;
-  const largeAmountFeeCny = largeAmountFeeApplied ? Number(config?.largeAmountFeeCny || 0) : 0;
-  const payableCny = Number((((finalPriceValue + shippingFee + bankFeeJpy) * rate) + handlingFeeCny + largeAmountFeeCny).toFixed(2));
-
-  return {
-    finalPrice: finalPriceValue,
-    taxIncludedFinalPrice,
-    shippingFee,
-    rate,
-    bankFeeJpy,
-    handlingFeeCny,
-    largeAmountFeeCny,
-    largeAmountFeeApplied,
-    payableCny
-  };
-}
-
-function canSettleShippingFeeText(shippingFeeText) {
-  const text = String(shippingFeeText || '').trim();
-  if (!text || text === '-') return false;
-  if (/落札者負担/.test(text)) return false;
-  if (/着払い/.test(text)) return true;
-  if (/無料/i.test(text)) return true;
-  return /(\d[\d,]*)\s*円/.test(text);
-}
-
-function canSettleOrderShippingFee(order = {}) {
-  const effectiveShippingFeeText = getEffectiveShippingFeeText(order);
-  if (String(order.product_type || '') === 'store' && /落札者負担/.test(effectiveShippingFeeText)) {
-    return true;
-  }
-  return canSettleShippingFeeText(effectiveShippingFeeText);
-}
-
-function getEffectiveShippingFeeText(order = {}) {
-  const bundleText = String(order.bundle_shipping_fee_text || '').trim();
-  if (bundleText) return bundleText;
-  return String(order.shipping_fee_text || '').trim();
-}
-
 function resolveSettlementOrderStatus(currentStatus) {
   return currentStatus === ORDER_STATUS_BUNDLE_COMPLETED || currentStatus === ORDER_STATUS_PENDING_SHIPMENT
     ? currentStatus
@@ -788,14 +750,6 @@ function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
     hasUserFinanceOverride: effectiveConfig.hasUserFinanceOverride,
     payableCny: payable.payableCny
   };
-}
-
-function parseShippingFeeToNumber(shippingFeeText) {
-  const text = String(shippingFeeText || '').trim();
-  if (!text || text === '-') return 0;
-  if (/無料|着払い|落札者負担/i.test(text)) return 0;
-  const match = text.match(/(\d[\d,]*)\s*円/);
-  return match ? Number(match[1].replace(/,/g, '')) : 0;
 }
 
 function extractAuctionId(input) {

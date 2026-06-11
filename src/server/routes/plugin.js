@@ -40,6 +40,14 @@ const {
 const {
   shouldSplitDirectBidByYahooLowPriceRule
 } = require('../../shared/biddingRules.cjs');
+const {
+  normalizeShippingFeeText,
+  parseShippingFeeToNumber
+} = require('../../shared/shippingRules.cjs');
+const {
+  calculateSheetPayable,
+  applySheetUserFinance
+} = require('../../shared/payableRules.cjs');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
@@ -1289,20 +1297,8 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
   return { updated: result.rowCount || 0 };
 }
 
-function normalizeShippingFeeText(value) {
-  const amount = String(value || '').replace(/[^\d]/g, '');
-  return amount ? `${amount}円` : '';
-}
-
 function normalizePlainText(value, maxLength = 128) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
-}
-
-function parseShippingFeeToNumber(value) {
-  const text = String(value || '').trim();
-  if (!text || /無料|着払い|落札者負担/i.test(text)) return 0;
-  const match = text.match(/(\d[\d,]*)\s*円/);
-  return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
 }
 
 const getTaxIncludedFinalPrice = taxExcludedToTaxIncluded;
@@ -1328,32 +1324,6 @@ async function getSheetFinanceBaseConfig(database = db) {
     bankFeeJpy: Number(values.bank_fee_jpy || 0),
     handlingFeeCny: Number(values.handling_fee_cny || 0),
     largeAmountFeeCny: Number(values.large_amount_fee_cny || 0)
-  };
-}
-
-function applySheetUserFinance(baseConfig = {}, order = {}) {
-  const rateAdjustment = normalizeNullableNumber(order.user_rate_adjustment) || 0;
-  const bankFeeJpy = normalizeNullableNumber(order.user_bank_fee_jpy);
-  const handlingFeeCny = normalizeNullableNumber(order.user_handling_fee_cny);
-  const largeAmountFeeCny = normalizeNullableNumber(order.user_large_amount_fee_cny);
-  return {
-    rate: Number((Number(baseConfig.rate || 0) + rateAdjustment).toFixed(4)),
-    bankFeeJpy: bankFeeJpy !== null ? bankFeeJpy : Number(baseConfig.bankFeeJpy || 0),
-    handlingFeeCny: handlingFeeCny !== null ? handlingFeeCny : Number(baseConfig.handlingFeeCny || 0),
-    largeAmountFeeCny: largeAmountFeeCny !== null ? largeAmountFeeCny : Number(baseConfig.largeAmountFeeCny || 0)
-  };
-}
-
-function calculateSheetPayable(order = {}, baseConfig = {}) {
-  const finalPrice = Number(order.final_price || 0);
-  const effectiveShippingText = String(order.bundle_shipping_fee_text || '').trim() || String(order.shipping_fee_text || '').trim();
-  const shippingFee = parseShippingFeeToNumber(effectiveShippingText);
-  const config = applySheetUserFinance(baseConfig, order);
-  const taxIncludedFinalPrice = getTaxIncludedFinalPrice(finalPrice, order.tax_type);
-  const largeAmountFeeCny = taxIncludedFinalPrice >= 30000 ? Number(config.largeAmountFeeCny || 0) : 0;
-  return {
-    totalJpy: finalPrice + shippingFee,
-    payableCny: Number((((finalPrice + shippingFee + Number(config.bankFeeJpy || 0)) * Number(config.rate || 0)) + Number(config.handlingFeeCny || 0) + largeAmountFeeCny).toFixed(2))
   };
 }
 
