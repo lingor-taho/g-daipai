@@ -5,8 +5,21 @@ const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
 const { actingUserMiddleware } = require('../services/actingUser');
 const { getWebsiteRate } = require('../services/websiteRate');
-const { DEFAULT_MULTI_BID_MIN_PRICE, shouldSplitDirectBidByYahooLowPriceRule, YAHOO_LOW_PRICE_INITIAL_BID } = require('./plugin');
 const { getCaptchaChallenge } = require('../services/manualCaptcha');
+const {
+  normalizeTaxType,
+  normalizeProductType,
+  taxIncludedToTaxExcluded,
+  taxExcludedToTaxIncluded
+} = require('../../shared/priceRules.cjs');
+const {
+  DEFAULT_MULTI_BID_MIN_PRICE,
+  YAHOO_LOW_PRICE_INITIAL_BID,
+  getMinBidIncrement,
+  getRequiredBidMaxPrice,
+  resolveBuyoutTaskPrices,
+  shouldSplitDirectBidByYahooLowPriceRule
+} = require('../../shared/biddingRules.cjs');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
@@ -40,49 +53,8 @@ function buildSubmitTaskInput(user, body) {
   };
 }
 
-function normalizeTaxType(value) {
-  return value === 'tax_included' ? 'tax_included' : 'tax_zero';
-}
-
-function normalizeProductType(value, taxType) {
-  if (value === 'store' || value === 'normal') return value;
-  return normalizeTaxType(taxType) === 'tax_included' ? 'store' : 'normal';
-}
-
-function calculateBidMaxPrice(userMaxPrice, taxType) {
-  const value = Number(userMaxPrice || 0);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  if (normalizeTaxType(taxType) !== 'tax_included' || value < 10) return Math.floor(value);
-  return Math.floor((value / 1.1) + 1e-6);
-}
-
-function getTaxIncludedPrice(price, taxType) {
-  const value = Number(price || 0);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  if (normalizeTaxType(taxType) !== 'tax_included' || value < 10) return Math.floor(value);
-  return Math.floor(value * 1.1);
-}
-
-function resolveBuyoutTaskPrices({ fetchedBuyoutPrice, submittedBuyoutPrice, inputMaxPrice, taxType }) {
-  const resolvedTaxType = normalizeTaxType(taxType);
-  const value = Number(fetchedBuyoutPrice || submittedBuyoutPrice || inputMaxPrice || 0);
-  if (!Number.isFinite(value) || value <= 0) {
-    return { buyoutPrice: 0, userMaxPrice: 0, bidMaxPrice: 0 };
-  }
-  const buyoutPrice = Math.floor(value);
-  if (resolvedTaxType === 'tax_included') {
-    return {
-      buyoutPrice,
-      userMaxPrice: buyoutPrice,
-      bidMaxPrice: calculateBidMaxPrice(buyoutPrice, resolvedTaxType)
-    };
-  }
-  return {
-    buyoutPrice,
-    userMaxPrice: buyoutPrice,
-    bidMaxPrice: buyoutPrice
-  };
-}
+const calculateBidMaxPrice = taxIncludedToTaxExcluded;
+const getTaxIncludedPrice = taxExcludedToTaxIncluded;
 
 async function getMultiBidMinPrice(database = db) {
   const row = await database.getOne("SELECT value FROM config WHERE key = 'multi_bid_min_price'");
@@ -100,25 +72,7 @@ function validateMultiBidUserMaxPrice(strategy, userMaxPrice, minPrice = DEFAULT
   }
 }
 
-function getMinMultiBidIncrement(userMaxPrice) {
-  const value = Number(userMaxPrice || 0);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  if (value < 1000) return 10;
-  if (value < 5000) return 100;
-  if (value < 10000) return 250;
-  if (value < 50000) return 500;
-  return 1000;
-}
-
-function getRequiredBidMaxPrice(currentPrice, bidCount) {
-  const current = Number(currentPrice || 0);
-  if (!Number.isFinite(current) || current <= 0) return 0;
-  const count = Number(bidCount || 0);
-  const increment = Number.isFinite(count) && count > 0
-    ? getMinMultiBidIncrement(current)
-    : 0;
-  return Math.floor(current + increment);
-}
+const getMinMultiBidIncrement = getMinBidIncrement;
 
 function validateSubmitMeetsMinimumBidPrice({ bidMode, bidMaxPrice, currentPrice, bidCount }) {
   if (bidMode === 'buyout') return;

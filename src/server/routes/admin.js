@@ -45,14 +45,18 @@ const {
   answerCaptchaChallenge,
   closeCaptchaChallenge
 } = require('../services/manualCaptcha');
-
-const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
-const ORDER_STATUS_COMPLETED = 'completed';
-const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
-const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
-const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
-const ORDER_STATUS_PENDING_RECEIPT = 'pending_receipt';
-const ORDER_STATUS_CANCELLED = 'cancelled';
+const {
+  ORDER_STATUS_PENDING_SETTLEMENT,
+  ORDER_STATUS_COMPLETED,
+  ORDER_STATUS_PENDING_PAYMENT,
+  ORDER_STATUS_BUNDLE_COMPLETED,
+  ORDER_STATUS_PENDING_SHIPMENT,
+  ORDER_STATUS_PENDING_RECEIPT,
+  ORDER_STATUS_CANCELLED
+} = require('../../shared/domainConstants.cjs');
+const {
+  taxExcludedToTaxIncluded
+} = require('../../shared/priceRules.cjs');
 
 function buildGoogleSheetUrl(spreadsheetId) {
   const id = String(spreadsheetId || '').trim();
@@ -674,12 +678,7 @@ async function getFinanceConfig() {
   };
 }
 
-function getTaxIncludedFinalPrice(finalPrice, taxType) {
-  const value = Number(finalPrice || 0);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
-  return Math.floor(value * 1.1);
-}
+const getTaxIncludedFinalPrice = taxExcludedToTaxIncluded;
 
 function normalizeNullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;

@@ -2,6 +2,10 @@
 const https = require('https');
 const fs = require('fs');
 const { chromium } = require('playwright');
+const {
+  normalizeProductType,
+  taxExcludedToTaxIncluded
+} = require('../../shared/priceRules.cjs');
 
 const router = express.Router();
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -170,12 +174,7 @@ function extractBuyoutPrice(html) {
   return 0;
 }
 
-function toTaxIncludedPrice(price, taxType) {
-  const value = Number(price || 0);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
-  return Math.floor(value * 1.1);
-}
+const toTaxIncludedPrice = taxExcludedToTaxIncluded;
 
 function extractBidCount(html) {
   const pageDataItems = extractPageDataItems(html);
@@ -229,7 +228,7 @@ function extractTaxType(html) {
 }
 
 function getProductTypeFromTaxType(taxType) {
-  return taxType === 'tax_included' ? 'store' : 'normal';
+  return normalizeProductType('', taxType);
 }
 
 function extractLowestStructuredShippingFee(item) {

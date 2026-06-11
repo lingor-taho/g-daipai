@@ -18,12 +18,33 @@ const {
   getCaptchaChallenge,
   closeCaptchaChallenge
 } = require('../services/manualCaptcha');
+const {
+  ORDER_STATUS_PENDING_PAYMENT,
+  ORDER_STATUS_WAITING_SHIPPING,
+  ORDER_STATUS_PENDING_BUNDLE,
+  ORDER_STATUS_BUNDLE_COMPLETED,
+  ORDER_STATUS_PENDING_SETTLEMENT,
+  ORDER_STATUS_PENDING_SHIPMENT,
+  ORDER_STATUS_PENDING_RECEIPT,
+  ORDER_STATUS_CANCELLED,
+  ORDER_STATUS_COMPLETED,
+  DEFAULT_MULTI_BID_MIN_PRICE,
+  YAHOO_LOW_PRICE_THRESHOLD,
+  YAHOO_LOW_PRICE_BID_LIMIT,
+  YAHOO_LOW_PRICE_INITIAL_BID,
+  YAHOO_LOW_PRICE_FOLLOWUP_THRESHOLD
+} = require('../../shared/domainConstants.cjs');
+const {
+  taxExcludedToTaxIncluded
+} = require('../../shared/priceRules.cjs');
+const {
+  shouldSplitDirectBidByYahooLowPriceRule
+} = require('../../shared/biddingRules.cjs');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_SYNC_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_BID_GUARD_MINUTES = 10;
-const DEFAULT_MULTI_BID_MIN_PRICE = 5000;
 const DEFAULT_TRANSACTION_START_HOUR = 1;
 const TRANSACTION_START_DELAY_MINUTES = 1;
 const DEFAULT_CONFIRM_RECEIPT_HOUR = 18;
@@ -33,15 +54,6 @@ const DEFAULT_SCAN_END_HOUR = 20;
 const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
 const DEFAULT_PAYMENT_JOB_LIMIT = 3;
 const DEFAULT_PAYMENT_PAGE_STAY_SECONDS = 3;
-const ORDER_STATUS_PENDING_PAYMENT = 'pending_payment';
-const ORDER_STATUS_WAITING_SHIPPING = 'waiting_shipping';
-const ORDER_STATUS_PENDING_BUNDLE = 'pending_bundle';
-const ORDER_STATUS_BUNDLE_COMPLETED = 'bundle_completed';
-const ORDER_STATUS_PENDING_SETTLEMENT = 'pending_settlement';
-const ORDER_STATUS_PENDING_SHIPMENT = 'pending_shipment';
-const ORDER_STATUS_PENDING_RECEIPT = 'pending_receipt';
-const ORDER_STATUS_CANCELLED = 'cancelled';
-const ORDER_STATUS_COMPLETED = 'completed';
 const SHIPMENT_ALERTS_CONFIG_KEY = 'shipment_alerts';
 const GOOGLE_SHEET_STATUS_PENDING_RECEIPT = '待收货';
 const BUNDLE_SHEET_COLORS = [
@@ -935,38 +947,6 @@ function normalizeBiddingStatus(value) {
   return value === 'highest' || value === 'outbid' ? value : null;
 }
 
-const YAHOO_LOW_PRICE_THRESHOLD = 1000;
-const YAHOO_LOW_PRICE_BID_LIMIT = 10000;
-const YAHOO_LOW_PRICE_INITIAL_BID = 9000;
-// followup 触发阈值高于 Yahoo 规则边界（1000），留 20% 缓冲，绕开税前/税后差异。
-const YAHOO_LOW_PRICE_FOLLOWUP_THRESHOLD = 1200;
-
-// 把含税值折回税前（Yahoo 内部口径）。普通商品税前=原值。
-function toTaxExcludedYen(value, taxType) {
-  const v = Number(value || 0);
-  if (!Number.isFinite(v) || v <= 0) return 0;
-  if (taxType !== 'tax_included' || v < 10) return Math.floor(v);
-  return Math.floor((v / 1.1) + 1e-6);
-}
-
-/**
- * Yahoo 出价规则：商品税前价不足 1000 时，单次税前出价不能超过 10000。
- * 口径：
- * - submitMaxPrice 是税后值（user_max_price 口径），需折回税前再比较 10000
- * - currentPrice 来自 proxy 抓的 HTML price 字段，本身就是税前，直接比较 1000
- * 仅对 direct + bid 模式生效；buyout 不受影响。
- */
-function shouldSplitDirectBidByYahooLowPriceRule({ strategy, bidMode, currentPrice, submitMaxPrice, taxType }) {
-  if (strategy !== 'direct') return false;
-  if (bidMode !== 'bid') return false;
-  const submitTaxExcluded = toTaxExcludedYen(submitMaxPrice, taxType);
-  if (submitTaxExcluded <= YAHOO_LOW_PRICE_BID_LIMIT) return false;
-  const currentTaxExcluded = Number(currentPrice || 0);
-  // 当前价未知（0）时按"低于 1000"处理，给出提示更安全。
-  if (!Number.isFinite(currentTaxExcluded) || currentTaxExcluded <= 0) return true;
-  return currentTaxExcluded < YAHOO_LOW_PRICE_THRESHOLD;
-}
-
 function isFollowupTaskReady(task, nowMs = Date.now()) {
   if (!task) return false;
   if (!Number(task.pending_followup_max_price || 0)) return false;
@@ -1325,12 +1305,7 @@ function parseShippingFeeToNumber(value) {
   return match ? Number(match[1].replace(/,/g, '')) || 0 : 0;
 }
 
-function getTaxIncludedFinalPrice(finalPrice, taxType) {
-  const value = Number(finalPrice || 0);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  if (taxType !== 'tax_included' || value < 10) return Math.floor(value);
-  return Math.floor(value * 1.1);
-}
+const getTaxIncludedFinalPrice = taxExcludedToTaxIncluded;
 
 function normalizeNullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;

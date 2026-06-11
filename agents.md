@@ -2146,3 +2146,32 @@ npm run regression
 cmd /c "echo N|备份.bat"
 cmd /c "echo N|恢复.bat"
 ```
+
+---
+
+## 2026-06-11 维护性整理第一部分实施记录
+
+### 已实现内容
+
+- 新增服务端共享规则模块，使用 `.cjs` 以兼容当前 Express/CommonJS 路由：
+  - `src/shared/domainConstants.cjs`：集中订单状态、任务状态、税类型、商品类型、出价模式、Yahoo 低价规则常量。
+  - `src/shared/priceRules.cjs`：集中税前/税后换算、税类型归一、商品类型归一。
+  - `src/shared/biddingRules.cjs`：集中 Yahoo 最低加价阶梯、最低可出价、低价拆分规则、即決价格解析。
+- 新增对应回归测试：
+  - `src/shared/orderStatus.test.cjs`
+  - `src/shared/priceRules.test.cjs`
+  - `src/shared/biddingRules.test.cjs`
+- `src/server/routes/task.js` 不再从 `src/server/routes/plugin.js` 引入 `DEFAULT_MULTI_BID_MIN_PRICE`、`shouldSplitDirectBidByYahooLowPriceRule`、`YAHOO_LOW_PRICE_INITIAL_BID`，改为依赖共享规则模块，消除用户任务提交逻辑对插件路由的反向依赖。
+- `src/server/routes/plugin.js`、`src/server/routes/admin.js`、`src/server/routes/proxy.js` 替换等价重复常量/纯函数为共享模块引用。
+- 保留原有导出函数名和 API 行为，例如 `calculateBidMaxPrice`、`getTaxIncludedPrice`、`getMinMultiBidIncrement`、`resolveBuyoutTaskPrices`、`shouldSplitDirectBidByYahooLowPriceRule`，避免影响现有测试和调用方。
+- 未修改数据库 schema、未运行清理/批处理接口、未改变任务/订单状态值、未改变插件轮询或 idle action 顺序。
+
+### 最近验证命令
+
+```powershell
+npm run regression
+node src\shared\orderStatus.test.cjs; node src\shared\priceRules.test.cjs; node src\shared\biddingRules.test.cjs; node src\server\routes\task.test.js; node src\server\routes\proxy.test.js; node src\server\routes\plugin.test.js; node src\server\routes\admin.orders.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
