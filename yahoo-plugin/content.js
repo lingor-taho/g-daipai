@@ -21,6 +21,10 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function normalizeVisibleText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
 function cleanupProductTitle(title, auctionId = '') {
   const cleaned = String(title || '')
     .replace(/^Yahoo![^-\n]*\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\s*-\s*/i, '')
@@ -937,10 +941,6 @@ async function executeBidV3(maxPrice, options = {}) {
 }
 
 function extractOrderHistory() {
-  function normalizeVisibleText(value) {
-    return String(value || '').replace(/\s+/g, ' ').trim();
-  }
-
   // Yahoo 落札页的 DOM 结构：标题（含尾部商品代码 F26171）和价格 23,100円 分属不同元素，
   // 用 item.textContent 会把它们拼成 "...F2617123,100円"，正则吃错。
   // 这个函数从容器内部直接找"叶子价格元素"（只含数字+円），返回干净文本。
@@ -1806,7 +1806,8 @@ window.__G_DAIPAI_TEST__ = {
   isBidEntryButtonText,
   isFinalAgreeButtonText,
   isConfirmButtonText,
-  extractOrderHistory
+  extractOrderHistory,
+  findWonHistoryNextPageUrl
 };
 })();
 

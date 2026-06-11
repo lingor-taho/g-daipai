@@ -362,7 +362,7 @@ async function testRequestScanSetsCounterToConfiguredEveryRuns() {
   assert.equal(queries[0].params[0], '7');
 }
 
-async function testCreateManualOrderImportBatchPrimesScanCounter() {
+async function testCreateManualOrderImportBatchDoesNotMutateScanCounter() {
   const queries = [];
   const fakeDb = {
     async query(sql, params) {
@@ -389,8 +389,7 @@ async function testCreateManualOrderImportBatchPrimesScanCounter() {
     requested: 1
   });
   assert.match(queries[0].sql, /manual_order_import_batches/);
-  assert.match(queries[1].sql, /scan_idle_counter/);
-  assert.equal(queries[1].params[0], '999');
+  assert.equal(queries.length, 1);
 }
 
 async function testRequestPaymentSetsFlag() {
@@ -597,7 +596,7 @@ testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 
 Promise.all([
   testRequestScanSetsCounterToConfiguredEveryRuns(),
-  testCreateManualOrderImportBatchPrimesScanCounter(),
+  testCreateManualOrderImportBatchDoesNotMutateScanCounter(),
   testRequestPaymentSetsFlag(),
   testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),

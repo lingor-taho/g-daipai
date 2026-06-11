@@ -1265,6 +1265,25 @@ function testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice() {
   assert.equal(orders[0].price, '31,500');
 }
 
+function testWonHistoryNextPageUsesSharedVisibleTextNormalizer() {
+  const nextLink = createTestAnchor('next', 'https://auctions.yahoo.co.jp/my/won?page=2');
+  nextLink.getAttribute = name => {
+    if (name === 'rel') return 'next';
+    if (name === 'href') return nextLink.href;
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href]') return [nextLink];
+      return [];
+    }
+  });
+
+  assert.equal(api.findWonHistoryNextPageUrl(), 'https://auctions.yahoo.co.jp/my/won?page=2');
+}
+
 function testBiddingItemsExtractsOutbidRebidRows() {
   const { container, link } = createBiddingContainer(
     '高値更新 再入札する 現在 1,500円 MD ゴールデンアックス',
@@ -1877,6 +1896,7 @@ async function run() {
   testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened();
   testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice();
   testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
+  testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
   testBiddingItemsExtractsOutbidRebidRows();
   testBundleTransactionInfoValidatesQuantity();
   testBundleTransactionInfoDetectsQuantityMismatch();

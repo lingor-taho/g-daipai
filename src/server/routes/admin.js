@@ -1477,7 +1477,6 @@ async function createManualOrderImportBatch(payload = {}, database = db) {
     [startDate, endDate, maxPages]
   );
   const row = await database.getOne('SELECT last_insert_rowid() AS id');
-  await saveConfigValue(database, 'scan_idle_counter', '999');
   return { id: row?.id, startDate, endDate, maxPages, requested: result.rowCount || 0 };
 }
 
