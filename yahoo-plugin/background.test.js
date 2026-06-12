@@ -1110,7 +1110,7 @@ async function testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisable
   assert.equal(createdTransactionTab, false);
 }
 
-async function testRunTransactionStartMarksAlreadyWaitingShippingPagePendingPayment() {
+async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping() {
   const statusCalls = [];
   const clickedActions = [];
   const api = loadBackgroundForTest({
@@ -1181,7 +1181,7 @@ async function testRunTransactionStartMarksAlreadyWaitingShippingPagePendingPaym
   assert.deepEqual(clickedActions, []);
   assert.equal(statusCalls.length, 1);
   assert.equal(statusCalls[0].orderId, 77);
-  assert.equal(statusCalls[0].status, 'pending_payment');
+  assert.equal(statusCalls[0].status, 'waiting_shipping');
 }
 
 async function testRunPaymentJobsCompletesNormalItemPayment() {
@@ -3653,7 +3653,7 @@ async function run() {
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
-  await testRunTransactionStartMarksAlreadyWaitingShippingPagePendingPayment();
+  await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
   await testRunPaymentJobsCompletesNormalItemPayment();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput();

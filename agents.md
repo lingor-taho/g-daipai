@@ -2221,9 +2221,9 @@ npm run regression
 
 ### 已实现内容
 
-- `completeBidderPaysShippingTransaction()` 如果打开取引页时页面已经是 `waitingShipping`，会返回 `alreadyWaitingShipping=true`，表示这是“交易开始已完成后的恢复场景”，不会再尝试点击交易开始按钮。
-- `executeTransactionStartJob()` 对上述恢复场景直接回写 `pending_payment`（待支付），用于补偿空状态订单；正常新执行 `落札者負担` 交易开始并走完 `decide/confirm` 后，仍按原逻辑回写 `waiting_shipping`，等待扫描拿到真实运费。
-- 新增回归测试覆盖：普通 `落札者負担` 订单状态为空、Yahoo 页面已是等待送料确定的支付阶段时，插件必须回写 `pending_payment`，且不点击任何交易开始按钮。
+- `completeBidderPaysShippingTransaction()` 如果打开取引页时页面已经是 `waitingShipping`，会直接成功返回，不再尝试点击交易开始按钮。
+- `executeTransactionStartJob()` 对上述恢复场景回写 `waiting_shipping`（等待运费），保持普通 `落札者負担` 的现有业务口径：运费还未确定前不是 `pending_payment`。
+- 新增回归测试覆盖：普通 `落札者負担` 订单状态为空、Yahoo 页面已是等待送料确定的支付阶段时，插件必须回写 `waiting_shipping`，且不点击任何交易开始按钮。
 
 ### 最近验证命令
 
