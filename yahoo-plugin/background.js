@@ -2470,45 +2470,6 @@ async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
 
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const previousTabIds = await getTabIds();
-  if (shouldUseTrustedPaymentActionFirst(tab, action)) {
-    const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
-    console.log('[Yahoo Bid] Trusted-first payment mouse click result:', trustedClick);
-    if (trustedClick?.success) {
-      try {
-        const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
-        await injectContentScript(nextTab.id).catch(() => {});
-        return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
-      } catch (afterFirstTrustedError) {
-        console.warn('[Yahoo Bid] Trusted-first payment click did not reach next state after 5s, retrying trusted click:', afterFirstTrustedError.message || afterFirstTrustedError);
-        const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
-        const retryTrustedClick = await dispatchTrustedPaymentActionClick(currentTab || tab, action);
-        console.log('[Yahoo Bid] Trusted retry payment mouse click result:', retryTrustedClick);
-        if (!retryTrustedClick?.success) {
-          const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
-          return {
-            success: false,
-            error: formatPaymentClickDiagnostics(action, null, retryTrustedClick, currentState, afterFirstTrustedError),
-            tab: currentTab || tab
-          };
-        }
-        try {
-          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
-          await injectContentScript(nextTab.id).catch(() => {});
-          return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
-        } catch (afterRetryTrustedError) {
-          const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
-          const diagnosticClick = retryTrustedClick || trustedClick;
-          return {
-            success: false,
-            error: formatPaymentClickDiagnostics(action, null, diagnosticClick, currentState, afterRetryTrustedError),
-            tab: currentTab || tab
-          };
-        }
-      }
-    }
-    console.warn('[Yahoo Bid] Trusted-first payment click unavailable, falling back to synthetic click:', trustedClick?.error || 'unknown error');
-  }
-
   const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
   if (!clickResult?.success) {
     return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };
@@ -2518,6 +2479,23 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
     await injectContentScript(nextTab.id).catch(() => {});
     return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
   } catch (e) {
+    if (shouldUseTrustedPaymentActionFirst(tab, action)) {
+      console.warn('[Yahoo Bid] Payment synthetic click did not reach next state after 5s, retrying synthetic click:', e.message || e);
+      const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+      const retryClickResult = await runMainWorldPaymentActionClick((currentTab || tab).id, action);
+      console.log('[Yahoo Bid] Payment synthetic retry click result:', retryClickResult);
+      if (retryClickResult?.success) {
+        try {
+          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
+          await injectContentScript(nextTab.id).catch(() => {});
+          return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+        } catch (afterRetrySyntheticError) {
+          console.warn('[Yahoo Bid] Payment synthetic retry did not reach next state, trying trusted mouse click:', afterRetrySyntheticError.message || afterRetrySyntheticError);
+        }
+      } else {
+        console.warn('[Yahoo Bid] Payment synthetic retry click failed, trying trusted mouse click:', retryClickResult?.error || 'unknown error');
+      }
+    }
     console.warn('[Yahoo Bid] Payment synthetic click did not reach next state, trying trusted mouse click:', e.message || e);
     const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
     console.log('[Yahoo Bid] Trusted payment mouse click result:', trustedClick);

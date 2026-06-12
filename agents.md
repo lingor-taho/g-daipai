@@ -2432,3 +2432,30 @@ node yahoo-plugin\background.test.js
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-12 付款 review 页点击顺序回退修复
+
+### 问题
+
+- `p1232862422` 付款 review 页人工点击 `確認する` 可进入下一步，但插件连续失败。
+- Git 历史确认：`87e7249 支付bug修正` 之前的可用流程是先在页面 MAIN world 内执行按钮点击，5 秒未跳转才 fallback 到 Chrome debugger 鼠标点击。
+- `8ce3820 更新1` 开始把现代 `buy.auctions.yahoo.co.jp/order/review` 改为 debugger 鼠标优先；该方式不会移动 Windows 真实鼠标，用户现场看不到点击动作，并且在当前 Yahoo review 页没有触发有效跳转。
+- `2a880b9 支付bug2` 虽增加了 5 秒后重试，但重试的仍是 debugger 鼠标点击，没有恢复原来可用的页面内点击路径。
+
+### 已实现内容
+
+- 恢复付款按钮点击顺序：所有付款动作先走 `runMainWorldPaymentActionClick()` 页面内点击。
+- 对现代 `order/review` 页，第一次页面内点击后等待 5 秒；若未进入下一步，重新读取当前 tab 并再次执行页面内点击。
+- 第二次页面内点击仍未跳转时，才 fallback 到 `dispatchTrustedPaymentActionClick()` debugger 鼠标点击。
+- 保留此前对 `#confirm a[data-cl-params*="_cl_link:confirm"]` 的优先定位，避免误点 PayPay 特典等其它 `確認する`。
+- 回归测试改为明确要求 review 页先走页面内点击，且 5 秒未跳转时第二次仍走页面内点击。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+```
+
+验证结果：以上命令通过。
