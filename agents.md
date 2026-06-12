@@ -2411,6 +2411,34 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-12 付款 review 页误判店铺确认事项修复
+
+### 问题
+
+- `p1232862422` 是商城商品，但当前付款 review 页没有显示 `ストアからの確認事項`。
+- 用户提供的插件报错位置指向 `dispatchTrustedStoreConfirmationClick()`，说明插件误进入了“店铺确认事项”处理分支，而不是普通付款 review 页的 `確認する` 点击分支。
+- 根因是旧状态识别把 `#cartopt` DOM 存在当作店铺确认事项存在；Yahoo 付款 review 页可能存在 `#cartopt` 或其他选项区域，但页面并没有真实显示 `ストアからの確認事項`。这会导致没有确认事项的商城商品也被错误导航/点击到店铺确认事项流程。
+
+### 已实现内容
+
+- `buildPaymentPageStateFromSnapshot()` 不再信任 `snapshot.hasStoreConfirmationSection` 或单纯 `#cartopt`，只在页面文本真实包含 `ストアからの確認事項` 时才进入店铺确认事项流程。
+- `getPaymentPageState()` 的快照字段同步改为按页面文本检测 `ストアからの確認事項`，不再用 `document.querySelector('#cartopt')` 兜底。
+- 商城商品如果没有真实 `ストアからの確認事項`，付款页面逻辑与普通商品一致：等待 review 页 ready，优先定位 `#confirm a[data-cl-params*="_cl_link:confirm"]`，点击红色 `確認する`。
+- 新增回归测试覆盖“有 `#cartopt`/PayPay 特典/付款金额，但没有 `ストアからの確認事項`”时不能被判定为店铺确认事项。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\encoding.test.js
+git diff --check
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
 ## 2026-06-12 付款失败摘要区分按钮定位/点击状态
 
 ### 问题

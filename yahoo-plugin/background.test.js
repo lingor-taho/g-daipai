@@ -675,6 +675,20 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
   assert.equal(editState.hasStoreConfirmationEditPage, true);
 }
 
+function testPaymentPageStateDoesNotTreatCartoptOnlyAsStoreConfirmation() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+    bodyText: '\u30af\u30fc\u30dd\u30f3 PayPay\u30dd\u30a4\u30f3\u30c8 \u304a\u652f\u6255\u3044\u65b9\u6cd5 \u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b',
+    controls: ['\u7279\u5178\u3092\u78ba\u8a8d\u3059\u308b', '\u78ba\u8a8d\u3059\u308b'],
+    hasStoreConfirmationSection: true
+  });
+
+  assert.equal(state.hasStoreConfirmationSection, false);
+  assert.equal(state.hasStoreConfirmationEditPage, false);
+  assert.equal(state.hasReviewButton, true);
+}
+
 function testBuildStoreOptionsUrlUsesProductId() {
   const api = loadBackgroundForTest();
 
@@ -3887,6 +3901,7 @@ async function run() {
   testPaymentPageStateDetectsPaymentMethodFee();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsStoreConfirmationSection();
+  testPaymentPageStateDoesNotTreatCartoptOnlyAsStoreConfirmation();
   testBuildStoreOptionsUrlUsesProductId();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
