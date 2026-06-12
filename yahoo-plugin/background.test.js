@@ -2101,6 +2101,8 @@ async function testModernStoreReviewFallsBackToSystemMouseClick() {
   let systemClicked = false;
   let finalized = false;
   let now = 0;
+  const tabUpdates = [];
+  const windowUpdates = [];
   const reviewState = {
     url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
     hasReviewButton: true,
@@ -2116,8 +2118,17 @@ async function testModernStoreReviewFallsBackToSystemMouseClick() {
     tabs: {
       async create() { return { id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: reviewState.url, status: 'complete', windowId: 1 }; },
       async get(id) { return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : reviewState.url, status: 'complete', windowId: 1 }; },
-      async update(id, info) { return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: reviewState.url, status: 'complete', windowId: 1, ...info }; },
+      async update(id, info) {
+        tabUpdates.push({ id, info });
+        return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: reviewState.url, status: 'complete', windowId: 1, ...info };
+      },
       async query() { return [{ id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : reviewState.url, status: 'complete', windowId: 1 }]; }
+    },
+    windows: {
+      async update(id, info) {
+        windowUpdates.push({ id, info });
+        return { id, ...info };
+      }
     },
     scripting: {
       async executeScript(...args) {
@@ -2167,6 +2178,8 @@ async function testModernStoreReviewFallsBackToSystemMouseClick() {
 
   assert.equal(syntheticReviewClicks >= 2, true);
   assert.equal(trustedMouseCommands, 0);
+  assert.equal(windowUpdates.some(call => call.id === 1 && call.info.focused === true), true);
+  assert.equal(tabUpdates.some(call => call.id === 24 && call.info.active === true), true);
   assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/native-click') && /912/.test(call.body) && /597/.test(call.body)), true);
   assert.equal(actions.includes('finalize'), true);
   assert.equal(calls[0].orderId, 24);

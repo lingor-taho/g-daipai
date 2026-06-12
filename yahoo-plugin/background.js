@@ -2502,6 +2502,18 @@ async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
   return null;
 }
 
+async function focusTabForNativeUserInput(tab) {
+  if (!tab?.id) return tab;
+  const current = await chrome.tabs.get(tab.id).catch(() => tab);
+  if (current?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(current.windowId, { state: 'normal' }).catch(() => {});
+    await chrome.windows.update(current.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(current?.id || tab.id, { active: true }).catch(() => {});
+  await sleep(500);
+  return await chrome.tabs.get(tab.id).catch(() => current || tab);
+}
+
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const previousTabIds = await getTabIds();
   let systemClick = null;
@@ -2531,14 +2543,15 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
         console.warn('[Yahoo Bid] Payment synthetic retry click failed, trying system mouse click:', retryClickResult?.error || 'unknown error');
       }
 
-      const point = await getPaymentActionClickPoint((currentTab || tab).id, action).catch(e2 => ({ success: false, error: e2.message || 'payment click point unavailable' }));
+      const focusedTab = await focusTabForNativeUserInput(currentTab || tab);
+      const point = await getPaymentActionClickPoint((focusedTab || currentTab || tab).id, action).catch(e2 => ({ success: false, error: e2.message || 'payment click point unavailable' }));
       systemClick = point?.success
-        ? await clickWithSystemMouse(point, { windowTitle: currentTab?.title || tab?.title || '' })
+        ? await clickWithSystemMouse(point, { windowTitle: focusedTab?.title || currentTab?.title || tab?.title || '' })
         : { success: false, error: point?.error || 'payment click point unavailable' };
       console.log('[Yahoo Bid] System payment mouse click result:', systemClick);
       if (systemClick?.success) {
         try {
-          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
+          const nextTab = await waitForPaymentStateAcrossTabs(focusedTab || currentTab || tab, waitFor, previousTabIds, 30000);
           await injectContentScript(nextTab.id).catch(() => {});
           return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
         } catch (afterSystemError) {
@@ -4761,6 +4774,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   clickStoreConfirmationApplyButton,
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
+  focusTabForNativeUserInput,
   buildStoreOptionsUrl,
   openStoreOptionsPage,
   completeStoreConfirmationItems,
