@@ -2176,6 +2176,29 @@ npm run regression
 
 验证结果：以上命令均通过。
 
+---
+
+## 2026-06-12 Google 表格追加行字体颜色修复
+
+### 问题
+
+- 订单追加到 Google 表格时，新插入行会沿用上一行字体颜色，导致历史行如果被改成红色/其他颜色，新订单也可能不是默认黑色。
+
+### 已实现内容
+
+- `appendRows()` 在 Google Sheets `values.append` 后，会对本次新增的 A:J 行执行 `repeatCell` 格式化。
+- 新增行始终设置 `textFormat.foregroundColor` 为黑色 `{ red: 0, green: 0, blue: 0 }`。
+- 如果调用方传入背景色，继续同时设置背景色，不影响原有按颜色标记/查询逻辑。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\googleSheets.test.js
+node src\server\routes\plugin.test.js
+```
+
+验证结果：以上命令均通过。
+
 ### 后续补充目标：商品表渐进引入
 
 - 用户确认长期目标采用 `products / tasks / orders` 更清晰的数据模型：`products 1:N tasks`，`products 1:0/1 orders`，`orders` 可保留 `task_id` 指向来源/成功任务。

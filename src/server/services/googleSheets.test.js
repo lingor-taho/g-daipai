@@ -3,6 +3,7 @@ const path = require('path');
 const {
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,
+  buildAppendRowsFormatRequest,
   extractSpreadsheetId,
   getGoogleSheetsCredentialPath,
   getSheetConfig
@@ -68,10 +69,36 @@ async function testApplyConfigFromDbOverridesEnv() {
   applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
 }
 
+function testAppendRowFormatSetsBlackText() {
+  const backgroundColor = { red: 1, green: 0.9, blue: 0.8 };
+  const request = buildAppendRowsFormatRequest({
+    sheetId: 123,
+    startRowIndex: 4,
+    endRowIndex: 6,
+    backgroundColor
+  });
+
+  assert.deepEqual(request.repeatCell.range, {
+    sheetId: 123,
+    startRowIndex: 4,
+    endRowIndex: 6,
+    startColumnIndex: 0,
+    endColumnIndex: 10
+  });
+  assert.deepEqual(
+    request.repeatCell.cell.userEnteredFormat.textFormat.foregroundColor,
+    { red: 0, green: 0, blue: 0 }
+  );
+  assert.deepEqual(request.repeatCell.cell.userEnteredFormat.backgroundColor, backgroundColor);
+  assert.match(request.repeatCell.fields, /userEnteredFormat\.textFormat\.foregroundColor/);
+  assert.match(request.repeatCell.fields, /userEnteredFormat\.backgroundColor/);
+}
+
 async function run() {
   testCredentialPathUsesGoogleApplicationCredentials();
   testCredentialPathIsEmptyWithoutFileEnv();
   testExtractSpreadsheetIdFromUrl();
+  testAppendRowFormatSetsBlackText();
   await testApplyConfigFromDbOverridesEnv();
 }
 

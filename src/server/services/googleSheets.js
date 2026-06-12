@@ -9,6 +9,7 @@ const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '物流', '单号'];
 const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150];
+const DEFAULT_APPEND_TEXT_COLOR = { red: 0, green: 0, blue: 0 };
 
 let cachedToken = null;
 let runtimeConfig = {
@@ -171,6 +172,34 @@ function toColumnLetters(index) {
   return letters;
 }
 
+function buildAppendRowsFormatRequest({ sheetId, startRowIndex, endRowIndex, backgroundColor = null }) {
+  const userEnteredFormat = {
+    textFormat: {
+      foregroundColor: DEFAULT_APPEND_TEXT_COLOR
+    }
+  };
+  const fields = ['userEnteredFormat.textFormat.foregroundColor'];
+  if (backgroundColor) {
+    userEnteredFormat.backgroundColor = backgroundColor;
+    fields.push('userEnteredFormat.backgroundColor');
+  }
+  return {
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex,
+        endRowIndex,
+        startColumnIndex: 0,
+        endColumnIndex: 10
+      },
+      cell: {
+        userEnteredFormat
+      },
+      fields: fields.join(',')
+    }
+  };
+}
+
 async function appendRows({ rows, backgroundColor = null }) {
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
   if (!Array.isArray(rows) || !rows.length) return { skipped: true, reason: 'no rows' };
@@ -186,7 +215,7 @@ async function appendRows({ rows, backgroundColor = null }) {
       body: JSON.stringify({ values: rows })
     }
   );
-  if (backgroundColor && rows.length) {
+  if (rows.length) {
     const updatedRange = appendResult.updates?.updatedRange || '';
     const match = updatedRange.match(/![A-Z]+(\d+):[A-Z]+(\d+)/);
     if (match) {
@@ -196,23 +225,7 @@ async function appendRows({ rows, backgroundColor = null }) {
       await googleRequest(`${spreadsheetId}:batchUpdate`, {
         method: 'POST',
         body: JSON.stringify({
-          requests: [{
-            repeatCell: {
-              range: {
-                sheetId,
-                startRowIndex,
-                endRowIndex,
-                startColumnIndex: 0,
-                endColumnIndex: 10
-              },
-              cell: {
-                userEnteredFormat: {
-                  backgroundColor
-                }
-              },
-              fields: 'userEnteredFormat.backgroundColor'
-            }
-          }]
+          requests: [buildAppendRowsFormatRequest({ sheetId, startRowIndex, endRowIndex, backgroundColor })]
         })
       });
     }
@@ -402,6 +415,7 @@ module.exports = {
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,
   applySheetBaseStyle,
+  buildAppendRowsFormatRequest,
   ensureHeaderRow,
   extractSpreadsheetId,
   findRowsByProductIdWithAnyColor,
