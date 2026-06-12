@@ -2893,13 +2893,17 @@ async function getManualCaptchaRect(tabId) {
         width: Math.max(1, rect.width),
         height: Math.max(1, rect.height)
       });
+      const withScale = result => ({
+        ...result,
+        deviceScaleFactor: Number(window.devicePixelRatio || 1) || 1
+      });
       const media = [...document.querySelectorAll('img, canvas, svg')]
         .map(el => ({ el, rect: el.getBoundingClientRect?.(), text: el.alt || el.getAttribute?.('aria-label') || '' }))
         .filter(item => item.rect && item.rect.width >= 120 && item.rect.height >= 40 && isVisible(item.el))
         .filter(item => !/Yahoo/i.test(item.text));
       if (media.length) {
         const target = media.sort((a, b) => (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height))[0];
-        return { success: true, rect: toRect(target.rect), method: 'media' };
+        return withScale({ success: true, rect: toRect(target.rect), method: 'media' });
       }
       const panels = [...document.querySelectorAll('div, section, form, table')]
         .map(el => ({ el, rect: el.getBoundingClientRect?.(), text: String(el.textContent || '') }))
@@ -2907,7 +2911,7 @@ async function getManualCaptchaRect(tabId) {
         .filter(item => /\u753b\u50cf\u3067\u8a8d\u8a3c\u3059\u308b|\u753b\u50cf\u3092\u5909\u66f4/.test(item.text));
       if (panels.length) {
         const target = panels.sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height))[0];
-        return { success: true, rect: toRect(target.rect), method: 'panel' };
+        return withScale({ success: true, rect: toRect(target.rect), method: 'panel' });
       }
       return { success: false, error: 'captcha image rect not found' };
     }
@@ -2949,12 +2953,6 @@ async function extractManualCaptchaImageFromPage(tabId) {
         const style = window.getComputedStyle(el);
         return rect && rect.width >= 80 && rect.height >= 30 && style.display !== 'none' && style.visibility !== 'hidden';
       };
-      const blobToDataUrl = blob => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error || new Error('blob read failed'));
-        reader.readAsDataURL(blob);
-      });
       const supportedImageDataUrl = value => /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(String(value || ''));
       const candidates = [...document.querySelectorAll('img, canvas')]
         .map(el => ({
@@ -2980,14 +2978,6 @@ async function extractManualCaptchaImageFromPage(tabId) {
           }
           const src = el.currentSrc || el.src || el.getAttribute?.('src') || '';
           if (supportedImageDataUrl(src)) return { success: true, imageDataUrl: src, method: 'img-data-src' };
-          if (src) {
-            const response = await fetch(src, { credentials: 'include', cache: 'no-store' });
-            if (!response.ok) continue;
-            const blob = await response.blob();
-            if (!/^image\//i.test(blob.type || '')) continue;
-            const dataUrl = await blobToDataUrl(blob);
-            if (supportedImageDataUrl(dataUrl)) return { success: true, imageDataUrl: dataUrl, method: 'img-fetch' };
-          }
         } catch (_) {
           // Try the next visible media element.
         }
@@ -2996,6 +2986,39 @@ async function extractManualCaptchaImageFromPage(tabId) {
     }
   }).catch(error => [{ result: { success: false, error: error.message || 'captcha image extraction failed' } }]);
   return result?.[0]?.result || { success: false, error: 'captcha image extraction unavailable' };
+}
+
+async function captureManualCaptchaImageWithDebugger(tabId, rectResult) {
+  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attached = true;
+    await chrome.debugger.sendCommand(target, 'Page.enable').catch(() => null);
+    const params = {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false
+    };
+    if (rectResult?.success && rectResult.rect) {
+      params.clip = {
+        x: Math.max(0, rectResult.rect.left),
+        y: Math.max(0, rectResult.rect.top),
+        width: Math.max(1, rectResult.rect.width),
+        height: Math.max(1, rectResult.rect.height),
+        scale: 1
+      };
+    }
+    const result = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', params);
+    const data = String(result?.data || '');
+    if (!data) return { success: false, error: 'debugger screenshot data unavailable' };
+    return { success: true, imageDataUrl: `data:image/png;base64,${data}`, method: 'debugger-page-screenshot' };
+  } catch (error) {
+    return { success: false, error: error?.message || 'debugger screenshot failed' };
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => {});
+  }
 }
 
 async function captureManualCaptchaImage(tab) {
@@ -3007,12 +3030,24 @@ async function captureManualCaptchaImage(tab) {
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(500);
+  const rectResult = await getManualCaptchaRect(tabId);
+  const debuggerImage = await captureManualCaptchaImageWithDebugger(tabId, rectResult);
+  if (debuggerImage?.success && debuggerImage.imageDataUrl) return debuggerImage.imageDataUrl;
+  let visibleTabError = '';
+  try {
+    const imageDataUrl = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
+    if (!rectResult?.success) return imageDataUrl;
+    return await cropDataUrl(imageDataUrl, rectResult.rect, rectResult.deviceScaleFactor || 1).catch(() => imageDataUrl);
+  } catch (error) {
+    visibleTabError = error?.message || 'visible tab screenshot failed';
+  }
   const pageImage = await extractManualCaptchaImageFromPage(tabId);
   if (pageImage?.success && pageImage.imageDataUrl) return pageImage.imageDataUrl;
-  const rectResult = await getManualCaptchaRect(tabId);
-  const imageDataUrl = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
-  if (!rectResult?.success) return imageDataUrl;
-  return await cropDataUrl(imageDataUrl, rectResult.rect, currentTab.width ? currentTab.width / currentTab.width : 1).catch(() => imageDataUrl);
+  throw new Error([
+    debuggerImage?.error || '',
+    visibleTabError,
+    pageImage?.error || ''
+  ].filter(Boolean).join('; ') || 'manual captcha image unavailable');
 }
 
 async function waitForManualCaptchaAnswer(id, timeoutMs = MANUAL_CAPTCHA_WAIT_TIMEOUT_MS) {
