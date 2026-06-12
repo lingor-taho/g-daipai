@@ -2411,6 +2411,15 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-12 付款 review 页店铺确认误判与 Win32 诊断
+
+- 现场插件日志出现 `Payment tab left open for store confirmation diagnosis`，说明当次付款没有进入 Win32 鼠标点击红色 `確認する` 的分支，而是被提前判定为“店铺确认事项流程开始但未完成”。
+- 修正店铺确认事项识别：真实页面快照必须检测到可见文本 `ストアからの確認事項`，才设置 `hasStoreConfirmationSection=true`。隐藏模板、残留 DOM 或不可见文本中包含该字样时，不再阻断普通付款 review 页点击。
+- 保留并增强 Win32 诊断：`native-click` 执行 `SetCursorPos` 后会读取 `GetCursorPos` 校验真实光标是否到达目标坐标；失败原因会包含请求坐标、实际坐标、窗口激活结果、API Server session 和 Chrome session，用于判断是否处于同一 Windows 交互桌面。
+- 生产部署后，如果仍停在 review 页，先看插件控制台是否出现 `System payment mouse click result`。如果没有，表示仍未进入 Win32 分支；如果有且失败原因包含 session/坐标不一致，再排查 API Server 启动方式和桌面会话。
+
+---
+
 ## 2026-06-12 付款 review 页误判店铺确认事项修复
 
 ### 问题

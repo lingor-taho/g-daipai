@@ -161,7 +161,10 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class GDaipaiNativeMouse {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct POINT { public int X; public int Y; }
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
@@ -174,14 +177,24 @@ public static class GDaipaiNativeMouse {
     '$targetWindow = $null',
     "if ($targetTitle) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($targetTitle) } | Select-Object -First 1 }",
     "if (-not $targetWindow) { $targetWindow = $chromeWindows | Sort-Object StartTime -Descending | Select-Object -First 1 }",
-    "if ($targetWindow) { [GDaipaiNativeMouse]::SetForegroundWindow($targetWindow.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 250 }",
-    `[GDaipaiNativeMouse]::SetCursorPos(${targetX}, ${targetY}) | Out-Null`,
+    '$activated = $false',
+    "if ($targetWindow) { $activated = [GDaipaiNativeMouse]::SetForegroundWindow($targetWindow.MainWindowHandle); Start-Sleep -Milliseconds 250 }",
+    `$moved = [GDaipaiNativeMouse]::SetCursorPos(${targetX}, ${targetY})`,
+    "if (-not $moved) { throw 'SetCursorPos returned false' }",
     'Start-Sleep -Milliseconds 120',
+    '$point = New-Object GDaipaiNativeMouse+POINT',
+    '$gotCursor = [GDaipaiNativeMouse]::GetCursorPos([ref]$point)',
+    "if (-not $gotCursor) { throw 'GetCursorPos returned false after SetCursorPos' }",
+    `$deltaX = [Math]::Abs($point.X - ${targetX})`,
+    `$deltaY = [Math]::Abs($point.Y - ${targetY})`,
+    "if ($deltaX -gt 3 -or $deltaY -gt 3) { throw ('SetCursorPos mismatch: requested=${targetX},${targetY}; actual=' + $point.X + ',' + $point.Y) }",
     '[GDaipaiNativeMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)',
     'Start-Sleep -Milliseconds 80',
     '[GDaipaiNativeMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)',
     'Start-Sleep -Milliseconds 300',
-    `Write-Output 'clicked=${targetX},${targetY}'`
+    '$session = [System.Diagnostics.Process]::GetCurrentProcess().SessionId',
+    "$chromeSession = if ($targetWindow) { $targetWindow.SessionId } else { '' }",
+    `Write-Output ('clicked=${targetX},${targetY}; cursor=' + $point.X + ',' + $point.Y + '; moved=' + $moved + '; activated=' + $activated + '; session=' + $session + '; chromeSession=' + $chromeSession)`
   ].join('\n');
 }
 
@@ -207,7 +220,8 @@ function clickWithSystemMouse(x, y, options = {}) {
       timeout: Number(options.timeoutMs || 5000)
     }, (error, stdout, stderr) => {
       if (error) {
-        const wrapped = new Error(stderr || error.message || 'system mouse click failed');
+        const details = [stderr, stdout, error.message].filter(Boolean).join(' ').trim();
+        const wrapped = new Error(details || 'system mouse click failed');
         wrapped.statusCode = 500;
         reject(wrapped);
         return;
