@@ -842,19 +842,22 @@ async function getPaymentPageState(tabId) {
         const rect = el.getBoundingClientRect?.();
         return !!(rect && rect.width > 0 && rect.height > 0);
       };
-      const hasVisibleStoreConfirmationSection = (() => {
+      const hasVisibleText = pattern => {
         const root = document.body || document.documentElement;
         if (!root || typeof document.createTreeWalker !== 'function') return false;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         let node = walker.nextNode();
         while (node) {
-          if (/\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(String(node.nodeValue || '')) && isVisibleElement(node.parentElement)) {
+          if (pattern.test(String(node.nodeValue || '')) && isVisibleElement(node.parentElement)) {
             return true;
           }
           node = walker.nextNode();
         }
         return false;
-      })();
+      };
+      const hasVisibleStoreConfirmationTitle = hasVisibleText(/\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/);
+      const hasVisibleStoreConfirmationContent = hasVisibleText(/\u5e74\u9f62\u78ba\u8a8d|\u9818\u53ce\u66f8|\u30e1\u30fc\u30eb\u914d\u4fe1\u767b\u9332|\u30b9\u30c8\u30a2\u3078\u306e\u8981\u671b|\u5fc5\u9808/);
+      const hasVisibleStoreConfirmationSection = hasVisibleStoreConfirmationTitle && hasVisibleStoreConfirmationContent;
       const isVisibleRadioOption = radio => {
         if (!radio) return false;
         let node = radio;
@@ -915,6 +918,8 @@ async function getPaymentPageState(tabId) {
           hasLoadingPlaceholder: [...document.querySelectorAll('[class*="skeleton"], [class*="Skeleton"], [aria-busy="true"]')].length > 0,
           hasStoreConfirmationSection: hasVisibleStoreConfirmationSection,
           hasVisibleStoreConfirmationSection,
+          hasVisibleStoreConfirmationTitle,
+          hasVisibleStoreConfirmationContent,
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
           shippingOptions
         }
