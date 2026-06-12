@@ -2212,6 +2212,94 @@ npm run regression
 
 ---
 
+## 2026-06-12 维护性整理第三部分实施记录
+
+### 已实现内容
+
+- 新增 `src/server/services/dataCleanupPolicy.js`，集中数据清理状态策略：
+  - 当前允许清理的任务状态仍仅为 `failed`、`cancelled`、`bidding`。
+  - 明确保留 `success`、`pending`、`processing`，不扩大历史数据清理范围。
+  - 提供 `shouldCleanupTaskStatus()`、`buildCleanupStatusSqlList()`、`buildCleanupScopeDescription()`，让清理范围有单独测试和文字说明。
+- 新增 `src/server/services/dataCleanupPolicy.test.js`，锁定上述清理边界。
+- `src/server/services/dataCleanup.js` 改为从策略模块读取 `CLEANUP_STATUSES` 和 SQL 状态列表，保留原导出名、原 SQL 输出形式和原删除顺序。
+- 未修改 `data/gdaipai.db`、未运行真实清理接口、未修改数据库 schema、未扩大 `pending/processing/success` 等状态的清理范围。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\dataCleanupPolicy.test.js
+node src\server\services\dataCleanup.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+### 下一步计划
+
+- 继续执行维护计划 Task 7-8：新增配置注册表和配置读取服务，先只建立只读/归一化测试，再逐步替换 `plugin.js`、`admin.js`、`dataCleanup.js` 中的配置读取逻辑。
+- Task 7-8 仍保持行为不变：不改配置 key、不改默认值、不改 API 返回字段、不触发真实批处理或清理接口。
+
+---
+
+## 2026-06-12 维护性整理第四部分实施记录
+
+### 已实现内容
+
+- 新增 `src/server/services/configRegistry.js`，集中登记当前服务端已确认的数值/布尔配置项默认值、类型和上下限：
+  - 多次出价：`multi_bid_start_hours`、`multi_bid_interval_minutes`、`multi_bid_min_price`。
+  - 空闲同步/保护窗口：`idle_sync_interval_minutes`、`idle_bid_guard_minutes`。
+  - 交易开始/扫描/收货/付款：`transaction_start_hour`、`scan_start_hour`、`scan_end_hour`、`scan_every_idle_runs`、`confirm_receipt_hour`、`payment_job_limit*`、`payment_page_stay_seconds`。
+  - 数据清理：`data_cleanup_enabled`、`data_cleanup_hour`、`data_cleanup_retention_days`。
+- 新增 `src/server/services/configService.js`，提供 `normalizeConfigValue()` 和 `readConfigMap()`，用于后续逐步替换各路由中的重复配置读取和归一化逻辑。
+- 新增 `src/server/services/configService.test.js`，验证默认值、整数/数字上下限、布尔值和批量读取行为。
+- 本阶段只建立配置注册表和只读服务，尚未替换 `plugin.js`、`admin.js`、`dataCleanup.js` 的业务读取路径；因此不改变现有配置存储、默认值、API 返回字段或插件调度行为。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\configService.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+### 下一步计划
+
+- 执行维护计划 Task 8：从 `src/server/routes/plugin.js` 的 `getMultiBidConfig()` 开始接入 `readConfigMap()`，每替换一组配置读取就运行对应 focused tests。
+- Task 8 必须保持返回对象 shape 不变，特别是插件使用的 `multiBidStartHours`、`multiBidIntervalMinutes`、`idleSyncIntervalMinutes`、`idleBidGuardMinutes`、`multiBidMinPrice`、`transactionStartHour`、`scanStartHour`、`scanEndHour`、`scanEveryIdleRuns`。
+
+---
+
+## 2026-06-12 付款确认页慢加载等待修复
+
+### 问题
+
+- 付款任务进入 `https://buy.auctions.yahoo.co.jp/order/review?auctionId=...` 页面时，Yahoo 前端可能会刷新/重渲染几次，右侧红色 `確認する` 按钮和页面金额区域加载不同步。
+- 旧逻辑只要检测到 `確認する` 按钮和金额匹配，就立即点击；如果此时支付方式、商品合计、送料、支付金额等区域尚未完全稳定，点击后可能没有进入下一页，最终回写 `付款失败：点击确认后页面未跳转`。
+- 真实失败样例：`p1232862422`，页面可见按钮但需要等待页面判断和渲染完全结束后再点击。
+
+### 已实现内容
+
+- `yahoo-plugin/background.js` 的付款页状态新增 `reviewPageReady` 判断：仅当 `確認する` 按钮、支付金额、支付方式区域、商品合计/送料/手续费汇总区域都出现，并且没有加载占位/处理中提示时，现代 Yahoo `order/review` 页才认为可点击。
+- `executePaymentJob()` 在点击付款 review 页 `確認する` 前，新增 `waitForPaymentReviewReady()`：
+  - 只对 `buy.auctions.yahoo.co.jp/order/review` 页面启用更严格等待。
+  - 需要连续两次读取到稳定 ready 状态后才点击，避免 Yahoo 页面短暂刷新导致点击落空。
+  - 非该类 review 页继续保持原有兼容路径，避免影响旧付款页。
+- 点击前会在等待 ready 后再次校验付款金额，防止等待期间金额发生变化。
+- 新增回归测试覆盖：`order/review` 页面第一次已有按钮但未 ready、第二次部分加载、后续稳定后才允许点击 `確認する`。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\encoding.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
 ## 2026-06-12 普通落札者負担交易开始状态补偿
 
 ### 问题

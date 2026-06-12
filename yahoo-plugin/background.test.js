@@ -1831,6 +1831,95 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsWaitsForStoreReviewPageReadyBeforeConfirmClick() {
+  const calls = [];
+  const actions = [];
+  let stateReads = 0;
+  let stateReadsAtReviewClick = 0;
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+        hasReviewButton: true,
+        paymentAmountJpy: 20700,
+        reviewPageReady: false,
+        textSample: '\u8cfc\u5165 \u78ba\u8a8d\u3059\u308b'
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+        hasReviewButton: true,
+        paymentAmountJpy: 20700,
+        reviewPageReady: false,
+        textSample: '\u8cfc\u5165 \u304a\u652f\u6255\u3044\u65b9\u6cd5 \u78ba\u8a8d\u3059\u308b'
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+        hasReviewButton: true,
+        paymentAmountJpy: 20700,
+        reviewPageReady: true,
+        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+        hasReviewButton: true,
+        paymentAmountJpy: 20700,
+        reviewPageReady: true,
+        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
+      }
+    },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422', hasFinalizeButton: true, paymentAmountJpy: 20700 } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=p1232862422', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 21, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete' }; },
+      async query() { return [{ id: 21, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          actions.push(payload.args[1]);
+          if (payload.args[1] === 'review') stateReadsAtReviewClick = stateReads;
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        stateReads += 1;
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 21, productId: 'p1232862422', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', finalPrice: 19800, effectiveShippingFeeText: '900\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(stateReadsAtReviewClick >= 4, true);
+  assert.equal(calls[0].orderId, 21);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
   const calls = [];
   const actions = [];
@@ -3666,6 +3755,7 @@ async function run() {
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
+  await testRunPaymentJobsWaitsForStoreReviewPageReadyBeforeConfirmClick();
   await testRunPaymentJobsCompletesStoreConfirmationBeforeReview();
   await testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton();
   await testPaymentTrustedClickPointFindsRoleButton();

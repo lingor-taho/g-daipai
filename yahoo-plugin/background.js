@@ -746,6 +746,12 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
+  const hasReviewButton = hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/);
+  const hasReviewAmountSection = /\u304a\u652f\u6255\u3044\u91d1\u984d/.test(bodyText);
+  const hasReviewPaymentMethodSection = /\u304a\u652f\u6255\u3044\u65b9\u6cd5|\u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9|PayPay|\u30b3\u30f3\u30d3\u30cb|\u9280\u884c\u632f\u8fbc/.test(bodyText);
+  const hasReviewSummarySection = /\u5546\u54c1\u5408\u8a08|\u9001\u6599|\u652f\u6255\u3044\u624b\u6570\u6599/.test(bodyText);
+  const hasPaymentLoadingIndicator = Boolean(snapshot.hasLoadingPlaceholder) ||
+    /\u8aad\u307f\u8fbc\u307f|\u30ed\u30fc\u30c9\u4e2d|\u305f\u3060\u3044\u307e\u51e6\u7406\u4e2d|Loading|loading/.test(bodyText);
   return {
     url: snapshot.url || '',
     title: snapshot.title || '',
@@ -769,7 +775,13 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     hasPlacementOkButton: hasPlacementDefaultModal && hasControl(/^\s*OK\s*$/),
     hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
     hasTransactionConfirmButton: hasControl(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
-    hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
+    hasReviewButton,
+    reviewPageReady: hasReviewButton &&
+      paymentAmountJpy > 0 &&
+      hasReviewAmountSection &&
+      hasReviewPaymentMethodSection &&
+      hasReviewSummarySection &&
+      !hasPaymentLoadingIndicator,
     hasFinalizeButton: hasControl(/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/)
   };
 }
@@ -855,8 +867,10 @@ async function getPaymentPageState(tabId) {
         snapshot: {
           url: location.href,
           title: document.title || '',
+          readyState: document.readyState || '',
           bodyText,
           controls,
+          hasLoadingPlaceholder: [...document.querySelectorAll('[class*="skeleton"], [class*="Skeleton"], [aria-busy="true"]')].length > 0,
           hasStoreConfirmationSection: Boolean(document.querySelector('#cartopt')),
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
           shippingOptions
@@ -1151,6 +1165,52 @@ function assertPaymentAmountMatches(job, state) {
     const sample = (relevantIndex >= 0 ? sampleSource.slice(relevantIndex, relevantIndex + 240) : sampleSource.slice(0, 240));
     throw new Error(`payment amount mismatch: expected ${expected}\u5186, found ${actual}\u5186${feeSummary}${shippingSummary ? `; shippingState: ${shippingSummary}` : ''}${sample ? `; pageSample: ${sample}` : ''}`);
   }
+}
+
+function shouldWaitForModernPaymentReviewReady(state = {}) {
+  return /buy\.auctions\.yahoo\.co\.jp\/order\/review/i.test(String(state.url || ''));
+}
+
+function isPaymentReviewReadyToClick(state = {}, job = {}) {
+  if (!state?.hasReviewButton) return false;
+  const expected = getExpectedPaymentAmountJpy(job);
+  const actual = Number(state.paymentAmountJpy || 0);
+  if (expected !== null && actual !== expected) return false;
+  if (!shouldWaitForModernPaymentReviewReady(state)) return true;
+  if (state.reviewPageReady === true) return true;
+  if (state.reviewPageReady === false) return false;
+  const text = String(state.textSample || '');
+  if (!text) return true;
+  if (/\u8aad\u307f\u8fbc\u307f|\u30ed\u30fc\u30c9\u4e2d|\u305f\u3060\u3044\u307e\u51e6\u7406\u4e2d|Loading|loading/.test(text)) return false;
+  return /\u304a\u652f\u6255\u3044\u91d1\u984d/.test(text) &&
+    /\u304a\u652f\u6255\u3044\u65b9\u6cd5|\u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9|PayPay|\u30b3\u30f3\u30d3\u30cb|\u9280\u884c\u632f\u8fbc/.test(text) &&
+    /\u5546\u54c1\u5408\u8a08|\u9001\u6599|\u652f\u6255\u3044\u624b\u6570\u6599/.test(text);
+}
+
+async function waitForPaymentReviewReady(tab, job, initialState = null, timeoutMs = 20000) {
+  let state = initialState || await getPaymentPageState(tab.id);
+  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / 500));
+  let lastReadySignature = '';
+  let stableReadyCount = 0;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (state?.alreadyPaid || state?.complete || state?.hasFinalizeButton) return state;
+    if (isPaymentReviewReadyToClick(state, job)) {
+      if (!shouldWaitForModernPaymentReviewReady(state) || state.reviewPageReady !== true) return state;
+      const signature = `${state.url || ''}|${Number(state.paymentAmountJpy || 0)}|${state.reviewPageReady}`;
+      stableReadyCount = signature === lastReadySignature ? stableReadyCount + 1 : 1;
+      lastReadySignature = signature;
+      if (stableReadyCount >= 2) return state;
+    } else {
+      stableReadyCount = 0;
+      lastReadySignature = '';
+    }
+    await sleep(500);
+    const latest = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+    if (latest) state = latest;
+  }
+
+  throw new Error(`payment review page not ready before confirm click${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);
 }
 
 function shouldSelectPaymentShippingOption(job = {}, state = {}) {
@@ -4280,6 +4340,8 @@ async function executePaymentJob(job, paymentBatch = {}) {
     state = await ensurePaymentShippingOption(tab, job, state);
     state = await waitForExpectedPaymentAmount(tab, job, state);
     assertPaymentAmountMatches(job, state);
+    state = await waitForPaymentReviewReady(tab, job, state);
+    assertPaymentAmountMatches(job, state);
 
     let result = await clickPaymentActionAndFollowTab(tab, 'review', nextState =>
       nextState.alreadyPaid || nextState.complete || nextState.hasFinalizeButton
@@ -4609,6 +4671,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   completeStoreConfirmationItems,
   getRandomIntInclusive,
   assertPaymentAmountMatches,
+  isPaymentReviewReadyToClick,
+  waitForPaymentReviewReady,
   syncIdleYahooPages,
   runTransactionStartJobs,
   runPaymentJobs,
