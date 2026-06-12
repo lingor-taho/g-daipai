@@ -2690,7 +2690,75 @@ async function testIdleSyncPostsCaptchaFallbackWhenCaptureFails() {
   assert.equal(challenges.length, 1);
   assert.equal(challenges[0].type, 'captcha');
   assert.match(challenges[0].imageDataUrl, /^data:image\/png;base64,/);
-  assert.match(challenges[0].message, /截图失败/);
+  assert.ok(challenges[0].message);
+}
+
+async function testIdleSyncPostsCaptchaImageFromPageWhenScreenshotFails() {
+  const challenges = [];
+  let captchaDone = false;
+  const captchaImageDataUrl = 'data:image/png;base64,' + Buffer.from('captcha-image').toString('base64');
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async query() {
+        if (captchaDone) return [];
+        return [
+          { id: 21, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 }
+        ];
+      },
+      async get(id) {
+        if (captchaDone) return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474', status: 'complete', active: true, windowId: 3 };
+        return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 };
+      },
+      async update(id, props) {
+        return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async captureVisibleTab() {
+        throw new Error('capture should not be needed when DOM image extraction succeeds');
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        const source = String(payload.func || '');
+        if (source.includes('captcha image element not extractable')) {
+          return [{ result: { success: true, imageDataUrl: captchaImageDataUrl, method: 'img-fetch' } }];
+        }
+        if (source.includes('captchaAnswer')) {
+          captchaDone = true;
+          return [{ result: { success: true } }];
+        }
+        return [{ result: { success: false } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        challenges.push(body);
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not be fetched during manual captcha handling');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.equal(challenges.length, 1);
+  assert.equal(challenges[0].type, 'captcha');
+  assert.equal(challenges[0].imageDataUrl, captchaImageDataUrl);
+  assert.equal(challenges[0].message || '', '');
 }
 
 async function testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle() {
@@ -3341,6 +3409,7 @@ async function run() {
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
   await testIdleSyncPostsCaptchaFallbackWhenCaptureFails();
+  await testIdleSyncPostsCaptchaImageFromPageWhenScreenshotFails();
   await testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
   await testIdleSyncResumesAnsweredPinChallengeOnTimedOutLoginPage();

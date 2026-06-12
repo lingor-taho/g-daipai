@@ -2228,6 +2228,7 @@ npm run regression
 - `waitForManualVerificationPageTransition` 增加最大轮询次数保护，避免异常环境下时间不推进导致等待循环无法退出。
 - 新增回归测试覆盖 `login.yahoo.co.jp/config/login?src=auc&done=...` 这类超时登录页已有 PIN 答案后的恢复流程。
 - 补充修复：PIN 输入后如果已经到达 `/ncaptcha` 文字验证码页，跳转选择优先停留当前验证码页；手动验证流程会绑定一个验证 tab 走完，旁边出现的新 PIN tab 会被标记为本轮重复验证页，后续 idle 轮询不会再接管它；验证码截图失败时也会用占位图覆盖后台挑战为 `captcha`，避免后台继续显示旧 PIN 输入框。
+- 补充修复：验证码页优先从 Yahoo 页面 DOM 中提取可见 `img/canvas` 验证码图片，转为 `data:image/...;base64` 发给后台；只有 DOM 提取和 Chrome 截图都失败时才显示兜底提示，方便管理员无法登录服务器时仍可在后台查看验证码图片并输入文字。
 
 ### 最近验证命令
 

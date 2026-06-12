@@ -2886,6 +2886,65 @@ async function cropDataUrl(dataUrl, rect, deviceScaleFactor = 1) {
   return `data:image/png;base64,${btoa(binary)}`;
 }
 
+async function extractManualCaptchaImageFromPage(tabId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async () => {
+      const isVisible = el => {
+        const rect = el.getBoundingClientRect?.();
+        const style = window.getComputedStyle(el);
+        return rect && rect.width >= 80 && rect.height >= 30 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const blobToDataUrl = blob => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('blob read failed'));
+        reader.readAsDataURL(blob);
+      });
+      const supportedImageDataUrl = value => /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(String(value || ''));
+      const candidates = [...document.querySelectorAll('img, canvas')]
+        .map(el => ({
+          el,
+          rect: el.getBoundingClientRect?.(),
+          text: [
+            el.alt,
+            el.title,
+            el.getAttribute?.('aria-label'),
+            el.id,
+            el.className
+          ].filter(Boolean).join(' ')
+        }))
+        .filter(item => item.rect && isVisible(item.el))
+        .filter(item => !/Yahoo/i.test(String(item.text || '')))
+        .sort((a, b) => (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height));
+      for (const item of candidates) {
+        const el = item.el;
+        try {
+          if (el.tagName === 'CANVAS') {
+            const dataUrl = el.toDataURL('image/png');
+            if (/^data:image\/png;base64,/i.test(dataUrl)) return { success: true, imageDataUrl: dataUrl, method: 'canvas' };
+          }
+          const src = el.currentSrc || el.src || el.getAttribute?.('src') || '';
+          if (supportedImageDataUrl(src)) return { success: true, imageDataUrl: src, method: 'img-data-src' };
+          if (src) {
+            const response = await fetch(src, { credentials: 'include', cache: 'no-store' });
+            if (!response.ok) continue;
+            const blob = await response.blob();
+            if (!/^image\//i.test(blob.type || '')) continue;
+            const dataUrl = await blobToDataUrl(blob);
+            if (supportedImageDataUrl(dataUrl)) return { success: true, imageDataUrl: dataUrl, method: 'img-fetch' };
+          }
+        } catch (_) {
+          // Try the next visible media element.
+        }
+      }
+      return { success: false, error: 'captcha image element not extractable' };
+    }
+  }).catch(error => [{ result: { success: false, error: error.message || 'captcha image extraction failed' } }]);
+  return result?.[0]?.result || { success: false, error: 'captcha image extraction unavailable' };
+}
+
 async function captureManualCaptchaImage(tab) {
   const tabId = tab?.id;
   if (!tabId) throw new Error('captcha tab id is required');
@@ -2895,6 +2954,8 @@ async function captureManualCaptchaImage(tab) {
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(500);
+  const pageImage = await extractManualCaptchaImageFromPage(tabId);
+  if (pageImage?.success && pageImage.imageDataUrl) return pageImage.imageDataUrl;
   const rectResult = await getManualCaptchaRect(tabId);
   const imageDataUrl = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
   if (!rectResult?.success) return imageDataUrl;
@@ -3195,7 +3256,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       let captchaMessage = '';
       const imageDataUrl = await captureManualCaptchaImage(current).catch(error => {
         console.warn('[Yahoo Bid] Manual captcha screenshot failed; posting captcha challenge with fallback image:', error?.message || error);
-        captchaMessage = '验证码截图失败，请看服务器 Chrome 验证码页面输入文字';
+        captchaMessage = '验证码图片提取和截图都失败，请看服务器 Chrome 验证码页面输入文字';
         return MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL;
       });
       await postManualCaptchaChallenge({

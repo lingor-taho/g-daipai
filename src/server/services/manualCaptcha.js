@@ -18,7 +18,7 @@ function normalizeCaptchaChallenge(payload = {}) {
     error.statusCode = 400;
     throw error;
   }
-  if (type === 'captcha' && (!/^data:image\/(?:png|jpeg|webp);base64,/i.test(imageDataUrl) || imageDataUrl.length > MAX_IMAGE_DATA_URL_LENGTH)) {
+  if (type === 'captcha' && (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(imageDataUrl) || imageDataUrl.length > MAX_IMAGE_DATA_URL_LENGTH)) {
     const error = new Error('valid captcha imageDataUrl is required');
     error.statusCode = 400;
     throw error;
