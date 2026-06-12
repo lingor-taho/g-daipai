@@ -1145,6 +1145,10 @@ async function waitForPaymentStateOnTab(tab, predicate, timeoutMs = 15000) {
   return null;
 }
 
+function shouldUseTrustedPaymentActionFirst(tab, action) {
+  return action === 'review' && /buy\.auctions\.yahoo\.co\.jp\/order\/review/i.test(String(tab?.url || ''));
+}
+
 function assertPaymentAmountMatches(job, state) {
   const expected = getExpectedPaymentAmountJpy(job);
   const actual = Number(state?.paymentAmountJpy || 0);
@@ -2453,6 +2457,26 @@ async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
 
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const previousTabIds = await getTabIds();
+  if (shouldUseTrustedPaymentActionFirst(tab, action)) {
+    const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
+    console.log('[Yahoo Bid] Trusted-first payment mouse click result:', trustedClick);
+    if (trustedClick?.success) {
+      try {
+        const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+        await injectContentScript(nextTab.id).catch(() => {});
+        return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+      } catch (afterTrustedError) {
+        const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+        return {
+          success: false,
+          error: formatPaymentClickDiagnostics(action, null, trustedClick, currentState, afterTrustedError),
+          tab
+        };
+      }
+    }
+    console.warn('[Yahoo Bid] Trusted-first payment click unavailable, falling back to synthetic click:', trustedClick?.error || 'unknown error');
+  }
+
   const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
   if (!clickResult?.success) {
     return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };

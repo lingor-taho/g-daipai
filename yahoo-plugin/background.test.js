@@ -1920,6 +1920,84 @@ async function testRunPaymentJobsWaitsForStoreReviewPageReadyBeforeConfirmClick(
   assert.equal(calls[0].status, 'success');
 }
 
+async function testModernStoreReviewUsesTrustedClickBeforeSyntheticClick() {
+  const calls = [];
+  const actions = [];
+  let trustedMouseCommands = 0;
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+        hasReviewButton: true,
+        paymentAmountJpy: 20700,
+        reviewPageReady: true,
+        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
+        hasReviewButton: true,
+        paymentAmountJpy: 20700,
+        reviewPageReady: true,
+        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
+      }
+    },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422', hasFinalizeButton: true, paymentAmountJpy: 20700 } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=p1232862422', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 22, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1 }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1 }; },
+      async update(id, info) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1, ...info }; },
+      async query() { return [{ id: 22, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1 }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length >= 2) {
+          if (funcText.includes('payment button has no clickable rect')) {
+            return [{ result: { success: true, x: 752, y: 321, text: '\u78ba\u8a8d\u3059\u308b', candidates: [] } }];
+          }
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'synthetic clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command) {
+        if (command === 'Input.dispatchMouseEvent') trustedMouseCommands += 1;
+      },
+      async detach() {}
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 22, productId: 'p1232862422', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', finalPrice: 19800, effectiveShippingFeeText: '900\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(actions.includes('review'), false);
+  assert.equal(trustedMouseCommands >= 3, true);
+  assert.equal(calls[0].orderId, 22);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
   const calls = [];
   const actions = [];
@@ -2025,7 +2103,7 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
 
   assert.equal(storeApplyChecks, 0);
   assert.equal(storeApplySubmits, 1);
-  assert.equal(trustedMouseCommands, 6);
+  assert.equal(trustedMouseCommands, 9);
   assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), true);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 19);
@@ -2131,7 +2209,7 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
   await api.runPaymentJobs();
 
   assert.equal(storeApplySubmits, 1);
-  assert.equal(trustedMouseCommands, 6);
+  assert.equal(trustedMouseCommands, 9);
   assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), true);
   assert.equal(calls[0].orderId, 20);
   assert.equal(calls[0].status, 'success');
@@ -3756,6 +3834,7 @@ async function run() {
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testRunPaymentJobsWaitsForStoreReviewPageReadyBeforeConfirmClick();
+  await testModernStoreReviewUsesTrustedClickBeforeSyntheticClick();
   await testRunPaymentJobsCompletesStoreConfirmationBeforeReview();
   await testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton();
   await testPaymentTrustedClickPointFindsRoleButton();

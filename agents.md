@@ -2357,3 +2357,29 @@ npm run regression
 ```
 
 验证结果：以上命令均通过。
+---
+
+## 2026-06-12 付款 review 页真实鼠标优先点击修复
+
+### 问题
+
+- 商品 `p1232862422` 付款任务仍停在 `https://buy.auctions.yahoo.co.jp/order/review?auctionId=...`，后台提示 `付款失败：点击确认后页面未跳转`。
+- 真实页面没有 `ストアからの確認事項`，因此不应该进入店铺确认事项变更页；人工点击右侧红色 `確認する` 可以正常进入下一步。
+- 插件正常付款路径没有主动 `chrome.tabs.reload()` 该 review 页。用户看到的多次刷新/闪动更像 Yahoo 前端自身重渲染或页面状态更新；此前“等待页面 ready”只能避免太早点击，但旧逻辑仍先使用页面脚本触发 click，现代 Yahoo review 页可能吞掉这类合成点击，导致按钮看起来存在但没有跳转。
+
+### 已实现内容
+
+- `yahoo-plugin/background.js` 新增 `shouldUseTrustedPaymentActionFirst()`：仅对 `buy.auctions.yahoo.co.jp/order/review` 的付款 review 确认动作启用真实鼠标优先。
+- `clickPaymentActionAndFollowTab()` 在现代付款 review 页点击 `確認する` 时，先使用 Chrome debugger 鼠标事件点击按钮中心点，再等待下一页状态；只有无法取得可点击坐标时才回退到旧的脚本点击路径。
+- `ストアからの確認事項` 分支保持原条件：只有当前页真实检测到店铺确认事项区域时，才会导航到 `order/change/store-options`；没有该区域的普通付款 review 页不会走该变更流程。
+- 新增回归测试覆盖 `p1232862422` 同类场景：现代 review 页先 ready，再点击 `確認する`，要求优先走真实鼠标点击，不能先走脚本合成点击。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\encoding.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
