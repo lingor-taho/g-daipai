@@ -2183,6 +2183,12 @@ function summarizePaymentError(errorText) {
 
   const actionLabel = getPaymentActionLabel(text);
   if (/payment next page did not appear/i.test(text)) {
+    if (/trusted=success/i.test(text)) {
+      return actionLabel ? `${actionLabel}按钮已点击但页面未跳转` : '确认按钮已点击但页面未跳转';
+    }
+    if (/trusted=failed/i.test(text)) {
+      return actionLabel ? `${actionLabel}按钮真实点击失败` : '确认按钮真实点击失败';
+    }
     return actionLabel ? `${actionLabel}后页面未跳转` : '点击确认后页面未跳转';
   }
   if (/payment completion page did not appear/i.test(text)) return '提交支付后未出现完成页';

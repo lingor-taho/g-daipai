@@ -2408,3 +2408,27 @@ node yahoo-plugin\background.test.js
 ```
 
 验证结果：以上命令通过。
+
+---
+
+## 2026-06-12 付款失败摘要区分按钮定位/点击状态
+
+### 问题
+
+- 后台付款失败提醒会把 `action=review; trusted=success:debuggerMouse:確認する; wait=payment next page did not appear` 压缩成 `确认付款后页面未跳转`。
+- 该文案无法区分“找不到按钮”和“按钮已定位并发送真实点击但页面没跳转”，排查 `p1232862422` 付款 review 页时容易误判。
+
+### 已实现内容
+
+- `/api/plugin/payment/status` 摘要付款错误时，如果原始错误包含 `payment next page did not appear` 且 `trusted=success`，显示为 `确认付款按钮已点击但页面未跳转`。
+- 如果原始错误包含 `trusted=failed`，显示为 `确认付款按钮真实点击失败`。
+- 按钮定位失败仍走原有 `未找到付款确认按钮` / `页面按钮未找到` 文案。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+node yahoo-plugin\background.test.js
+```
+
+验证结果：以上命令均通过。

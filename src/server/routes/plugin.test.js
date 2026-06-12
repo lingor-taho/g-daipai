@@ -1477,7 +1477,7 @@ function testSummarizePaymentErrorRemovesDebugDetails() {
   const raw = 'action=review; synthetic=success:click:確認する; trusted=success:debuggerMouse:確認する; wait=payment next page did not appear; url=https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017; controls=ファンキー？ モンキー？; candidates=[{"text":"確認する","rect":{"height":13}}]';
   const summary = summarizePaymentError(raw);
 
-  assert.equal(summary, '确认付款后页面未跳转');
+  assert.equal(summary, '确认付款按钮已点击但页面未跳转');
   assert.equal(summary.includes('https://'), false);
   assert.equal(summary.includes('controls='), false);
   assert.equal(summary.includes('candidates='), false);
@@ -1499,7 +1499,7 @@ async function testUpdatePaymentStatusFailureWritesConciseAlert() {
 
   const alert = calls[1].params[1];
   assert.match(alert, /j1232680017/);
-  assert.match(alert, /确认付款后页面未跳转/);
+  assert.match(alert, /确认付款按钮已点击但页面未跳转/);
   assert.equal(alert.includes('https://'), false);
   assert.equal(alert.includes('controls='), false);
   assert.equal(alert.includes('candidates='), false);
