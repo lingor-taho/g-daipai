@@ -4,7 +4,10 @@ const path = require('path');
 const vm = require('vm');
 
 function loadBackgroundForTest(overrides = {}) {
-  const code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  let code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  if (overrides.disableAutoStart) {
+    code = code.replace(/\r?\nstartPolling\(\);\r?\n\r?\n\/\/ Listen for messages from content script or client page/, '\n// Listen for messages from content script or client page');
+  }
   const tabs = overrides.tabs || {};
   const scripting = overrides.scripting || {};
   const debuggerApi = overrides.debuggerApi || {};
@@ -2749,6 +2752,81 @@ async function testManualPinRefreshesPageBeforeEnteringAnswer() {
   assert.equal(keyTexts.join(''), '123456');
 }
 
+async function testIdleSyncResumesAnsweredPinChallengeOnTimedOutLoginPage() {
+  let currentUrl = 'https://login.yahoo.co.jp/config/login?src=auc&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1232375474';
+  let reloadCount = 0;
+  let typedPin = '';
+  let closedChallengeId = '';
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async query() {
+        return [
+          { id: 21, url: currentUrl, status: 'complete', active: true, windowId: 3 }
+        ];
+      },
+      async get(id) {
+        return { id, url: currentUrl, status: 'complete', active: true, windowId: 3 };
+      },
+      async update(id, props) {
+        return { id, url: currentUrl, status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async reload(id) {
+        assert.equal(id, 21);
+        reloadCount += 1;
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        return [{ result: false }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/current')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              found: true,
+              id: 'pin-j1232375474-1',
+              type: 'pin',
+              answered: true,
+              answer: '123456',
+              productId: 'j1232375474'
+            };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/manual-pin/type')) {
+        const body = JSON.parse(options.body || '{}');
+        typedPin = body.pin;
+        currentUrl = 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474';
+        return { async json() { return { success: true, digits: 6 }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/close')) {
+        const body = JSON.parse(options.body || '{}');
+        closedChallengeId = body.id;
+        return { async json() { return { success: true, closed: 1 }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not run while manual PIN is being resumed');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.ok(reloadCount >= 1);
+  assert.equal(typedPin, '123456');
+  assert.equal(closedChallengeId, 'pin-j1232375474-1');
+}
+
 async function testManualVerificationTransitionPrefersNewPinTabAfterCaptcha() {
   const api = loadBackgroundForTest({
     tabs: {
@@ -3176,6 +3254,7 @@ async function run() {
   await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
   await testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
+  await testIdleSyncResumesAnsweredPinChallengeOnTimedOutLoginPage();
   await testManualVerificationTransitionPrefersNewPinTabAfterCaptcha();
   await testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin();
   await testManualVerificationReusesPinWhenCaptchaReturnsToPinPage();

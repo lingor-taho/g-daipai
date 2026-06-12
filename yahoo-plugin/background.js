@@ -597,6 +597,11 @@ async function fetchManualCaptchaAnswer(id) {
   return await res.json();
 }
 
+async function fetchCurrentManualCaptchaChallenge() {
+  const res = await apiFetch('/api/plugin/manual-captcha/current');
+  return await res.json();
+}
+
 async function closeManualCaptchaChallenge(id) {
   await apiFetch('/api/plugin/manual-captcha/close', {
     method: 'POST',
@@ -2749,6 +2754,15 @@ async function pauseIdleWorkForOpenManualPin() {
     return true;
   }
   const keep = pinTabs.length ? await keepSingleManualPinTab(pinTabs) : (captchaTabs.find(tab => tab.active) || captchaTabs[0] || null);
+  if (keep?.id && isLikelyManualPinTab(keep)) {
+    const resumed = await resumeAnsweredManualPinChallenge(keep, {
+      source: 'idle_manual_verification'
+    }).catch(error => {
+      console.warn('[Yahoo Bid] Manual PIN resume failed during idle pause:', error?.message || error);
+      return null;
+    });
+    if (resumed?.handled) return true;
+  }
   console.warn('[Yahoo Bid] Manual verification flow is active; idle non-bid work paused:', keep?.id || '');
   return true;
 }
@@ -3084,7 +3098,10 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
   const previous = previousTabIds instanceof Set ? previousTabIds : await getTabIds().catch(() => new Set());
   const startUrl = String(current?.url || '');
   const startAt = Date.now();
-  while (Date.now() - startAt < timeoutMs && current?.id) {
+  let attempts = 0;
+  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / 1000) + 2);
+  while (Date.now() - startAt < timeoutMs && current?.id && attempts < maxAttempts) {
+    attempts += 1;
     await sleep(1000);
     current = await findManualVerificationTransitionTab(current, previous);
     const url = String(current?.url || '');
@@ -3101,6 +3118,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   let handled = false;
   let pinAnswer = String(context.pinAnswer || '').trim();
+  let pinAnswerFromContext = Boolean(pinAnswer);
   let canReusePinAfterCaptcha = false;
   let pinAttempted = Boolean(pinAnswer);
   for (let step = 0; step < 6 && current?.id; step += 1) {
@@ -3134,7 +3152,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     manualVerificationFlowActive = true;
     handled = true;
     let pinChallengeId = '';
-    if (!pinAnswer || !canReusePinAfterCaptcha) {
+    if (!pinAnswer || (!canReusePinAfterCaptcha && !pinAnswerFromContext)) {
       pinChallengeId = buildManualVerificationId('pin', current, context);
       await postManualCaptchaChallenge({
         id: pinChallengeId,
@@ -3151,6 +3169,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
     pinAttempted = true;
+    pinAnswerFromContext = false;
     if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
     canReusePinAfterCaptcha = false;
     if (fillResult.method === 'debuggerRealKeyboard') {
@@ -3174,6 +3193,23 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
   }
   if (current?.id) await injectContentScript(current.id).catch(() => {});
   return { handled, tab: current || tab, pinAnswer };
+}
+
+async function resumeAnsweredManualPinChallenge(tab, context = {}) {
+  const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  if (!current?.id || !isLikelyManualPinTab(current)) return { handled: false, tab: current || tab };
+  const challenge = await fetchCurrentManualCaptchaChallenge().catch(() => null);
+  if (!challenge?.found || challenge.type !== 'pin' || !challenge.answered || !challenge.answer) {
+    return { handled: false, tab: current };
+  }
+  console.log('[Yahoo Bid] Resuming answered manual PIN challenge:', challenge.id);
+  const result = await handleManualVerificationIfPresent(current, {
+    ...context,
+    productId: context.productId || challenge.productId || '',
+    pinAnswer: challenge.answer
+  });
+  if (result?.handled) await closeManualCaptchaChallenge(challenge.id);
+  return result;
 }
 
 async function handleManualCaptchaIfPresent(tab, context = {}) {

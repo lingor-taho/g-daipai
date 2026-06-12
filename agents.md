@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-11
+**最后更新**: 2026-06-12
 
 ---
 
@@ -2205,6 +2205,36 @@ npm run regression
 
 ```powershell
 node src\shared\shippingRules.test.cjs; node src\shared\payableRules.test.cjs; node src\server\routes\admin.orders.test.js; node src\server\routes\plugin.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-12 PIN 验证超时页恢复修复
+
+### 问题
+
+- 服务器 Chrome 中 Yahoo 登录/PIN 页如果停留过久，会出现“此请求已超时”弹窗。
+- 后台已经显示 PIN 输入框并提交 PIN 后，插件可能只暂停 idle 流程，不会重新接管已打开的 PIN 页执行“刷新 -> 输入 PIN -> 进入验证码/后续页面”。
+- 既有 `handleManualVerificationIfPresent` 虽然支持传入 `pinAnswer`，但普通 PIN 页分支仍可能重新创建新的 PIN 挑战并等待，导致已提交的 PIN 没有被直接使用。
+
+### 已实现内容
+
+- 新增插件只读接口 `GET /api/plugin/manual-captcha/current`，返回当前未关闭验证码/PIN 挑战的状态；用于插件恢复已回答的 PIN 挑战，不改业务数据表。
+- 插件 idle 暂停遇到已打开 PIN 页时，会检查当前 PIN 挑战是否已经有后台答案；如有答案，则接管该 tab，先刷新页面，再输入 PIN，之后继续原有验证码/后续页面处理。
+- `handleManualVerificationIfPresent` 支持外部传入的 PIN 答案直接使用一次；如果输入后仍停留 PIN 页，才重新要求后台输入，避免错误 PIN 无限复用。
+- `waitForManualVerificationPageTransition` 增加最大轮询次数保护，避免异常环境下时间不推进导致等待循环无法退出。
+- 新增回归测试覆盖 `login.yahoo.co.jp/config/login?src=auc&done=...` 这类超时登录页已有 PIN 答案后的恢复流程。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node src\server\services\manualCaptcha.test.js
+node src\server\routes\plugin.test.js
+node yahoo-plugin\encoding.test.js
 npm run regression
 ```
 

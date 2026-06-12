@@ -2406,6 +2406,26 @@ router.get('/manual-captcha/answer/:id', async (req, res) => {
   });
 });
 
+router.get('/manual-captcha/current', async (req, res) => {
+  const challenge = await getCaptchaChallenge(db);
+  if (!challenge) {
+    return res.json({ success: true, found: false, answered: false });
+  }
+  res.json({
+    success: true,
+    found: true,
+    id: challenge.id,
+    type: challenge.type || 'captcha',
+    answered: !!challenge.answer,
+    answer: challenge.answer || '',
+    pageUrl: challenge.pageUrl || '',
+    productId: challenge.productId || '',
+    source: challenge.source || '',
+    createdAt: challenge.createdAt || '',
+    answeredAt: challenge.answeredAt || ''
+  });
+});
+
 router.post('/manual-captcha/close', async (req, res) => {
   const result = await closeCaptchaChallenge(db, req.body?.id || '');
   res.json({ success: true, ...result });
