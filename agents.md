@@ -2452,9 +2452,9 @@ npm run regression
 
 - 服务端新增 `POST /api/plugin/native-click`，仅 Windows 可用，使用 PowerShell STA + Win32 `SetCursorPos` / `mouse_event` 执行系统级鼠标点击。
 - 插件 `getPaymentActionClickPoint()` 在原有视口坐标基础上补充估算屏幕坐标 `screenX/screenY`。
-- `clickPaymentActionAndFollowTab()` 付款 review 页流程保持原顺序：页面内点击 -> 5 秒未跳转再页面内点击 -> Chrome debugger 鼠标点击；如果仍未进入下一步，最后调用服务器原生鼠标点击红色 `確認する`。
+- `clickPaymentActionAndFollowTab()` 付款 review 页流程调整为：页面内点击 -> 5 秒未跳转再页面内点击 -> 再等 5 秒未跳转就调用服务器原生鼠标点击红色 `確認する`；如果系统鼠标仍未进入下一步，才继续 Chrome debugger 鼠标点击或失败诊断。
 - 后台付款失败摘要新增区分：如果原始错误包含 `system=success`，显示 `确认付款按钮已用系统鼠标点击但页面未跳转`，便于判断是否已经发生真实鼠标点击。
-- 新增回归测试覆盖：两次页面内点击和 debugger 点击都未跳转时，会调用 `/api/plugin/native-click`，系统鼠标点击后进入确认页并继续完成付款流程。
+- 新增回归测试覆盖：两次页面内点击都未跳转时，会先调用 `/api/plugin/native-click`，系统鼠标点击后进入确认页并继续完成付款流程，且不再先等待 Chrome debugger 点击。
 
 ### 最近验证命令
 
@@ -2462,6 +2462,7 @@ npm run regression
 node yahoo-plugin\background.test.js
 node src\server\routes\plugin.test.js
 node yahoo-plugin\encoding.test.js
+npm run regression
 ```
 
 验证结果：以上命令均通过。

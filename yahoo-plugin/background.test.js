@@ -2166,7 +2166,7 @@ async function testModernStoreReviewFallsBackToSystemMouseClick() {
   await api.runPaymentJobs();
 
   assert.equal(syntheticReviewClicks >= 2, true);
-  assert.equal(trustedMouseCommands >= 3, true);
+  assert.equal(trustedMouseCommands, 0);
   assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/native-click') && /912/.test(call.body) && /597/.test(call.body)), true);
   assert.equal(actions.includes('finalize'), true);
   assert.equal(calls[0].orderId, 24);

@@ -2504,6 +2504,7 @@ async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
 
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const previousTabIds = await getTabIds();
+  let systemClick = null;
   const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
   if (!clickResult?.success) {
     return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };
@@ -2520,20 +2521,45 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
       console.log('[Yahoo Bid] Payment synthetic retry click result:', retryClickResult);
       if (retryClickResult?.success) {
         try {
-          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
+          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 5000);
           await injectContentScript(nextTab.id).catch(() => {});
           return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
         } catch (afterRetrySyntheticError) {
-          console.warn('[Yahoo Bid] Payment synthetic retry did not reach next state, trying trusted mouse click:', afterRetrySyntheticError.message || afterRetrySyntheticError);
+          console.warn('[Yahoo Bid] Payment synthetic retry did not reach next state after 5s, trying system mouse click:', afterRetrySyntheticError.message || afterRetrySyntheticError);
         }
       } else {
-        console.warn('[Yahoo Bid] Payment synthetic retry click failed, trying trusted mouse click:', retryClickResult?.error || 'unknown error');
+        console.warn('[Yahoo Bid] Payment synthetic retry click failed, trying system mouse click:', retryClickResult?.error || 'unknown error');
+      }
+
+      const point = await getPaymentActionClickPoint((currentTab || tab).id, action).catch(e2 => ({ success: false, error: e2.message || 'payment click point unavailable' }));
+      systemClick = point?.success
+        ? await clickWithSystemMouse(point, { windowTitle: currentTab?.title || tab?.title || '' })
+        : { success: false, error: point?.error || 'payment click point unavailable' };
+      console.log('[Yahoo Bid] System payment mouse click result:', systemClick);
+      if (systemClick?.success) {
+        try {
+          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
+          await injectContentScript(nextTab.id).catch(() => {});
+          return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+        } catch (afterSystemError) {
+          console.warn('[Yahoo Bid] System payment mouse click did not reach next state, trying trusted mouse click:', afterSystemError.message || afterSystemError);
+        }
+      } else {
+        console.warn('[Yahoo Bid] System payment mouse click failed, trying trusted mouse click:', systemClick?.error || 'unknown error');
       }
     }
     console.warn('[Yahoo Bid] Payment synthetic click did not reach next state, trying trusted mouse click:', e.message || e);
     const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
     console.log('[Yahoo Bid] Trusted payment mouse click result:', trustedClick);
     if (!trustedClick?.success) {
+      if (systemClick) {
+        const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+        return {
+          success: false,
+          error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, e, systemClick),
+          tab
+        };
+      }
       return { success: false, error: trustedClick?.error || clickResult?.error || `payment ${action} click failed`, tab };
     }
     try {
@@ -2541,32 +2567,10 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
       await injectContentScript(nextTab.id).catch(() => {});
       return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
     } catch (afterTrustedError) {
-      if (shouldUseTrustedPaymentActionFirst(tab, action)) {
-        const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
-        const point = await getPaymentActionClickPoint((currentTab || tab).id, action).catch(e2 => ({ success: false, error: e2.message || 'payment click point unavailable' }));
-        const systemClick = point?.success
-          ? await clickWithSystemMouse(point, { windowTitle: currentTab?.title || tab?.title || '' })
-          : { success: false, error: point?.error || 'payment click point unavailable' };
-        console.log('[Yahoo Bid] System payment mouse click result:', systemClick);
-        if (systemClick?.success) {
-          try {
-            const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
-            await injectContentScript(nextTab.id).catch(() => {});
-            return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
-          } catch (afterSystemError) {
-            const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
-            return {
-              success: false,
-              error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterSystemError, systemClick),
-              tab
-            };
-          }
-        }
-      }
       const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
       return {
         success: false,
-        error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterTrustedError),
+        error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterTrustedError, systemClick),
         tab
       };
     }
