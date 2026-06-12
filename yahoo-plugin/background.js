@@ -7,12 +7,15 @@ const PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS = 15000;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 
 let isRunning = false;
 let fetchFailureCount = 0;
 let idleSyncIntervalMs = 5 * 60 * 1000;
 let lastIdleSyncAt = 0;
 let manualVerificationFlowActive = false;
+let manualVerificationTabId = null;
+const ignoredManualVerificationTabIds = new Set();
 const managedTaskTabs = new Set();
 const managedTaskTabsByTaskId = new Map();
 
@@ -2714,7 +2717,31 @@ async function getOpenManualPinTabs() {
 
 async function getOpenManualVerificationTabs() {
   const tabs = await chrome.tabs.query({}).catch(() => []);
-  return tabs.filter(isManualVerificationTab);
+  return tabs.filter(tab => isManualVerificationTab(tab) && !ignoredManualVerificationTabIds.has(tab.id));
+}
+
+async function getManualVerificationLockedTab() {
+  if (!manualVerificationTabId) return null;
+  const tab = await chrome.tabs.get(manualVerificationTabId).catch(() => null);
+  if (tab && isManualVerificationTab(tab)) return tab;
+  manualVerificationTabId = null;
+  return null;
+}
+
+function rememberManualVerificationTab(tab) {
+  if (tab?.id && isManualVerificationTab(tab)) {
+    manualVerificationTabId = tab.id;
+    ignoredManualVerificationTabIds.delete(tab.id);
+    manualVerificationFlowActive = true;
+  }
+}
+
+function ignoreDuplicateManualVerificationTabs(tabs = [], keepTab = null) {
+  const keepId = keepTab?.id || null;
+  for (const tab of tabs) {
+    if (!tab?.id || tab.id === keepId) continue;
+    if (isLikelyManualPinTab(tab)) ignoredManualVerificationTabIds.add(tab.id);
+  }
 }
 
 async function keepSingleManualPinTab(tabs) {
@@ -2733,6 +2760,30 @@ async function keepSingleManualPinTab(tabs) {
 }
 
 async function pauseIdleWorkForOpenManualPin() {
+  const lockedTab = await getManualVerificationLockedTab();
+  if (lockedTab?.id) {
+    manualVerificationFlowActive = true;
+    await chrome.tabs.update(lockedTab.id, { active: true }).catch(() => {});
+    if (isManualCaptchaTab(lockedTab)) {
+      console.warn('[Yahoo Bid] Manual captcha tab is active; handling captcha before other idle work:', lockedTab.id);
+      await handleManualVerificationIfPresent(lockedTab, {
+        source: 'idle_manual_verification'
+      }).catch(error => {
+        console.warn('[Yahoo Bid] Manual captcha handling failed during idle pause:', error?.message || error);
+      });
+      return true;
+    }
+    const resumed = await resumeAnsweredManualPinChallenge(lockedTab, {
+      source: 'idle_manual_verification'
+    }).catch(error => {
+      console.warn('[Yahoo Bid] Manual PIN resume failed during idle pause:', error?.message || error);
+      return null;
+    });
+    if (resumed?.handled) return true;
+    console.warn('[Yahoo Bid] Manual verification flow is active; idle non-bid work paused:', lockedTab.id);
+    return true;
+  }
+
   const verificationTabs = await getOpenManualVerificationTabs();
   const pinTabs = verificationTabs.filter(isLikelyManualPinTab);
   const captchaTabs = verificationTabs.filter(isManualCaptchaTab);
@@ -2744,6 +2795,7 @@ async function pauseIdleWorkForOpenManualPin() {
   if (!manualVerificationFlowActive) return false;
   const captcha = captchaTabs.find(tab => tab.active) || captchaTabs[0] || null;
   if (captcha?.id) {
+    rememberManualVerificationTab(captcha);
     console.warn('[Yahoo Bid] Manual captcha tab is active; handling captcha before other idle work:', captcha.id);
     await chrome.tabs.update(captcha.id, { active: true }).catch(() => {});
     await handleManualVerificationIfPresent(captcha, {
@@ -2754,6 +2806,7 @@ async function pauseIdleWorkForOpenManualPin() {
     return true;
   }
   const keep = pinTabs.length ? await keepSingleManualPinTab(pinTabs) : (captchaTabs.find(tab => tab.active) || captchaTabs[0] || null);
+  rememberManualVerificationTab(keep);
   if (keep?.id && isLikelyManualPinTab(keep)) {
     const resumed = await resumeAnsweredManualPinChallenge(keep, {
       source: 'idle_manual_verification'
@@ -3068,7 +3121,7 @@ async function refreshManualPinPageBeforeAnswer(tab) {
   return current;
 }
 
-async function findManualVerificationTransitionTab(current, previousTabIds = new Set()) {
+async function findManualVerificationTransitionTab(current, previousTabIds = new Set(), options = {}) {
   const currentTab = current?.id ? await chrome.tabs.get(current.id).catch(() => current) : current;
   const tabs = await chrome.tabs.query({}).catch(() => []);
   const previous = previousTabIds instanceof Set ? previousTabIds : new Set(previousTabIds || []);
@@ -3079,6 +3132,16 @@ async function findManualVerificationTransitionTab(current, previousTabIds = new
     if (!candidates.some(candidate => candidate.id === tab.id)) candidates.push(tab);
   }
   if (!candidates.length) return currentTab || current;
+  if (currentTab?.id && isManualVerificationTab(currentTab)) {
+    ignoreDuplicateManualVerificationTabs(candidates, currentTab);
+    return currentTab;
+  }
+  if (options.preferCaptcha) {
+    const activeCaptcha = candidates.find(tab => tab.active && isManualCaptchaTab(tab));
+    if (activeCaptcha) return activeCaptcha;
+    const newCaptchas = candidates.filter(tab => !previous.has(tab.id) && isManualCaptchaTab(tab));
+    if (newCaptchas.length) return newCaptchas.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+  }
   const newPins = candidates.filter(tab => !previous.has(tab.id) && isLikelyManualPinTab(tab));
   if (newPins.length) return newPins.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
   const newVerificationTabs = candidates.filter(tab => !previous.has(tab.id));
@@ -3093,7 +3156,7 @@ async function findManualVerificationTransitionTab(current, previousTabIds = new
   return currentTab || candidates[0];
 }
 
-async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, previousTabIds = null) {
+async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, previousTabIds = null, options = {}) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   const previous = previousTabIds instanceof Set ? previousTabIds : await getTabIds().catch(() => new Set());
   const startUrl = String(current?.url || '');
@@ -3103,7 +3166,7 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
   while (Date.now() - startAt < timeoutMs && current?.id && attempts < maxAttempts) {
     attempts += 1;
     await sleep(1000);
-    current = await findManualVerificationTransitionTab(current, previous);
+    current = await findManualVerificationTransitionTab(current, previous, options);
     const url = String(current?.url || '');
     if (current?.id && current.id !== tab?.id) break;
     if (url && url !== startUrl) break;
@@ -3116,6 +3179,7 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
 
 async function handleManualVerificationIfPresent(tab, context = {}) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  rememberManualVerificationTab(current);
   let handled = false;
   let pinAnswer = String(context.pinAnswer || '').trim();
   let pinAnswerFromContext = Boolean(pinAnswer);
@@ -3125,13 +3189,20 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     current = await chrome.tabs.get(current.id).catch(() => current);
     if (isManualCaptchaTab(current)) {
       manualVerificationFlowActive = true;
+      rememberManualVerificationTab(current);
       handled = true;
       const id = buildManualVerificationId('captcha', current, context);
-      const imageDataUrl = await captureManualCaptchaImage(current);
+      let captchaMessage = '';
+      const imageDataUrl = await captureManualCaptchaImage(current).catch(error => {
+        console.warn('[Yahoo Bid] Manual captcha screenshot failed; posting captcha challenge with fallback image:', error?.message || error);
+        captchaMessage = '验证码截图失败，请看服务器 Chrome 验证码页面输入文字';
+        return MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL;
+      });
       await postManualCaptchaChallenge({
         id,
         type: 'captcha',
         imageDataUrl,
+        message: captchaMessage,
         pageUrl: current.url || '',
         productId: context.productId || '',
         source: context.source || ''
@@ -3143,6 +3214,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       await closeManualCaptchaChallenge(id);
       if (pinAnswer) canReusePinAfterCaptcha = true;
       current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds);
+      rememberManualVerificationTab(current);
       await sleep(500);
       continue;
     }
@@ -3150,6 +3222,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     const pinDetected = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
     if (!pinDetected) break;
     manualVerificationFlowActive = true;
+    rememberManualVerificationTab(current);
     handled = true;
     let pinChallengeId = '';
     if (!pinAnswer || (!canReusePinAfterCaptcha && !pinAnswerFromContext)) {
@@ -3165,6 +3238,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       pinAnswer = await waitForManualCaptchaAnswer(pinChallengeId);
     }
     current = await refreshManualPinPageBeforeAnswer(current);
+    rememberManualVerificationTab(current);
     const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
@@ -3173,23 +3247,29 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
     canReusePinAfterCaptcha = false;
     if (fillResult.method === 'debuggerRealKeyboard') {
-      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds);
+      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, { preferCaptcha: true });
+      rememberManualVerificationTab(current);
       const stillPinAfterKeyboard = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
       if (stillPinAfterKeyboard) {
         console.warn('[Yahoo Bid] PIN page still open after real keyboard; retrying with insertText fallback');
         const beforeInsertTextRetryTabIds = await getTabIds().catch(() => new Set());
         const insertTextResult = await dispatchTrustedManualPinInput(current.id, pinAnswer, { preferKeyboard: false });
         if (!insertTextResult?.success) throw new Error(insertTextResult?.error || 'manual pin insertText retry failed');
-        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds);
+        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds, { preferCaptcha: true });
+        rememberManualVerificationTab(current);
       }
     } else {
-      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds);
+      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds, { preferCaptcha: true });
+      rememberManualVerificationTab(current);
     }
     await sleep(500);
   }
-  const openVerificationTabs = await getOpenManualVerificationTabs().catch(() => []);
+  const allOpenVerificationTabs = await chrome.tabs.query({}).then(tabs => tabs.filter(isManualVerificationTab)).catch(() => []);
+  const openVerificationTabs = allOpenVerificationTabs.filter(tab => !ignoredManualVerificationTabIds.has(tab.id));
   if (!openVerificationTabs.length) {
     manualVerificationFlowActive = false;
+    manualVerificationTabId = null;
+    if (!allOpenVerificationTabs.length) ignoredManualVerificationTabIds.clear();
   }
   if (current?.id) await injectContentScript(current.id).catch(() => {});
   return { handled, tab: current || tab, pinAnswer };

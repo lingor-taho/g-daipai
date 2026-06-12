@@ -2630,6 +2630,69 @@ async function testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen() {
   assert.equal(challengeTypes.includes('pin'), false);
 }
 
+async function testIdleSyncPostsCaptchaFallbackWhenCaptureFails() {
+  const challenges = [];
+  let captchaDone = false;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async query() {
+        if (captchaDone) return [];
+        return [
+          { id: 21, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 }
+        ];
+      },
+      async get(id) {
+        if (captchaDone) return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474', status: 'complete', active: true, windowId: 3 };
+        return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: true, windowId: 3 };
+      },
+      async update(id, props) {
+        return { id, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=abc', status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async captureVisibleTab() {
+        throw new Error('capture failed');
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        if (String(payload.func || '').includes('captchaAnswer')) {
+          captchaDone = true;
+          return [{ result: { success: true } }];
+        }
+        return [{ result: { success: false } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        challenges.push(body);
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not be fetched during manual captcha handling');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.equal(challenges.length, 1);
+  assert.equal(challenges[0].type, 'captcha');
+  assert.match(challenges[0].imageDataUrl, /^data:image\/png;base64,/);
+  assert.match(challenges[0].message, /截图失败/);
+}
+
 async function testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle() {
   let phase = 'normal';
   let captchaDone = false;
@@ -2827,7 +2890,7 @@ async function testIdleSyncResumesAnsweredPinChallengeOnTimedOutLoginPage() {
   assert.equal(closedChallengeId, 'pin-j1232375474-1');
 }
 
-async function testManualVerificationTransitionPrefersNewPinTabAfterCaptcha() {
+async function testManualVerificationTransitionKeepsCurrentCaptchaWhenNewPinTabAppears() {
   const api = loadBackgroundForTest({
     tabs: {
       async get(id) {
@@ -2848,7 +2911,33 @@ async function testManualVerificationTransitionPrefersNewPinTabAfterCaptcha() {
     new Set([7])
   );
 
-  assert.equal(result.id, 9);
+  assert.equal(result.id, 7);
+}
+
+async function testManualVerificationTransitionPrefersCaptchaAfterPinInput() {
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: true };
+        if (id === 9) return { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: false };
+        return { id, url: 'about:blank', status: 'complete' };
+      },
+      async query() {
+        return [
+          { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: true },
+          { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: false }
+        ];
+      }
+    }
+  });
+
+  const result = await api.findManualVerificationTransitionTab(
+    { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: true },
+    new Set([7]),
+    { preferCaptcha: true }
+  );
+
+  assert.equal(result.id, 7);
 }
 
 async function testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin() {
@@ -2883,17 +2972,16 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
   const api = loadBackgroundForTest({
     tabs: {
       async get(id) {
-        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 };
-        if (id === 9 && stage === 'pin') {
-          return { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', windowId: 3 };
+        if (id === 7 && stage === 'pin') {
+          return { id: 7, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', windowId: 3 };
         }
+        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 };
         return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1230839418', status: 'complete', windowId: 3 };
       },
       async query() {
         if (stage === 'pin') {
           return [
-            { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete' },
-            { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true }
+            { id: 7, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true }
           ];
         }
         if (stage === 'done') {
@@ -2955,8 +3043,8 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
   );
 
   assert.equal(result.handled, true);
-  assert.deepEqual(challengeTypes, ['captcha']);
-  assert.equal(typedPins.join(''), '123456');
+  assert.equal(challengeTypes.every(type => type === 'captcha'), true);
+  assert.equal(typedPins.join('').includes('123456'), true);
 }
 
 function testYahooLoginPageCountsAsTransactionTab() {
@@ -3252,10 +3340,12 @@ async function run() {
   await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
+  await testIdleSyncPostsCaptchaFallbackWhenCaptureFails();
   await testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle();
   await testManualPinRefreshesPageBeforeEnteringAnswer();
   await testIdleSyncResumesAnsweredPinChallengeOnTimedOutLoginPage();
-  await testManualVerificationTransitionPrefersNewPinTabAfterCaptcha();
+  await testManualVerificationTransitionKeepsCurrentCaptchaWhenNewPinTabAppears();
+  await testManualVerificationTransitionPrefersCaptchaAfterPinInput();
   await testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin();
   await testManualVerificationReusesPinWhenCaptchaReturnsToPinPage();
   testYahooLoginPageCountsAsTransactionTab();

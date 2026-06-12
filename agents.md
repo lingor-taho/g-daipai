@@ -2227,6 +2227,7 @@ npm run regression
 - `handleManualVerificationIfPresent` 支持外部传入的 PIN 答案直接使用一次；如果输入后仍停留 PIN 页，才重新要求后台输入，避免错误 PIN 无限复用。
 - `waitForManualVerificationPageTransition` 增加最大轮询次数保护，避免异常环境下时间不推进导致等待循环无法退出。
 - 新增回归测试覆盖 `login.yahoo.co.jp/config/login?src=auc&done=...` 这类超时登录页已有 PIN 答案后的恢复流程。
+- 补充修复：PIN 输入后如果已经到达 `/ncaptcha` 文字验证码页，跳转选择优先停留当前验证码页；手动验证流程会绑定一个验证 tab 走完，旁边出现的新 PIN tab 会被标记为本轮重复验证页，后续 idle 轮询不会再接管它；验证码截图失败时也会用占位图覆盖后台挑战为 `captcha`，避免后台继续显示旧 PIN 输入框。
 
 ### 最近验证命令
 
