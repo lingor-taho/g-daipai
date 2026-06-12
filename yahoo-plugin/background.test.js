@@ -2116,11 +2116,11 @@ async function testModernStoreReviewFallsBackToSystemMouseClick() {
     now: () => now,
     sleep: async ms => { now += ms || 0; },
     tabs: {
-      async create() { return { id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: reviewState.url, status: 'complete', windowId: 1 }; },
-      async get(id) { return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : reviewState.url, status: 'complete', windowId: 1 }; },
+      async create() { return { id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: '', status: 'complete', windowId: 1 }; },
+      async get(id) { return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : '', status: 'complete', windowId: 1 }; },
       async update(id, info) {
         tabUpdates.push({ id, info });
-        return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: reviewState.url, status: 'complete', windowId: 1, ...info };
+        return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: '', status: 'complete', windowId: 1, ...info };
       },
       async query() { return [{ id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : reviewState.url, status: 'complete', windowId: 1 }]; }
     },

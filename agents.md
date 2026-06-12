@@ -2454,6 +2454,7 @@ npm run regression
 - 插件 `getPaymentActionClickPoint()` 在原有视口坐标基础上补充估算屏幕坐标 `screenX/screenY`。
 - 调用 Win32 原生鼠标点击前，插件会先恢复并聚焦付款 tab 所在 Chrome 窗口，再把该付款 tab 设置为 active，等待约 0.5 秒后重新读取按钮坐标，避免真实鼠标点到同窗口的其他标签页。
 - `clickPaymentActionAndFollowTab()` 付款 review 页流程调整为：页面内点击 -> 5 秒未跳转再页面内点击 -> 再等 5 秒未跳转就调用服务器原生鼠标点击红色 `確認する`；如果系统鼠标仍未进入下一步，才继续 Chrome debugger 鼠标点击或失败诊断。
+- Win32 原生鼠标分支现在只按付款动作 `action === 'review'` 触发，不再依赖 `tab.url` 必须包含 `/order/review`；避免服务器 Chrome 返回的 tab URL 为空、旧 URL 或中间流程 tab 对象未刷新时，native-click 根本不执行。
 - 后台付款失败摘要新增区分：如果原始错误包含 `system=success`，显示 `确认付款按钮已用系统鼠标点击但页面未跳转`，便于判断是否已经发生真实鼠标点击。
 - 新增回归测试覆盖：两次页面内点击都未跳转时，会先调用 `/api/plugin/native-click`，系统鼠标点击后进入确认页并继续完成付款流程，且不再先等待 Chrome debugger 点击。
 

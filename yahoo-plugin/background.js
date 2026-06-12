@@ -2526,7 +2526,7 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
     await injectContentScript(nextTab.id).catch(() => {});
     return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
   } catch (e) {
-    if (shouldUseTrustedPaymentActionFirst(tab, action)) {
+    if (action === 'review') {
       console.warn('[Yahoo Bid] Payment synthetic click did not reach next state after 5s, retrying synthetic click:', e.message || e);
       const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
       const retryClickResult = await runMainWorldPaymentActionClick((currentTab || tab).id, action);
