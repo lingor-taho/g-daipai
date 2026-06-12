@@ -94,11 +94,31 @@ function testAppendRowFormatSetsBlackText() {
   assert.match(request.repeatCell.fields, /userEnteredFormat\.backgroundColor/);
 }
 
+function testAppendRowFormatUsesWhiteBackgroundByDefault() {
+  const request = buildAppendRowsFormatRequest({
+    sheetId: 123,
+    startRowIndex: 1,
+    endRowIndex: 2
+  });
+
+  assert.deepEqual(
+    request.repeatCell.cell.userEnteredFormat.backgroundColor,
+    { red: 1, green: 1, blue: 1 }
+  );
+  assert.deepEqual(
+    request.repeatCell.cell.userEnteredFormat.textFormat.foregroundColor,
+    { red: 0, green: 0, blue: 0 }
+  );
+  assert.match(request.repeatCell.fields, /userEnteredFormat\.backgroundColor/);
+  assert.match(request.repeatCell.fields, /userEnteredFormat\.textFormat\.foregroundColor/);
+}
+
 async function run() {
   testCredentialPathUsesGoogleApplicationCredentials();
   testCredentialPathIsEmptyWithoutFileEnv();
   testExtractSpreadsheetIdFromUrl();
   testAppendRowFormatSetsBlackText();
+  testAppendRowFormatUsesWhiteBackgroundByDefault();
   await testApplyConfigFromDbOverridesEnv();
 }
 

@@ -10,6 +10,7 @@ const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '物流', '单号'];
 const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150];
 const DEFAULT_APPEND_TEXT_COLOR = { red: 0, green: 0, blue: 0 };
+const DEFAULT_APPEND_BACKGROUND_COLOR = { red: 1, green: 1, blue: 1 };
 
 let cachedToken = null;
 let runtimeConfig = {
@@ -174,15 +175,15 @@ function toColumnLetters(index) {
 
 function buildAppendRowsFormatRequest({ sheetId, startRowIndex, endRowIndex, backgroundColor = null }) {
   const userEnteredFormat = {
+    backgroundColor: backgroundColor || DEFAULT_APPEND_BACKGROUND_COLOR,
     textFormat: {
       foregroundColor: DEFAULT_APPEND_TEXT_COLOR
     }
   };
-  const fields = ['userEnteredFormat.textFormat.foregroundColor'];
-  if (backgroundColor) {
-    userEnteredFormat.backgroundColor = backgroundColor;
-    fields.push('userEnteredFormat.backgroundColor');
-  }
+  const fields = [
+    'userEnteredFormat.backgroundColor',
+    'userEnteredFormat.textFormat.foregroundColor'
+  ];
   return {
     repeatCell: {
       range: {

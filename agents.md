@@ -2178,17 +2178,19 @@ npm run regression
 
 ---
 
-## 2026-06-12 Google 表格追加行字体颜色修复
+## 2026-06-12 Google 表格追加行默认白底黑字修复
 
 ### 问题
 
 - 订单追加到 Google 表格时，新插入行会沿用上一行字体颜色，导致历史行如果被改成红色/其他颜色，新订单也可能不是默认黑色。
+- Google Sheets `values.append` 插入的新行也可能继承表头或上一行背景色，普通订单行会变成淡蓝色等非默认背景。
 
 ### 已实现内容
 
 - `appendRows()` 在 Google Sheets `values.append` 后，会对本次新增的 A:J 行执行 `repeatCell` 格式化。
 - 新增行始终设置 `textFormat.foregroundColor` 为黑色 `{ red: 0, green: 0, blue: 0 }`。
-- 如果调用方传入背景色，继续同时设置背景色，不影响原有按颜色标记/查询逻辑。
+- 普通新增行始终设置 `backgroundColor` 为白色 `{ red: 1, green: 1, blue: 1 }`，不再继承表头/上一行背景色。
+- 如果调用方传入同捆背景色，继续使用同捆背景色覆盖默认白底，不影响原有按颜色标记/查询逻辑。
 
 ### 最近验证命令
 
