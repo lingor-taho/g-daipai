@@ -2630,6 +2630,111 @@ async function testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen() {
   assert.equal(challengeTypes.includes('pin'), false);
 }
 
+async function testIdleSyncPostsPinWhenActivePinTabOverridesStaleCaptcha() {
+  const challengeTypes = [];
+  let currentUrl = 'https://login.yahoo.co.jp/config/login?src=auc&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1232375474';
+  let currentChallenge = {
+    id: 'captcha-j1232375474-old',
+    type: 'captcha',
+    answered: false,
+    productId: 'j1232375474',
+    pageUrl: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=old'
+  };
+  let typedPin = '';
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async query() {
+        if (!currentUrl.includes('login.yahoo.co.jp')) return [];
+        return [
+          { id: 21, url: currentUrl, status: 'complete', active: true, windowId: 3 },
+          { id: 22, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=old', status: 'complete', active: false, windowId: 3 }
+        ];
+      },
+      async get(id) {
+        if (id === 21) return { id: 21, url: currentUrl, status: 'complete', active: true, windowId: 3 };
+        return { id: 22, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=old', status: 'complete', active: false, windowId: 3 };
+      },
+      async update(id, props) {
+        if (id === 21) return { id: 21, url: currentUrl, status: 'complete', active: props?.active, windowId: 3 };
+        return { id: 22, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1&trans=old', status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async reload(id) {
+        assert.equal(id, 21);
+      },
+      async captureVisibleTab() {
+        throw new Error('stale captcha tab should not be captured when active PIN tab is open');
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        return [{ result: false }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/current')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              found: true,
+              ...currentChallenge
+            };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        challengeTypes.push(body.type);
+        currentChallenge = {
+          id: body.id,
+          type: body.type,
+          answered: false,
+          productId: body.productId || 'j1232375474',
+          pageUrl: body.pageUrl || ''
+        };
+        return { async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/answer/')) {
+        return { async json() { return { answered: true, answer: '123456' }; } };
+      }
+      if (value.includes('/api/plugin/manual-pin/type')) {
+        const body = JSON.parse(options.body || '{}');
+        typedPin = body.pin;
+        currentUrl = 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474';
+        return { async json() { return { success: true, digits: 6 }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/close')) {
+        return { async json() { return { success: true, closed: 1 }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/next')) {
+        throw new Error('idle action should not be fetched during manual verification');
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.equal(challengeTypes[0], 'pin');
+  assert.equal(challengeTypes.includes('captcha'), false);
+  assert.equal(typedPin, '');
+
+  currentChallenge = {
+    ...currentChallenge,
+    answered: true,
+    answer: '123456'
+  };
+  await api.syncIdleYahooPages();
+
+  assert.equal(typedPin, '123456');
+}
+
 async function testIdleSyncPostsCaptchaFallbackWhenCaptureFails() {
   const challenges = [];
   let captchaDone = false;
@@ -3408,6 +3513,7 @@ async function run() {
   await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
+  await testIdleSyncPostsPinWhenActivePinTabOverridesStaleCaptcha();
   await testIdleSyncPostsCaptchaFallbackWhenCaptureFails();
   await testIdleSyncPostsCaptchaImageFromPageWhenScreenshotFails();
   await testIdleSyncHandlesCaptchaBeforeIdleIntervalThrottle();

@@ -2759,6 +2759,27 @@ async function keepSingleManualPinTab(tabs) {
   return keep;
 }
 
+async function ensureManualPinChallenge(tab, context = {}) {
+  if (!tab?.id || !isLikelyManualPinTab(tab)) return { posted: false };
+  const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
+  if (current?.found && current.type === 'pin' && !current.answered) {
+    const currentPageUrl = String(current.pageUrl || '');
+    if (!currentPageUrl || currentPageUrl === String(tab.url || '')) {
+      return { posted: false, existing: true, id: current.id || '' };
+    }
+  }
+  const id = buildManualVerificationId('pin', tab, context);
+  await postManualCaptchaChallenge({
+    id,
+    type: 'pin',
+    message: 'Yahoo 需要 PIN 码验证，请输入 PIN 码',
+    pageUrl: tab.url || '',
+    productId: context.productId || current?.productId || '',
+    source: context.source || ''
+  });
+  return { posted: true, id };
+}
+
 async function pauseIdleWorkForOpenManualPin() {
   const lockedTab = await getManualVerificationLockedTab();
   if (lockedTab?.id) {
@@ -2780,6 +2801,13 @@ async function pauseIdleWorkForOpenManualPin() {
       return null;
     });
     if (resumed?.handled) return true;
+    if (isLikelyManualPinTab(lockedTab)) {
+      await ensureManualPinChallenge(lockedTab, {
+        source: 'idle_manual_verification'
+      }).catch(error => {
+        console.warn('[Yahoo Bid] Manual PIN challenge sync failed during idle pause:', error?.message || error);
+      });
+    }
     console.warn('[Yahoo Bid] Manual verification flow is active; idle non-bid work paused:', lockedTab.id);
     return true;
   }
@@ -2793,6 +2821,26 @@ async function pauseIdleWorkForOpenManualPin() {
     manualVerificationFlowActive = false;
   }
   if (!manualVerificationFlowActive) return false;
+  const activeVerification = verificationTabs.find(tab => tab.active) || null;
+  if (activeVerification?.id && isLikelyManualPinTab(activeVerification)) {
+    const keep = await keepSingleManualPinTab(pinTabs);
+    rememberManualVerificationTab(keep || activeVerification);
+    const pinTab = keep || activeVerification;
+    const resumed = await resumeAnsweredManualPinChallenge(pinTab, {
+      source: 'idle_manual_verification'
+    }).catch(error => {
+      console.warn('[Yahoo Bid] Manual PIN resume failed during idle pause:', error?.message || error);
+      return null;
+    });
+    if (resumed?.handled) return true;
+    await ensureManualPinChallenge(pinTab, {
+      source: 'idle_manual_verification'
+    }).catch(error => {
+      console.warn('[Yahoo Bid] Manual PIN challenge sync failed during idle pause:', error?.message || error);
+    });
+    console.warn('[Yahoo Bid] Manual PIN tab is active; idle non-bid work paused:', pinTab?.id || '');
+    return true;
+  }
   const captcha = captchaTabs.find(tab => tab.active) || captchaTabs[0] || null;
   if (captcha?.id) {
     rememberManualVerificationTab(captcha);
@@ -2815,6 +2863,11 @@ async function pauseIdleWorkForOpenManualPin() {
       return null;
     });
     if (resumed?.handled) return true;
+    await ensureManualPinChallenge(keep, {
+      source: 'idle_manual_verification'
+    }).catch(error => {
+      console.warn('[Yahoo Bid] Manual PIN challenge sync failed during idle pause:', error?.message || error);
+    });
   }
   console.warn('[Yahoo Bid] Manual verification flow is active; idle non-bid work paused:', keep?.id || '');
   return true;
