@@ -95,6 +95,9 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
 }
 
 function sleep(ms) {
+  if (typeof globalThis.__G_DAIPAI_SLEEP__ === 'function') {
+    return globalThis.__G_DAIPAI_SLEEP__(ms);
+  }
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
@@ -913,6 +916,9 @@ async function runMainWorldPaymentActionClick(tabId, action) {
       };
       const hasClickableTarget = el => isClickable(el) ||
         controls.some(child => child !== el && child.closest?.('a, button, input, [role="button"]') === el && pattern.test(getText(child)) && isClickable(child));
+      const directReviewConfirm = actionName === 'review'
+        ? document.querySelector?.('#confirm a[data-cl-params*="_cl_link:confirm"]')
+        : null;
       const matches = controls.filter(el => pattern.test(getText(el)));
       const reviewAnchorMatches = actionName === 'review'
         ? matches.filter(el => String(el.tagName || '').toUpperCase() === 'A')
@@ -921,9 +927,11 @@ async function runMainWorldPaymentActionClick(tabId, action) {
       const targetMatches = actionName === 'review'
         ? (reviewAnchorMatches.length ? reviewAnchorMatches : reviewControlMatches)
         : matches;
-      const button = targetMatches.find(el => isPreferredConfirm(el) && hasClickableTarget(el)) ||
+      const button = (directReviewConfirm && hasClickableTarget(directReviewConfirm) ? directReviewConfirm : null) ||
+        targetMatches.find(el => isPreferredConfirm(el) && hasClickableTarget(el)) ||
         targetMatches.find(el => hasClickableTarget(el)) ||
         targetMatches.find(el => isPreferredConfirm(el)) ||
+        directReviewConfirm ||
         targetMatches[0];
       if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found: exact anchor/button not found' : 'payment button not found' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
@@ -991,6 +999,9 @@ async function getPaymentActionClickPoint(tabId, action) {
       };
       const hasClickableTarget = el => isClickable(el) ||
         controls.some(child => child !== el && child.closest?.('a, button, input, [role="button"]') === el && pattern.test(getText(child)) && isClickable(child));
+      const directReviewConfirm = actionName === 'review'
+        ? document.querySelector?.('#confirm a[data-cl-params*="_cl_link:confirm"]')
+        : null;
       const matches = controls.filter(el => pattern.test(getText(el)));
       const reviewAnchorMatches = actionName === 'review'
         ? matches.filter(el => String(el.tagName || '').toUpperCase() === 'A')
@@ -999,9 +1010,11 @@ async function getPaymentActionClickPoint(tabId, action) {
       const targetMatches = actionName === 'review'
         ? (reviewAnchorMatches.length ? reviewAnchorMatches : reviewControlMatches)
         : matches;
-      const button = targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && hasClickableTarget(el)) ||
+      const button = (directReviewConfirm && hasClickableTarget(directReviewConfirm) ? directReviewConfirm : null) ||
+        targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && hasClickableTarget(el)) ||
         targetMatches.find(el => hasClickableTarget(el)) ||
         targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el)) ||
+        directReviewConfirm ||
         targetMatches[0];
       if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found: exact anchor/button not found for trusted click' : 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
@@ -2462,16 +2475,35 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
     console.log('[Yahoo Bid] Trusted-first payment mouse click result:', trustedClick);
     if (trustedClick?.success) {
       try {
-        const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+        const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
         await injectContentScript(nextTab.id).catch(() => {});
         return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
-      } catch (afterTrustedError) {
-        const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
-        return {
-          success: false,
-          error: formatPaymentClickDiagnostics(action, null, trustedClick, currentState, afterTrustedError),
-          tab
-        };
+      } catch (afterFirstTrustedError) {
+        console.warn('[Yahoo Bid] Trusted-first payment click did not reach next state after 5s, retrying trusted click:', afterFirstTrustedError.message || afterFirstTrustedError);
+        const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+        const retryTrustedClick = await dispatchTrustedPaymentActionClick(currentTab || tab, action);
+        console.log('[Yahoo Bid] Trusted retry payment mouse click result:', retryTrustedClick);
+        if (!retryTrustedClick?.success) {
+          const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+          return {
+            success: false,
+            error: formatPaymentClickDiagnostics(action, null, retryTrustedClick, currentState, afterFirstTrustedError),
+            tab: currentTab || tab
+          };
+        }
+        try {
+          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
+          await injectContentScript(nextTab.id).catch(() => {});
+          return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+        } catch (afterRetryTrustedError) {
+          const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+          const diagnosticClick = retryTrustedClick || trustedClick;
+          return {
+            success: false,
+            error: formatPaymentClickDiagnostics(action, null, diagnosticClick, currentState, afterRetryTrustedError),
+            tab: currentTab || tab
+          };
+        }
       }
     }
     console.warn('[Yahoo Bid] Trusted-first payment click unavailable, falling back to synthetic click:', trustedClick?.error || 'unknown error');

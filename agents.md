@@ -2383,3 +2383,28 @@ npm run regression
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-12 付款 review 页二次确认点击修复
+
+### 问题
+
+- 商品 `p1232862422` 付款 review 页仍可能停在 `buy.auctions.yahoo.co.jp/order/review`，后台报 `点击确认后页面未跳转`。
+- 真实 DOM 中右侧红色确认按钮结构为 `#confirm a[data-cl-params*="_cl_link:confirm"]`，人工点击该按钮可以进入下一步。
+- 现场观察页面进入后可能刷新/重渲染 1 次，第一次真实鼠标点击仍可能被 Yahoo 前端刷新吞掉。
+
+### 已实现内容
+
+- 付款 review 页按钮定位优先使用 `#confirm a[data-cl-params*="_cl_link:confirm"]`，再回退到原有 `確認する` 文本匹配。
+- 现代 `buy.auctions.yahoo.co.jp/order/review` 页点击 `確認する` 后，先等待 5 秒；如果没有进入下一步骤，会重新读取当前 tab 并再次执行真实鼠标点击。
+- 第二次真实点击后继续等待最多 30 秒进入确认/完成页。
+- 测试沙箱支持替换 `sleep()`，新增回归测试覆盖“第一次点击后仍停留 review，第二次点击后进入 confirm”的场景。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+```
+
+验证结果：以上命令通过。
