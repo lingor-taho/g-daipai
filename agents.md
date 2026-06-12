@@ -2416,8 +2416,9 @@ node yahoo-plugin\background.test.js
 ### 问题
 
 - `p1232862422` 是商城商品，但当前付款 review 页没有显示 `ストアからの確認事項`。
-- 用户提供的插件报错位置指向 `dispatchTrustedStoreConfirmationClick()`，说明插件误进入了“店铺确认事项”处理分支，而不是普通付款 review 页的 `確認する` 点击分支。
-- 根因是旧状态识别把 `#cartopt` DOM 存在当作店铺确认事项存在；Yahoo 付款 review 页可能存在 `#cartopt` 或其他选项区域，但页面并没有真实显示 `ストアからの確認事項`。这会导致没有确认事项的商城商品也被错误导航/点击到店铺确认事项流程。
+- 用户提供的插件报错位置曾指向 `dispatchTrustedStoreConfirmationClick()`，为避免没有真实确认事项的商城商品误进入该分支，需要收窄店铺确认事项识别条件。
+- 该项是风险修正，不是当前“按钮仍未进入下一步”的唯一根因；当前现场 DOM 已确认按钮定位正确，后续核心修复见“付款 review 页服务器原生鼠标兜底”。
+- 旧状态识别把 `#cartopt` DOM 存在当作店铺确认事项存在；Yahoo 付款 review 页可能存在 `#cartopt` 或其他选项区域，但页面并没有真实显示 `ストアからの確認事項`。这会导致没有确认事项的商城商品也有误进店铺确认事项流程的风险。
 
 ### 已实现内容
 
@@ -2433,6 +2434,34 @@ node yahoo-plugin\background.test.js
 node yahoo-plugin\encoding.test.js
 git diff --check
 npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-12 付款 review 页服务器原生鼠标兜底
+
+### 问题
+
+- `p1232862422` 服务器 Chrome 真实页面的 `確認する` DOM 为 `#confirm a[data-cl-params*="_cl_link:confirm"]`，即 `<a ...>確認する</a>`，没有 `href`，依赖 Yahoo 前端绑定的点击事件。
+- 按钮定位没有错；插件此前优先定位的就是该选择器。失败原因是页面内 `element.click()` 和 Chrome debugger `Input.dispatchMouseEvent` 都属于自动合成路径，在该 Yahoo review 页上可能不触发有效跳转。
+- 该问题是 2026-06-12 调整付款 review 页刷新/等待/店铺确认事项逻辑后暴露出来的回归；之前能跑通的普通付款路径已恢复，但当前服务器现场仍需要与人工一致的真实系统鼠标点击兜底。
+
+### 已实现内容
+
+- 服务端新增 `POST /api/plugin/native-click`，仅 Windows 可用，使用 PowerShell STA + Win32 `SetCursorPos` / `mouse_event` 执行系统级鼠标点击。
+- 插件 `getPaymentActionClickPoint()` 在原有视口坐标基础上补充估算屏幕坐标 `screenX/screenY`。
+- `clickPaymentActionAndFollowTab()` 付款 review 页流程保持原顺序：页面内点击 -> 5 秒未跳转再页面内点击 -> Chrome debugger 鼠标点击；如果仍未进入下一步，最后调用服务器原生鼠标点击红色 `確認する`。
+- 后台付款失败摘要新增区分：如果原始错误包含 `system=success`，显示 `确认付款按钮已用系统鼠标点击但页面未跳转`，便于判断是否已经发生真实鼠标点击。
+- 新增回归测试覆盖：两次页面内点击和 debugger 点击都未跳转时，会调用 `/api/plugin/native-click`，系统鼠标点击后进入确认页并继续完成付款流程。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
+node yahoo-plugin\encoding.test.js
 ```
 
 验证结果：以上命令均通过。

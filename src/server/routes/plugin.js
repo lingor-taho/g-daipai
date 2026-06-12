@@ -142,6 +142,86 @@ public static class GDaipaiNativeInput {
   ].join('\n');
 }
 
+function normalizeScreenCoordinate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const rounded = Math.round(number);
+  return rounded >= -10000 && rounded <= 10000 ? rounded : null;
+}
+
+function buildWindowsMouseClickScript(x, y, options = {}) {
+  const targetX = normalizeScreenCoordinate(x);
+  const targetY = normalizeScreenCoordinate(y);
+  if (targetX === null || targetY === null) {
+    throw new Error('valid screen x/y are required');
+  }
+  const windowTitle = String(options.windowTitle || '').trim().slice(0, 200);
+  const nativeInputType = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class GDaipaiNativeMouse {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+'@`;
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    nativeInputType,
+    `$targetTitle = ${quotePowerShellString(windowTitle)}`,
+    '$chromeWindows = @(Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })',
+    '$targetWindow = $null',
+    "if ($targetTitle) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($targetTitle) } | Select-Object -First 1 }",
+    "if (-not $targetWindow) { $targetWindow = $chromeWindows | Sort-Object StartTime -Descending | Select-Object -First 1 }",
+    "if ($targetWindow) { [GDaipaiNativeMouse]::SetForegroundWindow($targetWindow.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 250 }",
+    `[GDaipaiNativeMouse]::SetCursorPos(${targetX}, ${targetY}) | Out-Null`,
+    'Start-Sleep -Milliseconds 120',
+    '[GDaipaiNativeMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)',
+    'Start-Sleep -Milliseconds 80',
+    '[GDaipaiNativeMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)',
+    'Start-Sleep -Milliseconds 300',
+    `Write-Output 'clicked=${targetX},${targetY}'`
+  ].join('\n');
+}
+
+function clickWithSystemMouse(x, y, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== 'win32') {
+    const error = new Error('system mouse click is only supported on Windows');
+    error.statusCode = 400;
+    return Promise.reject(error);
+  }
+  let script;
+  try {
+    script = buildWindowsMouseClickScript(x, y, { windowTitle: options.windowTitle });
+  } catch (error) {
+    error.statusCode = 400;
+    return Promise.reject(error);
+  }
+  const execFileImpl = options.execFileImpl || execFile;
+  const args = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script];
+  return new Promise((resolve, reject) => {
+    execFileImpl('powershell.exe', args, {
+      windowsHide: true,
+      timeout: Number(options.timeoutMs || 5000)
+    }, (error, stdout, stderr) => {
+      if (error) {
+        const wrapped = new Error(stderr || error.message || 'system mouse click failed');
+        wrapped.statusCode = 500;
+        reject(wrapped);
+        return;
+      }
+      resolve({
+        success: true,
+        x: normalizeScreenCoordinate(x),
+        y: normalizeScreenCoordinate(y),
+        stdout: String(stdout || '').trim()
+      });
+    });
+  });
+}
+
 function typeManualPinWithSystemKeyboard(pinCode, options = {}) {
   const pin = normalizeManualPinCode(pinCode);
   if (!pin) {
@@ -2183,6 +2263,9 @@ function summarizePaymentError(errorText) {
 
   const actionLabel = getPaymentActionLabel(text);
   if (/payment next page did not appear/i.test(text)) {
+    if (/system=success/i.test(text)) {
+      return actionLabel ? `${actionLabel}按钮已用系统鼠标点击但页面未跳转` : '确认按钮已用系统鼠标点击但页面未跳转';
+    }
     if (/trusted=success/i.test(text)) {
       return actionLabel ? `${actionLabel}按钮已点击但页面未跳转` : '确认按钮已点击但页面未跳转';
     }
@@ -2451,6 +2534,20 @@ router.post('/manual-pin/type', async (req, res) => {
   }
 });
 
+router.post('/native-click', async (req, res) => {
+  try {
+    const result = await clickWithSystemMouse(req.body?.x, req.body?.y, {
+      windowTitle: req.body?.windowTitle || req.body?.title || ''
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'system mouse click failed'
+    });
+  }
+});
+
 router.post('/yahoo-login/status', async (req, res) => {
   const status = req.body?.status === 'ok' ? 'ok' : 'failed';
   const message = req.body?.message || (status === 'ok' ? '' : '需要登录 Yahoo');
@@ -2517,6 +2614,9 @@ module.exports.getStrategyLeadMs = getStrategyLeadMs;
 module.exports.normalizeManualPinCode = normalizeManualPinCode;
 module.exports.buildWindowsSendKeysScript = buildWindowsSendKeysScript;
 module.exports.typeManualPinWithSystemKeyboard = typeManualPinWithSystemKeyboard;
+module.exports.normalizeScreenCoordinate = normalizeScreenCoordinate;
+module.exports.buildWindowsMouseClickScript = buildWindowsMouseClickScript;
+module.exports.clickWithSystemMouse = clickWithSystemMouse;
 module.exports.getMultiBidStartMs = getMultiBidStartMs;
 module.exports.getMultiBidIntervalMs = getMultiBidIntervalMs;
 module.exports.getIdleBidGuardMs = getIdleBidGuardMs;

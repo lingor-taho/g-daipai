@@ -45,6 +45,9 @@ const {
   normalizeManualPinCode,
   buildWindowsSendKeysScript,
   typeManualPinWithSystemKeyboard,
+  normalizeScreenCoordinate,
+  buildWindowsMouseClickScript,
+  clickWithSystemMouse,
   ORDER_STATUS_PENDING_PAYMENT,
   ORDER_STATUS_WAITING_SHIPPING,
   ORDER_STATUS_PENDING_BUNDLE,
@@ -1189,6 +1192,16 @@ function testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly() {
   assert.doesNotMatch(script, /\{ENTER\}|VK_RETURN|0x0D/);
 }
 
+function testBuildWindowsMouseClickScriptUsesNativeMouseOnly() {
+  assert.equal(normalizeScreenCoordinate('912.4'), 912);
+  assert.equal(normalizeScreenCoordinate('bad'), null);
+  const script = buildWindowsMouseClickScript(912.4, 596.6, { windowTitle: '購入内容の確認' });
+  assert.match(script, /SetCursorPos\(912, 597\)/);
+  assert.match(script, /mouse_event\(0x0002/);
+  assert.match(script, /mouse_event\(0x0004/);
+  assert.doesNotMatch(script, /keybd_event|SendKeys/);
+}
+
 async function testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput() {
   const calls = [];
   const result = await typeManualPinWithSystemKeyboard('123456', {
@@ -1205,6 +1218,24 @@ async function testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput() {
   assert.equal(calls[0].args.includes('-STA'), true);
   assert.equal(calls[0].args.includes('-Command'), true);
   assert.equal(calls[0].options.windowsHide, true);
+}
+
+async function testClickWithSystemMouseUsesPowerShellNativeInput() {
+  const calls = [];
+  const result = await clickWithSystemMouse(912, 597, {
+    platform: 'win32',
+    execFileImpl(file, args, options, callback) {
+      calls.push({ file, args, options });
+      callback(null, 'clicked=912,597', '');
+    }
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.x, 912);
+  assert.equal(result.y, 597);
+  assert.equal(calls[0].file, 'powershell.exe');
+  assert.equal(calls[0].args.includes('-STA'), true);
+  assert.match(calls[0].args.join('\n'), /SetCursorPos\(912, 597\)/);
 }
 
 async function testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached() {
@@ -1476,8 +1507,10 @@ async function testUpdatePaymentStatusFailureWritesAlertAndClearsFlag() {
 function testSummarizePaymentErrorRemovesDebugDetails() {
   const raw = 'action=review; synthetic=success:click:確認する; trusted=success:debuggerMouse:確認する; wait=payment next page did not appear; url=https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017; controls=ファンキー？ モンキー？; candidates=[{"text":"確認する","rect":{"height":13}}]';
   const summary = summarizePaymentError(raw);
+  const systemSummary = summarizePaymentError('action=review; synthetic=success:click:確認する; trusted=success:debuggerMouse:確認する; system=success:systemMouse:912,597; wait=payment next page did not appear');
 
   assert.equal(summary, '确认付款按钮已点击但页面未跳转');
+  assert.equal(systemSummary, '确认付款按钮已用系统鼠标点击但页面未跳转');
   assert.equal(summary.includes('https://'), false);
   assert.equal(summary.includes('controls='), false);
   assert.equal(summary.includes('candidates='), false);
@@ -1568,6 +1601,7 @@ testScanCounterClearsAfterThresholdWhenScanDoesNotRun();
 testIsFollowupTaskReady();
 testNormalizeManualPinCodeKeepsDigitsOnly();
 testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly();
+testBuildWindowsMouseClickScriptUsesNativeMouseOnly();
 testSummarizePaymentErrorRemovesDebugDetails();
 Promise.all([
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
@@ -1602,7 +1636,8 @@ Promise.all([
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
   testUpdatePaymentStatusFailureWritesConciseAlert(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
-  testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput()
+  testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput(),
+  testClickWithSystemMouseUsesPowerShellNativeInput()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

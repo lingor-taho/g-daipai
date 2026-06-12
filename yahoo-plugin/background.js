@@ -637,6 +637,31 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
   }
 }
 
+async function clickWithSystemMouse(point = {}, context = {}) {
+  const x = Number(point.screenX);
+  const y = Number(point.screenY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { success: false, error: 'system mouse screen coordinates unavailable' };
+  }
+  try {
+    const res = await apiFetch('/api/plugin/native-click', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        x: Math.round(x),
+        y: Math.round(y),
+        windowTitle: String(context.windowTitle || context.title || '').slice(0, 200)
+      })
+    });
+    const result = await res.json().catch(() => ({ success: res.ok }));
+    return result?.success
+      ? { success: true, method: 'systemMouse', x: Math.round(x), y: Math.round(y) }
+      : { success: false, error: result?.error || 'system mouse click failed' };
+  } catch (e) {
+    return { success: false, error: e.message || 'system mouse click failed' };
+  }
+}
+
 function buildPaymentFailurePayload(job, error) {
   return {
     orderId: job?.orderId,
@@ -1024,10 +1049,17 @@ async function getPaymentActionClickPoint(tabId, action) {
       if (!rect || rect.width <= 0 || rect.height <= 0) {
         return { success: false, error: 'payment button has no clickable rect', candidates: candidates.slice(0, 20) };
       }
+      const win = typeof window !== 'undefined' ? window : {};
+      const borderX = Math.max(0, (Number(win.outerWidth || 0) - Number(win.innerWidth || 0)) / 2);
+      const browserTop = Math.max(0, Number(win.outerHeight || 0) - Number(win.innerHeight || 0) - borderX);
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
       return {
         success: true,
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
+        x: centerX,
+        y: centerY,
+        screenX: Number(win.screenX || 0) + borderX + centerX,
+        screenY: Number(win.screenY || 0) + browserTop + centerY,
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
         text: getText(button),
         candidates: candidates.slice(0, 20)
@@ -1039,12 +1071,15 @@ async function getPaymentActionClickPoint(tabId, action) {
   return result?.success ? result : { success: false, error: result?.error || 'payment button not found for trusted click' };
 }
 
-function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state, waitError) {
+function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state, waitError, systemClick = null) {
   const parts = [
     `action=${action}`,
     `synthetic=${clickResult?.success ? 'success' : 'failed'}:${clickResult?.method || ''}:${clickResult?.text || clickResult?.error || ''}`,
     `trusted=${trustedClick?.success ? 'success' : 'failed'}:${trustedClick?.method || ''}:${trustedClick?.text || trustedClick?.error || ''}`
   ];
+  if (systemClick) {
+    parts.push(`system=${systemClick?.success ? 'success' : 'failed'}:${systemClick?.method || ''}:${systemClick?.x || ''},${systemClick?.y || ''}:${systemClick?.error || ''}`);
+  }
   if (waitError?.message) parts.push(`wait=${waitError.message}`);
   if (state?.url) parts.push(`url=${state.url}`);
   if (Array.isArray(state?.controlsSample)) parts.push(`controls=${state.controlsSample.join(' | ').slice(0, 500)}`);
@@ -2506,6 +2541,28 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
       await injectContentScript(nextTab.id).catch(() => {});
       return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
     } catch (afterTrustedError) {
+      if (shouldUseTrustedPaymentActionFirst(tab, action)) {
+        const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+        const point = await getPaymentActionClickPoint((currentTab || tab).id, action).catch(e2 => ({ success: false, error: e2.message || 'payment click point unavailable' }));
+        const systemClick = point?.success
+          ? await clickWithSystemMouse(point, { windowTitle: currentTab?.title || tab?.title || '' })
+          : { success: false, error: point?.error || 'payment click point unavailable' };
+        console.log('[Yahoo Bid] System payment mouse click result:', systemClick);
+        if (systemClick?.success) {
+          try {
+            const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 30000);
+            await injectContentScript(nextTab.id).catch(() => {});
+            return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
+          } catch (afterSystemError) {
+            const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+            return {
+              success: false,
+              error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterSystemError, systemClick),
+              tab
+            };
+          }
+        }
+      }
       const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
       return {
         success: false,
@@ -4679,6 +4736,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
   dispatchTrustedPaymentActionClick,
+  clickWithSystemMouse,
   dispatchTrustedManualPinKeys,
   dispatchTrustedManualPinInput,
   fillManualPinAnswer,
