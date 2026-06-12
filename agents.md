@@ -2411,6 +2411,31 @@ node yahoo-plugin\background.test.js
 
 ---
 
+## 2026-06-12 付款 review 页临时停用店铺确认事项分支
+
+### 问题
+
+- 服务器最新版本仍在付款 review 页输出 `Payment tab left open for store confirmation diagnosis`，说明 `p1232862422` 当前页面没有进入普通 `確認する` 点击链路，而是提前落入店铺确认事项诊断分支。
+- 当前真实页面没有显示 `ストアからの確認事項` 内容，用户确认人工点击右侧红色 `確認する` 可以进入下一步。
+
+### 已实现内容
+
+- 新增 `PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED=false`，临时关闭付款流程中的 `ストアからの確認事項` 自动处理分支。
+- `hasStoreConfirmationSection` / `hasVisibleStoreConfirmationSection` 在该开关关闭时固定为 false，付款任务不再等待或执行 `completeStoreConfirmationItems()`。
+- 付款 review 页会回到普通流程：页面内点击 `確認する`，5 秒未跳转再页面内点击一次，再按既有兜底继续走系统鼠标/诊断。
+- 保留店铺确认事项处理函数和相关代码，后续确认支付按钮问题修复后，可按真实页面条件重新开启或重写该分支。
+
+### 最近验证命令
+
+```powershell
+git diff --check
+npm run regression
+```
+
+验证结果：以上命令通过。
+
+---
+
 ## 2026-06-12 付款 review 页店铺确认误判与 Win32 诊断
 
 - 现场插件日志出现 `Payment tab left open for store confirmation diagnosis`，说明当次付款没有进入 Win32 鼠标点击红色 `確認する` 的分支，而是被提前判定为“店铺确认事项流程开始但未完成”。

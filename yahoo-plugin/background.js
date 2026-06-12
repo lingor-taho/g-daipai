@@ -8,6 +8,7 @@ const TASK_EXECUTION_TIMEOUT_MS = 30000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = false;
 
 let isRunning = false;
 let fetchFailureCount = 0;
@@ -768,9 +769,11 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
   const hasPlacementDefaultModal = /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(bodyText);
   const hasStoreBundlePurchaseNotice = /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d\u3067\u304d\u308b\u5546\u54c1/.test(bodyText);
-  const hasStoreConfirmationSection = Object.prototype.hasOwnProperty.call(snapshot, 'hasVisibleStoreConfirmationSection')
-    ? Boolean(snapshot.hasVisibleStoreConfirmationSection)
-    : /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText);
+  const hasStoreConfirmationSection = PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && (
+    Object.prototype.hasOwnProperty.call(snapshot, 'hasVisibleStoreConfirmationSection')
+      ? Boolean(snapshot.hasVisibleStoreConfirmationSection)
+      : /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText)
+  );
   const hasStoreConfirmationEditPage = Boolean(snapshot.hasStoreConfirmationEditPage) ||
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
@@ -916,8 +919,8 @@ async function getPaymentPageState(tabId) {
           bodyText,
           controls,
           hasLoadingPlaceholder: [...document.querySelectorAll('[class*="skeleton"], [class*="Skeleton"], [aria-busy="true"]')].length > 0,
-          hasStoreConfirmationSection: hasVisibleStoreConfirmationSection,
-          hasVisibleStoreConfirmationSection,
+          hasStoreConfirmationSection: PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && hasVisibleStoreConfirmationSection,
+          hasVisibleStoreConfirmationSection: PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && hasVisibleStoreConfirmationSection,
           hasVisibleStoreConfirmationTitle,
           hasVisibleStoreConfirmationContent,
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
@@ -4416,9 +4419,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
       state = result.state;
     }
 
-    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton && !state?.hasStoreConfirmationSection) {
+    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton || nextState.hasStoreConfirmationSection,
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
         15000
       );
       if (reviewTab) {
@@ -4426,7 +4429,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
-    if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+    if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
       if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
@@ -4441,9 +4444,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
 
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
-    if (!state?.hasReviewButton && !state?.hasStoreConfirmationSection) {
+    if (!state?.hasReviewButton) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton || nextState.hasStoreConfirmationSection,
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
         15000
       );
       if (reviewTab) {
@@ -4451,7 +4454,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
-    if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+    if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
       if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');

@@ -669,10 +669,10 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
     controls: ['\u5909\u66f4\u3059\u308b']
   });
 
-  assert.equal(state.hasStoreConfirmationSection, true);
+  assert.equal(state.hasStoreConfirmationSection, false);
   assert.equal(state.hasStoreConfirmationEditPage, false);
-  assert.equal(editState.hasStoreConfirmationSection, true);
-  assert.equal(editState.hasStoreConfirmationEditPage, true);
+  assert.equal(editState.hasStoreConfirmationSection, false);
+  assert.equal(editState.hasStoreConfirmationEditPage, false);
 }
 
 function testPaymentPageStateDoesNotTreatCartoptOnlyAsStoreConfirmation() {
@@ -4056,8 +4056,6 @@ async function run() {
   await testModernStoreReviewUsesSyntheticClickBeforeTrustedClick();
   await testModernStoreReviewRetriesSyntheticClickAfterFiveSeconds();
   await testModernStoreReviewFallsBackToSystemMouseClick();
-  await testRunPaymentJobsCompletesStoreConfirmationBeforeReview();
-  await testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
   await testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit();
