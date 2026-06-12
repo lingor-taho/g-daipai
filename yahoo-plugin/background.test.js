@@ -14,15 +14,9 @@ function loadBackgroundForTest(overrides = {}) {
   const windows = overrides.windows || {};
   const sandbox = {
     console,
-    Date: overrides.now
-      ? class MockDate extends Date {
-          static now() { return overrides.now(); }
-        }
-      : Date,
     globalThis: {
       __G_DAIPAI_TRANSACTION_START_ENABLED__: overrides.transactionStartEnabled,
-      __G_DAIPAI_RANDOM__: overrides.random,
-      __G_DAIPAI_SLEEP__: overrides.sleep
+      __G_DAIPAI_RANDOM__: overrides.random
     },
     setInterval() {},
     setTimeout(fn, ms) { return overrides.setTimeout ? overrides.setTimeout(fn, ms) : fn(); },
@@ -669,52 +663,10 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
     controls: ['\u5909\u66f4\u3059\u308b']
   });
 
-  assert.equal(state.hasStoreConfirmationSection, false);
+  assert.equal(state.hasStoreConfirmationSection, true);
   assert.equal(state.hasStoreConfirmationEditPage, false);
-  assert.equal(editState.hasStoreConfirmationSection, false);
-  assert.equal(editState.hasStoreConfirmationEditPage, false);
-}
-
-function testPaymentPageStateDoesNotTreatCartoptOnlyAsStoreConfirmation() {
-  const api = loadBackgroundForTest();
-  const state = api.buildPaymentPageStateFromSnapshot({
-    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-    bodyText: '\u30af\u30fc\u30dd\u30f3 PayPay\u30dd\u30a4\u30f3\u30c8 \u304a\u652f\u6255\u3044\u65b9\u6cd5 \u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b',
-    controls: ['\u7279\u5178\u3092\u78ba\u8a8d\u3059\u308b', '\u78ba\u8a8d\u3059\u308b'],
-    hasStoreConfirmationSection: true
-  });
-
-  assert.equal(state.hasStoreConfirmationSection, false);
-  assert.equal(state.hasStoreConfirmationEditPage, false);
-  assert.equal(state.hasReviewButton, true);
-}
-
-function testPaymentPageStateRequiresVisibleStoreConfirmationText() {
-  const api = loadBackgroundForTest();
-  const state = api.buildPaymentPageStateFromSnapshot({
-    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-    bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u30af\u30fc\u30dd\u30f3 \u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b',
-    controls: ['\u78ba\u8a8d\u3059\u308b'],
-    hasVisibleStoreConfirmationSection: false
-  });
-
-  assert.equal(state.hasStoreConfirmationSection, false);
-  assert.equal(state.hasReviewButton, true);
-}
-
-function testPaymentPageStateRequiresStoreConfirmationContent() {
-  const api = loadBackgroundForTest();
-  const state = api.buildPaymentPageStateFromSnapshot({
-    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-    bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u30af\u30fc\u30dd\u30f3 \u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b',
-    controls: ['\u78ba\u8a8d\u3059\u308b'],
-    hasVisibleStoreConfirmationSection: false,
-    hasVisibleStoreConfirmationTitle: true,
-    hasVisibleStoreConfirmationContent: false
-  });
-
-  assert.equal(state.hasStoreConfirmationSection, false);
-  assert.equal(state.hasReviewButton, true);
+  assert.equal(editState.hasStoreConfirmationSection, true);
+  assert.equal(editState.hasStoreConfirmationEditPage, true);
 }
 
 function testBuildStoreOptionsUrlUsesProductId() {
@@ -1876,341 +1828,6 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
 
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 17);
-  assert.equal(calls[0].status, 'success');
-}
-
-async function testRunPaymentJobsWaitsForStoreReviewPageReadyBeforeConfirmClick() {
-  const calls = [];
-  const actions = [];
-  let stateReads = 0;
-  let stateReadsAtReviewClick = 0;
-  const states = [
-    {
-      success: true,
-      state: {
-        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-        hasReviewButton: true,
-        paymentAmountJpy: 20700,
-        reviewPageReady: false,
-        textSample: '\u8cfc\u5165 \u78ba\u8a8d\u3059\u308b'
-      }
-    },
-    {
-      success: true,
-      state: {
-        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-        hasReviewButton: true,
-        paymentAmountJpy: 20700,
-        reviewPageReady: false,
-        textSample: '\u8cfc\u5165 \u304a\u652f\u6255\u3044\u65b9\u6cd5 \u78ba\u8a8d\u3059\u308b'
-      }
-    },
-    {
-      success: true,
-      state: {
-        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-        hasReviewButton: true,
-        paymentAmountJpy: 20700,
-        reviewPageReady: true,
-        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
-      }
-    },
-    {
-      success: true,
-      state: {
-        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-        hasReviewButton: true,
-        paymentAmountJpy: 20700,
-        reviewPageReady: true,
-        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
-      }
-    },
-    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422', hasFinalizeButton: true, paymentAmountJpy: 20700 } },
-    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=p1232862422', complete: true } }
-  ];
-  const api = loadBackgroundForTest({
-    sleep: async () => {},
-    tabs: {
-      async create() { return { id: 21, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete' }; },
-      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete' }; },
-      async query() { return [{ id: 21, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete' }]; }
-    },
-    scripting: {
-      async executeScript(...args) {
-        const payload = args[0] || {};
-        if (payload.files) return undefined;
-        if (payload.args && payload.args.length) {
-          actions.push(payload.args[1]);
-          if (payload.args[1] === 'review') stateReadsAtReviewClick = stateReads;
-          return [{ result: { success: true, text: 'clicked' } }];
-        }
-        stateReads += 1;
-        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
-      }
-    },
-    fetch: async (url, options = {}) => {
-      if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 21, productId: 'p1232862422', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', finalPrice: 19800, effectiveShippingFeeText: '900\u5186' }] }; } };
-      }
-      if (String(url).includes('/api/plugin/payment/status')) {
-        calls.push(JSON.parse(options.body || '{}'));
-        return { async json() { return { success: true }; } };
-      }
-      return { async json() { return { task: null }; } };
-    }
-  });
-
-  await api.runPaymentJobs();
-
-  assert.deepEqual(actions, ['review', 'finalize']);
-  assert.equal(stateReadsAtReviewClick >= 4, true);
-  assert.equal(calls[0].orderId, 21);
-  assert.equal(calls[0].status, 'success');
-}
-
-async function testModernStoreReviewUsesSyntheticClickBeforeTrustedClick() {
-  const calls = [];
-  const actions = [];
-  let trustedMouseCommands = 0;
-  const states = [
-    {
-      success: true,
-      state: {
-        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-        hasReviewButton: true,
-        paymentAmountJpy: 20700,
-        reviewPageReady: true,
-        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
-      }
-    },
-    {
-      success: true,
-      state: {
-        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-        hasReviewButton: true,
-        paymentAmountJpy: 20700,
-        reviewPageReady: true,
-        textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
-      }
-    },
-    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422', hasFinalizeButton: true, paymentAmountJpy: 20700 } },
-    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=p1232862422', complete: true } }
-  ];
-  const api = loadBackgroundForTest({
-    sleep: async () => {},
-    tabs: {
-      async create() { return { id: 22, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1 }; },
-      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1 }; },
-      async update(id, info) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1, ...info }; },
-      async query() { return [{ id: 22, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', status: 'complete', windowId: 1 }]; }
-    },
-    scripting: {
-      async executeScript(...args) {
-        const payload = args[0] || {};
-        const funcText = String(payload.func || '');
-        if (payload.files) return undefined;
-        if (payload.args && payload.args.length >= 2) {
-          if (funcText.includes('payment button has no clickable rect')) {
-            return [{ result: { success: true, x: 752, y: 321, text: '\u78ba\u8a8d\u3059\u308b', candidates: [] } }];
-          }
-          actions.push(payload.args[1]);
-          return [{ result: { success: true, text: 'synthetic clicked' } }];
-        }
-        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
-      }
-    },
-    debuggerApi: {
-      async attach() {},
-      async sendCommand(target, command) {
-        if (command === 'Input.dispatchMouseEvent') trustedMouseCommands += 1;
-      },
-      async detach() {}
-    },
-    fetch: async (url, options = {}) => {
-      if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 22, productId: 'p1232862422', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422', finalPrice: 19800, effectiveShippingFeeText: '900\u5186' }] }; } };
-      }
-      if (String(url).includes('/api/plugin/payment/status')) {
-        calls.push(JSON.parse(options.body || '{}'));
-        return { async json() { return { success: true }; } };
-      }
-      return { async json() { return { task: null }; } };
-    }
-  });
-
-  await api.runPaymentJobs();
-
-  assert.equal(actions.includes('review'), true);
-  assert.equal(trustedMouseCommands, 0);
-  assert.equal(calls[0].orderId, 22);
-  assert.equal(calls[0].status, 'success');
-}
-
-async function testModernStoreReviewRetriesSyntheticClickAfterFiveSeconds() {
-  const calls = [];
-  const actions = [];
-  let trustedMouseCommands = 0;
-  let syntheticReviewClicks = 0;
-  let now = 0;
-  let finalized = false;
-  const reviewState = {
-    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-    hasReviewButton: true,
-    paymentAmountJpy: 20700,
-    reviewPageReady: true,
-    textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
-  };
-  const api = loadBackgroundForTest({
-    disableAutoStart: true,
-    now: () => now,
-    sleep: async ms => { now += ms || 0; },
-    tabs: {
-      async create() { return { id: 23, url: reviewState.url, status: 'complete', windowId: 1 }; },
-      async get(id) { return { id, url: syntheticReviewClicks >= 2 ? 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422' : reviewState.url, status: 'complete', windowId: 1 }; },
-      async update(id, info) { return { id, url: reviewState.url, status: 'complete', windowId: 1, ...info }; },
-      async query() { return [{ id: 23, url: syntheticReviewClicks >= 2 ? 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422' : reviewState.url, status: 'complete', windowId: 1 }]; }
-    },
-    scripting: {
-      async executeScript(...args) {
-        const payload = args[0] || {};
-        const funcText = String(payload.func || '');
-        if (payload.files) return undefined;
-        if (payload.args && payload.args.length >= 2) {
-          if (funcText.includes('payment button has no clickable rect')) {
-            return [{ result: { success: true, x: 752, y: 321, text: '\u78ba\u8a8d\u3059\u308b', candidates: [] } }];
-          }
-          actions.push(payload.args[1]);
-          if (payload.args[1] === 'review') syntheticReviewClicks += 1;
-          if (payload.args[1] === 'finalize') finalized = true;
-          return [{ result: { success: true, text: 'synthetic clicked' } }];
-        }
-        if (finalized) {
-          return [{ result: { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=p1232862422', complete: true } } }];
-        }
-        if (syntheticReviewClicks >= 2) {
-          return [{ result: { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422', hasFinalizeButton: true, paymentAmountJpy: 20700 } } }];
-        }
-        return [{ result: { success: true, state: reviewState } }];
-      }
-    },
-    debuggerApi: {
-      async attach() {},
-      async sendCommand(target, command) {
-        if (command === 'Input.dispatchMouseEvent') trustedMouseCommands += 1;
-      },
-      async detach() {}
-    },
-    fetch: async (url, options = {}) => {
-      if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 23, productId: 'p1232862422', transactionUrl: reviewState.url, finalPrice: 19800, effectiveShippingFeeText: '900\u5186' }] }; } };
-      }
-      if (String(url).includes('/api/plugin/payment/status')) {
-        calls.push(JSON.parse(options.body || '{}'));
-        return { async json() { return { success: true }; } };
-      }
-      return { async json() { return { task: null }; } };
-    }
-  });
-
-  await api.runPaymentJobs();
-
-  assert.equal(actions.filter(action => action === 'review').length >= 2, true);
-  assert.equal(trustedMouseCommands, 0);
-  assert.equal(calls[0].orderId, 23);
-  assert.equal(calls[0].status, 'success');
-}
-
-async function testModernStoreReviewFallsBackToSystemMouseClick() {
-  const calls = [];
-  const fetchCalls = [];
-  const actions = [];
-  let trustedMouseCommands = 0;
-  let syntheticReviewClicks = 0;
-  let systemClicked = false;
-  let finalized = false;
-  let now = 0;
-  const tabUpdates = [];
-  const windowUpdates = [];
-  const reviewState = {
-    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1232862422',
-    hasReviewButton: true,
-    paymentAmountJpy: 20700,
-    reviewPageReady: true,
-    textSample: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u5546\u54c1\u5408\u8a08 19,800\u5186 \u9001\u6599 900\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d 20,700\u5186 \u78ba\u8a8d\u3059\u308b'
-  };
-  const confirmState = { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=p1232862422', hasFinalizeButton: true, paymentAmountJpy: 20700 };
-  const api = loadBackgroundForTest({
-    disableAutoStart: true,
-    now: () => now,
-    sleep: async ms => { now += ms || 0; },
-    tabs: {
-      async create() { return { id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: '', status: 'complete', windowId: 1 }; },
-      async get(id) { return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : '', status: 'complete', windowId: 1 }; },
-      async update(id, info) {
-        tabUpdates.push({ id, info });
-        return { id, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: '', status: 'complete', windowId: 1, ...info };
-      },
-      async query() { return [{ id: 24, title: '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d', url: systemClicked ? confirmState.url : reviewState.url, status: 'complete', windowId: 1 }]; }
-    },
-    windows: {
-      async update(id, info) {
-        windowUpdates.push({ id, info });
-        return { id, ...info };
-      }
-    },
-    scripting: {
-      async executeScript(...args) {
-        const payload = args[0] || {};
-        const funcText = String(payload.func || '');
-        if (payload.files) return undefined;
-        if (payload.args && payload.args.length >= 2) {
-          if (funcText.includes('payment button has no clickable rect')) {
-            return [{ result: { success: true, x: 752, y: 321, screenX: 912, screenY: 597, text: '\u78ba\u8a8d\u3059\u308b', candidates: [] } }];
-          }
-          actions.push(payload.args[1]);
-          if (payload.args[1] === 'review') syntheticReviewClicks += 1;
-          if (payload.args[1] === 'finalize') finalized = true;
-          return [{ result: { success: true, text: 'synthetic clicked' } }];
-        }
-        if (finalized) {
-          return [{ result: { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=p1232862422', complete: true } } }];
-        }
-        return [{ result: { success: true, state: systemClicked ? confirmState : reviewState } }];
-      }
-    },
-    debuggerApi: {
-      async attach() {},
-      async sendCommand(target, command) {
-        if (command === 'Input.dispatchMouseEvent') trustedMouseCommands += 1;
-      },
-      async detach() {}
-    },
-    fetch: async (url, options = {}) => {
-      fetchCalls.push({ url: String(url), body: options.body || '' });
-      if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 24, productId: 'p1232862422', transactionUrl: reviewState.url, finalPrice: 19800, effectiveShippingFeeText: '900\u5186' }] }; } };
-      }
-      if (String(url).includes('/api/plugin/native-click')) {
-        systemClicked = true;
-        return { async json() { return { success: true, x: 912, y: 597 }; } };
-      }
-      if (String(url).includes('/api/plugin/payment/status')) {
-        calls.push(JSON.parse(options.body || '{}'));
-        return { async json() { return { success: true }; } };
-      }
-      return { async json() { return { task: null }; } };
-    }
-  });
-
-  await api.runPaymentJobs();
-
-  assert.equal(syntheticReviewClicks >= 2, true);
-  assert.equal(trustedMouseCommands, 0);
-  assert.equal(windowUpdates.some(call => call.id === 1 && call.info.focused === true), true);
-  assert.equal(tabUpdates.some(call => call.id === 24 && call.info.active === true), true);
-  assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/native-click') && /912/.test(call.body) && /597/.test(call.body)), true);
-  assert.equal(actions.includes('finalize'), true);
-  assert.equal(calls[0].orderId, 24);
   assert.equal(calls[0].status, 'success');
 }
 
@@ -4023,9 +3640,6 @@ async function run() {
   testPaymentPageStateDetectsPaymentMethodFee();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsStoreConfirmationSection();
-  testPaymentPageStateDoesNotTreatCartoptOnlyAsStoreConfirmation();
-  testPaymentPageStateRequiresVisibleStoreConfirmationText();
-  testPaymentPageStateRequiresStoreConfirmationContent();
   testBuildStoreOptionsUrlUsesProductId();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
@@ -4052,10 +3666,8 @@ async function run() {
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
-  await testRunPaymentJobsWaitsForStoreReviewPageReadyBeforeConfirmClick();
-  await testModernStoreReviewUsesSyntheticClickBeforeTrustedClick();
-  await testModernStoreReviewRetriesSyntheticClickAfterFiveSeconds();
-  await testModernStoreReviewFallsBackToSystemMouseClick();
+  await testRunPaymentJobsCompletesStoreConfirmationBeforeReview();
+  await testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
   await testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit();

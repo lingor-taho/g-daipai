@@ -8,7 +8,6 @@ const TASK_EXECUTION_TIMEOUT_MS = 30000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
-const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = false;
 
 let isRunning = false;
 let fetchFailureCount = 0;
@@ -96,9 +95,6 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
 }
 
 function sleep(ms) {
-  if (typeof globalThis.__G_DAIPAI_SLEEP__ === 'function') {
-    return globalThis.__G_DAIPAI_SLEEP__(ms);
-  }
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
@@ -638,31 +634,6 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
   }
 }
 
-async function clickWithSystemMouse(point = {}, context = {}) {
-  const x = Number(point.screenX);
-  const y = Number(point.screenY);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return { success: false, error: 'system mouse screen coordinates unavailable' };
-  }
-  try {
-    const res = await apiFetch('/api/plugin/native-click', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        x: Math.round(x),
-        y: Math.round(y),
-        windowTitle: String(context.windowTitle || context.title || '').slice(0, 200)
-      })
-    });
-    const result = await res.json().catch(() => ({ success: res.ok }));
-    return result?.success
-      ? { success: true, method: 'systemMouse', x: Math.round(x), y: Math.round(y), stdout: result.stdout || '' }
-      : { success: false, error: result?.error || 'system mouse click failed' };
-  } catch (e) {
-    return { success: false, error: e.message || 'system mouse click failed' };
-  }
-}
-
 function buildPaymentFailurePayload(job, error) {
   return {
     orderId: job?.orderId,
@@ -769,21 +740,12 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
   const hasPlacementDefaultModal = /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(bodyText);
   const hasStoreBundlePurchaseNotice = /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d\u3067\u304d\u308b\u5546\u54c1/.test(bodyText);
-  const hasStoreConfirmationSection = PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && (
-    Object.prototype.hasOwnProperty.call(snapshot, 'hasVisibleStoreConfirmationSection')
-      ? Boolean(snapshot.hasVisibleStoreConfirmationSection)
-      : /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText)
-  );
+  const hasStoreConfirmationSection = Boolean(snapshot.hasStoreConfirmationSection) ||
+    /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText);
   const hasStoreConfirmationEditPage = Boolean(snapshot.hasStoreConfirmationEditPage) ||
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
-  const hasReviewButton = hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/);
-  const hasReviewAmountSection = /\u304a\u652f\u6255\u3044\u91d1\u984d/.test(bodyText);
-  const hasReviewPaymentMethodSection = /\u304a\u652f\u6255\u3044\u65b9\u6cd5|\u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9|PayPay|\u30b3\u30f3\u30d3\u30cb|\u9280\u884c\u632f\u8fbc/.test(bodyText);
-  const hasReviewSummarySection = /\u5546\u54c1\u5408\u8a08|\u9001\u6599|\u652f\u6255\u3044\u624b\u6570\u6599/.test(bodyText);
-  const hasPaymentLoadingIndicator = Boolean(snapshot.hasLoadingPlaceholder) ||
-    /\u8aad\u307f\u8fbc\u307f|\u30ed\u30fc\u30c9\u4e2d|\u305f\u3060\u3044\u307e\u51e6\u7406\u4e2d|Loading|loading/.test(bodyText);
   return {
     url: snapshot.url || '',
     title: snapshot.title || '',
@@ -807,13 +769,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     hasPlacementOkButton: hasPlacementDefaultModal && hasControl(/^\s*OK\s*$/),
     hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
     hasTransactionConfirmButton: hasControl(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
-    hasReviewButton,
-    reviewPageReady: hasReviewButton &&
-      paymentAmountJpy > 0 &&
-      hasReviewAmountSection &&
-      hasReviewPaymentMethodSection &&
-      hasReviewSummarySection &&
-      !hasPaymentLoadingIndicator,
+    hasReviewButton: hasControl(/^\s*\u78ba\u8a8d\u3059\u308b\s*$/),
     hasFinalizeButton: hasControl(/\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b/)
   };
 }
@@ -845,22 +801,6 @@ async function getPaymentPageState(tabId) {
         const rect = el.getBoundingClientRect?.();
         return !!(rect && rect.width > 0 && rect.height > 0);
       };
-      const hasVisibleText = pattern => {
-        const root = document.body || document.documentElement;
-        if (!root || typeof document.createTreeWalker !== 'function') return false;
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        let node = walker.nextNode();
-        while (node) {
-          if (pattern.test(String(node.nodeValue || '')) && isVisibleElement(node.parentElement)) {
-            return true;
-          }
-          node = walker.nextNode();
-        }
-        return false;
-      };
-      const hasVisibleStoreConfirmationTitle = hasVisibleText(/\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/);
-      const hasVisibleStoreConfirmationContent = hasVisibleText(/\u5e74\u9f62\u78ba\u8a8d|\u9818\u53ce\u66f8|\u30e1\u30fc\u30eb\u914d\u4fe1\u767b\u9332|\u30b9\u30c8\u30a2\u3078\u306e\u8981\u671b|\u5fc5\u9808/);
-      const hasVisibleStoreConfirmationSection = hasVisibleStoreConfirmationTitle && hasVisibleStoreConfirmationContent;
       const isVisibleRadioOption = radio => {
         if (!radio) return false;
         let node = radio;
@@ -915,14 +855,9 @@ async function getPaymentPageState(tabId) {
         snapshot: {
           url: location.href,
           title: document.title || '',
-          readyState: document.readyState || '',
           bodyText,
           controls,
-          hasLoadingPlaceholder: [...document.querySelectorAll('[class*="skeleton"], [class*="Skeleton"], [aria-busy="true"]')].length > 0,
-          hasStoreConfirmationSection: PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && hasVisibleStoreConfirmationSection,
-          hasVisibleStoreConfirmationSection: PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && hasVisibleStoreConfirmationSection,
-          hasVisibleStoreConfirmationTitle,
-          hasVisibleStoreConfirmationContent,
+          hasStoreConfirmationSection: Boolean(document.querySelector('#cartopt')),
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
           shippingOptions
         }
@@ -964,9 +899,6 @@ async function runMainWorldPaymentActionClick(tabId, action) {
       };
       const hasClickableTarget = el => isClickable(el) ||
         controls.some(child => child !== el && child.closest?.('a, button, input, [role="button"]') === el && pattern.test(getText(child)) && isClickable(child));
-      const directReviewConfirm = actionName === 'review'
-        ? document.querySelector?.('#confirm a[data-cl-params*="_cl_link:confirm"]')
-        : null;
       const matches = controls.filter(el => pattern.test(getText(el)));
       const reviewAnchorMatches = actionName === 'review'
         ? matches.filter(el => String(el.tagName || '').toUpperCase() === 'A')
@@ -975,11 +907,9 @@ async function runMainWorldPaymentActionClick(tabId, action) {
       const targetMatches = actionName === 'review'
         ? (reviewAnchorMatches.length ? reviewAnchorMatches : reviewControlMatches)
         : matches;
-      const button = (directReviewConfirm && hasClickableTarget(directReviewConfirm) ? directReviewConfirm : null) ||
-        targetMatches.find(el => isPreferredConfirm(el) && hasClickableTarget(el)) ||
+      const button = targetMatches.find(el => isPreferredConfirm(el) && hasClickableTarget(el)) ||
         targetMatches.find(el => hasClickableTarget(el)) ||
         targetMatches.find(el => isPreferredConfirm(el)) ||
-        directReviewConfirm ||
         targetMatches[0];
       if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found: exact anchor/button not found' : 'payment button not found' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
@@ -1047,9 +977,6 @@ async function getPaymentActionClickPoint(tabId, action) {
       };
       const hasClickableTarget = el => isClickable(el) ||
         controls.some(child => child !== el && child.closest?.('a, button, input, [role="button"]') === el && pattern.test(getText(child)) && isClickable(child));
-      const directReviewConfirm = actionName === 'review'
-        ? document.querySelector?.('#confirm a[data-cl-params*="_cl_link:confirm"]')
-        : null;
       const matches = controls.filter(el => pattern.test(getText(el)));
       const reviewAnchorMatches = actionName === 'review'
         ? matches.filter(el => String(el.tagName || '').toUpperCase() === 'A')
@@ -1058,11 +985,9 @@ async function getPaymentActionClickPoint(tabId, action) {
       const targetMatches = actionName === 'review'
         ? (reviewAnchorMatches.length ? reviewAnchorMatches : reviewControlMatches)
         : matches;
-      const button = (directReviewConfirm && hasClickableTarget(directReviewConfirm) ? directReviewConfirm : null) ||
-        targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && hasClickableTarget(el)) ||
+      const button = targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el) && hasClickableTarget(el)) ||
         targetMatches.find(el => hasClickableTarget(el)) ||
         targetMatches.find(el => actionName === 'review' && isPreferredConfirm(el)) ||
-        directReviewConfirm ||
         targetMatches[0];
       if (!button) return { success: false, error: actionName === 'review' ? 'payment review button not found: exact anchor/button not found for trusted click' : 'payment button not found for trusted click', candidates: candidates.slice(0, 20) };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
@@ -1073,17 +998,10 @@ async function getPaymentActionClickPoint(tabId, action) {
       if (!rect || rect.width <= 0 || rect.height <= 0) {
         return { success: false, error: 'payment button has no clickable rect', candidates: candidates.slice(0, 20) };
       }
-      const win = typeof window !== 'undefined' ? window : {};
-      const borderX = Math.max(0, (Number(win.outerWidth || 0) - Number(win.innerWidth || 0)) / 2);
-      const browserTop = Math.max(0, Number(win.outerHeight || 0) - Number(win.innerHeight || 0) - borderX);
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
       return {
         success: true,
-        x: centerX,
-        y: centerY,
-        screenX: Number(win.screenX || 0) + borderX + centerX,
-        screenY: Number(win.screenY || 0) + browserTop + centerY,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
         text: getText(button),
         candidates: candidates.slice(0, 20)
@@ -1095,15 +1013,12 @@ async function getPaymentActionClickPoint(tabId, action) {
   return result?.success ? result : { success: false, error: result?.error || 'payment button not found for trusted click' };
 }
 
-function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state, waitError, systemClick = null) {
+function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state, waitError) {
   const parts = [
     `action=${action}`,
     `synthetic=${clickResult?.success ? 'success' : 'failed'}:${clickResult?.method || ''}:${clickResult?.text || clickResult?.error || ''}`,
     `trusted=${trustedClick?.success ? 'success' : 'failed'}:${trustedClick?.method || ''}:${trustedClick?.text || trustedClick?.error || ''}`
   ];
-  if (systemClick) {
-    parts.push(`system=${systemClick?.success ? 'success' : 'failed'}:${systemClick?.method || ''}:${systemClick?.x || ''},${systemClick?.y || ''}:${systemClick?.error || systemClick?.stdout || ''}`);
-  }
   if (waitError?.message) parts.push(`wait=${waitError.message}`);
   if (state?.url) parts.push(`url=${state.url}`);
   if (Array.isArray(state?.controlsSample)) parts.push(`controls=${state.controlsSample.join(' | ').slice(0, 500)}`);
@@ -1216,10 +1131,6 @@ async function waitForPaymentStateOnTab(tab, predicate, timeoutMs = 15000) {
   return null;
 }
 
-function shouldUseTrustedPaymentActionFirst(tab, action) {
-  return action === 'review' && /buy\.auctions\.yahoo\.co\.jp\/order\/review/i.test(String(tab?.url || ''));
-}
-
 function assertPaymentAmountMatches(job, state) {
   const expected = getExpectedPaymentAmountJpy(job);
   const actual = Number(state?.paymentAmountJpy || 0);
@@ -1240,52 +1151,6 @@ function assertPaymentAmountMatches(job, state) {
     const sample = (relevantIndex >= 0 ? sampleSource.slice(relevantIndex, relevantIndex + 240) : sampleSource.slice(0, 240));
     throw new Error(`payment amount mismatch: expected ${expected}\u5186, found ${actual}\u5186${feeSummary}${shippingSummary ? `; shippingState: ${shippingSummary}` : ''}${sample ? `; pageSample: ${sample}` : ''}`);
   }
-}
-
-function shouldWaitForModernPaymentReviewReady(state = {}) {
-  return /buy\.auctions\.yahoo\.co\.jp\/order\/review/i.test(String(state.url || ''));
-}
-
-function isPaymentReviewReadyToClick(state = {}, job = {}) {
-  if (!state?.hasReviewButton) return false;
-  const expected = getExpectedPaymentAmountJpy(job);
-  const actual = Number(state.paymentAmountJpy || 0);
-  if (expected !== null && actual !== expected) return false;
-  if (!shouldWaitForModernPaymentReviewReady(state)) return true;
-  if (state.reviewPageReady === true) return true;
-  if (state.reviewPageReady === false) return false;
-  const text = String(state.textSample || '');
-  if (!text) return true;
-  if (/\u8aad\u307f\u8fbc\u307f|\u30ed\u30fc\u30c9\u4e2d|\u305f\u3060\u3044\u307e\u51e6\u7406\u4e2d|Loading|loading/.test(text)) return false;
-  return /\u304a\u652f\u6255\u3044\u91d1\u984d/.test(text) &&
-    /\u304a\u652f\u6255\u3044\u65b9\u6cd5|\u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9|PayPay|\u30b3\u30f3\u30d3\u30cb|\u9280\u884c\u632f\u8fbc/.test(text) &&
-    /\u5546\u54c1\u5408\u8a08|\u9001\u6599|\u652f\u6255\u3044\u624b\u6570\u6599/.test(text);
-}
-
-async function waitForPaymentReviewReady(tab, job, initialState = null, timeoutMs = 20000) {
-  let state = initialState || await getPaymentPageState(tab.id);
-  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / 500));
-  let lastReadySignature = '';
-  let stableReadyCount = 0;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (state?.alreadyPaid || state?.complete || state?.hasFinalizeButton) return state;
-    if (isPaymentReviewReadyToClick(state, job)) {
-      if (!shouldWaitForModernPaymentReviewReady(state) || state.reviewPageReady !== true) return state;
-      const signature = `${state.url || ''}|${Number(state.paymentAmountJpy || 0)}|${state.reviewPageReady}`;
-      stableReadyCount = signature === lastReadySignature ? stableReadyCount + 1 : 1;
-      lastReadySignature = signature;
-      if (stableReadyCount >= 2) return state;
-    } else {
-      stableReadyCount = 0;
-      lastReadySignature = '';
-    }
-    await sleep(500);
-    const latest = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
-    if (latest) state = latest;
-  }
-
-  throw new Error(`payment review page not ready before confirm click${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);
 }
 
 function shouldSelectPaymentShippingOption(job = {}, state = {}) {
@@ -2526,21 +2391,8 @@ async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
   return null;
 }
 
-async function focusTabForNativeUserInput(tab) {
-  if (!tab?.id) return tab;
-  const current = await chrome.tabs.get(tab.id).catch(() => tab);
-  if (current?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(current.windowId, { state: 'normal' }).catch(() => {});
-    await chrome.windows.update(current.windowId, { focused: true }).catch(() => {});
-  }
-  await chrome.tabs.update(current?.id || tab.id, { active: true }).catch(() => {});
-  await sleep(500);
-  return await chrome.tabs.get(tab.id).catch(() => current || tab);
-}
-
 async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
   const previousTabIds = await getTabIds();
-  let systemClick = null;
   const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
   if (!clickResult?.success) {
     return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };
@@ -2550,53 +2402,10 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
     await injectContentScript(nextTab.id).catch(() => {});
     return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
   } catch (e) {
-    if (action === 'review') {
-      console.warn('[Yahoo Bid] Payment synthetic click did not reach next state after 5s, retrying synthetic click:', e.message || e);
-      const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
-      const retryClickResult = await runMainWorldPaymentActionClick((currentTab || tab).id, action);
-      console.log('[Yahoo Bid] Payment synthetic retry click result:', retryClickResult);
-      if (retryClickResult?.success) {
-        try {
-          const nextTab = await waitForPaymentStateAcrossTabs(currentTab || tab, waitFor, previousTabIds, 5000);
-          await injectContentScript(nextTab.id).catch(() => {});
-          return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
-        } catch (afterRetrySyntheticError) {
-          console.warn('[Yahoo Bid] Payment synthetic retry did not reach next state after 5s, trying system mouse click:', afterRetrySyntheticError.message || afterRetrySyntheticError);
-        }
-      } else {
-        console.warn('[Yahoo Bid] Payment synthetic retry click failed, trying system mouse click:', retryClickResult?.error || 'unknown error');
-      }
-
-      const focusedTab = await focusTabForNativeUserInput(currentTab || tab);
-      const point = await getPaymentActionClickPoint((focusedTab || currentTab || tab).id, action).catch(e2 => ({ success: false, error: e2.message || 'payment click point unavailable' }));
-      systemClick = point?.success
-        ? await clickWithSystemMouse(point, { windowTitle: focusedTab?.title || currentTab?.title || tab?.title || '' })
-        : { success: false, error: point?.error || 'payment click point unavailable' };
-      console.log('[Yahoo Bid] System payment mouse click result:', systemClick);
-      if (systemClick?.success) {
-        try {
-          const nextTab = await waitForPaymentStateAcrossTabs(focusedTab || currentTab || tab, waitFor, previousTabIds, 30000);
-          await injectContentScript(nextTab.id).catch(() => {});
-          return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
-        } catch (afterSystemError) {
-          console.warn('[Yahoo Bid] System payment mouse click did not reach next state, trying trusted mouse click:', afterSystemError.message || afterSystemError);
-        }
-      } else {
-        console.warn('[Yahoo Bid] System payment mouse click failed, trying trusted mouse click:', systemClick?.error || 'unknown error');
-      }
-    }
     console.warn('[Yahoo Bid] Payment synthetic click did not reach next state, trying trusted mouse click:', e.message || e);
     const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
     console.log('[Yahoo Bid] Trusted payment mouse click result:', trustedClick);
     if (!trustedClick?.success) {
-      if (systemClick) {
-        const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
-        return {
-          success: false,
-          error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, e, systemClick),
-          tab
-        };
-      }
       return { success: false, error: trustedClick?.error || clickResult?.error || `payment ${action} click failed`, tab };
     }
     try {
@@ -2607,7 +2416,7 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
       const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
       return {
         success: false,
-        error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterTrustedError, systemClick),
+        error: formatPaymentClickDiagnostics(action, clickResult, trustedClick, currentState, afterTrustedError),
         tab
       };
     }
@@ -4419,9 +4228,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
       state = result.state;
     }
 
-    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton) {
+    if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton && !state?.hasStoreConfirmationSection) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton || nextState.hasStoreConfirmationSection,
         15000
       );
       if (reviewTab) {
@@ -4429,7 +4238,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
-    if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+    if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
       if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
@@ -4444,9 +4253,9 @@ async function executePaymentJob(job, paymentBatch = {}) {
 
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
-    if (!state?.hasReviewButton) {
+    if (!state?.hasReviewButton && !state?.hasStoreConfirmationSection) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton || nextState.hasStoreConfirmationSection,
         15000
       );
       if (reviewTab) {
@@ -4454,7 +4263,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
-    if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+    if (state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
       if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
@@ -4470,8 +4279,6 @@ async function executePaymentJob(job, paymentBatch = {}) {
     }
     state = await ensurePaymentShippingOption(tab, job, state);
     state = await waitForExpectedPaymentAmount(tab, job, state);
-    assertPaymentAmountMatches(job, state);
-    state = await waitForPaymentReviewReady(tab, job, state);
     assertPaymentAmountMatches(job, state);
 
     let result = await clickPaymentActionAndFollowTab(tab, 'review', nextState =>
@@ -4777,7 +4584,6 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
   dispatchTrustedPaymentActionClick,
-  clickWithSystemMouse,
   dispatchTrustedManualPinKeys,
   dispatchTrustedManualPinInput,
   fillManualPinAnswer,
@@ -4798,14 +4604,11 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   clickStoreConfirmationApplyButton,
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
-  focusTabForNativeUserInput,
   buildStoreOptionsUrl,
   openStoreOptionsPage,
   completeStoreConfirmationItems,
   getRandomIntInclusive,
   assertPaymentAmountMatches,
-  isPaymentReviewReadyToClick,
-  waitForPaymentReviewReady,
   syncIdleYahooPages,
   runTransactionStartJobs,
   runPaymentJobs,

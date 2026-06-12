@@ -4,12 +4,7 @@ const DEFAULT_CLEANUP_CONFIG = {
   retentionDays: 30
 };
 
-const {
-  CLEANUP_TASK_STATUSES,
-  buildCleanupStatusSqlList
-} = require('./dataCleanupPolicy');
-
-const CLEANUP_STATUSES = CLEANUP_TASK_STATUSES;
+const CLEANUP_STATUSES = ['failed', 'cancelled', 'bidding'];
 
 function normalizePositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   const number = Number(value);
@@ -94,7 +89,7 @@ async function deleteStaleTaskData(database, options = {}) {
   const staleTasks = await database.getAll(
     `SELECT id, product_id
      FROM tasks
-     WHERE status IN (${buildCleanupStatusSqlList()})
+     WHERE status IN ('failed', 'cancelled', 'bidding')
        AND datetime(COALESCE(end_time, updated_at, created_at)) < datetime(?)`,
     [cutoffIso]
   );
