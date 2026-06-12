@@ -2212,6 +2212,32 @@ npm run regression
 
 ---
 
+## 2026-06-12 普通落札者負担交易开始状态补偿
+
+### 问题
+
+- 普通商品且运费为 `落札者負担` 时，如果插件已在 Yahoo 取引页完成交易开始，但服务重启或异常导致 `/api/plugin/transaction-start/status` 回写失败，本系统订单状态会继续为空。
+- 再次执行交易开始时，Yahoo 实际页面已经处于“送料連絡待ち / 支払い金額は送料決定後に確定”的支付阶段，没有可点击的 `決定する / 確定する` 按钮；旧逻辑可能写入 `button not found for trusted click` 错误，后台仍无法进入后续处理。
+
+### 已实现内容
+
+- `completeBidderPaysShippingTransaction()` 如果打开取引页时页面已经是 `waitingShipping`，会返回 `alreadyWaitingShipping=true`，表示这是“交易开始已完成后的恢复场景”，不会再尝试点击交易开始按钮。
+- `executeTransactionStartJob()` 对上述恢复场景直接回写 `pending_payment`（待支付），用于补偿空状态订单；正常新执行 `落札者負担` 交易开始并走完 `decide/confirm` 后，仍按原逻辑回写 `waiting_shipping`，等待扫描拿到真实运费。
+- 新增回归测试覆盖：普通 `落札者負担` 订单状态为空、Yahoo 页面已是等待送料确定的支付阶段时，插件必须回写 `pending_payment`，且不点击任何交易开始按钮。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node src\server\routes\plugin.test.js
+node yahoo-plugin\encoding.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
 ## 2026-06-12 PIN 验证超时页恢复修复
 
 ### 问题

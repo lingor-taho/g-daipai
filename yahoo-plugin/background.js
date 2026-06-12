@@ -3820,7 +3820,7 @@ async function completeBidderPaysShippingTransaction(tab) {
     state = await getBundleActionState(tab.id);
   }
   if (state?.waitingShipping) {
-    return { success: true, tab };
+    return { success: true, tab, alreadyWaitingShipping: true };
   }
 
   let result = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.waitingShipping);
@@ -3895,7 +3895,10 @@ async function executeTransactionStartJob(job) {
         return { processedProductIds: [job.productId] };
       }
       tab = result.tab;
-      await updateTransactionStartStatus({ orderId: job.orderId, status: 'waiting_shipping' });
+      await updateTransactionStartStatus({
+        orderId: job.orderId,
+        status: result.alreadyWaitingShipping ? 'pending_payment' : 'waiting_shipping'
+      });
     } else {
       await updateTransactionStartStatus({ orderId: job.orderId, status: 'pending_payment' });
     }

@@ -1110,6 +1110,80 @@ async function testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisable
   assert.equal(createdTransactionTab, false);
 }
 
+async function testRunTransactionStartMarksAlreadyWaitingShippingPagePendingPayment() {
+  const statusCalls = [];
+  const clickedActions = [];
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async create(urlOrOptions) {
+        const url = typeof urlOrOptions === 'string' ? urlOrOptions : urlOrOptions?.url;
+        return { id: 41, url, status: 'complete', windowId: 3 };
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474', status: 'complete', windowId: 3 };
+      },
+      async update(id, props) {
+        return { id, url: props?.url || 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474', status: 'complete', windowId: 3 };
+      },
+      async query() {
+        return [{ id: 41, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474', status: 'complete', windowId: 3 }];
+      },
+      async sendMessage(id, message) {
+        if (message.type === 'EXTRACT_TRANSACTION_START_INFO') {
+          return { success: true, loginStatus: { status: 'ok' }, info: { available: false } };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              waitingShipping: true,
+              complete: false,
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474'
+            }
+          };
+        }
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          return { success: false, error: 'transaction start should not click when already waiting shipping' };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 77,
+                productId: 'j1232375474',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1232375474',
+                shippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runTransactionStartJobs();
+
+  assert.deepEqual(clickedActions, []);
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].orderId, 77);
+  assert.equal(statusCalls[0].status, 'pending_payment');
+}
+
 async function testRunPaymentJobsCompletesNormalItemPayment() {
   const calls = [];
   let removedTabId = null;
@@ -3579,6 +3653,7 @@ async function run() {
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
+  await testRunTransactionStartMarksAlreadyWaitingShippingPagePendingPayment();
   await testRunPaymentJobsCompletesNormalItemPayment();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput();
