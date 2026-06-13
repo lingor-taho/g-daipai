@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-12
+**最后更新**: 2026-06-13
 
 ---
 
@@ -2178,6 +2178,92 @@ npm run regression
 
 ---
 
+## 2026-06-13 三表模型实施计划
+
+### 当前状态
+
+- 已新增独立实施计划：`docs/superpowers/plans/2026-06-13-three-table-product-model.md`。
+- 目标模型为 `products / tasks / orders`：
+  - `products.product_id 1:N tasks.product_id`
+  - `products.product_id 1:0/1 orders.product_id`
+  - `orders.task_id` 继续保留为来源/成功任务指针
+- 计划采用渐进方式：先新增 `products` 表和 `orders.product_id`，再回填和双写，最后才逐步切换展示类读路径。
+
+### 关键安全前提
+
+- 不在第一阶段删除 `tasks` 现有商品字段；提交任务、插件快照、手动导入继续写旧字段保持兼容。
+- 第一阶段不改支付、交易开始、收货、Google 表格、插件轮询、idle action 顺序或订单状态流转。
+- 付款/交易/收货相关查询在 `products` 双写稳定前继续使用现有 `tasks` 字段，避免再次引入支付金额、运费或状态判断问题。
+- 数据库改动必须是增量、幂等、可回滚；生产执行前必须先停服务备份。
+
+### 推荐执行顺序
+
+1. 新增 `products` schema 和 `orders.product_id`，同步 `src/db/init.sql`。
+2. 从现有 `tasks / bidding_items / orders` 回填 `products` 和 `orders.product_id`。
+3. 用户提交、手动导入、插件快照、入札同步、落札同步全部双写 `products`，但旧字段继续写。
+4. 只切换用户端/后台展示类列表到 `products + fallback tasks`。
+5. 通过只读 parity 脚本确认无缺口后，再另开后续阶段讨论是否切换付款/交易/收货等操作路径。
+
+### 当前实施进度
+
+- Task 1 已完成：增量新增 `products` 表结构、`orders.product_id`、相关索引，并同步 `src/db/init.sql`。
+- Task 2 已完成：新增 `products` 启动幂等回填，以及 `orders.product_id` 从来源 `tasks.product_id` 的幂等补齐。
+- Task 3 已完成：用户提交任务和后台手动导入订单开始双写 `products`；手动导入创建的新订单会同步写入 `orders.product_id`，但继续保留 `orders.task_id`。
+- Task 4 已完成：插件商品快照、入札中同步、落札同步开始双写 `products`；落札同步创建/更新订单时会补 `orders.product_id`。
+- `src/server/services/productRepository.js` 当前包含商品快照归一化、`backfillProductsFromExistingData()`、`backfillOrderProductIds()`、`upsertProductSnapshot()`。
+- 尚未切换任何读路径；用户端/后台展示列表仍以现有查询为主。
+- 支付、交易开始、收货、Google 表格、插件轮询、idle action 顺序和订单状态流转均未修改。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\productRepository.test.js
+node --check src\server\models\index.js
+node --check src\server\services\productRepository.js
+node -e "require('./src/server/models'); console.log('models schema smoke passed')"
+node src\server\routes\task.test.js
+node src\server\routes\admin.orders.test.js
+node src\server\routes\plugin.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 数据清理策略边界抽取
+
+### 当前状态
+
+- 按维护性整理计划完成 Task 6：把数据清理可删除状态从 `dataCleanup.js` 中抽到独立策略模块。
+- 本次只整理“清理哪些任务状态”的边界，不修改支付、交易开始、付款任务、收货任务、插件轮询、idle action 顺序或任何订单状态流转逻辑。
+- 清理范围保持不变：只清理超过保留天数的 `failed`、`cancelled`、`bidding` 任务及关联出价日志、订单和入札缓存。
+- 成功落札数据继续明确保护：`success`、`pending`、`processing` 不纳入当前清理策略；后续如要扩展清理长期无效 `pending/processing`，必须另做 dry-run 统计、明确年龄规则和真实订单保护规则。
+
+### 已实现内容
+
+- 新增 `src/server/services/dataCleanupPolicy.js`：
+  - `CLEANUP_TASK_STATUSES = ['failed', 'cancelled', 'bidding']`
+  - `PRESERVED_TASK_STATUSES = ['success', 'pending', 'processing']`
+  - `shouldCleanupTaskStatus()`
+  - `buildCleanupStatusSqlList()`
+  - `buildCleanupScopeDescription()`
+- 新增 `src/server/services/dataCleanupPolicy.test.js`，覆盖可清理状态、保留状态和说明文本。
+- `src/server/services/dataCleanup.js` 改为引用策略模块；保留原导出 `CLEANUP_STATUSES`，SQL 仍生成 `status IN ('failed', 'cancelled', 'bidding')`，避免影响现有测试和调用方。
+- 后台“清理数据”页面说明已与当前策略一致，本次未修改前端页面。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\dataCleanupPolicy.test.js
+node src\server\services\dataCleanup.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
 ## 2026-06-12 Google 表格追加行默认白底黑字修复
 
 ### 问题
@@ -2294,3 +2380,57 @@ npm run regression
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 三表模型 Task 1-7 实施进度
+
+### 当前状态
+
+- 已完成 `products / tasks / orders` 三表模型第一阶段实施，计划文件为 `docs/superpowers/plans/2026-06-13-three-table-product-model.md`。
+- 新增 `products` 表作为商品快照表，并新增 `orders.product_id`；旧的 `tasks` 商品字段继续保留并继续写入，保证兼容。
+- 启动时会幂等回填 `products`，并从来源 `tasks.product_id` 补齐 `orders.product_id`。
+- 用户提交、后台手动导入、插件商品快照、入札中同步、落札同步已开始双写 `products`。
+- 用户端展示类读路径已切到 `products + fallback tasks`：任务列表、入札中、落札商品、近 30 天落札统计导出。
+- 付款、交易开始、收货、Google Sheets、插件 idle action 顺序、订单状态流转仍保持原有 `tasks/orders` 字段读取，未切到 `products`，避免再次引入支付金额、运费或状态判断问题。
+- 后台“按商品 ID 删除数据”会同步删除 `products`；自动/手动过期数据清理不会删除 `products`。
+- 新增只读 parity 脚本 `scripts/check-product-parity.js`，用于上线前检查商品快照一致性。
+
+### 本地 parity 检查结果
+
+```powershell
+node scripts\check-product-parity.js
+```
+
+输出：
+
+```text
+Product parity check (read-only)
+Database: D:\www\g-daipai\data\gdaipai.db
+tasksWithoutProductRow: 0
+ordersWithoutProductId: 0
+ordersProductIdMismatch: 0
+productsLatestTaskSnapshotMismatch: 0
+```
+
+### 最近验证命令
+
+```powershell
+node src\server\services\productRepository.test.js
+node src\server\services\dataCleanup.test.js
+node src\server\routes\task.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node scripts\check-product-parity.test.js
+node scripts\check-product-parity.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+### 后续注意事项
+
+- 生产部署前先停服务并备份 `data/gdaipai.db`。
+- 生产部署后先运行 `node scripts\check-product-parity.js`，确认 4 个计数为 0 或可解释，再考虑后续阶段。
+- 不要在本阶段删除 `tasks` 上的商品字段。
+- 不要直接把付款、交易开始、收货、Google Sheets 等操作路径切到 `products`；这些属于后续阶段，需要覆盖商城即決、普通着払い、落札者負担、同捆和待发货等支付状态测试后再做。

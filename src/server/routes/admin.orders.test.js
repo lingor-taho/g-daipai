@@ -102,7 +102,9 @@ async function testConfirmManualOrderImportSkipsUnassignedItems() {
 
   assert.equal(result.imported, 1);
   assert.equal(result.skippedUnassigned, 1);
+  assert.equal(queries.some(query => /INSERT INTO products/.test(query.sql)), true);
   assert.equal(queries.some(query => /INSERT INTO tasks/.test(query.sql)), true);
+  assert.equal(queries.some(query => /INSERT INTO orders/.test(query.sql) && /product_id/.test(query.sql)), true);
   assert.equal(queries.some(query => /status = 'confirmed'/.test(query.sql)), true);
 }
 
@@ -541,6 +543,7 @@ async function testDeleteProductDataRemovesTaskOrderAndBiddingAssociations() {
       if (/orders/.test(sql)) return { rowCount: 2 };
       if (/bidding_items/.test(sql)) return { rowCount: 1 };
       if (/tasks/.test(sql)) return { rowCount: 2 };
+      if (/products/.test(sql)) return { rowCount: 1 };
       return { rowCount: 0 };
     }
   };
@@ -552,13 +555,17 @@ async function testDeleteProductDataRemovesTaskOrderAndBiddingAssociations() {
   assert.equal(result.orderCount, 2);
   assert.equal(result.bidLogCount, 2);
   assert.equal(result.biddingItemCount, 1);
+  assert.equal(result.productCount, 1);
   assert.equal(result.orderStatusLogCount, 3);
+  assert.equal(result.totalCount, 11);
   assert.equal(calls[0].params[0], 'v1231866422');
   assert.match(calls[2].sql, /DELETE FROM order_status_change_logs/);
   assert.match(calls[3].sql, /DELETE FROM bid_logs/);
   assert.match(calls[4].sql, /DELETE FROM orders/);
   assert.match(calls[5].sql, /DELETE FROM bidding_items/);
   assert.match(calls[6].sql, /DELETE FROM tasks/);
+  assert.match(calls[7].sql, /DELETE FROM products WHERE product_id = \?/);
+  assert.deepEqual(calls[7].params, ['v1231866422']);
 }
 
 async function testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted() {

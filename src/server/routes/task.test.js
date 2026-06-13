@@ -1,6 +1,7 @@
 const assert = require('assert/strict');
 const {
   buildSubmitTaskInput,
+  buildSubmitProductSnapshot,
   buildTaskListInput,
   buildActiveBiddingTaskListInput,
   buildWonTaskListInput,
@@ -51,6 +52,43 @@ function testSubmitUsesAuthenticatedUserId() {
   assert.equal(input.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
   assert.equal(input.maxPrice, 1200);
   assert.equal(input.bidMode, 'bid');
+}
+
+function testBuildSubmitProductSnapshotUsesResolvedTaskProductFields() {
+  const snapshot = buildSubmitProductSnapshot({
+    input: {
+      productId: 'a123456789',
+      standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/a123456789'
+    },
+    productInfo: {
+      title: 'Fetched title',
+      imageUrl: 'https://example.com/fetched.jpg',
+      currentPrice: 900
+    },
+    productTitle: 'Submitted title',
+    productImageUrl: '',
+    currentPrice: 1200,
+    buyoutPrice: 5000,
+    bidCount: 2,
+    resolvedTaxType: 'tax_included',
+    resolvedProductType: 'store',
+    shippingFeeText: '送料 500円',
+    endTime: '2026-06-20T12:00:00+09:00'
+  });
+
+  assert.deepEqual(snapshot, {
+    product_id: 'a123456789',
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789',
+    product_title: 'Submitted title',
+    product_image_url: 'https://example.com/fetched.jpg',
+    current_price: 1200,
+    buyout_price: 5000,
+    bid_count: 2,
+    tax_type: 'tax_included',
+    product_type: 'store',
+    shipping_fee_text: '送料 500円',
+    end_time: '2026-06-20T12:00:00+09:00'
+  });
 }
 
 function testSubmitAcceptsBuyoutMode() {
@@ -198,9 +236,10 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
   assert.match(query.sql, /bi\.status IN \('highest', 'outbid'\)/);
   assert.match(query.sql, /bi\.status AS bidding_status/);
   assert.match(query.sql, /ORDER BY datetime\(t2\.created_at\) DESC, t2\.id DESC/);
-  assert.match(query.sql, /t\.product_title/);
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = bi\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
   assert.doesNotMatch(query.sql, /bi\.product_title/);
-  assert.match(query.sql, /t\.shipping_fee_text/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.match(query.sql, /AS product_type/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.match(query.sql, /LIMIT \? OFFSET \?/);
@@ -234,9 +273,10 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
   assert.deepEqual(summary.params, [9, 30]);
 
   assert.match(exportQuery.sql, /t\.product_id/);
-  assert.match(exportQuery.sql, /t\.product_title/);
+  assert.match(exportQuery.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(exportQuery.sql, /COALESCE\(o\.product_title, p\.product_title, t\.product_title, ''\) AS product_title/);
   assert.match(exportQuery.sql, /o\.final_price/);
-  assert.match(exportQuery.sql, /t\.shipping_fee_text/);
+  assert.match(exportQuery.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.match(exportQuery.sql, /o\.won_at/);
   assert.deepEqual(exportQuery.params, [9, 30]);
 }
@@ -518,6 +558,7 @@ async function testWebsiteRateProviderUsesCacheUntilExpiry() {
 }
 
 testSubmitUsesAuthenticatedUserId();
+testBuildSubmitProductSnapshotUsesResolvedTaskProductFields();
 testSubmitAcceptsBuyoutMode();
 testSubmitForcesBuyoutModeForBuyoutOnlyProducts();
 testSubmitAcceptsThirdPartyAndNumericAuctionUrls();

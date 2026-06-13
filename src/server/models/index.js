@@ -1,6 +1,10 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const config = require('../../config');
+const {
+  backfillProductsFromExistingData,
+  backfillOrderProductIds
+} = require('../services/productRepository');
 
 const dbPath = config.databaseUrl.replace('sqlite:', '').replace('//', '');
 const db = new Database(path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd(), dbPath));
@@ -26,6 +30,7 @@ ensureColumn('tasks', 'client_request_id', 'VARCHAR(128)');
 ensureColumn('tasks', 'shipping_fee_text', 'VARCHAR(64)');
 ensureColumn('tasks', 'pending_followup_max_price', 'INTEGER');
 ensureColumn('tasks', 'force_orders_resync', 'INTEGER DEFAULT 0');
+ensureColumn('orders', 'product_id', 'VARCHAR(32)');
 ensureColumn('orders', 'won_at', 'DATETIME');
 ensureColumn('orders', 'won_time_text', 'VARCHAR(64)');
 ensureColumn('orders', 'bank_fee_jpy', 'INTEGER');
@@ -49,6 +54,36 @@ ensureColumn('users', 'parent_user_id', 'INTEGER');
 ensureColumn('users', 'bid_strategy_scope', "VARCHAR(32) DEFAULT 'all'");
 
 db.prepare(`
+  CREATE TABLE IF NOT EXISTS products (
+    product_id VARCHAR(32) PRIMARY KEY,
+    product_url TEXT,
+    product_title VARCHAR(512),
+    product_image_url TEXT,
+    current_price INTEGER,
+    buyout_price INTEGER,
+    bid_count INTEGER DEFAULT 0,
+    tax_type VARCHAR(32) DEFAULT 'tax_zero',
+    product_type VARCHAR(32) DEFAULT 'normal',
+    shipping_fee_text VARCHAR(64),
+    end_time DATETIME,
+    last_fetched_at DATETIME,
+    last_scanned_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_products_end_time
+  ON products(end_time)
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_orders_product_id
+  ON orders(product_id)
+`).run();
+
+db.prepare(`
   CREATE TABLE IF NOT EXISTS bidding_items (
     product_id VARCHAR(32) PRIMARY KEY,
     product_url TEXT,
@@ -61,6 +96,17 @@ db.prepare(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
+
+const startupBackfillDb = {
+  query(text, params) {
+    const stmt = db.prepare(text);
+    const result = params ? stmt.run(...params) : stmt.run();
+    return { rows: [], rowCount: result.changes };
+  }
+};
+
+backfillProductsFromExistingData(startupBackfillDb);
+backfillOrderProductIds(startupBackfillDb);
 
 db.prepare(`
   CREATE TABLE IF NOT EXISTS data_cleanup_logs (

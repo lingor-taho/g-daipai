@@ -48,6 +48,7 @@ const {
   calculateSheetPayable,
   applySheetUserFinance
 } = require('../../shared/payableRules.cjs');
+const { upsertProductSnapshot } = require('../services/productRepository');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
@@ -926,6 +927,19 @@ function normalizeYahooWonTimeText(value, nowMs = Date.now()) {
 async function upsertOrderFromTask(taskId, options = {}, database = db) {
   const task = await database.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task) return;
+  await upsertProductSnapshot(database, {
+    product_id: task.product_id,
+    product_url: task.product_url,
+    product_title: task.product_title || task.product_id,
+    product_image_url: task.product_image_url,
+    current_price: task.current_price,
+    buyout_price: task.buyout_price,
+    bid_count: task.bid_count,
+    tax_type: task.tax_type || 'tax_zero',
+    product_type: task.product_type || (task.tax_type === 'tax_included' ? 'store' : 'normal'),
+    shipping_fee_text: task.shipping_fee_text,
+    end_time: task.end_time
+  }, { source: 'fetch' });
   const existing = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
@@ -934,19 +948,20 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
   if (existing) {
     await database.query(
       `UPDATE orders
-       SET product_title = ?, product_url = ?, final_price = ?,
+       SET product_id = COALESCE(product_id, ?),
+           product_title = ?, product_url = ?, final_price = ?,
            won_at = COALESCE(?, won_at),
            won_time_text = COALESCE(?, won_time_text),
            transaction_url = COALESCE(?, transaction_url),
            updated_at = CURRENT_TIMESTAMP
        WHERE task_id = ?`,
-      [task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
+      [task.product_id, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
     );
   } else {
     await database.query(
-      `INSERT INTO orders (task_id, product_title, product_url, final_price, won_at, won_time_text, transaction_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [taskId, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
+      `INSERT INTO orders (task_id, product_id, product_title, product_url, final_price, won_at, won_time_text, transaction_url)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [taskId, task.product_id, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
     );
   }
 }
@@ -1088,6 +1103,14 @@ async function syncBiddingItems(items, database = db) {
         itemStatus
       ]
     );
+    await upsertProductSnapshot(database, {
+      product_id: productId,
+      product_url: item.url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+      product_title: item.title || null,
+      product_image_url: item.imageUrl || null,
+      current_price: currentPrice,
+      tax_type: taxType
+    }, { source: 'scan' });
 
     if (itemStatus === 'highest') {
       const result = await database.query(
@@ -2482,6 +2505,17 @@ router.patch('/task/:id/snapshot', async (req, res) => {
       req.params.id
     ]
   );
+  const task = await db.getOne(
+    `SELECT id, product_id, product_url, product_title, product_image_url,
+            current_price, buyout_price, bid_count, tax_type, product_type,
+            shipping_fee_text, end_time
+     FROM tasks
+     WHERE id = ?`,
+    [req.params.id]
+  );
+  if (task) {
+    await upsertProductSnapshot(db, task, { source: 'fetch' });
+  }
   await processPendingFollowupTasks();
   res.json({ success: true });
 });
