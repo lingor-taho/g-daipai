@@ -3,6 +3,7 @@ const {
   buildOnlineUsersQuery,
   recordClientSession,
   touchClientSession,
+  syncClientSession,
   getExpiryIso
 } = require('./onlineUsers');
 
@@ -12,7 +13,10 @@ function testBuildOnlineUsersQueryOnlyIncludesUnexpiredClientUsers() {
   assert.match(query.sql, /FROM user_sessions s/);
   assert.match(query.sql, /s\.role = 'user'/);
   assert.match(query.sql, /u\.role = 'user'/);
+  assert.match(query.sql, /COALESCE\(u\.user_level, s\.user_level, 1\) < 3/);
   assert.match(query.sql, /datetime\(s\.expires_at\) > datetime\('now'\)/);
+  assert.match(query.sql, /datetime\(s\.last_seen_at\) >= datetime\('now', \? \|\| ' seconds'\)/);
+  assert.deepEqual(query.params, [-15 * 60]);
   assert.match(query.sql, /COUNT\(\*\) AS session_count/);
   assert.match(query.sql, /GROUP BY u\.id/);
 }
@@ -31,6 +35,13 @@ async function testRecordClientSessionSkipsAdminAndRecordsUser() {
     tokenId: 'admin-token'
   });
   assert.equal(adminResult.skipped, true);
+  assert.equal(calls.length, 0);
+
+  const clientAdminResult = await recordClientSession(fakeDb, {
+    user: { id: 3, username: 'gaoyun', role: 'user', user_level: 3 },
+    tokenId: 'client-admin-token'
+  });
+  assert.equal(clientAdminResult.skipped, true);
   assert.equal(calls.length, 0);
 
   await recordClientSession(fakeDb, {
@@ -64,6 +75,29 @@ async function testTouchClientSessionOnlyTouchesUserRole() {
   assert.deepEqual(calls[0].params, ['client-token']);
 }
 
+async function testSyncClientSessionRecordsLegacyTokenWithoutJti() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await syncClientSession(fakeDb, {
+    user: { id: 3, username: 'legacy', role: 'user', user_level: 1 },
+    token: 'legacy.jwt.token',
+    expiresAt: '2026-06-20T00:00:00.000Z',
+    userAgent: 'old-browser'
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /INSERT INTO user_sessions/);
+  assert.match(calls[0].params[1], /^jwt:/);
+  assert.deepEqual(calls[0].params.slice(0, 1), [3]);
+  assert.deepEqual(calls[0].params.slice(2), ['legacy', 'user', 1, '2026-06-20T00:00:00.000Z', 'old-browser']);
+}
+
 function testExpiryUsesSevenDayTtl() {
   assert.equal(getExpiryIso(Date.parse('2026-06-13T00:00:00.000Z')), '2026-06-20T00:00:00.000Z');
 }
@@ -72,7 +106,8 @@ testBuildOnlineUsersQueryOnlyIncludesUnexpiredClientUsers();
 testExpiryUsesSevenDayTtl();
 Promise.all([
   testRecordClientSessionSkipsAdminAndRecordsUser(),
-  testTouchClientSessionOnlyTouchesUserRole()
+  testTouchClientSessionOnlyTouchesUserRole(),
+  testSyncClientSessionRecordsLegacyTokenWithoutJti()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

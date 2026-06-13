@@ -2399,3 +2399,23 @@ npm run build --prefix src\admin
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 在线用户活动判定修正
+
+### 已实现内容
+
+- 在线用户判定从“只看登录时写入的 `user_sessions`”调整为“有效前台用户 token 最近有 API 活动”。
+- 鉴权中间件在每次前台用户 API 请求时会 upsert `user_sessions`，刷新 `last_seen_at`；旧版无 `jti` 的有效 token 会按 JWT 原文派生稳定 session id，因此不需要用户重新登录。
+- 在线用户列表只显示 `expires_at` 未过期且 `last_seen_at` 在最近 15 分钟内的前台用户；管理员账号仍不计入在线用户。
+- `role='user'` 但 `user_level>=3` 的前台管理员账号也不计入在线用户，避免 gaoyun 这类管理员在在线用户页显示为普通用户。
+- 该功能表示“最近有活动的用户”，不是 7 天 token 未过期就一直在线。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\onlineUsers.test.js
+```
+
+验证结果：通过。

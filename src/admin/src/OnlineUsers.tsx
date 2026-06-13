@@ -23,6 +23,7 @@ function formatDateTime(value: string | null | undefined) {
 
 function getUserTypeText(levelValue: any) {
   const level = Number(levelValue || 1);
+  if (level >= 3) return '管理员';
   return level === 2 ? '代理用户' : '普通用户';
 }
 
