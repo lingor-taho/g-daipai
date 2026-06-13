@@ -3814,6 +3814,32 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
   return { success: true, tab: nextTab };
 }
 
+async function completeNormalBundleRequest(tab) {
+  let result = await clickBundleActionAndFollowTab(tab, 'close');
+  if (!result?.success) return result;
+  tab = result.tab;
+
+  result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canStart || state.canDecide || state.complete);
+  if (!result?.success) return result;
+  tab = result.tab;
+
+  let state = await getBundleActionState(tab.id);
+  if (state?.canStart && !state?.canDecide && !state?.complete) {
+    result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canDecide || state.complete);
+    if (!result?.success) return result;
+    tab = result.tab;
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (state?.complete) {
+    return { success: true, tab };
+  }
+
+  result = await clickBundleActionAndFollowTab(tab, 'decide');
+  if (!result?.success) return result;
+  return { success: true, tab: result.tab };
+}
+
 async function completeBidderPaysShippingTransaction(tab) {
   let state = await getBundleActionState(tab.id);
   if (state?.canPlacementOk) {
@@ -3864,17 +3890,15 @@ async function executeTransactionStartJob(job) {
         return;
       }
       const bundleProductIds = info.productIds || [];
-      for (const action of ['close', 'start', 'decide']) {
-        const result = await clickBundleActionAndFollowTab(tab, action);
-        if (!result?.success) {
-          await updateTransactionStartStatus({
-            productIds: bundleProductIds.length ? bundleProductIds : [job.productId],
-            error: result?.error || `bundle ${action} failed`
-          });
-          return { processedProductIds: bundleProductIds.length ? bundleProductIds : [job.productId] };
-        }
-        tab = result.tab;
+      const result = await completeNormalBundleRequest(tab);
+      if (!result?.success) {
+        await updateTransactionStartStatus({
+          productIds: bundleProductIds.length ? bundleProductIds : [job.productId],
+          error: result?.error || 'normal bundle request failed'
+        });
+        return { processedProductIds: bundleProductIds.length ? bundleProductIds : [job.productId] };
       }
+      tab = result.tab;
       const completed = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(() => null);
       if (!completed?.complete) {
         await updateTransactionStartStatus({
@@ -4583,6 +4607,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   withTimeout,
   waitForCurrentTabNavigation,
   clickBundleActionAndFollowTab,
+  completeNormalBundleRequest,
   completeBidderPaysShippingTransaction,
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,

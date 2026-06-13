@@ -149,6 +149,56 @@ async function testBundleStartWaitsForDecideButtonState() {
   assert.equal(injected, true);
 }
 
+async function testNormalBundleRequestClicksSecondStartPageBeforeDecide() {
+  const clickedActions = [];
+  let phase = 'intro';
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [{ id: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=l1232473681', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=l1232473681', status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 5);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          if (message.action === 'start' && phase === 'intro') {
+            phase = 'request';
+          } else if (message.action === 'start' && phase === 'request') {
+            phase = 'decide';
+          } else if (message.action === 'decide') {
+            phase = 'complete';
+          }
+          return { success: true };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canStart: phase === 'request',
+              canDecide: phase === 'decide',
+              complete: phase === 'complete'
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    }
+  });
+
+  const result = await api.completeNormalBundleRequest({ id: 5 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(clickedActions, ['close', 'start', 'start', 'decide']);
+}
+
 async function testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab() {
   const api = loadBackgroundForTest({
     tabs: {
@@ -3620,6 +3670,7 @@ async function run() {
   testAlreadyHighestMultiBidClosesTab();
   await testWithTimeoutMarksCloseTab();
   await testBundleStartWaitsForDecideButtonState();
+  await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();

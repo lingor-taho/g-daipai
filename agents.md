@@ -2294,3 +2294,29 @@ npm run regression
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 普通商品同捆开始流程修复
+
+### 问题
+
+- 服务器上普通商品同捆交易开始失败，后台显示 `bundle next page did not appear`。
+- 真实页面流程为：同捆开始页关闭提示后，先点 `まとめて取引をはじめる`，进入お届け地域确认页，再点 `まとめて取引を依頼する`，之后才进入 `決定する` 页面。
+- 原插件普通同捆交易开始只执行 `close -> start -> decide`。第一个 `start` 后如果进入 `まとめて取引を依頼する` 中间页，后台仍等待 `canDecide`，因此超时。
+
+### 已实现内容
+
+- 新增普通同捆专用 helper `completeNormalBundleRequest()`，只用于 `EXTRACT_TRANSACTION_START_INFO.available` 的普通同捆分支。
+- 普通同捆点击序列调整为：`close -> start -> 如果仍有 canStart 再 start -> decide`。
+- 未修改付款、商城即決、收货、Google Sheets、订单状态流转或三表模型逻辑。
+- 新增 `yahoo-plugin/background.test.js` 回归测试，覆盖 `close -> start -> start -> decide` 的普通同捆中间页流程。
+
+### 最近验证命令
+
+```powershell
+node yahoo-plugin\background.test.js
+node yahoo-plugin\content.test.js
+```
+
+验证结果：以上命令均通过。
