@@ -2320,3 +2320,49 @@ node yahoo-plugin\content.test.js
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 后台在线用户页面
+
+### 已实现内容
+
+- 新增 `user_sessions` 表，用于记录前台用户端登录会话，包含用户、token id、登录时间、最后访问时间和失效时间。
+- 前台 `/api/auth/login` 登录成功后记录会话；管理员 `/api/auth/admin-login` 不计入在线用户。
+- 鉴权中间件会在前台用户请求 API 时刷新 `last_seen_at`，旧版无 `jti` 的 token 不会生成在线会话记录。
+- 后台新增接口 `GET /api/admin/online-users`，只展示 `role='user'` 且 `expires_at` 未过期的用户会话，按用户聚合显示有效会话数。
+- 后台底部新增菜单“在线用户”，页面展示用户名、用户类型、有效会话数、最近登录、最后访问、失效时间，每 30 秒自动刷新。
+
+### 注意事项
+
+- 该功能从部署后新登录的前台用户开始记录；部署前已经登录但 token 中没有会话 id 的用户，需要重新登录后才会显示。
+- 在线用户只表示 token 未失效，不代表浏览器页面一定正在打开。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\onlineUsers.test.js
+npm run build --prefix src\admin
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 后台订单归属用户重分配
+
+### 已实现内容
+
+- 后台“订单管理”用户名列支持双击打开“修改订单绑定用户”弹窗。
+- 用户选择控件沿用手动导入订单的可搜索下拉框，数据来自 `/api/admin/users/options`，展示所有非管理员用户（包含代理用户），排除管理员。
+- 新增接口 `PUT /api/admin/orders/:id/user`，只允许绑定到 `role='user'` 的用户。
+- 重分配会更新该订单来源任务，以及同一商品、原用户下的相关任务 `tasks.user_id`；不修改订单状态、付款金额、运费、结算字段或支付/交易流程。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\admin.orders.test.js
+npm run build --prefix src\admin
+```
+
+验证结果：以上命令均通过。

@@ -17,6 +17,8 @@ const menuItemsConfig = [
   { key: '/orders', fullLabel: '订单管理', shortLabel: '订', mobileLabel: '订单' }
 ];
 
+menuItemsConfig.push({ key: '/online-users', fullLabel: '在线用户', shortLabel: '在', mobileLabel: '在线' });
+
 function renderPaymentAlertMessage(messageText: string) {
   const text = String(messageText || '');
   const pattern = /([a-zA-Z]?\d{8,10})/g;

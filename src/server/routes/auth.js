@@ -6,11 +6,17 @@ const bcrypt = require('bcryptjs');
 const config = require('../../config');
 const authMiddleware = require('../middleware/auth');
 const { getAllowedActingUsers } = require('../services/actingUser');
+const {
+  createTokenId,
+  getExpiryIso,
+  recordClientSession
+} = require('../services/onlineUsers');
 
-function signUserToken(user) {
+function signUserToken(user, options = {}) {
   const role = user.role || 'user';
+  const tokenId = options.tokenId || createTokenId();
   return jwt.sign(
-    { id: user.id, username: user.username, role, user_level: user.user_level || 1 },
+    { id: user.id, username: user.username, role, user_level: user.user_level || 1, jti: tokenId },
     config.jwtSecret,
     { expiresIn: '7d' }
   );
@@ -45,7 +51,14 @@ router.post('/login', async (req, res) => {
   try {
     const user = await verifyUser(req.body.username, req.body.password);
     const role = user.role || 'user';
-    const token = signUserToken(user);
+    const tokenId = createTokenId();
+    const token = signUserToken(user, { tokenId });
+    await recordClientSession(db, {
+      user,
+      tokenId,
+      expiresAt: getExpiryIso(),
+      userAgent: req.headers['user-agent'] || ''
+    }).catch(() => null);
     res.json({ success: true, token, username: user.username, role, userLevel: Number(user.user_level || 1) });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message || 'login failed' });

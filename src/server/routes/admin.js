@@ -45,6 +45,7 @@ const {
   answerCaptchaChallenge,
   closeCaptchaChallenge
 } = require('../services/manualCaptcha');
+const { getOnlineUsers } = require('../services/onlineUsers');
 const {
   ORDER_STATUS_PENDING_SETTLEMENT,
   ORDER_STATUS_COMPLETED,
@@ -260,6 +261,84 @@ function mapAdminOrderListItem(item) {
     latest_status_old_status: item.latest_status_old_status || null,
     latest_status_new_status: item.latest_status_new_status || null,
     latest_status_change_metadata: item.latest_status_change_metadata || null
+  };
+}
+
+async function reassignOrderOwner(database, { orderId, userId }) {
+  const normalizedOrderId = Number(orderId);
+  const normalizedUserId = Number(userId);
+  if (!Number.isInteger(normalizedOrderId) || normalizedOrderId <= 0) {
+    const error = new Error('valid order id is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Number.isInteger(normalizedUserId) || normalizedUserId <= 0) {
+    const error = new Error('valid user is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const user = await database.getOne(
+    "SELECT id, username FROM users WHERE id = ? AND role = 'user'",
+    [normalizedUserId]
+  );
+  if (!user) {
+    const error = new Error('valid user is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const order = await database.getOne(
+    `SELECT o.id AS order_id,
+            o.task_id,
+            t.product_id,
+            t.user_id AS old_user_id
+     FROM orders o
+     INNER JOIN tasks t ON t.id = o.task_id
+     WHERE o.id = ?`,
+    [normalizedOrderId]
+  );
+  if (!order) {
+    const error = new Error('order not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (Number(order.old_user_id) === normalizedUserId) {
+    return {
+      success: true,
+      orderId: normalizedOrderId,
+      userId: normalizedUserId,
+      username: user.username,
+      taskCount: 0
+    };
+  }
+
+  let result;
+  const productId = String(order.product_id || '').trim();
+  if (productId && order.old_user_id !== null && order.old_user_id !== undefined) {
+    result = await database.query(
+      `UPDATE tasks
+       SET user_id = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE product_id = ?
+         AND user_id = ?`,
+      [normalizedUserId, productId, order.old_user_id]
+    );
+  } else {
+    result = await database.query(
+      `UPDATE tasks
+       SET user_id = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [normalizedUserId, order.task_id]
+    );
+  }
+
+  return {
+    success: true,
+    orderId: normalizedOrderId,
+    userId: normalizedUserId,
+    username: user.username,
+    taskCount: result.rowCount || 0
   };
 }
 
@@ -600,6 +679,11 @@ router.get('/orders/user-won-date-range', async (req, res) => {
   res.json({ items: items.map(mapAdminOrderListItem), total: items.length });
 });
 
+router.get('/online-users', async (req, res) => {
+  const result = await getOnlineUsers(db);
+  res.json(result);
+});
+
 router.get('/orders/:id/status-logs', async (req, res) => {
   const orderId = Number(req.params.id || 0);
   if (!Number.isInteger(orderId) || orderId <= 0) {
@@ -614,6 +698,18 @@ router.get('/orders/:id/status-logs', async (req, res) => {
     [orderId]
   );
   res.json({ items });
+});
+
+router.put('/orders/:id/user', async (req, res) => {
+  try {
+    const result = await reassignOrderOwner(db, {
+      orderId: req.params.id,
+      userId: req.body?.userId ?? req.body?.user_id
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '订单用户修改失败' });
+  }
 });
 
 router.get('/orders/status-debug/:productId', async (req, res) => {
@@ -2268,6 +2364,7 @@ module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
+module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;

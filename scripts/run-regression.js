@@ -8,6 +8,7 @@ const npmCommand = 'npm';
 
 const steps = [
   ['Google Sheets config tests', process.execPath, ['src/server/services/googleSheets.test.js'], rootDir],
+  ['Online users service tests', process.execPath, ['src/server/services/onlineUsers.test.js'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],
   ['Yahoo plugin content tests', process.execPath, ['yahoo-plugin/content.test.js'], rootDir],

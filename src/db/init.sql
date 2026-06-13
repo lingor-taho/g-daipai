@@ -135,6 +135,26 @@ CREATE TABLE IF NOT EXISTS user_finance_overrides (
 );
 
 -- 汇率配置
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  token_id VARCHAR(64) NOT NULL UNIQUE,
+  username VARCHAR(64),
+  role VARCHAR(32) DEFAULT 'user',
+  user_level INTEGER DEFAULT 1,
+  login_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  user_agent TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires
+ON user_sessions(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user
+ON user_sessions(user_id, expires_at);
+
 CREATE TABLE IF NOT EXISTS exchange_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   rate DECIMAL(10,4) NOT NULL,

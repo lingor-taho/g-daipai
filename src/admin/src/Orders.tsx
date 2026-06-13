@@ -1,7 +1,7 @@
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Modal, Space, Tag, Typography, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Tag, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 import { formatManualOrderImportFlag } from './manualOrderImportState';
 
@@ -98,6 +98,11 @@ function renderTransactionStartLastRun(log: any) {
 function renderManualOrderImportFlag(flags: any) {
   if (!flags) return '-';
   return formatManualOrderImportFlag(flags);
+}
+
+function getAssignableUserTypeText(levelValue: any) {
+  const level = Number(levelValue || 1);
+  return level === 2 ? '代理用户' : '普通用户';
 }
 
 function renderStatusChangeSource(row: any) {
@@ -231,6 +236,17 @@ async function requestPayment(orderIds: Key[]) {
   return data;
 }
 
+async function reassignOrderUser(orderId: number, userId: number) {
+  const res = await fetch(`/api/admin/orders/${orderId}/user`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ userId })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '订单用户修改失败');
+  return data;
+}
+
 export default function OrdersPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [settling, setSettling] = useState(false);
@@ -248,6 +264,11 @@ export default function OrdersPage() {
   const [csvShippingOpen, setCsvShippingOpen] = useState(false);
   const [csvShippingRows, setCsvShippingRows] = useState<any[]>([]);
   const [csvShippingOverrides, setCsvShippingOverrides] = useState<Record<string, number | null>>({});
+  const [users, setUsers] = useState<any[]>([]);
+  const [ownerEditorOpen, setOwnerEditorOpen] = useState(false);
+  const [ownerEditorOrder, setOwnerEditorOrder] = useState<any>(null);
+  const [ownerEditorUserId, setOwnerEditorUserId] = useState<number | undefined>();
+  const [ownerEditorSubmitting, setOwnerEditorSubmitting] = useState(false);
   const [storeBundleForm] = Form.useForm();
 
   const bundleRowClassMap = useMemo(() => {
@@ -264,7 +285,21 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchAdminJson('/api/admin/idle-flags').then(setIdleFlags).catch(() => {});
+    fetchAdminJson('/api/admin/users/options')
+      .then(data => setUsers(Array.isArray(data.items) ? data.items : []))
+      .catch(() => {});
   }, []);
+
+  const userOptions = useMemo(() => users
+    .map(user => {
+      const userTypeText = getAssignableUserTypeText(user.user_level);
+      return {
+        value: user.id,
+        label: user.username,
+        userTypeText,
+        searchText: `${user.username} ${userTypeText}`
+      };
+    }), [users]);
 
   function cacheRows(rows: any[]) {
     setSelectedRowsMap(prev => {
@@ -439,6 +474,31 @@ export default function OrdersPage() {
     }
   }
 
+  function openOwnerEditor(row: any) {
+    setOwnerEditorOrder(row);
+    setOwnerEditorUserId(row?.user_id ? Number(row.user_id) : undefined);
+    setOwnerEditorOpen(true);
+  }
+
+  async function submitOwnerEditor() {
+    if (!ownerEditorOrder?.id || !ownerEditorUserId) {
+      message.error('请选择用户');
+      return;
+    }
+    setOwnerEditorSubmitting(true);
+    try {
+      const data = await reassignOrderUser(Number(ownerEditorOrder.id), Number(ownerEditorUserId));
+      message.success(`已改为 ${data.username || '新用户'}，同步任务 ${data.taskCount || 0} 条`);
+      setOwnerEditorOpen(false);
+      setOwnerEditorOrder(null);
+      setReloadKey(key => key + 1);
+    } catch (e: any) {
+      message.error(e.message || '订单用户修改失败');
+    } finally {
+      setOwnerEditorSubmitting(false);
+    }
+  }
+
   function openStoreBundleBackfill(row: any) {
     if (row?.product_type !== 'store') {
       message.info('商城商品才支持同捆补录');
@@ -493,7 +553,22 @@ export default function OrdersPage() {
   }
 
   const columns = [
-    { title: '用户名', dataIndex: 'username', width: 90, ellipsis: true, onCell: () => noWrapCell },
+    {
+      title: '用户名',
+      dataIndex: 'username',
+      width: 90,
+      ellipsis: true,
+      onCell: (row: any) => ({
+        ...noWrapCell,
+        onDoubleClick: () => openOwnerEditor(row),
+        title: '双击修改绑定用户'
+      }),
+      render: (_: any, row: any) => (
+        <span style={{ cursor: 'pointer' }} title="双击修改绑定用户">
+          {row.username || '-'}
+        </span>
+      )
+    },
     {
       title: '商品ID',
       dataIndex: 'product_id',
@@ -689,6 +764,41 @@ export default function OrdersPage() {
               </Space>
             </Card>
           ))}
+        </Space>
+      </Modal>
+
+      <Modal
+        open={ownerEditorOpen}
+        title="修改订单绑定用户"
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={ownerEditorSubmitting}
+        onOk={submitOwnerEditor}
+        onCancel={() => {
+          setOwnerEditorOpen(false);
+          setOwnerEditorOrder(null);
+        }}
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">
+            当前订单：{ownerEditorOrder?.product_id || ownerEditorOrder?.id || '-'}
+          </Typography.Text>
+          <Select
+            showSearch
+            style={{ width: '100%' }}
+            placeholder="搜索并选择用户"
+            optionFilterProp="searchText"
+            value={ownerEditorUserId}
+            options={userOptions}
+            optionRender={(option: any) => (
+              <Space direction="vertical" size={0}>
+                <span>{option.data.label}</span>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>{option.data.userTypeText}</Typography.Text>
+              </Space>
+            )}
+            onChange={value => setOwnerEditorUserId(Number(value))}
+          />
         </Space>
       </Modal>
 

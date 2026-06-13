@@ -92,6 +92,32 @@ db.prepare(`
 `).run();
 
 db.prepare(`
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_id VARCHAR(64) NOT NULL UNIQUE,
+    username VARCHAR(64),
+    role VARCHAR(32) DEFAULT 'user',
+    user_level INTEGER DEFAULT 1,
+    login_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    user_agent TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_user_sessions_expires
+  ON user_sessions(expires_at)
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_user_sessions_user
+  ON user_sessions(user_id, expires_at)
+`).run();
+
+db.prepare(`
   CREATE TABLE IF NOT EXISTS order_status_change_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER NOT NULL,

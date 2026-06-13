@@ -26,6 +26,7 @@ export default {
         { path: '/orders-resync', redirect: '/data-batch' },
         { path: '/special-user-settings', component: '@/SpecialUserSettings' },
         { path: '/orders', component: '@/Orders' },
+        { path: '/online-users', component: '@/OnlineUsers' },
       ],
     },
   ],

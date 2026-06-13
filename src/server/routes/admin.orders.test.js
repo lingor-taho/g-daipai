@@ -20,6 +20,7 @@ const {
   normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig,
   deleteProductDataByProductId,
+  reassignOrderOwner,
   buildGoogleSheetUrl,
   parseStoreBundleChildProductIds,
   normalizeManualOrderImportSummary,
@@ -647,6 +648,58 @@ async function testDeleteProductDataCanRemoveOrphanBiddingItem() {
   assert.equal(result.biddingItemCount, 1);
 }
 
+async function testReassignOrderOwnerUpdatesSourceAndSameProductTasks() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM users/.test(sql)) return { id: 9, username: 'new-user', role: 'user' };
+      if (/FROM orders o/.test(sql)) {
+        return {
+          order_id: 31,
+          task_id: 101,
+          product_id: 'l1232473681',
+          old_user_id: 4
+        };
+      }
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /UPDATE tasks/.test(sql) ? 3 : 0 };
+    }
+  };
+
+  const result = await reassignOrderOwner(fakeDb, { orderId: 31, userId: 9 });
+
+  assert.equal(result.success, true);
+  assert.equal(result.orderId, 31);
+  assert.equal(result.userId, 9);
+  assert.equal(result.username, 'new-user');
+  assert.equal(result.taskCount, 3);
+  const updateCall = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
+  assert.match(updateCall.sql, /WHERE product_id = \?/);
+  assert.match(updateCall.sql, /user_id = \?/);
+  assert.deepEqual(updateCall.params, [9, 'l1232473681', 4]);
+}
+
+async function testReassignOrderOwnerRejectsAdminUser() {
+  const fakeDb = {
+    async getOne(sql) {
+      if (/FROM users/.test(sql)) return null;
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    async query() {
+      throw new Error('should not update tasks');
+    }
+  };
+
+  await assert.rejects(
+    () => reassignOrderOwner(fakeDb, { orderId: 31, userId: 1 }),
+    /valid user is required/
+  );
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testStoreBidderPaysShippingCanSettleAsFree();
@@ -682,7 +735,9 @@ Promise.all([
   testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted(),
   testBackfillStoreBundleRejectsNormalProduct(),
   testDeleteProductDataRemovesTaskOrderAndBiddingAssociations(),
-  testDeleteProductDataCanRemoveOrphanBiddingItem()
+  testDeleteProductDataCanRemoveOrphanBiddingItem(),
+  testReassignOrderOwnerUpdatesSourceAndSameProductTasks(),
+  testReassignOrderOwnerRejectsAdminUser()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

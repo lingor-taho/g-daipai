@@ -1,5 +1,7 @@
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
+const db = require('../models');
+const { touchClientSession } = require('../services/onlineUsers');
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -10,6 +12,7 @@ function authMiddleware(req, res, next) {
   try {
     const payload = jwt.verify(token, config.jwtSecret);
     req.user = payload;
+    touchClientSession(db, { tokenId: payload.jti, role: payload.role }).catch(() => null);
     next();
   } catch {
     return res.status(401).json({ error: 'token 无效' });
