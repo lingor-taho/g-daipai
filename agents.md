@@ -2530,3 +2530,29 @@ npm run regression
 - 不要在当前三表第一阶段直接实现该规则。
 - 不要因为旧 `tasks.status` 是 `success` 就单独判断成功；三表稳定后的成功保护应以 `orders` 是否存在该 `product_id` 为准。
 - 需要更新后台清理页面说明、清理日志字段和自动清理日志输出；建议新增 `product_count` 和 dry-run 结果展示。
+
+---
+
+## 2026-06-13 商品表类型缺失覆盖修复
+
+### 问题
+
+- 生产部署三表模型后，`node scripts\check-product-parity.js` 发现 `productsLatestTaskSnapshotMismatch: 1`。
+- 具体商品 `v1233172964` 确认是真实商城商品，但 `products.product_type=normal`、最新 `tasks.product_type=store`。
+- 根因：`upsertProductSnapshot()` 对缺失的 `product_type` 默认归一为 `normal`；入札同步等扫描快照不传 `product_type` 时，会把已有或真实的 `store` 覆盖成 `normal`。
+
+### 已实现内容
+
+- `src/server/services/productRepository.js` 调整商品快照归一逻辑：
+  - 只有调用方明确传入 `tax_type/taxType` 时才写入 `tax_type`。
+  - 只有调用方明确传入 `product_type/productType` 时才写入 `product_type`。
+  - 缺失类型字段时传 `NULL`，由 upsert SQL 的 `COALESCE(excluded.field, products.field)` 保留已有商品表值。
+- `src/server/services/productRepository.test.js` 增加回归测试，覆盖扫描快照缺失类型字段时不会默认写 `tax_zero/normal`。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\productRepository.test.js
+```
+
+验证结果：通过。

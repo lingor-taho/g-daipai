@@ -95,11 +95,33 @@ async function testUpsertProductSnapshotPreservesExistingShippingAndMarksFetchSo
   assert.equal(calls[0].params.includes('fetch'), true);
 }
 
+async function testUpsertProductSnapshotDoesNotDefaultMissingTypeFields() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await upsertProductSnapshot(fakeDb, {
+    product_id: 'V1233172964',
+    product_title: 'Scan title',
+    current_price: 1340
+  }, { source: 'scan' });
+
+  assert.equal(calls[0].params[7], null);
+  assert.equal(calls[0].params[8], null);
+  assert.match(calls[0].sql, /tax_type = COALESCE\(excluded\.tax_type, products\.tax_type\)/);
+  assert.match(calls[0].sql, /product_type = COALESCE\(excluded\.product_type, products\.product_type\)/);
+}
+
 testNormalizeProductSnapshotKeepsKnownFieldsOnly();
 Promise.all([
   testBackfillProductsReadsTasksAndBiddingItemsOnly(),
   testBackfillOrderProductIdsUsesTaskRelationOnly(),
-  testUpsertProductSnapshotPreservesExistingShippingAndMarksFetchSource()
+  testUpsertProductSnapshotPreservesExistingShippingAndMarksFetchSource(),
+  testUpsertProductSnapshotDoesNotDefaultMissingTypeFields()
 ]).then(() => {
   console.log('product repository tests passed');
 }).catch(err => {

@@ -16,6 +16,10 @@ function normalizeText(value) {
 function normalizeProductSnapshot(input = {}) {
   const productId = normalizeProductId(input.product_id ?? input.productId);
   if (!productId) return null;
+  const hasTaxType = Object.prototype.hasOwnProperty.call(input, 'tax_type') ||
+    Object.prototype.hasOwnProperty.call(input, 'taxType');
+  const hasProductType = Object.prototype.hasOwnProperty.call(input, 'product_type') ||
+    Object.prototype.hasOwnProperty.call(input, 'productType');
   return {
     product_id: productId,
     product_url: normalizeText(input.product_url ?? input.productUrl),
@@ -24,8 +28,8 @@ function normalizeProductSnapshot(input = {}) {
     current_price: normalizeInteger(input.current_price ?? input.currentPrice),
     buyout_price: normalizeInteger(input.buyout_price ?? input.buyoutPrice),
     bid_count: normalizeInteger(input.bid_count ?? input.bidCount) || 0,
-    tax_type: normalizeText(input.tax_type ?? input.taxType) || 'tax_zero',
-    product_type: normalizeText(input.product_type ?? input.productType) || 'normal',
+    tax_type: hasTaxType ? normalizeText(input.tax_type ?? input.taxType) : null,
+    product_type: hasProductType ? normalizeText(input.product_type ?? input.productType) : null,
     shipping_fee_text: normalizeText(input.shipping_fee_text ?? input.shippingFeeText),
     end_time: normalizeText(input.end_time ?? input.endTime)
   };
