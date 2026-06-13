@@ -2117,9 +2117,13 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
 function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   const text = String(snapshot.bodyText || '').replace(/\s+/g, ' ').trim();
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
+  const cancelled = /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u307e\u3057\u305f/.test(text) ||
+    /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
+    /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text);
   return {
     url: snapshot.url || '',
     textSample: text.slice(0, 500),
+    cancelled,
     complete: /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text),
     hasReceiptCheckbox: /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(text) || Boolean(snapshot.hasReceiptCheckbox),
     hasReceiptCheckboxChecked: Boolean(snapshot.hasReceiptCheckboxChecked),
@@ -3534,6 +3538,7 @@ function isLikelyYahooTransactionTab(tab) {
   return !url ||
     /^about:blank/i.test(url) ||
     /:\/\/(?:[^/]+\.)?auctions\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/buy\.auctions\.yahoo\.co\.jp\//i.test(url) ||
     /:\/\/contact\.auctions\.yahoo\.co\.jp\//i.test(url) ||
     /:\/\/login\.yahoo\.co\.jp\//i.test(url) ||
     /:\/\/account\.edit\.yahoo\.co\.jp\//i.test(url);
@@ -4371,6 +4376,26 @@ async function runPaymentJobs() {
 }
 
 async function executeConfirmReceiptJob(job) {
+  if (job.jobType === 'cancel_check') {
+    let tab = null;
+    const beforeTabIds = await getTabIds();
+    try {
+      tab = await openTransactionPage(job);
+      const state = await getConfirmReceiptPageState(tab.id);
+      if (state?.cancelled) {
+        await updateConfirmReceiptStatus({
+          orderId: job.orderId,
+          productId: job.productId,
+          status: 'cancelled',
+          bundleGroupId: job.bundleGroupId || ''
+        });
+        return { success: true, cancelled: true };
+      }
+      return { success: true, skippedCancelCheck: true };
+    } finally {
+      await closeTabsForTransactionFlow(tab, beforeTabIds);
+    }
+  }
   if (job.productType === 'store') {
     await updateConfirmReceiptStatus({
       orderId: job.orderId,
@@ -4385,6 +4410,15 @@ async function executeConfirmReceiptJob(job) {
   try {
     tab = await openTransactionPage(job);
     let state = await getConfirmReceiptPageState(tab.id);
+    if (state?.cancelled) {
+      await updateConfirmReceiptStatus({
+        orderId: job.orderId,
+        productId: job.productId,
+        status: 'cancelled',
+        bundleGroupId: job.bundleGroupId || ''
+      });
+      return { success: true, cancelled: true };
+    }
     if (state?.complete) {
       await updateConfirmReceiptStatus({
         orderId: job.orderId,
@@ -4439,6 +4473,15 @@ async function executeConfirmReceiptJob(job) {
         bundleGroupId: job.bundleGroupId || ''
       });
       return { success: true, alreadyCompleted: true };
+    }
+    if (state?.cancelled) {
+      await updateConfirmReceiptStatus({
+        orderId: job.orderId,
+        productId: job.productId,
+        status: 'cancelled',
+        bundleGroupId: job.bundleGroupId || ''
+      });
+      return { success: true, cancelled: true };
     }
     if (!state?.hasReceiptSubmitButton) {
       throw new Error(`receipt submit button not found${state?.textSample ? `; pageSample: ${state.textSample}` : ''}`);

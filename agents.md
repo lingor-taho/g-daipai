@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-12
+**最后更新**: 2026-06-13
 
 ---
 
@@ -2171,6 +2171,39 @@ cmd /c "echo N|恢复.bat"
 ```powershell
 npm run regression
 node src\shared\orderStatus.test.cjs; node src\shared\priceRules.test.cjs; node src\shared\biddingRules.test.cjs; node src\server\routes\task.test.js; node src\server\routes\proxy.test.js; node src\server\routes\plugin.test.js; node src\server\routes\admin.orders.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 确认收货流程取消订单检查
+
+### 已实现内容
+
+- 确认收货队列除原有 `pending_receipt` 外，新增拉取 `pending_payment`（待支付）和 `pending_settlement`（待结算）订单作为 `cancel_check` 检查任务。
+- `cancel_check` 任务会打开订单的 `transaction_url`，兼容 `buy.auctions.yahoo.co.jp/order/status?auctionId=...` 页面。
+- 插件确认收货页面状态解析新增取消识别：
+  - `落札者削除されました`
+  - `取引がキャンセルされました`
+  - `キャンセルされました`
+- 命中取消文案后，插件回写 `/api/plugin/confirm-receipt/status`，后端把订单状态更新为 `cancelled`。
+- 后端取消回写只允许作用于 `pending_payment`、`pending_settlement`、`pending_receipt`，并写入订单状态审计日志，来源为 `confirm_receipt_cancel_check`。
+- 用户端落札商品页已有取消展示：订单状态为 `cancelled` 时显示红色“取消”，整行背景为淡粉色，本次无需额外修改前端。
+
+### 业务规则确认
+
+- 待支付/待结算订单没有取消文案时，不执行确认收货按钮逻辑，也不回写状态，直接跳过该检查任务。
+- 普通确认收货仍只对 `pending_receipt` 且 Google Sheets 颜色匹配的订单执行。
+- 商城商品原有确认收货直接完成逻辑保留；新增取消检查通过 `jobType=cancel_check` 单独分支处理，避免误把待支付/待结算商城订单直接置为完成。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+node yahoo-plugin\background.test.js
+node src\shared\orderStatus.test.cjs
 npm run regression
 ```
 

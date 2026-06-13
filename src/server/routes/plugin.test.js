@@ -37,6 +37,7 @@ const {
   buildDaipaiSheetRow,
   getOrdersForSheetAppend,
   getPaymentJobs,
+  getConfirmReceiptJobs,
   summarizePaymentError,
   updatePaymentStatus,
   updateConfirmReceiptStatus,
@@ -1404,6 +1405,92 @@ async function testUpdateConfirmReceiptStatusCompletesBundleGroup() {
   assert.equal(updateCall.params[1], 'bundle-1');
 }
 
+async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCancelChecks() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      if (/FROM config/.test(sql)) return [{ key: 'confirm_receipt_color', value: '#ffff00' }];
+      return [
+        {
+          order_id: 41,
+          order_status: ORDER_STATUS_PENDING_RECEIPT,
+          transaction_url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=r111111111',
+          bundle_group_id: '',
+          product_id: 'r111111111',
+          product_url: 'https://auctions.yahoo.co.jp/jp/auction/r111111111',
+          product_title: 'receipt item',
+          product_type: 'normal'
+        },
+        {
+          order_id: 42,
+          order_status: ORDER_STATUS_PENDING_PAYMENT,
+          transaction_url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222',
+          bundle_group_id: '',
+          product_id: 'p222222222',
+          product_url: 'https://auctions.yahoo.co.jp/jp/auction/p222222222',
+          product_title: 'payment item',
+          product_type: 'store'
+        },
+        {
+          order_id: 43,
+          order_status: ORDER_STATUS_PENDING_SETTLEMENT,
+          transaction_url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=s333333333',
+          bundle_group_id: '',
+          product_id: 's333333333',
+          product_url: 'https://auctions.yahoo.co.jp/jp/auction/s333333333',
+          product_title: 'settlement item',
+          product_type: 'store'
+        }
+      ];
+    }
+  };
+
+  const result = await getConfirmReceiptJobs(fakeDb, {
+    async findRowsByProductIdWithAnyColor(productId) {
+      return { matched: productId === 'r111111111' };
+    }
+  });
+
+  assert.match(calls[1].sql, /o\.order_status IN/);
+  assert.deepEqual(calls[1].params, [
+    ORDER_STATUS_PENDING_RECEIPT,
+    ORDER_STATUS_PENDING_PAYMENT,
+    ORDER_STATUS_PENDING_SETTLEMENT
+  ]);
+  assert.equal(result.jobs.length, 3);
+  assert.equal(result.jobs[0].jobType, 'confirm_receipt');
+  assert.equal(result.jobs[1].jobType, 'cancel_check');
+  assert.equal(result.jobs[1].orderStatus, ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(result.jobs[2].jobType, 'cancel_check');
+  assert.equal(result.jobs[2].orderStatus, ORDER_STATUS_PENDING_SETTLEMENT);
+}
+
+async function testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [{ order_id: 42, old_status: ORDER_STATUS_PENDING_PAYMENT, product_id: 'p222222222' }];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /UPDATE orders/.test(sql) ? 1 : 0 };
+    }
+  };
+
+  const result = await updateConfirmReceiptStatus({ orderId: 42, productId: 'p222222222', status: 'cancelled' }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  assert.equal(result.cancelled, true);
+  const updateCall = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql));
+  assert.equal(updateCall.params[0], ORDER_STATUS_CANCELLED);
+  assert.equal(updateCall.params[1], 42);
+  assert.equal(updateCall.params[2], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(updateCall.params[3], ORDER_STATUS_PENDING_SETTLEMENT);
+  assert.equal(updateCall.params[4], ORDER_STATUS_PENDING_RECEIPT);
+}
+
 async function testCompleteManualTransactionStartDoesNotWriteAutoRunDate() {
   const queries = [];
   const fakeDb = {
@@ -1596,7 +1683,9 @@ Promise.all([
   testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChangedHour(),
   testEnsureScheduledConfirmReceiptRequestSetsFlagAtDefault1801(),
   testCompleteConfirmReceiptIncrementsScanCounter(),
+  testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCancelChecks(),
   testUpdateConfirmReceiptStatusCompletesBundleGroup(),
+  testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled(),
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),

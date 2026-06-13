@@ -1997,6 +1997,7 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
   const colorHex = normalizeReceiptColorConfig(values.confirm_receipt_color || DEFAULT_CONFIRM_RECEIPT_COLOR);
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
+            o.order_status,
             o.transaction_url,
             o.bundle_group_id,
             t.product_id,
@@ -2005,23 +2006,29 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
             t.product_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
-     WHERE o.order_status = ?
+     WHERE o.order_status IN (?, ?, ?)
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
-    [ORDER_STATUS_PENDING_RECEIPT]
+    [ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_PENDING_PAYMENT, ORDER_STATUS_PENDING_SETTLEMENT]
   );
   const jobs = [];
   for (const row of rows) {
-    let sheetMatched = false;
+    const orderStatus = row.order_status || '';
+    const isReceiptJob = orderStatus === ORDER_STATUS_PENDING_RECEIPT;
+    let sheetMatched = !isReceiptJob;
     let sheetError = '';
-    try {
-      sheetMatched = await isConfirmReceiptSheetColorMatched(row.product_id, colorHex, options);
-    } catch (error) {
-      sheetError = error.message || String(error);
+    if (isReceiptJob) {
+      try {
+        sheetMatched = await isConfirmReceiptSheetColorMatched(row.product_id, colorHex, options);
+      } catch (error) {
+        sheetError = error.message || String(error);
+      }
     }
     if (!sheetMatched) continue;
+    if (!isReceiptJob && !row.transaction_url) continue;
     jobs.push({
       orderId: row.order_id,
+      orderStatus,
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
@@ -2029,6 +2036,7 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
       transactionUrl: row.transaction_url || '',
       bundleGroupId: row.bundle_group_id || '',
       receiptColor: colorHex,
+      jobType: isReceiptJob ? 'confirm_receipt' : 'cancel_check',
       sheetMatched: true,
       sheetError
     });
@@ -2060,6 +2068,32 @@ async function updateConfirmReceiptStatus(payload = {}, database = db) {
     throw err;
   }
   const status = String(payload.status || '').trim();
+  if (status === 'cancelled') {
+    const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND order_status IN (?, ?, ?)`,
+      [
+        ORDER_STATUS_CANCELLED,
+        orderId,
+        ORDER_STATUS_PENDING_PAYMENT,
+        ORDER_STATUS_PENDING_SETTLEMENT,
+        ORDER_STATUS_PENDING_RECEIPT
+      ]
+    );
+    if (result.rowCount) {
+      await saveConfigValue(database, 'confirm_receipt_alert_message', '');
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: ORDER_STATUS_CANCELLED,
+        source: 'confirm_receipt_cancel_check',
+        metadata: { orderId, productId: payload.productId || '' }
+      }).catch(() => null);
+    }
+    return { updated: result.rowCount || 0, cancelled: true };
+  }
   if (status !== 'success' && status !== 'already_completed') {
     const err = new Error('valid confirm receipt status is required');
     err.statusCode = 400;

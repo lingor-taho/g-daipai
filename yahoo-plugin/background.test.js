@@ -1739,6 +1739,137 @@ async function testRunConfirmReceiptJobsWaitsForEnabledReceiveButton() {
   assert.equal(sentDebuggerCommands.some(item => item.command === 'Input.dispatchMouseEvent'), true);
 }
 
+function testConfirmReceiptPageStateDetectsWinnerDeletedCancellation() {
+  const api = loadBackgroundForTest();
+
+  const state = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: '取引ナビ 落札者削除されました あなたが落札しましたが、出品者が落札を取り消しました。購入手続きする',
+    controls: ['商品ページへ']
+  });
+
+  assert.equal(state.cancelled, true);
+  assert.equal(state.complete, false);
+  assert.equal(state.hasReceiptCheckbox, false);
+}
+
+async function testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled() {
+  const statusCalls = [];
+  let closedTabId = null;
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 33, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222', status: 'complete' }; },
+      async query() { return [{ id: 33, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222', status: 'complete' }]; },
+      async remove(id) { closedTabId = id; }
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        return [{
+          result: {
+            success: true,
+            snapshot: {
+              bodyText: '落札者削除されました あなたが落札しましたが、出品者が落札を取り消しました。',
+              controls: ['商品ページへ']
+            }
+          }
+        }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 42,
+                productId: 'p222222222',
+                productType: 'store',
+                orderStatus: 'pending_payment',
+                jobType: 'cancel_check',
+                transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.deepEqual(statusCalls[0], {
+    orderId: 42,
+    productId: 'p222222222',
+    status: 'cancelled',
+    bundleGroupId: ''
+  });
+  assert.equal(closedTabId, 33);
+}
+
+async function testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing() {
+  const statusCalls = [];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 34, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222', status: 'complete' }; },
+      async query() { return [{ id: 34, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        return [{
+          result: {
+            success: true,
+            snapshot: {
+              bodyText: '購入 お支払い 発送連絡',
+              controls: ['購入手続きする']
+            }
+          }
+        }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 42,
+                productId: 'p222222222',
+                productType: 'store',
+                orderStatus: 'pending_payment',
+                jobType: 'cancel_check',
+                transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(statusCalls.length, 0);
+}
+
 async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
   const calls = [];
   const actions = [];
@@ -3715,6 +3846,9 @@ async function run() {
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
+  testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();
+  await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
+  await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
