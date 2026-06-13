@@ -2556,3 +2556,32 @@ node src\server\services\productRepository.test.js
 ```
 
 验证结果：通过。
+
+---
+
+## 2026-06-13 普通商品同捆付款金额校验修复
+
+### 问题
+
+- 普通商品同捆付款时，Yahoo 付款页展示的是同捆组整体应付金额。
+- 旧逻辑中插件付款校验只按当前付款主订单计算：`主商品落札价 + 同捆运费`。
+- 业务确认：同捆付款金额应为 `同捆组全部商品落札价合计 + 同捆运费`。例如主商品 1000 円、子商品 500 円、同捆运费 200 円，付款页应核对 1700 円，而不是 1200 円。
+
+### 已实现内容
+
+- `src/server/routes/plugin.js` 的 `/api/plugin/payment/jobs` 付款任务增加 `paymentFinalPrice` 字段。
+- 有 `bundle_group_id` 的付款任务会汇总同组 `pending_settlement` 主订单和 `bundle_completed` 子订单的 `orders.final_price`，作为付款页金额校验的商品合计。
+- `finalPrice` 继续保留为当前主商品落札价；插件付款金额校验优先使用 `paymentFinalPrice`，再加 `effectiveShippingFeeText`。
+- `yahoo-plugin/background.js` 付款校验现在会按 `paymentFinalPrice + 同捆运费` 比对 Yahoo 页面 `お支払い金額`。
+- 新增回归测试覆盖服务端同捆付款 job 汇总金额，以及插件同捆付款金额校验。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\plugin.test.js
+node yahoo-plugin\background.test.js
+node yahoo-plugin\encoding.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。

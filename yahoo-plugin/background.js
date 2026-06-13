@@ -676,15 +676,15 @@ function getRandomIntInclusive(min, max, randomFn = getRandomSource()) {
 }
 
 function getExpectedPaymentAmountJpy(job = {}) {
-  const finalPrice = Number(job.finalPrice ?? job.final_price ?? 0);
+  const finalPrice = getPaymentJobFinalPriceJpy(job);
   const shippingText = job.effectiveShippingFeeText || job.shippingFeeText || '';
   const shipping = parseYenAmount(shippingText);
-  if (!Number.isFinite(finalPrice) || finalPrice <= 0 || shipping === null) return null;
+  if (finalPrice === null || shipping === null) return null;
   return finalPrice + shipping;
 }
 
 function getPaymentJobFinalPriceJpy(job = {}) {
-  const finalPrice = Number(job.finalPrice ?? job.final_price ?? 0);
+  const finalPrice = Number(job.paymentFinalPrice ?? job.payment_final_price ?? job.finalPrice ?? job.final_price ?? 0);
   return Number.isFinite(finalPrice) && finalPrice > 0 ? finalPrice : null;
 }
 

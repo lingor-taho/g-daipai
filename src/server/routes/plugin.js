@@ -2178,6 +2178,17 @@ async function getPaymentJobs(database = db, options = {}) {
             o.transaction_url,
             o.total_amount_cny,
             o.final_price,
+            CASE
+              WHEN COALESCE(o.bundle_group_id, '') <> '' THEN COALESCE((
+                SELECT SUM(og.final_price)
+                FROM orders og
+                INNER JOIN tasks tg ON og.task_id = tg.id
+                WHERE og.bundle_group_id = o.bundle_group_id
+                  AND og.order_status IN (?, ?)
+                  AND tg.status = 'success'
+              ), o.final_price)
+              ELSE o.final_price
+            END AS payment_final_price,
             o.bundle_shipping_fee_text,
             o.bundle_group_id,
             t.product_id,
@@ -2192,7 +2203,7 @@ async function getPaymentJobs(database = db, options = {}) {
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC
      LIMIT ?`,
-    [ORDER_STATUS_PENDING_SETTLEMENT, limit]
+    [ORDER_STATUS_PENDING_SETTLEMENT, ORDER_STATUS_BUNDLE_COMPLETED, ORDER_STATUS_PENDING_SETTLEMENT, limit]
   );
   return {
     jobs: rows.map(row => ({
@@ -2204,6 +2215,7 @@ async function getPaymentJobs(database = db, options = {}) {
       transactionUrl: row.transaction_url || '',
       payableCny: row.total_amount_cny,
       finalPrice: row.final_price,
+      paymentFinalPrice: row.payment_final_price,
       effectiveShippingFeeText: row.bundle_shipping_fee_text || row.shipping_fee_text || '',
       bundleGroupId: row.bundle_group_id || ''
     })),

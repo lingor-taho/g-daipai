@@ -1009,6 +1009,27 @@ function testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProduct
   ));
 }
 
+function testPaymentAmountUsesBundleFinalPriceTotal() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.getExpectedPaymentAmountJpy({
+    finalPrice: 1000,
+    paymentFinalPrice: 1500,
+    effectiveShippingFeeText: '200\u5186',
+    bundleGroupId: 'bundle-a'
+  }), 1700);
+  assert.doesNotThrow(() => api.assertPaymentAmountMatches(
+    {
+      finalPrice: 1000,
+      paymentFinalPrice: 1500,
+      productType: 'normal',
+      effectiveShippingFeeText: '200\u5186',
+      bundleGroupId: 'bundle-a'
+    },
+    { paymentAmountJpy: 1700 }
+  ));
+}
+
 function testShouldSelectPaymentShippingOptionWhenDefaultDiffers() {
   const api = loadBackgroundForTest();
   const state = {
@@ -3830,6 +3851,7 @@ async function run() {
   testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
   testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice();
   testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProducts();
+  testPaymentAmountUsesBundleFinalPriceTotal();
   testShouldSelectPaymentShippingOptionWhenDefaultDiffers();
   testRandomIntInclusiveUsesConfiguredRange();
   await testRunPaymentJobsReportsEmptyQueue();

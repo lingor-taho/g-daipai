@@ -1145,8 +1145,12 @@ async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
       assert.match(sql, /o\.order_status = \?/);
       assert.match(sql, /o\.total_amount_cny IS NOT NULL/);
       assert.match(sql, /ORDER BY datetime\(COALESCE\(o\.won_at, o\.created_at\)\) ASC, o\.id ASC/);
-      assert.equal(params[0], 'pending_settlement');
-      assert.equal(params[1], 4);
+      assert.deepEqual(params.slice(0, 3), [
+        ORDER_STATUS_PENDING_SETTLEMENT,
+        ORDER_STATUS_BUNDLE_COMPLETED,
+        ORDER_STATUS_PENDING_SETTLEMENT
+      ]);
+      assert.equal(params[3], 4);
       return [{
         order_id: 9,
         product_id: 'x1',
@@ -1171,6 +1175,46 @@ async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
   assert.equal(result.limit, 4);
   assert.equal(result.limitMin, 2);
   assert.equal(result.limitMax, 5);
+}
+
+async function testGetPaymentJobsIncludesBundleFinalPriceTotal() {
+  let getAllCall = 0;
+  const fakeDb = {
+    async getAll(sql, params) {
+      getAllCall += 1;
+      if (getAllCall === 1) return [];
+      assert.match(sql, /bundle_group_id/);
+      assert.match(sql, /SUM\(og\.final_price\)/);
+      assert.match(sql, /payment_final_price/);
+      assert.deepEqual(params.slice(0, 3), [
+        ORDER_STATUS_PENDING_SETTLEMENT,
+        ORDER_STATUS_BUNDLE_COMPLETED,
+        ORDER_STATUS_PENDING_SETTLEMENT
+      ]);
+      return [{
+        order_id: 21,
+        product_id: 'a1',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/a1',
+        product_title: 'Bundle main',
+        product_type: 'normal',
+        transaction_url: 'https://contact.example/a1',
+        total_amount_cny: 85,
+        final_price: 1000,
+        payment_final_price: 1500,
+        shipping_fee_text: '送料 800円',
+        bundle_shipping_fee_text: '200円',
+        bundle_group_id: 'bundle-a'
+      }];
+    }
+  };
+
+  const result = await getPaymentJobs(fakeDb, { random: () => 0 });
+
+  assert.equal(result.jobs.length, 1);
+  assert.equal(result.jobs[0].finalPrice, 1000);
+  assert.equal(result.jobs[0].paymentFinalPrice, 1500);
+  assert.equal(result.jobs[0].effectiveShippingFeeText, '200円');
+  assert.equal(result.jobs[0].bundleGroupId, 'bundle-a');
 }
 
 function testPaymentJobLimitRangeAndRandomSelection() {
@@ -1683,6 +1727,7 @@ Promise.all([
   testUpdateScanStatusCompletesBundleGroupWithShippingFee(),
   testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
+  testGetPaymentJobsIncludesBundleFinalPriceTotal(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
   testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
