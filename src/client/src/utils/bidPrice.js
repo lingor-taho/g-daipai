@@ -82,7 +82,7 @@ export function isSubmitTaxExcludedPriceAtLeastRequiredBid(submitTaxExcludedPric
 }
 
 export function getMinimumBidComparableInputPrice({ inputYenPrice, submitTaxExcludedPrice, product, storeBidPriceMode }) {
-  if (isStoreProduct(product) && storeBidPriceMode === 'tax_before') {
+  if (isStoreProduct(product)) {
     return Math.floor(Number(inputYenPrice || 0));
   }
   return Math.floor(Number(submitTaxExcludedPrice || 0));
@@ -100,12 +100,14 @@ export function getMinimumBidInputRequirement(product, storeBidPriceMode) {
     : 0;
   const storeProduct = isStoreProduct(product);
   const useTaxIncludedInput = storeProduct && storeBidPriceMode === 'tax_after';
+  const requiredTaxExcludedPrice = Math.floor(currentTaxExcludedPrice + increment);
   const currentPrice = useTaxIncludedInput
     ? getComparableCurrentPrice(product)
     : Math.floor(currentTaxExcludedPrice);
-  const displayIncrement = useTaxIncludedInput && increment > 0
-    ? Math.floor(increment * 1.1)
-    : increment;
+  const requiredPrice = useTaxIncludedInput
+    ? Math.ceil((requiredTaxExcludedPrice * 1.1) - 1e-6)
+    : requiredTaxExcludedPrice;
+  const displayIncrement = Math.max(0, requiredPrice - currentPrice);
   const currentLabel = storeProduct
     ? (useTaxIncludedInput ? '当前税后价' : '当前税前价')
     : '当前价';
@@ -113,7 +115,7 @@ export function getMinimumBidInputRequirement(product, storeBidPriceMode) {
   return {
     currentPrice,
     increment: displayIncrement,
-    requiredPrice: Math.floor(currentPrice + displayIncrement),
+    requiredPrice,
     currentLabel
   };
 }

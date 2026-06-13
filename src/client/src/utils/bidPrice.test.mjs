@@ -153,6 +153,46 @@ function testTaxBeforeStoreMinimumBidUsesRawInputTaxExcludedPrice() {
   assert.equal(isSubmitTaxExcludedPriceAtLeastRequiredBid(comparable, product), true);
 }
 
+function testTaxAfterStoreMinimumBidUsesRawInputTaxIncludedPrice() {
+  const product = { taxType: 'tax_included', currentPrice: 30045, bidCount: 7 };
+  const requirement = getMinimumBidInputRequirement(product, 'tax_after');
+  const comparable = getMinimumBidComparableInputPrice({
+    inputYenPrice: 33599,
+    submitTaxExcludedPrice: 30544,
+    product,
+    storeBidPriceMode: 'tax_after'
+  });
+  const roundedUpComparable = getMinimumBidComparableInputPrice({
+    inputYenPrice: 33600,
+    submitTaxExcludedPrice: 30545,
+    product,
+    storeBidPriceMode: 'tax_after'
+  });
+
+  assert.equal(requirement.currentPrice, 33049);
+  assert.equal(requirement.increment, 551);
+  assert.equal(requirement.requiredPrice, 33600);
+  assert.equal(comparable, 33599);
+  assert.equal(comparable >= requirement.requiredPrice, false);
+  assert.equal(roundedUpComparable, 33600);
+  assert.equal(roundedUpComparable >= requirement.requiredPrice, true);
+
+  const lowerCurrentProduct = { taxType: 'tax_included', currentPrice: 28500, bidCount: 4 };
+  const lowerRequirement = getMinimumBidInputRequirement(lowerCurrentProduct, 'tax_after');
+  const higherComparable = getMinimumBidComparableInputPrice({
+    inputYenPrice: 32500,
+    submitTaxExcludedPrice: 29545,
+    product: lowerCurrentProduct,
+    storeBidPriceMode: 'tax_after'
+  });
+
+  assert.equal(lowerRequirement.currentPrice, 31350);
+  assert.equal(lowerRequirement.increment, 550);
+  assert.equal(lowerRequirement.requiredPrice, 31900);
+  assert.equal(higherComparable, 32500);
+  assert.equal(higherComparable >= lowerRequirement.requiredPrice, true);
+}
+
 testStoreProductDetection();
 testTaxBeforeStoreBidUsesNormalSubmitTaxAndShowsTaxIncludedActual();
 testTaxAfterStoreBidKeepsExistingTaxIncludedSubmitAndActual();
@@ -165,6 +205,7 @@ testSubmitMaxPriceMustBeAboveCurrentPrice();
 testRequiredBidPriceUsesYahooIncrementOnlyAfterExistingBids();
 testMinimumBidInputRequirementUsesSelectedPriceMode();
 testTaxBeforeStoreMinimumBidUsesRawInputTaxExcludedPrice();
+testTaxAfterStoreMinimumBidUsesRawInputTaxIncludedPrice();
 
 {
   const requirement = getMinimumBidInputRequirement({ taxType: 'tax_included', currentPrice: 4500, bidCount: 1 }, 'tax_after');
