@@ -2434,3 +2434,59 @@ npm run regression
 - 生产部署后先运行 `node scripts\check-product-parity.js`，确认 4 个计数为 0 或可解释，再考虑后续阶段。
 - 不要在本阶段删除 `tasks` 上的商品字段。
 - 不要直接把付款、交易开始、收货、Google Sheets 等操作路径切到 `products`；这些属于后续阶段，需要覆盖商城即決、普通着払い、落札者負担、同捆和待发货等支付状态测试后再做。
+
+---
+
+## 2026-06-13 三表模型后台订单列表展示读切换
+
+### 当前状态
+
+- 在第一阶段基础上继续推进一个低风险展示路径：后台订单管理列表开始对商品 URL、运费、税类型、商品类型使用 `products + fallback tasks`。
+- 该改动只影响后台订单列表查询 `buildAdminOrdersListQuery()` 的展示字段来源。
+- 结算接口、付款任务、交易开始、收货任务、Google Sheets 追加、插件 idle action 顺序和订单状态流转仍继续使用原有 `tasks/orders` 字段，未切到 `products`。
+
+### 已实现内容
+
+- `src/server/routes/admin.js` 的后台订单列表 SQL 增加 `LEFT JOIN products p ON p.product_id = t.product_id`。
+- 后台订单列表返回字段名保持不变：
+  - `product_url = COALESCE(p.product_url, t.product_url)`
+  - `shipping_fee_text = COALESCE(p.shipping_fee_text, t.shipping_fee_text)`
+  - `tax_type = COALESCE(p.tax_type, t.tax_type, 'tax_zero')`
+  - `product_type = COALESCE(p.product_type, t.product_type, tax_type 推导默认值)`
+- `src/server/routes/admin.orders.test.js` 增加断言，防止后台订单列表回退为只读 `tasks` 商品字段。
+
+### 最近验证命令
+
+```powershell
+node src\server\routes\admin.orders.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\task.test.js
+node src\server\services\productRepository.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 三表模型完善后的清理数据需求
+
+### 当前状态
+
+- 用户重新确认：后台“清理数据”涉及删除数据，属于破坏性操作，不应在三表模型仍处于渐进引入阶段时提前切换。
+- 当前代码继续保留旧清理逻辑，不在本阶段改动：按已配置保留天数清理旧的 `failed/cancelled/bidding` 任务及关联日志/缓存。
+- 本需求只作为三表模型稳定后的后续事项记录，避免现在提前实现后随着表结构变化再次返工。
+
+### 后续业务规则
+
+- 等 `products / tasks / orders` 三表结构和生产 parity 稳定后，再重做后台“清理数据”。
+- 新清理语义以落札表为成功保护来源：`orders` 只记录成功落札商品；凡不在 `orders` 中的商品，都视为非成功商品，可按后台配置的保留天数清理。
+- 清理对象应以商品维度处理：删除不在落札表中的过期商品对应的 `tasks` 和 `products` 数据，并同步清理关联 `bid_logs`、`bidding_items` 等缓存/日志。
+- 新版本清理前必须先做 dry-run 统计，显示将清理的商品数、任务数、日志数、入札缓存数；确认不会删除 `orders` 中已落札商品后，再允许执行真实删除。
+- 落札表中的商品必须被保护：只要 `orders.product_id` 存在该商品，关联 `products` 和历史任务不应被普通清理删除。
+
+### 后续实现注意
+
+- 不要在当前三表第一阶段直接实现该规则。
+- 不要因为旧 `tasks.status` 是 `success` 就单独判断成功；三表稳定后的成功保护应以 `orders` 是否存在该 `product_id` 为准。
+- 需要更新后台清理页面说明、清理日志字段和自动清理日志输出；建议新增 `product_count` 和 dry-run 结果展示。

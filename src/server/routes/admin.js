@@ -135,7 +135,14 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
 
 function buildAdminOrdersListQuery({ pageSize, offset }) {
   return {
-    sql: `SELECT o.*, t.product_id, t.product_url, t.shipping_fee_text, t.tax_type, t.product_type, u.id AS user_id, u.username,
+    sql: `SELECT o.*,
+            COALESCE(o.product_id, t.product_id) AS product_id,
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            u.id AS user_id,
+            u.username,
             ufo.rate_adjustment,
             ufo.bank_fee_jpy AS user_bank_fee_jpy,
             ufo.handling_fee_cny AS user_handling_fee_cny,
@@ -177,6 +184,7 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
             ) AS latest_status_change_metadata
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      LEFT JOIN users u ON t.user_id = u.id
      LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE t.status = 'success'

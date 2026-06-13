@@ -311,7 +311,11 @@ function testNormalizeProductTypeForBatchRefresh() {
 function testAdminOrdersQueryIncludesProductType() {
   const query = buildAdminOrdersListQuery({ pageSize: 10, offset: 0 });
 
-  assert.match(query.sql, /t\.product_type/);
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) AS tax_type/);
+  assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type, CASE WHEN COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);
   assert.match(query.sql, /ORDER BY datetime\(COALESCE\(o\.won_at, t\.updated_at\)\) DESC, t\.id DESC/);
   assert.deepEqual(query.params, [10, 0]);
 }
