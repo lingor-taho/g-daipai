@@ -67,6 +67,7 @@ const {
 const {
   calculateOrderPayable
 } = require('../../shared/payableRules.cjs');
+const { upsertProductSnapshot } = require('../services/productRepository');
 
 function buildGoogleSheetUrl(spreadsheetId) {
   const id = String(spreadsheetId || '').trim();
@@ -135,7 +136,14 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
 
 function buildAdminOrdersListQuery({ pageSize, offset }) {
   return {
-    sql: `SELECT o.*, t.product_id, t.product_url, t.shipping_fee_text, t.tax_type, t.product_type, u.id AS user_id, u.username,
+    sql: `SELECT o.*,
+            COALESCE(o.product_id, t.product_id) AS product_id,
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            u.id AS user_id,
+            u.username,
             ufo.rate_adjustment,
             ufo.bank_fee_jpy AS user_bank_fee_jpy,
             ufo.handling_fee_cny AS user_handling_fee_cny,
@@ -177,6 +185,7 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
             ) AS latest_status_change_metadata
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      LEFT JOIN users u ON t.user_id = u.id
      LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE t.status = 'success'
@@ -1664,6 +1673,19 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
       );
       continue;
     }
+    const importProductUrl = item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`;
+    const importFinalPrice = normalizeImportYenAmount(item.final_price);
+    await upsertProductSnapshot(database, {
+      product_id: productId,
+      product_url: importProductUrl,
+      product_title: item.product_title || productId,
+      product_image_url: item.product_image_url || '',
+      current_price: importFinalPrice,
+      tax_type: item.tax_type || 'tax_zero',
+      product_type: item.product_type || 'normal',
+      shipping_fee_text: item.shipping_fee_text || '',
+      end_time: null
+    }, { source: 'fetch' });
     await database.query(
       `INSERT INTO tasks
         (user_id, product_id, product_url, product_title, product_image_url,
@@ -1673,12 +1695,12 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
       [
         item.assigned_user_id,
         productId,
-        item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+        importProductUrl,
         item.product_title || productId,
         item.product_image_url || '',
-        normalizeImportYenAmount(item.final_price),
-        normalizeImportYenAmount(item.final_price),
-        normalizeImportYenAmount(item.final_price),
+        importFinalPrice,
+        importFinalPrice,
+        importFinalPrice,
         item.tax_type || 'tax_zero',
         item.product_type || 'normal',
         item.shipping_fee_text || ''
@@ -1687,14 +1709,15 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     const taskRow = await database.getOne('SELECT last_insert_rowid() AS id');
     await database.query(
       `INSERT INTO orders
-        (task_id, product_title, product_url, final_price, won_at, won_time_text,
+        (task_id, product_id, product_title, product_url, final_price, won_at, won_time_text,
          transaction_url, order_status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         taskRow.id,
+        productId,
         item.product_title || productId,
-        item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
-        normalizeImportYenAmount(item.final_price),
+        importProductUrl,
+        importFinalPrice,
         item.won_at || null,
         item.won_time_text || null,
         item.transaction_url || null
@@ -1936,6 +1959,7 @@ async function deleteProductDataByProductId(database, productId) {
   let orderCount = 0;
   let biddingItemCount = 0;
   let taskCount = 0;
+  let productCount = 0;
 
   if (taskIds.length > 0) {
     const taskPlaceholders = buildPlaceholders(taskIds);
@@ -1986,7 +2010,12 @@ async function deleteProductDataByProductId(database, productId) {
     )).rowCount || 0;
   }
 
-  const totalCount = taskCount + orderCount + bidLogCount + biddingItemCount + orderStatusLogCount;
+  productCount = (await database.query(
+    'DELETE FROM products WHERE product_id = ?',
+    [normalizedProductId]
+  )).rowCount || 0;
+
+  const totalCount = taskCount + orderCount + bidLogCount + biddingItemCount + orderStatusLogCount + productCount;
   return {
     productId: normalizedProductId,
     success: totalCount > 0,
@@ -1996,6 +2025,7 @@ async function deleteProductDataByProductId(database, productId) {
     orderCount,
     bidLogCount,
     biddingItemCount,
+    productCount,
     orderStatusLogCount,
     totalCount,
     error: totalCount > 0 ? undefined : '系统中没有这个商品数据'

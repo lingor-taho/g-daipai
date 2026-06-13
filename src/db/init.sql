@@ -53,6 +53,24 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS products (
+  product_id VARCHAR(32) PRIMARY KEY,
+  product_url TEXT,
+  product_title VARCHAR(512),
+  product_image_url TEXT,
+  current_price INTEGER,
+  buyout_price INTEGER,
+  bid_count INTEGER DEFAULT 0,
+  tax_type VARCHAR(32) DEFAULT 'tax_zero',
+  product_type VARCHAR(32) DEFAULT 'normal',
+  shipping_fee_text VARCHAR(64),
+  end_time DATETIME,
+  last_fetched_at DATETIME,
+  last_scanned_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 出价日志
 CREATE TABLE IF NOT EXISTS bid_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +86,7 @@ CREATE TABLE IF NOT EXISTS bid_logs (
 CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id INTEGER REFERENCES tasks(id),
+  product_id VARCHAR(32),
   account_id INTEGER REFERENCES yahoo_accounts(id),
   product_title VARCHAR(512),
   product_url TEXT,
@@ -174,6 +193,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_end_time ON tasks(end_time);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
+CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
+CREATE INDEX IF NOT EXISTS idx_products_end_time ON products(end_time);
 
 CREATE TABLE IF NOT EXISTS order_status_change_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

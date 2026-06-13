@@ -94,6 +94,7 @@ async function testDeleteStaleTaskDataDeletesAssociationsAndLogs() {
   assert.match(calls[3].sql, /DELETE FROM bidding_items/);
   assert.match(calls[4].sql, /DELETE FROM tasks/);
   assert.match(calls[5].sql, /INSERT INTO data_cleanup_logs/);
+  assert.equal(calls.some(call => /DELETE FROM products/.test(call.sql)), false);
   assert.equal(calls[5].params[0], 'manual');
   assert.equal(calls[5].params[2], 30);
   assert.equal(calls[5].params[4], 2);

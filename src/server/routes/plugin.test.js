@@ -307,12 +307,16 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
   assert.match(calls[1].sql, /INSERT INTO bidding_items/);
   assert.equal(calls[1].params[0], 'a123456789');
   assert.equal(calls[1].params[5], 'highest');
-  assert.match(calls[2].sql, /is_highest_bidder = 1/);
-  assert.match(calls[2].sql, /status = 'bidding'/);
-  assert.doesNotMatch(calls[2].sql, /product_title\s*=/);
-  assert.equal(calls[2].params.at(-1), 'a123456789');
-  assert.match(calls[4].sql, /is_highest_bidder = 0/);
-  assert.equal(calls[4].params.at(-1), 'b123456789');
+  const productUpserts = calls.filter(call => /INSERT INTO products/.test(call.sql));
+  assert.equal(productUpserts.length, 2);
+  assert.equal(productUpserts[0].params[0], 'a123456789');
+  assert.equal(productUpserts[0].params.includes('scan'), true);
+  const highestTaskUpdate = calls.find(call => /is_highest_bidder = 1/.test(call.sql));
+  assert.match(highestTaskUpdate.sql, /status = 'bidding'/);
+  assert.doesNotMatch(highestTaskUpdate.sql, /product_title\s*=/);
+  assert.equal(highestTaskUpdate.params.at(-1), 'a123456789');
+  const outbidTaskUpdate = calls.find(call => /is_highest_bidder = 0/.test(call.sql));
+  assert.equal(outbidTaskUpdate.params.at(-1), 'b123456789');
 }
 
 function testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice() {
@@ -880,7 +884,9 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
   assert.equal(statusUpdate.params[0], 110);
   const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
   assert.equal(orderInsert.params[0], 110);
-  assert.equal(orderInsert.params[3], 350);
+  assert.match(orderInsert.sql, /product_id/);
+  assert.equal(orderInsert.params[1], 'u1231877298');
+  assert.equal(orderInsert.params[4], 350);
 }
 
 async function testGetScanJobsReturnsWaitingShippingOnly() {

@@ -20,6 +20,7 @@ const {
   resolveBuyoutTaskPrices,
   shouldSplitDirectBidByYahooLowPriceRule
 } = require('../../shared/biddingRules.cjs');
+const { upsertProductSnapshot } = require('../services/productRepository');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
@@ -50,6 +51,34 @@ function buildSubmitTaskInput(user, body) {
     standardUrl: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
     maxPrice: parseInt(max_price, 10),
     bidMode: bid_mode === 'buyout' || buyout_only === true || buyout_only === 'true' ? 'buyout' : 'bid'
+  };
+}
+
+function buildSubmitProductSnapshot({
+  input,
+  productInfo,
+  productTitle,
+  productImageUrl,
+  currentPrice,
+  buyoutPrice,
+  bidCount,
+  resolvedTaxType,
+  resolvedProductType,
+  shippingFeeText,
+  endTime
+}) {
+  return {
+    product_id: input.productId,
+    product_url: input.standardUrl,
+    product_title: productTitle || productInfo?.title || null,
+    product_image_url: productImageUrl || productInfo?.imageUrl || null,
+    current_price: currentPrice || productInfo?.currentPrice || null,
+    buyout_price: buyoutPrice || null,
+    bid_count: bidCount,
+    tax_type: resolvedTaxType,
+    product_type: resolvedProductType,
+    shipping_fee_text: shippingFeeText,
+    end_time: endTime
   };
 }
 
@@ -218,14 +247,15 @@ function buildWonStatsExportQuery(input) {
   return {
     sql: `SELECT
          t.product_id,
-         COALESCE(o.product_title, t.product_title, '') AS product_title,
+         COALESCE(o.product_title, p.product_title, t.product_title, '') AS product_title,
          o.final_price,
-         t.shipping_fee_text,
+         COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
          o.won_at,
          o.won_time_text,
          t.updated_at
        FROM tasks t
        INNER JOIN orders o ON o.task_id = t.id
+       LEFT JOIN products p ON p.product_id = t.product_id
        WHERE t.user_id = ?
          AND t.status = 'success'
          AND date(COALESCE(o.won_at, t.updated_at), 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
@@ -257,21 +287,21 @@ function buildActiveBiddingTaskListQuery(input) {
     sql: `SELECT
          t.id,
          bi.product_id,
-         bi.product_url,
-         t.product_title,
-         bi.product_image_url,
-         bi.current_price,
-         t.buyout_price,
-         COALESCE(t.tax_type, 'tax_zero') AS tax_type,
-         COALESCE(t.product_type, CASE WHEN COALESCE(t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
-         t.shipping_fee_text,
+         COALESCE(p.product_url, bi.product_url) AS product_url,
+         COALESCE(p.product_title, t.product_title) AS product_title,
+         COALESCE(p.product_image_url, bi.product_image_url) AS product_image_url,
+         COALESCE(p.current_price, bi.current_price) AS current_price,
+         COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
+         COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+         COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+         COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
          t.max_price,
          t.user_max_price,
          t.strategy,
          t.bid_mode,
          'bidding' AS status,
          bi.status AS bidding_status,
-         t.end_time,
+         COALESCE(p.end_time, t.end_time) AS end_time,
          CASE WHEN bi.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder,
          t.last_bid_at,
          bi.synced_at AS updated_at
@@ -284,6 +314,7 @@ function buildActiveBiddingTaskListQuery(input) {
          ORDER BY datetime(t2.created_at) DESC, t2.id DESC
          LIMIT 1
        )
+       LEFT JOIN products p ON p.product_id = bi.product_id
        WHERE t.user_id = ?
          AND bi.status IN ('highest', 'outbid')
        ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
@@ -396,6 +427,20 @@ router.post('/submit', async (req, res) => {
       finalBidMaxPrice = YAHOO_LOW_PRICE_INITIAL_BID;
     }
 
+    await upsertProductSnapshot(db, buildSubmitProductSnapshot({
+      input,
+      productInfo,
+      productTitle: product_title,
+      productImageUrl: product_image_url,
+      currentPrice: current_price,
+      buyoutPrice,
+      bidCount,
+      resolvedTaxType,
+      resolvedProductType,
+      shippingFeeText,
+      endTime
+    }), { source: 'fetch' });
+
     await db.query(
       `INSERT INTO tasks (user_id, product_id, product_url, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, end_time, client_request_id, pending_followup_max_price)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
@@ -437,7 +482,31 @@ router.get('/list', async (req, res) => {
     input.userId = req.actingUser.id;
     const totalRow = await db.getOne('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [input.userId]);
     const tasks = await db.getAll(
-      'SELECT id, product_id, product_url, product_title, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, status, error_msg, end_time, is_highest_bidder, created_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      `SELECT t.id,
+              t.product_id,
+              COALESCE(p.product_url, t.product_url) AS product_url,
+              COALESCE(p.product_title, t.product_title) AS product_title,
+              COALESCE(p.current_price, t.current_price) AS current_price,
+              COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
+              COALESCE(p.bid_count, t.bid_count) AS bid_count,
+              COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+              COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+              COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+              t.max_price,
+              t.user_max_price,
+              t.multi_bid_increment,
+              t.strategy,
+              t.bid_mode,
+              t.status,
+              t.error_msg,
+              COALESCE(p.end_time, t.end_time) AS end_time,
+              t.is_highest_bidder,
+              t.created_at
+       FROM tasks t
+       LEFT JOIN products p ON p.product_id = t.product_id
+       WHERE t.user_id = ?
+       ORDER BY t.created_at DESC
+       LIMIT ? OFFSET ?`,
       [input.userId, input.limit, input.offset]
     );
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
@@ -541,20 +610,20 @@ router.get('/won', async (req, res) => {
       `SELECT
          t.id,
          won_task.product_id,
-         t.product_url,
-         COALESCE(t.product_title, won_task.product_title) AS product_title,
-         COALESCE(t.product_image_url, won_task.product_image_url) AS product_image_url,
-         t.current_price,
-         t.buyout_price,
-         t.tax_type,
-         t.product_type,
-         t.shipping_fee_text,
+         COALESCE(p.product_url, t.product_url) AS product_url,
+         COALESCE(p.product_title, t.product_title, won_task.product_title) AS product_title,
+         COALESCE(p.product_image_url, t.product_image_url, won_task.product_image_url) AS product_image_url,
+         COALESCE(p.current_price, t.current_price) AS current_price,
+         COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
+         COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+         COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+         COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
          t.max_price,
          t.user_max_price,
          t.strategy,
          t.bid_mode,
          t.status,
-         t.end_time,
+         COALESCE(p.end_time, t.end_time) AS end_time,
          t.updated_at,
          o.final_price,
          o.won_at,
@@ -576,6 +645,7 @@ router.get('/won', async (req, res) => {
          ORDER BY datetime(t2.created_at) DESC, t2.id DESC
          LIMIT 1
        )
+       LEFT JOIN products p ON p.product_id = won_task.product_id
        WHERE won_task.user_id = ?
          AND won_task.status = 'success'
        ORDER BY datetime(COALESCE(o.won_at, won_task.updated_at)) DESC, won_task.id DESC
@@ -666,6 +736,7 @@ router.patch('/:id/cancel', async (req, res) => {
 
 module.exports = router;
 module.exports.buildSubmitTaskInput = buildSubmitTaskInput;
+module.exports.buildSubmitProductSnapshot = buildSubmitProductSnapshot;
 module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
 module.exports.buildActiveBiddingTaskListQuery = buildActiveBiddingTaskListQuery;

@@ -2419,3 +2419,114 @@ node src\server\services\onlineUsers.test.js
 ```
 
 验证结果：通过。
+
+---
+
+## 2026-06-13 三表模型 Task 1-7 实施进度
+
+### 当前状态
+
+- 已完成 `products / tasks / orders` 三表模型第一阶段实施，计划文件为 `docs/superpowers/plans/2026-06-13-three-table-product-model.md`。
+- 新增 `products` 表作为商品快照表，并新增 `orders.product_id`；旧的 `tasks` 商品字段继续保留并继续写入，保证兼容。
+- 启动时会幂等回填 `products`，并从来源 `tasks.product_id` 补齐 `orders.product_id`。
+- 用户提交、后台手动导入、插件商品快照、入札中同步、落札同步已开始双写 `products`。
+- 用户端展示类读路径已切到 `products + fallback tasks`：任务列表、入札中、落札商品、近 30 天落札统计导出。
+- 后台订单管理列表也已对商品 URL、运费、税类型、商品类型使用 `products + fallback tasks`。
+- 付款、交易开始、收货、Google Sheets、插件 idle action 顺序、订单状态流转仍保持原有 `tasks/orders` 字段读取，未切到 `products`，避免再次引入支付金额、运费或状态判断问题。
+- 后台“按商品 ID 删除数据”会同步删除 `products`；自动/手动过期数据清理不会删除 `products`。
+- 新增只读 parity 脚本 `scripts/check-product-parity.js`，用于上线前检查商品快照一致性。
+
+### 本地 parity 检查结果
+
+```powershell
+node scripts\check-product-parity.js
+```
+
+输出：
+
+```text
+Product parity check (read-only)
+Database: D:\www\g-daipai\data\gdaipai.db
+tasksWithoutProductRow: 0
+ordersWithoutProductId: 0
+ordersProductIdMismatch: 0
+productsLatestTaskSnapshotMismatch: 0
+```
+
+### 最近验证命令
+
+```powershell
+node src\server\services\productRepository.test.js
+node src\server\services\dataCleanup.test.js
+node src\server\routes\task.test.js
+node src\server\routes\plugin.test.js
+node src\server\routes\admin.orders.test.js
+node scripts\check-product-parity.test.js
+node scripts\check-product-parity.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+### 后续注意事项
+
+- 生产部署前先停服务并备份 `data/gdaipai.db`。
+- 生产部署后先运行 `node scripts\check-product-parity.js`，确认 4 个计数为 0 或可解释，再考虑后续阶段。
+- 不要在本阶段删除 `tasks` 上的商品字段。
+- 不要直接把付款、交易开始、收货、Google Sheets 等操作路径切到 `products`；这些属于后续阶段，需要覆盖商城即決、普通着払い、落札者負担、同捆和待发货等支付状态测试后再做。
+
+---
+
+## 2026-06-13 数据清理策略边界抽取
+
+### 当前状态
+
+- 把数据清理可删除状态从 `dataCleanup.js` 中抽到独立策略模块。
+- 本次只整理“清理哪些任务状态”的边界，不修改支付、交易开始、付款任务、收货任务、插件轮询、idle action 顺序或任何订单状态流转逻辑。
+- 清理范围保持不变：只清理超过保留天数的 `failed`、`cancelled`、`bidding` 任务及关联出价日志、订单和入札缓存。
+- 成功落札数据继续明确保护：`success`、`pending`、`processing` 不纳入当前清理策略。
+
+### 已实现内容
+
+- 新增 `src/server/services/dataCleanupPolicy.js`：
+  - `CLEANUP_TASK_STATUSES = ['failed', 'cancelled', 'bidding']`
+  - `PRESERVED_TASK_STATUSES = ['success', 'pending', 'processing']`
+  - `shouldCleanupTaskStatus()`
+  - `buildCleanupStatusSqlList()`
+  - `buildCleanupScopeDescription()`
+- 新增 `src/server/services/dataCleanupPolicy.test.js`，覆盖可清理状态、保留状态和说明文本。
+- `src/server/services/dataCleanup.js` 改为引用策略模块；保留原导出 `CLEANUP_STATUSES`，SQL 仍生成 `status IN ('failed', 'cancelled', 'bidding')`，避免影响现有测试和调用方。
+
+### 最近验证命令
+
+```powershell
+node src\server\services\dataCleanupPolicy.test.js
+node src\server\services\dataCleanup.test.js
+npm run regression
+```
+
+验证结果：以上命令均通过。
+
+---
+
+## 2026-06-13 三表模型完善后的清理数据需求
+
+### 当前状态
+
+- 用户重新确认：后台“清理数据”涉及删除数据，属于破坏性操作，不应在三表模型仍处于渐进引入阶段时提前切换。
+- 当前代码继续保留旧清理逻辑，不在本阶段改动：按已配置保留天数清理旧的 `failed/cancelled/bidding` 任务及关联日志/缓存。
+- 本需求只作为三表模型稳定后的后续事项记录，避免现在提前实现后随着表结构变化再次返工。
+
+### 后续业务规则
+
+- 等 `products / tasks / orders` 三表结构和生产 parity 稳定后，再重做后台“清理数据”。
+- 新清理语义以落札表为成功保护来源：`orders` 只记录成功落札商品；凡不在 `orders` 中的商品，都视为非成功商品，可按后台配置的保留天数清理。
+- 清理对象应以商品维度处理：删除不在落札表中的过期商品对应的 `tasks` 和 `products` 数据，并同步清理关联 `bid_logs`、`bidding_items` 等缓存/日志。
+- 新版本清理前必须先做 dry-run 统计，显示将清理的商品数、任务数、日志数、入札缓存数；确认不会删除 `orders` 中已落札商品后，再允许执行真实删除。
+- 落札表中的商品必须被保护：只要 `orders.product_id` 存在该商品，关联 `products` 和历史任务不应被普通清理删除。
+
+### 后续实现注意
+
+- 不要在当前三表第一阶段直接实现该规则。
+- 不要因为旧 `tasks.status` 是 `success` 就单独判断成功；三表稳定后的成功保护应以 `orders` 是否存在该 `product_id` 为准。
+- 需要更新后台清理页面说明、清理日志字段和自动清理日志输出；建议新增 `product_count` 和 dry-run 结果展示。
