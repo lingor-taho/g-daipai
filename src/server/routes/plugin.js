@@ -392,7 +392,7 @@ async function getMultiBidConfig(database = db) {
     multiBidStartHours: Number(values.multi_bid_start_hours || DEFAULT_MULTI_BID_START_HOURS),
     multiBidIntervalMinutes: Number(values.multi_bid_interval_minutes || DEFAULT_MULTI_BID_INTERVAL_MINUTES),
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || DEFAULT_IDLE_SYNC_INTERVAL_MINUTES),
-    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || DEFAULT_IDLE_BID_GUARD_MINUTES),
+    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes ?? DEFAULT_IDLE_BID_GUARD_MINUTES),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
     bidConcurrencyLimit: Math.max(1, Math.min(10, Math.floor(Number(values.bid_concurrency_limit || DEFAULT_BID_CONCURRENCY_LIMIT)))),
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),

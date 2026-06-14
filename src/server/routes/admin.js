@@ -1243,7 +1243,7 @@ async function getMultiBidConfig() {
     startHours: Number(values.multi_bid_start_hours || 0.5),
     intervalMinutes: Number(values.multi_bid_interval_minutes || 5),
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5),
-    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || 10),
+    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes ?? 10),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
     bidConcurrencyLimit: normalizePositiveIntegerConfig(values.bid_concurrency_limit, 2),
     yahooShippingPrefCode: normalizeYahooShippingPrefCode(values.yahoo_shipping_pref_code || '27'),
@@ -1308,7 +1308,7 @@ router.put('/multi-bid-config', async (req, res) => {
   if (!Number.isFinite(idleSyncIntervalMinutes) || idleSyncIntervalMinutes <= 0) {
     return res.status(400).json({ error: 'valid idleSyncIntervalMinutes is required' });
   }
-  if (!Number.isFinite(idleBidGuardMinutes) || idleBidGuardMinutes <= 0) {
+  if (!Number.isFinite(idleBidGuardMinutes) || idleBidGuardMinutes < 0) {
     return res.status(400).json({ error: 'valid idleBidGuardMinutes is required' });
   }
   if (!Number.isFinite(multiBidMinPrice) || multiBidMinPrice <= 0 || Math.floor(multiBidMinPrice) !== multiBidMinPrice) {

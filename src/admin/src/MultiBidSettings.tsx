@@ -198,7 +198,7 @@ export default function MultiBidSettingsPage() {
             label="每 X 分钟自动加价"
             rules={[{ required: true, message: '请输入加价间隔' }]}
           >
-            <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
+            <InputNumber min={0} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
           </Form.Item>
           <Typography.Text type="secondary">
             多次出价会在开始时间后按加价间隔重复执行，在最高价范围内继续尝试超过对方。
@@ -235,7 +235,7 @@ export default function MultiBidSettingsPage() {
             <Select options={PREFECTURE_OPTIONS} />
           </Form.Item>
           <Typography.Text type="secondary">
-            插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会进入空闲任务链路。
+            并行调度后，入札 / 落札监控不再受保护窗口影响；填 0 表示关闭保护窗口兼容配置。
           </Typography.Text>
         </Card>
 
