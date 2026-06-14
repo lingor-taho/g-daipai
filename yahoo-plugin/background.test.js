@@ -21,6 +21,7 @@ function loadBackgroundForTest(overrides = {}) {
     setInterval() {},
     setTimeout(fn, ms) { return overrides.setTimeout ? overrides.setTimeout(fn, ms) : fn(); },
     clearTimeout() {},
+    Date: overrides.Date || Date,
     URL,
     URLSearchParams,
     fetch: overrides.fetch || (async () => ({ async json() { return { task: null }; } })),
@@ -1052,6 +1053,12 @@ function testRandomIntInclusiveUsesConfiguredRange() {
   assert.equal(api.getRandomIntInclusive(2, 5), 5);
 }
 
+function testPaymentFinalizeCompletionTimeoutIsSixtySeconds() {
+  const code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  const match = code.match(/PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS\s*=\s*(\d+)/);
+  assert.equal(Number(match?.[1]), 60000);
+}
+
 async function testRunPaymentJobsReportsEmptyQueue() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -1631,6 +1638,72 @@ async function testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProce
   assert.deepEqual(actions, ['easyPayment', 'review', 'finalize']);
   assert.equal(sleeps.some(item => item.ms === 3000 && item.actions.join(',') === 'easyPayment,review'), true);
   assert.equal(calls[0].status, 'success');
+}
+
+async function testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage() {
+  const calls = [];
+  const actions = [];
+  let nowMs = 0;
+  const FakeDate = class extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [nowMs]));
+    }
+    static now() {
+      return nowMs;
+    }
+  };
+  Object.setPrototypeOf(FakeDate, Date);
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    setTimeout(fn, ms) {
+      nowMs += ms;
+      fn();
+      return 1;
+    },
+    tabs: {
+      async create() { return { id: 116, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 116, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        if (!actions.includes('review')) {
+          return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', hasReviewButton: true, paymentAmountJpy: 4330 } } }];
+        }
+        if (!actions.includes('finalize')) {
+          return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 4330 } } }];
+        }
+        if (nowMs < 20000) {
+          return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', processing: true } } }];
+        }
+        return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 116, productId: 'p116', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].orderId, 116);
+  assert.equal(calls[0].status, 'success');
+  assert.ok(nowMs >= 20000);
+  assert.ok(nowMs < 60000);
 }
 
 async function testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab() {
@@ -3854,6 +3927,7 @@ async function run() {
   testPaymentAmountUsesBundleFinalPriceTotal();
   testShouldSelectPaymentShippingOptionWhenDefaultDiffers();
   testRandomIntInclusiveUsesConfiguredRange();
+  testPaymentFinalizeCompletionTimeoutIsSixtySeconds();
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
@@ -3866,6 +3940,7 @@ async function run() {
   await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
+  await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();
   await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
   testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();
