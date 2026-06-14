@@ -10,10 +10,15 @@ const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = false;
 
-let isRunning = false;
 let fetchFailureCount = 0;
 let idleSyncIntervalMs = 5 * 60 * 1000;
+let bidConcurrencyLimit = 2;
 let lastIdleSyncAt = 0;
+let lastMonitorSyncAt = 0;
+let lastWorkflowSyncAt = 0;
+const activeBidRuns = new Map();
+let monitorRunning = false;
+let workflowRunning = false;
 let manualVerificationFlowActive = false;
 let manualVerificationTabId = null;
 const ignoredManualVerificationTabIds = new Set();
@@ -681,6 +686,23 @@ function getExpectedPaymentAmountJpy(job = {}) {
   const shipping = parseYenAmount(shippingText);
   if (finalPrice === null || shipping === null) return null;
   return finalPrice + shipping;
+}
+
+async function fetchPendingTasks(limit = 1) {
+  try {
+    const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit || 1))));
+    const res = await apiFetch(`/api/plugin/tasks?limit=${safeLimit}`);
+    const data = await res.json();
+    if (Number(data?.bidConcurrencyLimit || 0) > 0) {
+      bidConcurrencyLimit = Math.max(1, Math.min(10, Math.floor(Number(data.bidConcurrencyLimit))));
+    }
+    return Array.isArray(data.tasks) ? data.tasks : [];
+  } catch (e) {
+    fetchFailureCount += 1;
+    const log = fetchFailureCount === 1 || fetchFailureCount % 6 === 0 ? console.warn : console.debug;
+    log('[Yahoo Bid] API unavailable, bid task polling will retry:', e.message || e);
+    return [];
+  }
 }
 
 function getPaymentJobFinalPriceJpy(job = {}) {
@@ -2503,28 +2525,34 @@ async function refreshPluginConfig() {
     const config = await res.json();
     const intervalMinutes = Number(config?.idleSyncIntervalMinutes || 5);
     idleSyncIntervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
+    bidConcurrencyLimit = Math.max(1, Math.min(10, Math.floor(Number(config?.bidConcurrencyLimit || 2))));
   } catch (e) {
     console.warn('[Yahoo Bid] Failed to refresh plugin config:', e.message || e);
   }
 }
 
-async function openWonPageForSync() {
-  const [existingTab] = await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/won*' });
+async function openWonPageForSync(options = {}) {
+  const closeAfter = options.closeAfter === true;
+  const [existingTab] = closeAfter ? [] : await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/won*' });
   const tab = existingTab
     ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/won', active: false })
     : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/won', active: false });
-  if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
-  await sleep(3000);
-  await injectContentScript(tab.id);
-  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ORDER_HISTORY' }).catch(error => {
-    console.error('[Yahoo Bid] Failed to extract order history:', error);
+  try {
+    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+    await sleep(3000);
+    await injectContentScript(tab.id);
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ORDER_HISTORY' }).catch(error => {
+      console.error('[Yahoo Bid] Failed to extract order history:', error);
+      return null;
+    });
+    await reportYahooLoginStatus(response?.loginStatus);
+    if (response?.success) {
+      return await syncOrderHistory(response.orders || []);
+    }
     return null;
-  });
-  await reportYahooLoginStatus(response?.loginStatus);
-  if (response?.success) {
-    return await syncOrderHistory(response.orders || []);
+  } finally {
+    if (closeAfter && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
   }
-  return null;
 }
 
 function parseYahooWonTimeMs(wonTimeText, nowMs = Date.now()) {
@@ -2667,21 +2695,26 @@ async function runManualOrderImportJobs() {
   return true;
 }
 
-async function openBiddingPageForSync() {
-  const [existingTab] = await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/bidding*' });
+async function openBiddingPageForSync(options = {}) {
+  const closeAfter = options.closeAfter === true;
+  const [existingTab] = closeAfter ? [] : await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/bidding*' });
   const tab = existingTab
     ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/bidding', active: false })
     : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/bidding', active: false });
-  if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
-  await sleep(3000);
-  await injectContentScript(tab.id);
-  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
-    console.error('[Yahoo Bid] Failed to extract bidding items:', error);
-    return null;
-  });
-  await reportYahooLoginStatus(response?.loginStatus);
-  if (response?.success) {
-    await syncBiddingItems(response.items || []);
+  try {
+    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+    await sleep(3000);
+    await injectContentScript(tab.id);
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
+      console.error('[Yahoo Bid] Failed to extract bidding items:', error);
+      return null;
+    });
+    await reportYahooLoginStatus(response?.loginStatus);
+    if (response?.success) {
+      await syncBiddingItems(response.items || []);
+    }
+  } finally {
+    if (closeAfter && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
   }
 }
 
@@ -4534,6 +4567,42 @@ async function syncIdleYahooPages() {
   lastIdleSyncAt = now;
   await openBiddingPageForSync();
   await openWonPageForSync();
+  await executeNextWorkflowAction();
+}
+
+async function syncMonitorYahooPages() {
+  if (monitorRunning) return;
+  await refreshPluginConfig();
+  const now = Date.now();
+  if (now - lastMonitorSyncAt < idleSyncIntervalMs) return;
+  monitorRunning = true;
+  lastMonitorSyncAt = now;
+  try {
+    await openBiddingPageForSync({ closeAfter: true });
+    await openWonPageForSync({ closeAfter: true });
+  } finally {
+    monitorRunning = false;
+  }
+}
+
+async function runWorkflowAction() {
+  if (workflowRunning) return;
+  await refreshPluginConfig();
+  const now = Date.now();
+  if (now - lastWorkflowSyncAt < idleSyncIntervalMs) return;
+  workflowRunning = true;
+  lastWorkflowSyncAt = now;
+  try {
+    if (await pauseIdleWorkForOpenManualPin()) {
+      return;
+    }
+    await executeNextWorkflowAction();
+  } finally {
+    workflowRunning = false;
+  }
+}
+
+async function executeNextWorkflowAction() {
   const idleAction = await fetchNextIdleAction();
   if (idleAction?.action === 'transaction_start') {
     await runTransactionStartJobs({
@@ -4551,28 +4620,20 @@ async function syncIdleYahooPages() {
   await completeIdleAction(idleAction?.action || 'none');
 }
 
-async function pollAndExecute() {
-  if (!AUTO_BID_ENABLED) {
-    console.log('[Yahoo Bid] Auto bid disabled. Pending tasks remain queued.');
-    return;
-  }
-
-  if (isRunning) return;
-  isRunning = true;
+async function executeBidTask(task, options = {}) {
+  if (!task?.id) return;
+  console.log('[Yahoo Bid] Executing task:', task.product_url);
+  let taskTab = null;
+  let taskTimedOut = false;
   try {
-    const taskResponse = await fetchPendingTask();
-    const task = taskResponse.task;
-    if (task) {
-      console.log('[Yahoo Bid] Executing task:', task.product_url);
-      let taskTab = null;
-      let taskTimedOut = false;
-      try {
-        await withTimeout((async () => {
+    await withTimeout((async () => {
+          if (!options.alreadyClaimed) {
           const markedProcessing = await markTaskStatus(task.id, 'processing');
           if (taskTimedOut) return;
           if (!markedProcessing?.success) {
             console.log('[Yahoo Bid] Task skipped because it is no longer active:', task.id);
             return;
+          }
           }
           taskTab = await openTaskPage(task);
           if (taskTimedOut) {
@@ -4607,34 +4668,48 @@ async function pollAndExecute() {
             await closeTaskTab(tab.id);
           }
           console.log('[Yahoo Bid] Task completed:', task.id, result);
-        })(), TASK_EXECUTION_TIMEOUT_MS, () => {
+    })(), TASK_EXECUTION_TIMEOUT_MS, () => {
           taskTimedOut = true;
           return buildTaskTimeoutError(TASK_EXECUTION_TIMEOUT_MS);
-        });
-      } catch (e) {
-        await chrome.storage.session.remove(['currentTask']);
-        if (taskTab?.id && e.closeTab) {
-          await closeTaskTab(taskTab.id);
-        }
-        await markTaskStatus(task.id, 'failed', e.message);
-      }
-    } else if (taskResponse.canIdleSync) {
-      await chrome.storage.session.remove(['currentTask']);
-      await syncIdleYahooPages();
-      console.log('[Yahoo Bid] No pending tasks, polling again in', POLL_INTERVAL_MS / 1000, 's');
-    } else {
-      await chrome.storage.session.remove(['currentTask']);
-      console.log('[Yahoo Bid] Idle sync skipped because a bid task is within guard window:', taskResponse.idleBidGuardMinutes, 'minutes');
+    });
+  } catch (e) {
+    await chrome.storage.session.remove(['currentTask']);
+    if (taskTab?.id && e.closeTab) {
+      await closeTaskTab(taskTab.id);
     }
+    await markTaskStatus(task.id, 'failed', e.message);
   } finally {
-    isRunning = false;
+    activeBidRuns.delete(task.id);
   }
+}
+
+async function pollBidPool() {
+  if (!AUTO_BID_ENABLED) {
+    console.log('[Yahoo Bid] Auto bid disabled. Pending tasks remain queued.');
+    return;
+  }
+  await refreshPluginConfig();
+  const slots = Math.max(0, bidConcurrencyLimit - activeBidRuns.size);
+  if (slots <= 0) return;
+  const tasks = await fetchPendingTasks(slots);
+  if (!tasks.length) return;
+  for (const task of tasks) {
+    if (!task?.id || activeBidRuns.has(task.id)) continue;
+    const run = executeBidTask(task, { alreadyClaimed: true });
+    activeBidRuns.set(task.id, run);
+    run.catch(error => console.error('[Yahoo Bid] Bid run failed:', task.id, error?.message || error));
+  }
+}
+
+async function pollAndExecute() {
+  pollBidPool().catch(error => console.error('[Yahoo Bid] Bid pool failed:', error?.message || error));
+  syncMonitorYahooPages().catch(error => console.error('[Yahoo Bid] Monitor sync failed:', error?.message || error));
+  runWorkflowAction().catch(error => console.error('[Yahoo Bid] Workflow action failed:', error?.message || error));
 }
 
 async function startPolling() {
   chrome.alarms.create(POLL_ALARM_NAME, { periodInMinutes: 1 });
   setInterval(pollAndExecute, POLL_INTERVAL_MS);
-  pollAndExecute();
   console.log('[Yahoo Bid] Extension started, polling every', POLL_INTERVAL_MS / 1000, 's');
 }
 
@@ -4681,6 +4756,11 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   getRandomIntInclusive,
   assertPaymentAmountMatches,
   syncIdleYahooPages,
+  syncMonitorYahooPages,
+  runWorkflowAction,
+  executeBidTask,
+  pollBidPool,
+  pollAndExecute,
   runTransactionStartJobs,
   runPaymentJobs,
   runConfirmReceiptJobs,

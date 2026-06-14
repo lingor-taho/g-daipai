@@ -3822,6 +3822,28 @@ async function testFailedBidDoesNotImmediatelySyncWonPage() {
           }
         };
       }
+      if (value.includes('/api/plugin/tasks')) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              success: true,
+              bidConcurrencyLimit: 2,
+              tasks: [{
+                id: 42,
+                product_url: 'https://auctions.yahoo.co.jp/jp/auction/v1231866422',
+                current_price: 3400,
+                max_price: 3888,
+                user_max_price: 3888,
+                strategy: 'direct',
+                bid_mode: 'bid',
+                tax_type: 'tax_zero',
+                end_time: '2026-06-07T23:59:07+09:00'
+              }]
+            };
+          }
+        };
+      }
       if (value.includes('/api/plugin/task')) {
         return {
           ok: true,
@@ -3883,7 +3905,7 @@ async function testFailedBidDoesNotImmediatelySyncWonPage() {
     }
   });
 
-  await api.pollAndExecute();
+  await api.pollBidPool();
   await new Promise(resolve => setTimeout(resolve, 20));
 
   assert.equal(fetchCalls.some(call => String(call.url).includes('/api/plugin/orders/sync')), false);

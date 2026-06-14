@@ -8,6 +8,7 @@ const {
   failPricedOutPendingTasks,
   resetStaleProcessingTasks,
   claimTaskForProcessing,
+  claimReadyPluginTasks,
   sweepPendingTasks,
   getMultiBidStartMs,
   getMultiBidIntervalMs,
@@ -263,6 +264,29 @@ async function testClaimTaskForProcessingOnlyClaimsPendingTask() {
   assert.match(calls[0].sql, /status = 'pending'/);
   assert.match(calls[0].sql, /status = 'bidding' AND strategy = 'multi_bid'/);
   assert.deepEqual(calls[0].params, [42]);
+}
+
+async function testClaimReadyPluginTasksClaimsMultipleReadyTasks() {
+  const claimedIds = [];
+  const fakeDb = {
+    async getAll(sql) {
+      if (/FROM config/.test(sql)) return [];
+      return [
+        { id: 1, status: 'pending', strategy: 'direct', end_time: minutesFromNow(60), created_at: '2026-05-13 01:00:00' },
+        { id: 2, status: 'pending', strategy: 'direct', end_time: minutesFromNow(60), created_at: '2026-05-13 01:01:00' },
+        { id: 3, status: 'pending', strategy: '5min', end_time: minutesFromNow(60), created_at: '2026-05-13 01:02:00' }
+      ];
+    },
+    async query(sql, params) {
+      if (/SET status = 'processing'/.test(sql)) claimedIds.push(Number(params[0]));
+      return { rowCount: 1 };
+    }
+  };
+
+  const tasks = await claimReadyPluginTasks(2, fakeDb, now);
+
+  assert.deepEqual(tasks.map(task => task.id), [1, 2]);
+  assert.deepEqual(claimedIds, [1, 2]);
 }
 
 async function testSweepPendingTasksIncludesProcessingResets() {
@@ -1688,6 +1712,10 @@ testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
 testClaimTaskForProcessingOnlyClaimsPendingTask();
+Promise.resolve().then(testClaimReadyPluginTasksClaimsMultipleReadyTasks).catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});
 testSweepPendingTasksIncludesProcessingResets();
 testSyncBiddingItemsMarksHighestAndOutbidTasks();
 testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice();

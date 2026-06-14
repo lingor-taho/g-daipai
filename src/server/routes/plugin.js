@@ -54,6 +54,7 @@ const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_SYNC_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_BID_GUARD_MINUTES = 10;
+const DEFAULT_BID_CONCURRENCY_LIMIT = 2;
 const DEFAULT_TRANSACTION_START_HOUR = 1;
 const TRANSACTION_START_DELAY_MINUTES = 1;
 const DEFAULT_CONFIRM_RECEIPT_HOUR = 18;
@@ -352,6 +353,29 @@ async function claimTaskForProcessing(taskId, database = db) {
   return { success: (result.rowCount || 0) > 0 };
 }
 
+async function getPluginTaskCandidates(database = db) {
+  return database.getAll(
+    "SELECT * FROM tasks WHERE status = 'pending' OR (status = 'bidding' AND strategy = 'multi_bid') ORDER BY created_at ASC LIMIT 100"
+  );
+}
+
+async function claimReadyPluginTasks(limit = 1, database = db, nowMs = Date.now(), config = null) {
+  const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit || 1))));
+  const multiBidConfig = config || await getMultiBidConfig(database);
+  let remaining = await getPluginTaskCandidates(database);
+  const claimed = [];
+  while (claimed.length < safeLimit) {
+    const task = chooseNextPluginTask(remaining, nowMs, multiBidConfig);
+    if (!task) break;
+    remaining = remaining.filter(item => Number(item.id) !== Number(task.id));
+    const result = await claimTaskForProcessing(task.id, database);
+    if (result?.success) {
+      claimed.push(withMultiBidDispatchConfig(task, multiBidConfig));
+    }
+  }
+  return claimed;
+}
+
 async function sweepPendingTasks(database = db, nowMs = Date.now()) {
   const overdue = await expireOverduePendingTasks(database, nowMs);
   const pricedOut = await failPricedOutPendingTasks(database);
@@ -361,7 +385,7 @@ async function sweepPendingTasks(database = db, nowMs = Date.now()) {
 
 async function getMultiBidConfig(database = db) {
   const rows = await database.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'bid_concurrency_limit', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
@@ -370,6 +394,7 @@ async function getMultiBidConfig(database = db) {
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || DEFAULT_IDLE_SYNC_INTERVAL_MINUTES),
     idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || DEFAULT_IDLE_BID_GUARD_MINUTES),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
+    bidConcurrencyLimit: Math.max(1, Math.min(10, Math.floor(Number(values.bid_concurrency_limit || DEFAULT_BID_CONCURRENCY_LIMIT)))),
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
     scanStartHour: Number(values.scan_start_hour ?? DEFAULT_SCAN_START_HOUR),
     scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
@@ -816,16 +841,24 @@ async function appendTransactionStartRunLogResult(database, result = {}) {
 // GET /api/plugin/task
 router.get('/task', async (req, res) => {
   const multiBidConfig = await getMultiBidConfig();
-  const tasks = await db.getAll(
-    "SELECT * FROM tasks WHERE status = 'pending' OR (status = 'bidding' AND strategy = 'multi_bid') ORDER BY created_at ASC LIMIT 100"
-  );
+  const tasks = await getPluginTaskCandidates();
   const nowMs = Date.now();
   const task = chooseNextPluginTask(tasks, nowMs, multiBidConfig);
-  const canIdleSync = !task && !hasTaskWithinIdleGuard(tasks, nowMs, multiBidConfig);
   res.json({
     task: withMultiBidDispatchConfig(task, multiBidConfig) || null,
-    canIdleSync,
+    canIdleSync: true,
+    bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit,
     idleBidGuardMinutes: multiBidConfig.idleBidGuardMinutes
+  });
+});
+
+router.get('/tasks', async (req, res) => {
+  const multiBidConfig = await getMultiBidConfig();
+  const tasks = await claimReadyPluginTasks(req.query.limit || 1, db, Date.now(), multiBidConfig);
+  res.json({
+    success: true,
+    tasks,
+    bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit
   });
 });
 
@@ -2579,6 +2612,7 @@ router.get('/config', async (req, res) => {
     idleSyncIntervalMinutes: multiBidConfig.idleSyncIntervalMinutes,
     idleBidGuardMinutes: multiBidConfig.idleBidGuardMinutes,
     multiBidMinPrice: multiBidConfig.multiBidMinPrice,
+    bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit,
     transactionStartHour: multiBidConfig.transactionStartHour,
     scanStartHour: multiBidConfig.scanStartHour,
     scanEndHour: multiBidConfig.scanEndHour,
@@ -2654,6 +2688,7 @@ module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
 module.exports.claimTaskForProcessing = claimTaskForProcessing;
+module.exports.claimReadyPluginTasks = claimReadyPluginTasks;
 module.exports.sweepPendingTasks = sweepPendingTasks;
 module.exports.isYahooLoginError = isYahooLoginError;
 module.exports.syncBiddingItems = syncBiddingItems;
