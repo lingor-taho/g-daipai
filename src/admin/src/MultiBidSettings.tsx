@@ -218,7 +218,7 @@ export default function MultiBidSettingsPage() {
             label="出价保护窗口"
             rules={[{ required: true, message: '请输入出价保护窗口' }]}
           >
-            <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
+            <InputNumber min={0} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
             name="bidConcurrencyLimit"
