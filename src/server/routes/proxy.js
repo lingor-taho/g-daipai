@@ -6,6 +6,7 @@ const {
   normalizeProductType,
   taxExcludedToTaxIncluded
 } = require('../../shared/priceRules.cjs');
+const db = require('../models');
 
 const router = express.Router();
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -270,13 +271,28 @@ function isGenericShippingFeeText(value) {
   return value === '落札者負担';
 }
 
-function buildYahooShipmentUrls(html, auctionId) {
+function normalizeYahooShippingPrefCode(value, fallback = '27') {
+  const text = String(value || '').trim().padStart(2, '0');
+  return /^(0[1-9]|[1-3][0-9]|4[0-7])$/.test(text) ? text : fallback;
+}
+
+async function getYahooShippingPrefCode(database = db) {
+  const envPrefCode = normalizeYahooShippingPrefCode(process.env.YAHOO_SHIPPING_PREF_CODE || '27');
+  try {
+    const row = await database.getOne("SELECT value FROM config WHERE key = 'yahoo_shipping_pref_code'");
+    return normalizeYahooShippingPrefCode(row?.value, envPrefCode);
+  } catch {
+    return envPrefCode;
+  }
+}
+
+function buildYahooShipmentUrls(html, auctionId, prefCodeValue = '27') {
   const item = extractNextDataItem(html);
   const urls = [];
   const shoppingInfo = item?.aucShoppingItemInfo;
   const sellerId = shoppingInfo?.shoppingSellerId;
   const postageSet = shoppingInfo?.postageSetId || shoppingInfo?.shoppingItemInfo?.postageSet;
-  const prefCode = String(process.env.YAHOO_SHIPPING_PREF_CODE || '27');
+  const prefCode = normalizeYahooShippingPrefCode(prefCodeValue);
   if (sellerId && postageSet) {
     const params = new URLSearchParams({
       sellerId,
@@ -533,7 +549,8 @@ function createProductService({
     try {
       const html = await httpFetcher(parsed.standardUrl);
       const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
-      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId);
+      const prefCode = await getYahooShippingPrefCode();
+      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId, prefCode);
       const attemptedShipmentLookup = shipmentUrls.length > 0;
       if (attemptedShipmentLookup) {
         for (const shipmentUrl of shipmentUrls) {
@@ -556,7 +573,8 @@ function createProductService({
     try {
       const html = await playwrightFetcher(parsed.standardUrl);
       const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
-      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId);
+      const prefCode = await getYahooShippingPrefCode();
+      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId, prefCode);
       for (const shipmentUrl of shipmentUrls) {
         try {
           const shipmentJson = await httpFetcher(shipmentUrl);
@@ -635,5 +653,7 @@ module.exports.normalizeAuctionUrl = normalizeAuctionUrl;
 module.exports.parseProductHtml = parseProductHtml;
 module.exports.extractAuctionIdsFromSearchHtml = extractAuctionIdsFromSearchHtml;
 module.exports.buildYahooSearchUrl = buildYahooSearchUrl;
+module.exports.normalizeYahooShippingPrefCode = normalizeYahooShippingPrefCode;
+module.exports.getYahooShippingPrefCode = getYahooShippingPrefCode;
 module.exports.productService = productService;
 

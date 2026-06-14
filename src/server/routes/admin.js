@@ -1233,7 +1233,7 @@ async function saveUserFinanceOverride(body = {}) {
 async function getMultiBidConfig() {
   await applyGoogleSheetsConfigFromDb(db);
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'transaction_start_hour', 'confirm_receipt_hour', 'confirm_receipt_color', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'bid_concurrency_limit', 'yahoo_shipping_pref_code', 'transaction_start_hour', 'confirm_receipt_hour', 'confirm_receipt_color', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const legacyPaymentJobLimit = normalizePositiveIntegerConfig(values.payment_job_limit, 3);
@@ -1245,6 +1245,8 @@ async function getMultiBidConfig() {
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5),
     idleBidGuardMinutes: Number(values.idle_bid_guard_minutes || 10),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
+    bidConcurrencyLimit: normalizePositiveIntegerConfig(values.bid_concurrency_limit, 2),
+    yahooShippingPrefCode: normalizeYahooShippingPrefCode(values.yahoo_shipping_pref_code || '27'),
     transactionStartHour: Number(values.transaction_start_hour ?? 1),
     confirmReceiptHour: Number(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR),
     confirmReceiptColor: normalizeReceiptColorConfig(values.confirm_receipt_color, DEFAULT_CONFIRM_RECEIPT_COLOR),
@@ -1266,6 +1268,11 @@ function normalizePositiveIntegerConfig(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+function normalizeYahooShippingPrefCode(value, fallback = '27') {
+  const text = String(value || '').trim().padStart(2, '0');
+  return /^(0[1-9]|[1-3][0-9]|4[0-7])$/.test(text) ? text : fallback;
+}
+
 router.get('/multi-bid-config', async (req, res) => {
   res.json(await getMultiBidConfig());
 });
@@ -1276,6 +1283,8 @@ router.put('/multi-bid-config', async (req, res) => {
   const idleSyncIntervalMinutes = Number(req.body.idleSyncIntervalMinutes ?? 5);
   const idleBidGuardMinutes = Number(req.body.idleBidGuardMinutes ?? 10);
   const multiBidMinPrice = Number(req.body.multiBidMinPrice ?? DEFAULT_MULTI_BID_MIN_PRICE);
+  const bidConcurrencyLimit = normalizePositiveIntegerConfig(req.body.bidConcurrencyLimit ?? 2, 2);
+  const yahooShippingPrefCode = normalizeYahooShippingPrefCode(req.body.yahooShippingPrefCode ?? '27', '');
   const transactionStartHour = Number(req.body.transactionStartHour ?? 1);
   const confirmReceiptHour = Number(req.body.confirmReceiptHour ?? DEFAULT_CONFIRM_RECEIPT_HOUR);
   const confirmReceiptColor = normalizeReceiptColorConfig(req.body.confirmReceiptColor ?? DEFAULT_CONFIRM_RECEIPT_COLOR, '');
@@ -1304,6 +1313,12 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (!Number.isFinite(multiBidMinPrice) || multiBidMinPrice <= 0 || Math.floor(multiBidMinPrice) !== multiBidMinPrice) {
     return res.status(400).json({ error: 'valid multiBidMinPrice is required' });
+  }
+  if (bidConcurrencyLimit < 1 || bidConcurrencyLimit > 10) {
+    return res.status(400).json({ error: 'valid bidConcurrencyLimit is required' });
+  }
+  if (!yahooShippingPrefCode) {
+    return res.status(400).json({ error: 'valid yahooShippingPrefCode is required' });
   }
   for (const [name, value] of [
     ['transactionStartHour', transactionStartHour],
@@ -1352,6 +1367,14 @@ router.put('/multi-bid-config', async (req, res) => {
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_min_price', ?, CURRENT_TIMESTAMP)`,
     [String(multiBidMinPrice)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('bid_concurrency_limit', ?, CURRENT_TIMESTAMP)`,
+    [String(bidConcurrencyLimit)]
+  );
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('yahoo_shipping_pref_code', ?, CURRENT_TIMESTAMP)`,
+    [yahooShippingPrefCode]
   );
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_hour', ?, CURRENT_TIMESTAMP)`,

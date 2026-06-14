@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Checkbox, Form, Input, InputNumber, Space, Typography, message } from 'antd';
+import { Button, Card, Checkbox, Form, Input, InputNumber, Select, Space, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
+
+const PREFECTURE_OPTIONS = [
+  ['01', '01 Hokkaido'], ['02', '02 Aomori'], ['03', '03 Iwate'], ['04', '04 Miyagi'],
+  ['05', '05 Akita'], ['06', '06 Yamagata'], ['07', '07 Fukushima'], ['08', '08 Ibaraki'],
+  ['09', '09 Tochigi'], ['10', '10 Gunma'], ['11', '11 Saitama'], ['12', '12 Chiba'],
+  ['13', '13 Tokyo'], ['14', '14 Kanagawa'], ['15', '15 Niigata'], ['16', '16 Toyama'],
+  ['17', '17 Ishikawa'], ['18', '18 Fukui'], ['19', '19 Yamanashi'], ['20', '20 Nagano'],
+  ['21', '21 Gifu'], ['22', '22 Shizuoka'], ['23', '23 Aichi'], ['24', '24 Mie'],
+  ['25', '25 Shiga'], ['26', '26 Kyoto'], ['27', '27 Osaka'], ['28', '28 Hyogo'],
+  ['29', '29 Nara'], ['30', '30 Wakayama'], ['31', '31 Tottori'], ['32', '32 Shimane'],
+  ['33', '33 Okayama'], ['34', '34 Hiroshima'], ['35', '35 Yamaguchi'], ['36', '36 Tokushima'],
+  ['37', '37 Kagawa'], ['38', '38 Ehime'], ['39', '39 Kochi'], ['40', '40 Fukuoka'],
+  ['41', '41 Saga'], ['42', '42 Nagasaki'], ['43', '43 Kumamoto'], ['44', '44 Oita'],
+  ['45', '45 Miyazaki'], ['46', '46 Kagoshima'], ['47', '47 Okinawa']
+].map(([value, label]) => ({ value, label }));
 
 async function saveMultiBidConfig(values: any) {
   const res = await fetch('/api/admin/multi-bid-config', {
@@ -58,6 +73,8 @@ export default function MultiBidSettingsPage() {
           startHours: data.startHours ?? 0.5,
           intervalMinutes: data.intervalMinutes ?? 5,
           multiBidMinPrice: data.multiBidMinPrice ?? 5000,
+          bidConcurrencyLimit: data.bidConcurrencyLimit ?? 2,
+          yahooShippingPrefCode: data.yahooShippingPrefCode || '27',
           idleSyncIntervalMinutes: data.idleSyncIntervalMinutes ?? 5,
           idleBidGuardMinutes: data.idleBidGuardMinutes ?? 15,
           transactionStartHour: data.transactionStartHour ?? 1,
@@ -141,6 +158,8 @@ export default function MultiBidSettingsPage() {
           startHours: 0.5,
           intervalMinutes: 5,
           multiBidMinPrice: 5000,
+          bidConcurrencyLimit: 2,
+          yahooShippingPrefCode: '27',
           idleSyncIntervalMinutes: 5,
           idleBidGuardMinutes: 15,
           transactionStartHour: 1,
@@ -200,6 +219,20 @@ export default function MultiBidSettingsPage() {
             rules={[{ required: true, message: '请输入出价保护窗口' }]}
           >
             <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="bidConcurrencyLimit"
+            label="出价并发任务数"
+            rules={[{ required: true, message: '请输入出价并发任务数' }]}
+          >
+            <InputNumber min={1} max={10} step={1} precision={0} addonAfter="任务" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="yahooShippingPrefCode"
+            label="Yahoo shipment API 都道府県"
+            rules={[{ required: true, message: '请选择都道府県' }]}
+          >
+            <Select options={PREFECTURE_OPTIONS} />
           </Form.Item>
           <Typography.Text type="secondary">
             插件没有可执行出价任务，并且保护窗口内没有即将出价的任务时，才会进入空闲任务链路。

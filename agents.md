@@ -138,11 +138,13 @@ D:/www/g-daipai/
 
 ---
 
-## 2026-06-14 插件并行调度方案待实现
+## 2026-06-14 插件并行调度已实现
 
-已保存方案文档：`docs/superpowers/specs/2026-06-14-plugin-parallel-scheduler-design.md`。
+已保存方案文档：`docs/superpowers/specs/2026-06-14-plugin-parallel-scheduler-design.md`。实施计划：`docs/superpowers/plans/2026-06-14-plugin-parallel-scheduler-plan.md`。
 
-确认方向：后续把插件调度改为 3 条独立执行线：出价并行池、A/B 入札/落札监控同步、C/D/E/F/G 订单工作流。出价和 A/B、订单工作流三者可并行；PIN/验证码锁只影响 C/D/E/F/G；C/D/E/F/G 内部继续串行，并保持 G 导入优先于 C 交易开始、D 扫描、E 付款、F 确认收货。后台系统配置需新增出价并发数（默认 2）和 Yahoo shipment API 都道府県代码选择（默认大阪 27）。
+已把插件调度改为 3 条独立执行线：出价并行池、A/B 入札/落札监控同步、C/D/E/F/G 订单工作流。出价和 A/B、订单工作流三者可并行；PIN/验证码锁只影响 C/D/E/F/G；C/D/E/F/G 内部继续串行，并保持 G 导入优先于 C 交易开始、D 扫描、E 付款、F 确认收货。服务端新增 `/api/plugin/tasks?limit=N` 批量领取并 claim 出价任务，后台系统配置新增出价并发数（默认 2）和 Yahoo shipment API 都道府県代码选择（默认大阪 27）。A/B 监控按原同步间隔执行，不再受出价保护窗口限制，并在完成后关闭自己创建的入札/落札 tab。
+
+最近验证命令：`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node src/server/routes/plugin.test.js`、`node src/server/routes/proxy.test.js`、`npm run build --prefix src/admin`。
 
 ---
 
