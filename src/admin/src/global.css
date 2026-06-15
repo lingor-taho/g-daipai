@@ -129,8 +129,55 @@ body,
   }
 
   .admin-mobile-form .ant-input-number,
+  .admin-mobile-form .ant-input,
   .admin-mobile-form .ant-btn {
     width: 100%;
+  }
+
+  .admin-manual-import-batch-card .ant-card-head {
+    padding-block: 8px;
+  }
+
+  .admin-manual-import-batch-card .ant-card-head-wrapper {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .admin-manual-import-batch-card .ant-card-head-title,
+  .admin-manual-import-batch-card .ant-card-extra {
+    min-width: 0;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .admin-manual-import-batch-card .ant-card-head-title .ant-space {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .admin-manual-import-batch-card .ant-card-extra {
+    margin-inline-start: 0;
+  }
+
+  .admin-manual-import-batch-actions {
+    display: grid !important;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px !important;
+  }
+
+  .admin-manual-import-batch-actions .ant-space-item,
+  .admin-manual-import-batch-actions .ant-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-manual-import-batch-card .ant-table-wrapper {
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .admin-mobile-action-space,

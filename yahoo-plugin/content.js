@@ -1708,17 +1708,17 @@ function hasUnregisteredTrackingNumber(text = getBodyText()) {
 function extractTrackingNumberFromText(text = getBodyText()) {
   const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7'], text);
   if (labeledTrackingNumber) {
-    const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){12}/g) || [];
+    const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){10,12}/g) || [];
     for (const candidate of labeledMatches) {
       const digits = candidate.replace(/\D/g, '');
-      if (digits.length === 12) return digits;
+      if (digits.length >= 10 && digits.length <= 12) return digits;
     }
   }
   const source = String(text || '');
-  const matches = source.match(/(?:\d[\s-]*){12}/g) || [];
+  const matches = source.match(/(?:\d[\s-]*){10,12}/g) || [];
   for (const candidate of matches) {
     const digits = candidate.replace(/\D/g, '');
-    if (digits.length === 12) return digits;
+    if (digits.length >= 10 && digits.length <= 12) return digits;
   }
   return '';
 }

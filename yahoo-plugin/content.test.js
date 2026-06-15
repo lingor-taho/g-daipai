@@ -2341,6 +2341,15 @@ function testExtractPendingShipmentScanResultDetectsNormalShipped() {
   assert.equal(result.trackingNumber, '751242160303');
 }
 
+function testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber() {
+  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a \u30a8\u30eb\u30b3\u30fc\u30dd\u30ec\u30fc\u30b7\u30e7\u30f3\uff082875\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u65b9\u6cd5\uff1a \u5b85\u6025\u4fbf\uff08\u30e4\u30de\u30c8\u904b\u8f38\uff09\uff08\u9001\u6599\uff1a1,000\u5186\uff09\n\u8ffd\u8de1\u756a\u53f7\uff1a 2326453359');
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u5b85\u6025\u4fbf');
+  assert.equal(result.trackingNumber, '2326453359');
+  assert.equal(result.trackingFallback, '');
+}
+
 function testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields() {
   const api = loadContentForTest(
     '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
@@ -2541,6 +2550,7 @@ async function run() {
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();
   testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber();
   testExtractPendingShipmentScanResultDetectsNormalShipped();
+  testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber();
   testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
   testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();
