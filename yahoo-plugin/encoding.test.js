@@ -4,8 +4,11 @@ const path = require('path');
 
 const files = ['content.js', 'background.js'];
 const badPatterns = [
+  { name: 'UTF-8 BOM', pattern: /^\uFEFF/ },
   { name: 'replacement character', pattern: /\uFFFD/ },
-  { name: 'gbk replacement mojibake', pattern: /锟斤拷/ }
+  { name: 'gbk replacement mojibake', pattern: /\u95bf\u7194\u67bb\u93b7/ },
+  { name: 'BOM mojibake', pattern: /\u9518|\u7e1e/ },
+  { name: 'copied truncation marker', pattern: /<[^>\r\n]*(?:\u672a\u663e\u793a|\u672a\u986f\u793a|not shown)[^>\r\n]*>/i }
 ];
 
 for (const file of files) {
@@ -19,4 +22,3 @@ for (const file of files) {
     );
   }
 }
-

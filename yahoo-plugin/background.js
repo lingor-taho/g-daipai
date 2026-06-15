@@ -1,4 +1,4 @@
-﻿const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
+const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
 const POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
@@ -3366,6 +3366,12 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
   return current || tab;
 }
 
+async function isStillManualVerificationPage(tab) {
+  if (!tab?.id) return false;
+  if (isManualCaptchaTab(tab)) return true;
+  return await detectManualPinPage(tab).catch(() => isLikelyManualPinTab(tab));
+}
+
 async function handleManualVerificationIfPresent(tab, context = {}) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   rememberManualVerificationTab(current);
@@ -3400,10 +3406,10 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
       const fillResult = await fillManualCaptchaAnswer(current.id, answer);
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
-      await closeManualCaptchaChallenge(id);
       if (pinAnswer) canReusePinAfterCaptcha = true;
       current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds);
       rememberManualVerificationTab(current);
+      if (!await isStillManualVerificationPage(current)) await closeManualCaptchaChallenge(id);
       await sleep(500);
       continue;
     }
@@ -3433,7 +3439,6 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
     pinAttempted = true;
     pinAnswerFromContext = false;
-    if (pinChallengeId) await closeManualCaptchaChallenge(pinChallengeId);
     canReusePinAfterCaptcha = false;
     if (fillResult.method === 'debuggerRealKeyboard') {
       current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, { preferCaptcha: true });
@@ -3451,6 +3456,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds, { preferCaptcha: true });
       rememberManualVerificationTab(current);
     }
+    if (pinChallengeId && !await isStillManualVerificationPage(current)) await closeManualCaptchaChallenge(pinChallengeId);
     await sleep(500);
   }
   const allOpenVerificationTabs = await chrome.tabs.query({}).then(tabs => tabs.filter(isManualVerificationTab)).catch(() => []);

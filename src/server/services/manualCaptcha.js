@@ -40,12 +40,20 @@ function normalizeCaptchaChallenge(payload = {}) {
 
 async function saveCaptchaChallenge(database, payload) {
   const challenge = normalizeCaptchaChallenge(payload);
+  const current = await getCaptchaChallenge(database);
+  const next = current?.id === challenge.id && current.answeredAt
+    ? {
+        ...challenge,
+        answer: current.answer || '',
+        answeredAt: current.answeredAt || ''
+      }
+    : challenge;
   await database.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at)
      VALUES (?, ?, CURRENT_TIMESTAMP)`,
-    [MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(challenge)]
+    [MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(next)]
   );
-  return challenge;
+  return next;
 }
 
 async function getCaptchaChallenge(database) {

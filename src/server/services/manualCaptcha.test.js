@@ -72,10 +72,66 @@ async function testPinChallengeCanBeAnsweredWithoutImage() {
   assert.equal(answered.answer, '123456');
 }
 
+async function testSameAnsweredPinChallengeIsKeptConfirmingWhenReposted() {
+  const db = createFakeDb();
+
+  await saveCaptchaChallenge(db, {
+    id: 'pin-u123-1',
+    type: 'pin',
+    message: 'Yahoo PIN check',
+    productId: 'u1231877298'
+  });
+  const answered = await answerCaptchaChallenge(db, {
+    id: 'pin-u123-1',
+    answer: '123456'
+  });
+
+  const reposted = await saveCaptchaChallenge(db, {
+    id: 'pin-u123-1',
+    type: 'pin',
+    message: 'Yahoo PIN check',
+    productId: 'u1231877298'
+  });
+
+  assert.equal(reposted.answer, '123456');
+  assert.equal(reposted.answeredAt, answered.answeredAt);
+  const current = await getCaptchaChallenge(db);
+  assert.equal(current.answer, '123456');
+  assert.equal(current.answeredAt, answered.answeredAt);
+}
+
+async function testPinRetryChallengeCanResetAnsweredState() {
+  const db = createFakeDb();
+
+  await saveCaptchaChallenge(db, {
+    id: 'pin-u123-1',
+    type: 'pin',
+    message: 'Yahoo PIN check',
+    productId: 'u1231877298'
+  });
+  await answerCaptchaChallenge(db, {
+    id: 'pin-u123-1',
+    answer: '123456'
+  });
+
+  const retry = await saveCaptchaChallenge(db, {
+    id: 'pin-u123-2',
+    type: 'pin',
+    message: 'last PIN was wrong, retry PIN',
+    productId: 'u1231877298'
+  });
+
+  assert.equal(retry.id, 'pin-u123-2');
+  assert.equal(retry.answer, '');
+  assert.equal(retry.answeredAt, '');
+}
+
 async function run() {
   await testCaptchaChallengeCanBeAnswered();
   await testCaptchaChallengeCanBeClosed();
   await testPinChallengeCanBeAnsweredWithoutImage();
+  await testSameAnsweredPinChallengeIsKeptConfirmingWhenReposted();
+  await testPinRetryChallengeCanResetAnsweredState();
 }
 
 run().catch(error => {

@@ -1,8 +1,9 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Input, Layout, Menu, Space, Typography, message } from 'antd';
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
+import { getManualVerificationDisplayState } from '../manualVerificationState';
 
 const { Header, Content, Sider } = Layout;
 
@@ -59,9 +60,38 @@ export default function AdminLayout() {
   const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
   const [captchaChallenge, setCaptchaChallenge] = useState<any>(null);
   const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [submittedCaptchaId, setSubmittedCaptchaIdState] = useState('');
+  const [submittedCaptchaType, setSubmittedCaptchaTypeState] = useState('');
+  const [passedCaptchaType, setPassedCaptchaTypeState] = useState('');
+  const submittedCaptchaRef = useRef({ id: '', type: '' });
+  const passedCaptchaTimerRef = useRef<number | null>(null);
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+
+  function setSubmittedCaptcha(id: string, type: string) {
+    submittedCaptchaRef.current = { id, type };
+    setSubmittedCaptchaIdState(id);
+    setSubmittedCaptchaTypeState(type);
+  }
+
+  function clearSubmittedCaptcha() {
+    submittedCaptchaRef.current = { id: '', type: '' };
+    setSubmittedCaptchaIdState('');
+    setSubmittedCaptchaTypeState('');
+  }
+
+  function showPassedCaptchaNotice(type: string) {
+    if (type !== 'captcha') return;
+    setPassedCaptchaTypeState('captcha');
+    if (passedCaptchaTimerRef.current) {
+      window.clearTimeout(passedCaptchaTimerRef.current);
+    }
+    passedCaptchaTimerRef.current = window.setTimeout(() => {
+      setPassedCaptchaTypeState('');
+      passedCaptchaTimerRef.current = null;
+    }, 1800);
+  }
 
   // 根据折叠状态生成菜单项
   const menuItems = menuItemsConfig.map(item => ({
@@ -83,10 +113,22 @@ export default function AdminLayout() {
       try {
         const flags = await fetchAdminJson('/api/admin/idle-flags');
         if (active) {
+          const nextChallenge = flags.captchaChallenge || null;
           setPaymentAlert(flags.paymentAlertMessage || '');
           setConfirmReceiptAlert(flags.confirmReceiptAlertMessage || '');
-          setCaptchaChallenge(flags.captchaChallenge || null);
-          if (!flags.captchaChallenge) setCaptchaAnswer('');
+          setCaptchaChallenge(nextChallenge);
+          if (nextChallenge) {
+            setPassedCaptchaTypeState('');
+            if (nextChallenge.id !== submittedCaptchaRef.current.id && !nextChallenge.answeredAt) {
+              clearSubmittedCaptcha();
+            }
+          } else {
+            setCaptchaAnswer('');
+            if (submittedCaptchaRef.current.id) {
+              showPassedCaptchaNotice(submittedCaptchaRef.current.type);
+              clearSubmittedCaptcha();
+            }
+          }
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
         }
       } catch {
@@ -105,6 +147,9 @@ export default function AdminLayout() {
     return () => {
       active = false;
       window.clearInterval(timer);
+      if (passedCaptchaTimerRef.current) {
+        window.clearTimeout(passedCaptchaTimerRef.current);
+      }
     };
   }, []);
 
@@ -151,11 +196,15 @@ export default function AdminLayout() {
       return;
     }
     try {
-      await fetchAdminJson('/api/admin/manual-captcha/answer', {
+      const result = await fetchAdminJson('/api/admin/manual-captcha/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: captchaChallenge.id, answer })
       });
+      setSubmittedCaptcha(captchaChallenge.id, captchaChallenge.type || 'captcha');
+      setCaptchaChallenge((current: any) => current?.id === captchaChallenge.id
+        ? { ...current, answeredAt: result.answeredAt || new Date().toISOString() }
+        : current);
       setCaptchaAnswer('');
       message.success('已提交，插件会继续当前任务');
     } catch (e: any) {
@@ -173,12 +222,19 @@ export default function AdminLayout() {
       });
       setCaptchaChallenge(null);
       setCaptchaAnswer('');
+      clearSubmittedCaptcha();
+      setPassedCaptchaTypeState('');
     } catch (e: any) {
       message.error(e.message || '关闭验证码失败');
     }
   }
 
   const isPinChallenge = captchaChallenge?.type === 'pin';
+  const manualVerificationView = getManualVerificationDisplayState(captchaChallenge, {
+    submittedChallengeId: submittedCaptchaId,
+    submittedChallengeType: submittedCaptchaType,
+    passedChallengeType: passedCaptchaType
+  });
 
   return (
     <Layout className="admin-shell" style={{ minHeight: '100vh' }}>
@@ -281,45 +337,51 @@ export default function AdminLayout() {
                 style={{ marginBottom: 12 }}
               />
             ) : null}
-            {captchaChallenge ? (
+            {manualVerificationView.visible ? (
               <Alert
-                type="warning"
+                type={manualVerificationView.status === 'passed' ? 'success' : 'warning'}
                 showIcon
                 message={
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
                     <Typography.Text strong>
-                      {isPinChallenge ? 'Yahoo 需要 PIN 码验证，请输入 PIN 后继续任务' : 'Yahoo 需要文字验证码，请人工输入后继续任务'}
+                      {manualVerificationView.title}
                     </Typography.Text>
-                    <Space wrap align="start">
-                      {!isPinChallenge ? (
-                        <img
-                          src={captchaChallenge.imageDataUrl}
-                          alt="Yahoo 验证码"
-                          style={{ maxWidth: 360, width: '100%', border: '1px solid #d9d9d9', background: '#fff' }}
-                        />
-                      ) : null}
-                      <Space direction="vertical">
-                        <Typography.Text type="secondary">
-                          {captchaChallenge.productId ? `商品ID：${captchaChallenge.productId}` : 'Yahoo 验证页面'}
-                        </Typography.Text>
-                        {captchaChallenge.message ? (
-                          <Typography.Text type="danger">
-                            {captchaChallenge.message}
-                          </Typography.Text>
+                    {captchaChallenge ? (
+                      <Space wrap align="start">
+                        {!isPinChallenge && manualVerificationView.showInput ? (
+                          <img
+                            src={captchaChallenge.imageDataUrl}
+                            alt="Yahoo 验证码"
+                            style={{ maxWidth: 360, width: '100%', border: '1px solid #d9d9d9', background: '#fff' }}
+                          />
                         ) : null}
-                        <Input
-                          value={captchaAnswer}
-                          onChange={event => setCaptchaAnswer(event.target.value)}
-                          onPressEnter={submitCaptchaAnswer}
-                          placeholder={isPinChallenge ? '输入 PIN 码' : '输入图中日文'}
-                          style={{ width: 220 }}
-                        />
-                        <Space>
-                          <Button type="primary" onClick={submitCaptchaAnswer}>{isPinChallenge ? '提交 PIN' : '提交验证码'}</Button>
-                          <Button onClick={closeCaptchaChallenge}>关闭</Button>
+                        <Space direction="vertical">
+                          <Typography.Text type="secondary">
+                            {captchaChallenge.productId ? `商品ID：${captchaChallenge.productId}` : 'Yahoo 验证页面'}
+                          </Typography.Text>
+                          {manualVerificationView.showInput && captchaChallenge.message ? (
+                            <Typography.Text type="danger">
+                              {captchaChallenge.message}
+                            </Typography.Text>
+                          ) : null}
+                          {manualVerificationView.showInput ? (
+                            <>
+                              <Input
+                                value={captchaAnswer}
+                                onChange={event => setCaptchaAnswer(event.target.value)}
+                                onPressEnter={submitCaptchaAnswer}
+                                placeholder={isPinChallenge ? '输入 PIN 码' : '输入图中日文'}
+                                style={{ width: 220 }}
+                              />
+                              <Space>
+                                <Button type="primary" onClick={submitCaptchaAnswer}>{isPinChallenge ? '提交 PIN' : '提交验证码'}</Button>
+                                <Button onClick={closeCaptchaChallenge}>关闭</Button>
+                              </Space>
+                            </>
+                          ) : null}
                         </Space>
                       </Space>
-                    </Space>
+                    ) : null}
                   </Space>
                 }
                 style={{ marginBottom: 12 }}
