@@ -2,6 +2,7 @@ const assert = require('assert/strict');
 const {
   formatManualOrderImportFlag,
   getManualOrderImportStatusView,
+  canClearManualOrderImportBatch,
   shouldEditManualImportShippingFee,
   shouldAutoRefreshManualOrderImportBatch
 } = require('./manualOrderImportState');
@@ -50,3 +51,12 @@ testReadyWithoutCandidatesIsComplete();
 testOnlyActiveScanStatusesAutoRefresh();
 testManualOrderImportFlagOnlyShowsQueueState();
 testOnlyAmbiguousShippingFeesAreEditable();
+
+function testCurrentImportBatchCanBeClearedWhenLoaded() {
+  assert.equal(canClearManualOrderImportBatch({ id: 9, status: 'confirmed' }), true);
+  assert.equal(canClearManualOrderImportBatch({ id: 10, status: 'ready' }), true);
+  assert.equal(canClearManualOrderImportBatch(null), false);
+  assert.equal(canClearManualOrderImportBatch({}), false);
+}
+
+testCurrentImportBatchCanBeClearedWhenLoaded();

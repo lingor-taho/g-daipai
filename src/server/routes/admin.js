@@ -1590,6 +1590,24 @@ async function listManualOrderImportItems(batchId, database = db) {
   );
 }
 
+async function deleteManualOrderImportBatch(batchId, database = db) {
+  const batch = await getManualOrderImportBatch(batchId, database);
+  if (!batch) {
+    const error = new Error('import batch not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  await database.query(
+    `DELETE FROM manual_order_import_items WHERE batch_id = ?`,
+    [batch.id]
+  );
+  const result = await database.query(
+    `DELETE FROM manual_order_import_batches WHERE id = ?`,
+    [batch.id]
+  );
+  return { deleted: result.rowCount || 0, id: batch.id };
+}
+
 function normalizeManualOrderImportSummary(summary = {}) {
   const requested = Number(summary?.requested || 0);
   const scanning = Number(summary?.scanning || 0);
@@ -1765,8 +1783,6 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
      WHERE id = ?`,
     [skippedExisting, batch.id]
   );
-  await saveConfigValue(database, 'transaction_start_requested', '1');
-  await saveConfigValue(database, 'transaction_start_requested_source', 'manual');
   return { imported, skippedExisting, skippedUnassigned };
 }
 
@@ -1808,6 +1824,15 @@ router.get('/manual-order-import/batches/:id', async (req, res) => {
   if (!batch) return res.status(404).json({ error: 'import batch not found' });
   const items = await listManualOrderImportItems(batch.id, db);
   res.json({ success: true, batch, items });
+});
+
+router.delete('/manual-order-import/batches/:id', async (req, res) => {
+  try {
+    const result = await deleteManualOrderImportBatch(req.params.id, db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'delete import batch failed' });
+  }
 });
 
 router.post('/manual-order-import/batches/:id/confirm', async (req, res) => {
@@ -2435,6 +2460,7 @@ module.exports.backfillStoreBundle = backfillStoreBundle;
 module.exports.deleteProductDataByProductId = deleteProductDataByProductId;
 module.exports.createManualOrderImportBatch = createManualOrderImportBatch;
 module.exports.confirmManualOrderImport = confirmManualOrderImport;
+module.exports.deleteManualOrderImportBatch = deleteManualOrderImportBatch;
 module.exports.normalizeManualOrderImportSummary = normalizeManualOrderImportSummary;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;

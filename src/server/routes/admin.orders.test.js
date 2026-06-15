@@ -14,6 +14,7 @@ const {
   parseShippingFeeToNumber,
   createManualOrderImportBatch,
   confirmManualOrderImport,
+  deleteManualOrderImportBatch,
   requestScan,
   requestPayment,
   clearPaymentAlertAndContinue,
@@ -107,6 +108,10 @@ async function testConfirmManualOrderImportSkipsUnassignedItems() {
   assert.equal(queries.some(query => /INSERT INTO tasks/.test(query.sql)), true);
   assert.equal(queries.some(query => /INSERT INTO orders/.test(query.sql) && /product_id/.test(query.sql)), true);
   assert.equal(queries.some(query => /status = 'confirmed'/.test(query.sql)), true);
+  assert.equal(
+    queries.some(query => query.params?.[0] === 'transaction_start_requested' || query.params?.[0] === 'transaction_start_requested_source'),
+    false
+  );
 }
 
 function testSettleableShippingFeeDetection() {
@@ -475,6 +480,44 @@ async function testConfirmManualOrderImportRejectsAdminUserAssignment() {
   );
 }
 
+async function testDeleteManualOrderImportBatchDeletesBatchAndItems() {
+  const queries = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      if (/FROM manual_order_import_batches/.test(sql)) return { id: Number(params[0]), status: 'confirmed' };
+      throw new Error(`unexpected getOne: ${sql}`);
+    },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await deleteManualOrderImportBatch(9, fakeDb);
+
+  assert.deepEqual(result, { deleted: 1, id: 9 });
+  assert.match(queries[0].sql, /DELETE FROM manual_order_import_items/);
+  assert.equal(queries[0].params[0], 9);
+  assert.match(queries[1].sql, /DELETE FROM manual_order_import_batches/);
+  assert.equal(queries[1].params[0], 9);
+}
+
+async function testDeleteManualOrderImportBatchRejectsMissingBatch() {
+  const fakeDb = {
+    async getOne() {
+      return null;
+    },
+    async query() {
+      throw new Error('should not delete missing import batch');
+    }
+  };
+
+  await assert.rejects(
+    () => deleteManualOrderImportBatch(99, fakeDb),
+    /import batch not found/
+  );
+}
+
 async function testRequestPaymentSetsFlag() {
   const queries = [];
   const fakeDb = {
@@ -740,6 +783,8 @@ Promise.all([
   testCreateManualOrderImportBatchDoesNotMutateScanCounter(),
   testConfirmManualOrderImportRejectsAdminUserAssignment(),
   testConfirmManualOrderImportSkipsUnassignedItems(),
+  testDeleteManualOrderImportBatchDeletesBatchAndItems(),
+  testDeleteManualOrderImportBatchRejectsMissingBatch(),
   testRequestPaymentSetsFlag(),
   testRequestPaymentDoesNotSetFlagWhenNoPendingSettlementRows(),
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),

@@ -3,6 +3,7 @@ import { Button, Card, Form, Input, InputNumber, Select, Space, Table, Tag, Typo
 import { authHeaders, fetchAdminJson } from './utils/auth';
 import {
   getManualOrderImportStatusView,
+  canClearManualOrderImportBatch,
   shouldEditManualImportShippingFee,
   shouldAutoRefreshManualOrderImportBatch
 } from './manualOrderImportState';
@@ -35,6 +36,7 @@ export default function ManualOrderImportPage() {
   const [loading, setLoading] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [assignments, setAssignments] = useState<Record<number, number>>({});
   const [shippingEdits, setShippingEdits] = useState<Record<number, string>>({});
 
@@ -158,6 +160,29 @@ export default function ManualOrderImportPage() {
     }
   }
 
+  async function clearCurrentBatch() {
+    if (!batchId) return;
+    setClearing(true);
+    try {
+      const res = await fetch(`/api/admin/manual-order-import/batches/${batchId}`, {
+        method: 'DELETE',
+        headers: authHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '清空当前批次失败');
+      message.success('已清空当前批次');
+      setBatchId(null);
+      setBatch(null);
+      setItems([]);
+      setAssignments({});
+      setShippingEdits({});
+    } catch (e: any) {
+      message.error(e.message || '清空当前批次失败');
+    } finally {
+      setClearing(false);
+    }
+  }
+
   const userOptions = useMemo(() => users
     .filter(user => Number(user.user_level || 1) < 3)
     .map(user => {
@@ -262,14 +287,26 @@ export default function ManualOrderImportPage() {
           ) : null}
         </Form>
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          插件会在空闲 D 扫描阶段优先执行导入读取；正式导入后的订单状态为空，会从现有“交易开始”流程继续。
+          插件会在空闲 D 扫描阶段优先执行导入读取；正式导入后不会自动触发交易开始。确认导入成功后，可清空当前批次。
         </Typography.Paragraph>
       </Card>
 
       {batch ? (
         <Card
           title={<Space>当前批次 #{batch.id} {statusTag(batch)}</Space>}
-          extra={<Button type="primary" onClick={confirmImport} loading={confirming} disabled={!batchStatusView.canConfirm}>确认导入</Button>}
+          extra={(
+            <Space>
+              <Button
+                danger
+                onClick={clearCurrentBatch}
+                loading={clearing}
+                disabled={!canClearManualOrderImportBatch(batch)}
+              >
+                清空当前批次
+              </Button>
+              <Button type="primary" onClick={confirmImport} loading={confirming} disabled={!batchStatusView.canConfirm}>确认导入</Button>
+            </Space>
+          )}
         >
           <Space wrap style={{ marginBottom: 12 }}>
             <Typography.Text>日期：{batch.start_date} 至 {batch.end_date}</Typography.Text>

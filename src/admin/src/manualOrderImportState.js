@@ -68,6 +68,10 @@ function shouldAutoRefreshManualOrderImportBatch(batch) {
   return status === 'requested' || status === 'scanning';
 }
 
+function canClearManualOrderImportBatch(batch) {
+  return Number(batch?.id || 0) > 0;
+}
+
 function formatManualOrderImportFlag(flags) {
   return Number(flags?.manualOrderImportFlag || 0) > 0 ? '1' : '0';
 }
@@ -77,6 +81,7 @@ function shouldEditManualImportShippingFee(shippingFeeText) {
 }
 
 module.exports = {
+  canClearManualOrderImportBatch,
   formatManualOrderImportFlag,
   getManualOrderImportCandidateCount,
   getManualOrderImportStatusView,
