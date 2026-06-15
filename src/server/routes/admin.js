@@ -1979,6 +1979,69 @@ function parseShippingRefreshIds(value) {
     });
 }
 
+async function markProductOrdersForResync(database, productId) {
+  const normalizedProductId = normalizeAuctionUrl(productId)?.auctionId || String(productId || '').trim().toLowerCase();
+  if (!normalizedProductId) {
+    return { productId: '', success: false, error: '商品 ID 无效' };
+  }
+
+  const existingOrderRows = await database.getAll(
+    `SELECT o.id AS order_id, t.id AS task_id, t.status
+     FROM orders o
+     INNER JOIN tasks t ON t.id = o.task_id
+     WHERE t.product_id = ?
+     ORDER BY datetime(COALESCE(o.won_at, t.updated_at, t.created_at)) DESC, o.id DESC`,
+    [normalizedProductId]
+  );
+  if (existingOrderRows.length > 0) {
+    const taskIds = [...new Set(existingOrderRows.map(row => Number(row.task_id)).filter(Boolean))];
+    const updateResult = await database.query(
+      `UPDATE tasks
+       SET force_orders_resync = 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (${buildPlaceholders(taskIds)})`,
+      taskIds
+    );
+    return {
+      productId: normalizedProductId,
+      success: true,
+      taskId: taskIds[0],
+      taskIds,
+      orderIds: existingOrderRows.map(row => row.order_id),
+      taskStatus: existingOrderRows[0]?.status || '',
+      hasExistingOrder: true,
+      markedCount: updateResult.rowCount || 0
+    };
+  }
+
+  const task = await database.getOne(
+    `SELECT id, status FROM tasks
+     WHERE product_id = ?
+     ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
+     LIMIT 1`,
+    [normalizedProductId]
+  );
+  if (!task) {
+    return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
+  }
+  const updateResult = await database.query(
+    `UPDATE tasks
+     SET force_orders_resync = 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [task.id]
+  );
+  return {
+    productId: normalizedProductId,
+    success: true,
+    taskId: task.id,
+    taskIds: [task.id],
+    taskStatus: task.status,
+    hasExistingOrder: false,
+    markedCount: updateResult.rowCount || 0
+  };
+}
+
 function normalizeProductType(value) {
   if (value === 'normal' || value === 'store') return value;
   if (value === 'tax_zero') return 'normal';
@@ -2247,34 +2310,8 @@ router.post('/orders-resync/run', async (req, res) => {
 
   const results = [];
   for (const productId of productIds) {
-    const task = await db.getOne(
-      `SELECT id, status FROM tasks
-       WHERE product_id = ?
-       ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
-       LIMIT 1`,
-      [productId]
-    );
-    if (!task) {
-      results.push({ productId, success: false, error: '系统中没有这个商品' });
-      continue;
-    }
     // 标记任务下次插件 /orders/sync 时强制覆盖；处理后插件路由会自动清除标记。
-    const updateResult = await db.query(
-      `UPDATE tasks
-       SET force_orders_resync = 1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [task.id]
-    );
-    const existingOrder = await db.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
-    results.push({
-      productId,
-      success: true,
-      taskId: task.id,
-      taskStatus: task.status,
-      hasExistingOrder: Boolean(existingOrder),
-      markedCount: updateResult.rowCount || 0
-    });
+    results.push(await markProductOrdersForResync(db, productId));
   }
 
   res.json({
@@ -2462,6 +2499,7 @@ module.exports.createManualOrderImportBatch = createManualOrderImportBatch;
 module.exports.confirmManualOrderImport = confirmManualOrderImport;
 module.exports.deleteManualOrderImportBatch = deleteManualOrderImportBatch;
 module.exports.normalizeManualOrderImportSummary = normalizeManualOrderImportSummary;
+module.exports.markProductOrdersForResync = markProductOrdersForResync;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;

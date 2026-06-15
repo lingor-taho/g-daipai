@@ -1519,6 +1519,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
   let updated = 0;
   let skippedExisting = 0;
   let forcedResync = 0;
+  let missingPrice = 0;
   for (const order of orders) {
     const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
@@ -1527,7 +1528,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
       `SELECT id, force_orders_resync
        FROM tasks
        WHERE product_id = ? AND status IN ('bidding', 'success', 'failed')
-       ORDER BY datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
+       ORDER BY force_orders_resync DESC, datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
        LIMIT 1`,
       [productId]
     );
@@ -1536,6 +1537,11 @@ async function syncYahooWonOrders(orders = [], database = db) {
     const existingOrder = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
     if (existingOrder && !isForced) {
       skippedExisting += 1;
+      continue;
+    }
+    const finalPrice = normalizeYenAmount(order.price);
+    if (!finalPrice) {
+      missingPrice += 1;
       continue;
     }
     await database.query(
@@ -1548,7 +1554,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
       [task.id]
     );
     await upsertOrderFromTask(task.id, {
-      finalPrice: order.price,
+      finalPrice,
       wonTimeText: order.wonTimeText,
       transactionUrl: order.transactionUrl
     }, database);
@@ -1558,7 +1564,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
     if (isForced) forcedResync += 1;
     updated += 1;
   }
-  return { updated, failed: 0, skippedExisting, forcedResync };
+  return { updated, failed: 0, skippedExisting, forcedResync, missingPrice };
 }
 
 function normalizeManualImportProductId(value) {

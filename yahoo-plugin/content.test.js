@@ -1864,6 +1864,28 @@ function testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice
   assert.equal(orders[0].price, '23,100');
 }
 
+function testOrderHistoryPriceElementAcceptsRealYenCharacter() {
+  const orderContainer = createOrderContainer(
+    '商品が発送されました 【美品】 バーグファベル 管理K261716,600円ストア6/15 22:08 商品ID：k1230268385',
+    '【美品】 バーグファベル 管理K26171',
+    'https://auctions.yahoo.co.jp/jp/auction/k1230268385',
+    ['6,600円']
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'k1230268385');
+  assert.equal(orders[0].price, '6,600');
+}
+
 function testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice() {
   // 没有独立价格元素时，兜底正则要求"千位逗号格式"或纯短数字，避免吃到 F2617123,100 这种粘连。
   const orderContainer = createOrderContainer(
@@ -2573,6 +2595,7 @@ async function run() {
   testOrderHistoryExtractsUnlabeledWonPriceLine();
   testOrderHistoryExtractsFirstYenAmountWhenTextIsFlattened();
   testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice();
+  testOrderHistoryPriceElementAcceptsRealYenCharacter();
   testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
   testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
   testBiddingItemsExtractsOutbidRebidRows();

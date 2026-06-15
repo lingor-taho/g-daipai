@@ -960,7 +960,7 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
   assert.equal(orderInsert.params[4], 350);
 }
 
-async function testSyncYahooWonOrdersPreservesExistingFinalPriceWhenResyncPriceMissing() {
+async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
   const calls = [];
   const fakeDb = {
     async getOne(sql, params) {
@@ -989,7 +989,7 @@ async function testSyncYahooWonOrdersPreservesExistingFinalPriceWhenResyncPriceM
   const result = await syncYahooWonOrders([
     {
       productId: 'k1230268385',
-      price: '',
+      price: '6,600円',
       wonTimeText: '6/15 22:08',
       transactionUrl: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=k1230268385'
     }
@@ -1000,7 +1000,33 @@ async function testSyncYahooWonOrdersPreservesExistingFinalPriceWhenResyncPriceM
   const orderUpdate = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql) && /final_price/.test(call.sql));
   assert.ok(orderUpdate);
   assert.match(orderUpdate.sql, /final_price = COALESCE\(\?, final_price\)/);
-  assert.equal(orderUpdate.params[3], null);
+  assert.equal(orderUpdate.params[3], 6600);
+}
+
+async function testSyncYahooWonOrdersKeepsForcedResyncWhenPriceMissing() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) return { id: 77, force_orders_resync: 1 };
+      if (/SELECT id FROM orders WHERE task_id/.test(sql)) return { id: 177 };
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    { productId: 'k1230268385', price: '', wonTimeText: '6/15 22:08' }
+  ], fakeDb);
+
+  assert.equal(result.updated, 0);
+  assert.equal(result.missingPrice, 1);
+  assert.equal(result.forcedResync, 0);
+  assert.equal(calls.some(call => call.type === 'query' && /force_orders_resync = 0/.test(call.sql)), false);
+  assert.equal(calls.some(call => call.type === 'query' && /UPDATE orders/.test(call.sql)), false);
 }
 
 async function testGetScanJobsReturnsWaitingShippingOnly() {
@@ -1862,7 +1888,8 @@ Promise.all([
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testUpdateTransactionStartStatusMarksOrderCancelled(),
   testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
-  testSyncYahooWonOrdersPreservesExistingFinalPriceWhenResyncPriceMissing(),
+  testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce(),
+  testSyncYahooWonOrdersKeepsForcedResyncWhenPriceMissing(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),

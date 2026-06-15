@@ -26,6 +26,7 @@ const {
   parseStoreBundleChildProductIds,
   normalizeManualOrderImportSummary,
   backfillStoreBundle,
+  markProductOrdersForResync,
   ORDER_STATUS_PENDING_SHIPMENT,
   ORDER_STATUS_BUNDLE_COMPLETED
 } = require('./admin');
@@ -754,6 +755,41 @@ async function testReassignOrderOwnerRejectsAdminUser() {
   );
 }
 
+async function testMarkProductOrdersForResyncPrefersExistingOrderTasks() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      if (/FROM orders o/.test(sql)) {
+        return [
+          { order_id: 501, task_id: 11 },
+          { order_id: 502, task_id: 12 }
+        ];
+      }
+      return [];
+    },
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks/.test(sql)) return { id: 99, status: 'success' };
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 2 };
+    }
+  };
+
+  const result = await markProductOrdersForResync(fakeDb, 'k1230268385');
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.taskIds, [11, 12]);
+  assert.deepEqual(result.orderIds, [501, 502]);
+  assert.equal(result.hasExistingOrder, true);
+  const updateCall = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
+  assert.match(updateCall.sql, /id IN \(\?,\?\)/);
+  assert.deepEqual(updateCall.params, [11, 12]);
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testStoreBidderPaysShippingCanSettleAsFree();
@@ -793,7 +829,8 @@ Promise.all([
   testDeleteProductDataRemovesTaskOrderAndBiddingAssociations(),
   testDeleteProductDataCanRemoveOrphanBiddingItem(),
   testReassignOrderOwnerUpdatesSourceAndSameProductTasks(),
-  testReassignOrderOwnerRejectsAdminUser()
+  testReassignOrderOwnerRejectsAdminUser(),
+  testMarkProductOrdersForResyncPrefersExistingOrderTasks()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;
