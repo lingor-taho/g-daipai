@@ -1626,6 +1626,7 @@ function getBundleTransactionActionState() {
     canPlacementOk: detectPlacementDefaultModal(),
     canDecide: !!findClickableByText(/^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/),
     canConfirm: !!findClickableByText(/\u78ba\u5b9a\u3059\u308b/),
+    paymentReady: !!findClickableByText(/Yahoo!\s*\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
     waitingShipping: detectWaitingShippingPaymentAmount(),
     complete: detectBundleRequestedComplete(),
     url: window.location.href

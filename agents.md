@@ -322,6 +322,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-15 | 普通商品、无同捆、有固定运费时，Yahoo 可能跳过“取引情報を入力する”页，直接进入配送/支付信息输入页，插件旧逻辑会直接把订单标为待支付，未点 `決定する/確定する` | content 状态识别新增 `paymentReady`；普通无同捆固定运费交易开始流程在标记 `pending_payment` 前，若当前页已有 `決定する` 或 `確定する`，会先完成前置提交再进入支付步骤。相关取引页点击流程改为可从当前状态继续。验证：`node yahoo-plugin/background.test.js`、`node yahoo-plugin/content.test.js`、`node yahoo-plugin/encoding.test.js` |
 | 2026-06-15 | 手动导入订单确认后会自动触发交易开始，且确认导入后的批次信息仍留在当前页面 | 确认导入不再写 `transaction_start_requested` / `transaction_start_requested_source`，导入订单保持 `orders.order_status=NULL` 等待后续人工或定时交易开始；后台导入订单页新增“清空当前批次”按钮，调用 `DELETE /api/admin/manual-order-import/batches/:id` 删除当前批次和候选项。验证：`node src/server/routes/admin.orders.test.js`、`node src/admin/src/manualOrderImportState.test.js`、`npm run build --prefix src/admin` |
 | 2026-05-12 | `plugin.js` route 使用 `await` 但函数未声明 `async` | 添加 `async` |
 | 2026-05-12 | routes 中 `db.getOne/getAll` 缺少 `await` | 补齐 async/await |

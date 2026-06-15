@@ -3853,16 +3853,21 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
 }
 
 async function completeNormalBundleRequest(tab) {
-  let result = await clickBundleActionAndFollowTab(tab, 'close');
-  if (!result?.success) return result;
-  tab = result.tab;
-
-  result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canStart || state.canDecide || state.complete);
-  if (!result?.success) return result;
-  tab = result.tab;
-
+  let result = null;
   let state = await getBundleActionState(tab.id);
-  if (state?.canStart && !state?.canDecide && !state?.complete) {
+  if (!state?.canDecide && !state?.canConfirm && !state?.complete) {
+    result = await clickBundleActionAndFollowTab(tab, 'close');
+    if (!result?.success) return result;
+    tab = result.tab;
+
+    result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canStart || state.canDecide || state.complete);
+    if (!result?.success) return result;
+    tab = result.tab;
+
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (state?.canStart && !state?.canDecide && !state?.canConfirm && !state?.complete) {
     result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canDecide || state.complete);
     if (!result?.success) return result;
     tab = result.tab;
@@ -3873,9 +3878,22 @@ async function completeNormalBundleRequest(tab) {
     return { success: true, tab };
   }
 
-  result = await clickBundleActionAndFollowTab(tab, 'decide');
+  if (state?.canConfirm) {
+    result = await clickBundleActionAndFollowTab(tab, 'confirm');
+    if (!result?.success) return result;
+    return { success: true, tab: result.tab };
+  }
+
+  result = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.complete);
   if (!result?.success) return result;
-  return { success: true, tab: result.tab };
+  tab = result.tab;
+  state = await getBundleActionState(tab.id);
+  if (state?.canConfirm) {
+    result = await clickBundleActionAndFollowTab(tab, 'confirm');
+    if (!result?.success) return result;
+    return { success: true, tab: result.tab };
+  }
+  return { success: true, tab };
 }
 
 async function completeBidderPaysShippingTransaction(tab) {
@@ -3902,6 +3920,44 @@ async function completeBidderPaysShippingTransaction(tab) {
   result = await clickBundleActionAndFollowTab(tab, 'confirm', state => state.waitingShipping);
   if (!result?.success) return result;
   return { success: true, tab: result.tab };
+}
+
+function shouldCompleteFixedShippingTransactionInfo(state) {
+  return !!(
+    state?.canPlacementOk ||
+    state?.canDecide ||
+    state?.canConfirm
+  );
+}
+
+async function completeFixedShippingTransactionInfo(tab) {
+  let state = await getBundleActionState(tab.id);
+  if (!shouldCompleteFixedShippingTransactionInfo(state)) {
+    return { success: true, tab, skipped: true };
+  }
+
+  let result = null;
+  if (state?.canPlacementOk) {
+    result = await clickBundleActionAndFollowTab(tab, 'placementOk', state => state.canDecide || state.paymentReady);
+    if (!result?.success) return result;
+    tab = result.tab;
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (state?.canDecide) {
+    result = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.paymentReady || state.complete);
+    if (!result?.success) return result;
+    tab = result.tab;
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (state?.canConfirm) {
+    result = await clickBundleActionAndFollowTab(tab, 'confirm', state => state.paymentReady || state.complete);
+    if (!result?.success) return result;
+    tab = result.tab;
+  }
+
+  return { success: true, tab };
 }
 
 async function executeTransactionStartJob(job) {
@@ -3962,6 +4018,12 @@ async function executeTransactionStartJob(job) {
       tab = result.tab;
       await updateTransactionStartStatus({ orderId: job.orderId, status: 'waiting_shipping' });
     } else {
+      const result = await completeFixedShippingTransactionInfo(tab);
+      if (!result?.success) {
+        await updateTransactionStartStatus({ orderId: job.orderId, error: result?.error || 'fixed shipping transaction info failed' });
+        return { processedProductIds: [job.productId] };
+      }
+      tab = result.tab;
       await updateTransactionStartStatus({ orderId: job.orderId, status: 'pending_payment' });
     }
     return { processedProductIds: [job.productId] };
@@ -4142,7 +4204,13 @@ async function extractBundleScanResult(tab) {
 }
 
 function shouldAttemptBundleInputAction(result, state) {
-  return ['unknown', 'waiting_agreement', 'shipping_pending', 'input_required'].includes(result?.type) && !!state?.canInputTransaction;
+  return ['unknown', 'waiting_agreement', 'shipping_pending', 'input_required'].includes(result?.type) && (
+    !!state?.canInputTransaction ||
+    !!state?.canPlacementOk ||
+    !!state?.canDecide ||
+    !!state?.canConfirm ||
+    !!state?.waitingShipping
+  );
 }
 
 async function executePendingBundleScanJob(job) {
@@ -4172,23 +4240,26 @@ async function executePendingBundleScanJob(job) {
     if (['unknown', 'waiting_agreement', 'shipping_pending', 'input_required'].includes(result?.type)) {
       let state = await getBundleActionState(tab.id);
       if (shouldAttemptBundleInputAction(result, state)) {
-        let clickResult = await clickBundleActionAndFollowTab(tab, 'input', state => state.canPlacementOk || state.canDecide || state.waitingShipping);
-        if (!clickResult?.success) return { stop: false };
-        tab = clickResult.tab;
-        state = await getBundleActionState(tab.id);
+        let clickResult = null;
+        if (state?.canInputTransaction) {
+          clickResult = await clickBundleActionAndFollowTab(tab, 'input', state => state.canPlacementOk || state.canDecide || state.waitingShipping);
+          if (!clickResult?.success) return { stop: false };
+          tab = clickResult.tab;
+          state = await getBundleActionState(tab.id);
+        }
         if (state?.canPlacementOk) {
           clickResult = await clickBundleActionAndFollowTab(tab, 'placementOk', state => state.canDecide || state.waitingShipping);
           if (!clickResult?.success) return { stop: false };
           tab = clickResult.tab;
           state = await getBundleActionState(tab.id);
         }
-        if (!state?.waitingShipping) {
+        if (!state?.waitingShipping && state?.canDecide) {
           clickResult = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.waitingShipping);
           if (!clickResult?.success) return { stop: false };
           tab = clickResult.tab;
           state = await getBundleActionState(tab.id);
         }
-        if (!state?.waitingShipping) {
+        if (!state?.waitingShipping && state?.canConfirm) {
           clickResult = await clickBundleActionAndFollowTab(tab, 'confirm', state => state.waitingShipping);
           if (!clickResult?.success) return { stop: false };
           tab = clickResult.tab;

@@ -200,6 +200,59 @@ async function testNormalBundleRequestClicksSecondStartPageBeforeDecide() {
   assert.deepEqual(clickedActions, ['close', 'start', 'start', 'decide']);
 }
 
+async function testNormalBundleRequestCanStartFromInputPage() {
+  const clickedActions = [];
+  let phase = 'decide';
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [{ id: 6, url: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=s1232869893', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=s1232869893', status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 6);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          if (message.action === 'decide' && phase === 'decide') {
+            phase = 'confirm';
+            return { success: true };
+          }
+          if (message.action === 'confirm' && phase === 'confirm') {
+            phase = 'complete';
+            return { success: true };
+          }
+          return { success: false, error: `${message.action} button not found` };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canStart: false,
+              canInputTransaction: false,
+              canDecide: phase === 'decide',
+              canConfirm: phase === 'confirm',
+              complete: phase === 'complete'
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    }
+  });
+
+  const result = await api.completeNormalBundleRequest({ id: 6 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(clickedActions, ['decide', 'confirm']);
+}
+
 async function testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab() {
   const api = loadBackgroundForTest({
     tabs: {
@@ -625,6 +678,14 @@ function testBundleInputActionCanRunFromWaitingAgreementState() {
   assert.equal(api.shouldAttemptBundleInputAction(
     { type: 'input_required' },
     { canInputTransaction: true }
+  ), true);
+  assert.equal(api.shouldAttemptBundleInputAction(
+    { type: 'unknown' },
+    { canDecide: true }
+  ), true);
+  assert.equal(api.shouldAttemptBundleInputAction(
+    { type: 'unknown' },
+    { canConfirm: true }
   ), true);
   assert.equal(api.shouldAttemptBundleInputAction(
     { type: 'child_agreed' },
@@ -1260,6 +1321,93 @@ async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShip
   assert.equal(statusCalls.length, 1);
   assert.equal(statusCalls[0].orderId, 77);
   assert.equal(statusCalls[0].status, 'waiting_shipping');
+}
+
+async function testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment() {
+  const statusCalls = [];
+  const clickedActions = [];
+  let phase = 'decide';
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async create(urlOrOptions) {
+        const url = typeof urlOrOptions === 'string' ? urlOrOptions : urlOrOptions?.url;
+        return { id: 42, url, status: 'complete', windowId: 3 };
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=s1232869893', status: 'complete', windowId: 3 };
+      },
+      async query() {
+        return [{ id: 42, url: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=s1232869893', status: 'complete', windowId: 3 }];
+      },
+      async sendMessage(id, message) {
+        if (message.type === 'EXTRACT_TRANSACTION_START_INFO') {
+          return { success: true, loginStatus: { status: 'ok' }, info: { available: false } };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canDecide: phase === 'decide',
+              canConfirm: phase === 'confirm',
+              paymentReady: phase === 'payment',
+              complete: false,
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=s1232869893'
+            }
+          };
+        }
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          if (message.action === 'decide' && phase === 'decide') {
+            phase = 'confirm';
+            return { success: true };
+          }
+          if (message.action === 'confirm' && phase === 'confirm') {
+            phase = 'payment';
+            return { success: true };
+          }
+          return { success: false, error: `${message.action} button not found` };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 78,
+                productId: 's1232869893',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=s1232869893',
+                shippingFeeText: '230\u5186'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runTransactionStartJobs();
+
+  assert.deepEqual(clickedActions, ['decide', 'confirm']);
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].orderId, 78);
+  assert.equal(statusCalls[0].status, 'pending_payment');
 }
 
 async function testRunPaymentJobsCompletesNormalItemPayment() {
@@ -3918,6 +4066,7 @@ async function run() {
   await testWithTimeoutMarksCloseTab();
   await testBundleStartWaitsForDecideButtonState();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
+  await testNormalBundleRequestCanStartFromInputPage();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
@@ -3954,6 +4103,7 @@ async function run() {
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
+  await testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment();
   await testRunPaymentJobsCompletesNormalItemPayment();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput();

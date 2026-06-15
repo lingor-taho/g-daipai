@@ -1561,6 +1561,27 @@ function testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount() {
   assert.equal(state.waitingShipping, true);
 }
 
+function testBundleTransactionActionStateDetectsPaymentReadyPage() {
+  const paymentButton = createTestElement('Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046');
+  paymentButton.tagName = 'A';
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\u306b\u53d6\u5f15\u60c5\u5831\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002\u5f15\u304d\u7d9a\u304d\u3001\u652f\u6255\u3044\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector === 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]') return [paymentButton];
+        if (selector === '*') return [paymentButton];
+        return [];
+      }
+    }
+  );
+
+  const state = api.getBundleTransactionActionState();
+
+  assert.equal(state.paymentReady, true);
+}
+
 function testExtractWaitingShippingScanResultFindsShippingFee() {
   const api = loadContentForTest(
     '\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 2,560\u5186\uff08\u843d\u672d\u4fa1\u683c\uff1a1,500\u5186 \u6570\u91cf\uff1a1\u500b \u9001\u6599\uff1a1,060\u5186\uff09 \u652f\u6255\u3044\u671f\u9650',
@@ -1913,6 +1934,7 @@ async function run() {
   testBundleTransactionActionStateDetectsReviewButtonAsDecide();
   testBundleTransactionActionStateDetectsPlacementOkModal();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
+  testBundleTransactionActionStateDetectsPaymentReadyPage();
   testExtractWaitingShippingScanResultFindsShippingFee();
   testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
   testExtractWaitingShippingScanResultDetectsPendingShipping();
