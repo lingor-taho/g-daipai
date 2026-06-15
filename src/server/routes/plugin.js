@@ -997,7 +997,7 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
     await database.query(
       `UPDATE orders
        SET product_id = COALESCE(product_id, ?),
-           product_title = ?, product_url = ?, final_price = ?,
+           product_title = ?, product_url = ?, final_price = COALESCE(?, final_price),
            won_at = COALESCE(?, won_at),
            won_time_text = COALESCE(?, won_time_text),
            transaction_url = COALESCE(?, transaction_url),
@@ -1655,7 +1655,7 @@ async function updateManualOrderImportStatus(payload = {}, database = db) {
          product_url = excluded.product_url,
          product_title = excluded.product_title,
          product_image_url = excluded.product_image_url,
-         final_price = excluded.final_price,
+         final_price = COALESCE(NULLIF(excluded.final_price, 0), manual_order_import_items.final_price),
          won_at = excluded.won_at,
          won_time_text = excluded.won_time_text,
          transaction_url = excluded.transaction_url,
