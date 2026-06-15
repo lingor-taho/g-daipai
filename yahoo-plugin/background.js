@@ -5,6 +5,9 @@ const AUTO_BID_ENABLED = true;
 const TRANSACTION_START_ENABLED = globalThis.__G_DAIPAI_TRANSACTION_START_ENABLED__ !== false;
 const PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS = 60000;
 const TASK_EXECUTION_TIMEOUT_MS = 30000;
+const MULTI_BID_TASK_EXECUTION_TIMEOUT_MS = 180000;
+const MULTI_BID_TASK_PROGRESS_EXTENSION_MS = 60000;
+const MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -24,6 +27,7 @@ let manualVerificationTabId = null;
 const ignoredManualVerificationTabIds = new Set();
 const managedTaskTabs = new Set();
 const managedTaskTabsByTaskId = new Map();
+const activeBidProgressExtenders = new Map();
 
 async function apiFetch(path, options) {
   let lastError;
@@ -82,6 +86,20 @@ async function touchTaskSchedule(taskId, status) {
   }
 }
 
+async function heartbeatProcessingTask(taskId) {
+  if (!taskId) return null;
+  try {
+    const res = await apiFetch(`/api/plugin/task/${taskId}/heartbeat`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    return await res.json().catch(() => ({ success: res.ok }));
+  } catch (e) {
+    logBackgroundIssue('[Yahoo Bid] Failed to heartbeat processing task:', e);
+    return null;
+  }
+}
+
 function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const tid = setTimeout(() => {
@@ -110,6 +128,18 @@ function buildTaskTimeoutError(timeoutMs = TASK_EXECUTION_TIMEOUT_MS) {
   return error;
 }
 
+function getTaskExecutionTimeoutMs(task = {}) {
+  return task?.strategy === 'multi_bid' ? MULTI_BID_TASK_EXECUTION_TIMEOUT_MS : TASK_EXECUTION_TIMEOUT_MS;
+}
+
+function getTaskProgressExtensionMs(task = {}) {
+  return task?.strategy === 'multi_bid' ? MULTI_BID_TASK_PROGRESS_EXTENSION_MS : 0;
+}
+
+function getTaskExecutionMaxTimeoutMs(task = {}) {
+  return task?.strategy === 'multi_bid' ? MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS : getTaskExecutionTimeoutMs(task);
+}
+
 function withTimeout(promise, timeoutMs, errorFactory = () => buildTaskTimeoutError(timeoutMs)) {
   let timeoutId;
   const timeout = new Promise((_, reject) => {
@@ -118,8 +148,81 @@ function withTimeout(promise, timeoutMs, errorFactory = () => buildTaskTimeoutEr
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
+function withProgressTimeout(promise, timeoutMs, options = {}) {
+  const startedAt = Date.now();
+  const extensionMs = Math.max(0, Number(options.extensionMs || 0));
+  const maxTimeoutMs = Math.max(timeoutMs, Number(options.maxTimeoutMs || timeoutMs));
+  const errorFactory = options.errorFactory || (elapsedMs => buildTaskTimeoutError(elapsedMs));
+  let timeoutId;
+  let rejectTimeout;
+  let deadlineAt = startedAt + timeoutMs;
+
+  function schedule() {
+    clearTimeout(timeoutId);
+    const delay = Math.max(0, deadlineAt - Date.now());
+    timeoutId = setTimeout(() => rejectTimeout(errorFactory(Date.now() - startedAt)), delay);
+  }
+
+  function extend() {
+    if (!extensionMs) return deadlineAt - Date.now();
+    deadlineAt = Math.min(deadlineAt + extensionMs, startedAt + maxTimeoutMs);
+    schedule();
+    return deadlineAt - Date.now();
+  }
+
+  const timeout = new Promise((_, reject) => {
+    rejectTimeout = reject;
+    schedule();
+  });
+  const unregister = typeof options.registerProgressHandler === 'function'
+    ? options.registerProgressHandler(extend)
+    : null;
+
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timeoutId);
+    if (typeof unregister === 'function') unregister();
+  });
+}
+
+function normalizeProgressTaskId(taskId) {
+  return taskId == null ? '' : String(taskId);
+}
+
+function registerBidProgressExtender(taskId, extendFn) {
+  const key = normalizeProgressTaskId(taskId);
+  if (!key || typeof extendFn !== 'function') return () => {};
+  activeBidProgressExtenders.set(key, extendFn);
+  return () => {
+    if (activeBidProgressExtenders.get(key) === extendFn) {
+      activeBidProgressExtenders.delete(key);
+    }
+  };
+}
+
+function handleBidProgressMessage(msg = {}) {
+  const key = normalizeProgressTaskId(msg.taskId);
+  const extend = activeBidProgressExtenders.get(key);
+  if (!extend) return false;
+  extend(msg);
+  return true;
+}
+
 function isMessageChannelClosed(error) {
   return /message channel closed|Receiving end does not exist|Could not establish connection/i.test(error?.message || '');
+}
+
+function isNoTabWithIdError(error) {
+  return /No tab with id/i.test(error?.message || String(error || ''));
+}
+
+function isTransientFetchError(error) {
+  const text = error?.message || String(error || '');
+  return /Failed to fetch|NetworkError|Load failed|ERR_CONNECTION|ECONNREFUSED|ECONNRESET/i.test(text);
+}
+
+function logBackgroundIssue(label, error) {
+  const logger = isTransientFetchError(error) ? console.warn : console.error;
+  logger(label, error);
 }
 
 async function openTaskPage(task) {
@@ -204,6 +307,7 @@ async function sendBidMessageV2(tabId, task) {
   const auctionId = normalizeAuctionId(task.product_url);
   return chrome.tabs.sendMessage(tabId, {
     type: 'EXECUTE_BID',
+    taskId: task.id,
     auctionId,
     maxPrice: task.max_price,
     userMaxPrice: task.user_max_price || task.max_price,
@@ -215,13 +319,24 @@ async function sendBidMessageV2(tabId, task) {
   });
 }
 
-async function injectContentScript(tabId) {
+async function injectContentScript(tabId, options = {}) {
+  if (!tabId) {
+    const error = new Error('No tab with id: ' + tabId);
+    if (options.ignoreMissingTab) return false;
+    throw error;
+  }
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['content.js']
     });
+    return true;
   } catch (e) {
+    if (isNoTabWithIdError(e)) {
+      console.warn('[Yahoo Bid] Skip injecting content script because tab no longer exists:', tabId);
+      if (options.ignoreMissingTab) return false;
+      throw e;
+    }
     console.error('[Yahoo Bid] Failed to inject content script:', e);
     throw e;
   }
@@ -477,7 +592,7 @@ async function syncOrderHistory(orders) {
     });
     return await res.json().catch(() => null);
   } catch (e) {
-    console.error('[Yahoo Bid] Failed to sync order history:', e);
+    logBackgroundIssue('[Yahoo Bid] Failed to sync order history:', e);
     return null;
   }
 }
@@ -491,7 +606,7 @@ async function syncBiddingItems(items) {
       body: JSON.stringify({ items })
     });
   } catch (e) {
-    console.error('[Yahoo Bid] Failed to sync bidding items:', e);
+    logBackgroundIssue('[Yahoo Bid] Failed to sync bidding items:', e);
   }
 }
 
@@ -500,7 +615,7 @@ async function fetchNextIdleAction() {
     const res = await apiFetch('/api/plugin/idle-action/next');
     return await res.json();
   } catch (e) {
-    console.error('[Yahoo Bid] Failed to fetch idle action:', e);
+    logBackgroundIssue('[Yahoo Bid] Failed to fetch idle action:', e);
     return { action: 'none' };
   }
 }
@@ -513,7 +628,7 @@ async function completeIdleAction(action) {
       body: JSON.stringify({ action: action || 'none' })
     });
   } catch (e) {
-    console.error('[Yahoo Bid] Failed to complete idle action:', e);
+    logBackgroundIssue('[Yahoo Bid] Failed to complete idle action:', e);
   }
 }
 
@@ -771,6 +886,9 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
+  const cancelled = /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081/.test(bodyText) ||
+    /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u307e\u3057\u305f/.test(bodyText) ||
+    /\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(bodyText);
   return {
     url: snapshot.url || '',
     title: snapshot.title || '',
@@ -783,6 +901,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     shippingOptions,
     selectedShippingAmountJpy: selectedShippingOption ? selectedShippingOption.amountJpy : null,
     alreadyPaid,
+    cancelled,
     complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText),
     processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(bodyText),
     hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
@@ -2515,7 +2634,7 @@ async function reportYahooLoginStatus(loginStatus) {
       })
     });
   } catch (e) {
-    console.error('[Yahoo Bid] Failed to report Yahoo login status:', e);
+    logBackgroundIssue('[Yahoo Bid] Failed to report Yahoo login status:', e);
   }
 }
 
@@ -2540,8 +2659,13 @@ async function openWonPageForSync(options = {}) {
   try {
     if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
     await sleep(3000);
-    await injectContentScript(tab.id);
+    const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
+    if (!injected) return null;
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ORDER_HISTORY' }).catch(error => {
+      if (closeAfter && isNoTabWithIdError(error)) {
+        console.warn('[Yahoo Bid] Skip order history sync because tab no longer exists:', tab.id);
+        return null;
+      }
       console.error('[Yahoo Bid] Failed to extract order history:', error);
       return null;
     });
@@ -2704,8 +2828,13 @@ async function openBiddingPageForSync(options = {}) {
   try {
     if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
     await sleep(3000);
-    await injectContentScript(tab.id);
+    const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
+    if (!injected) return null;
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
+      if (closeAfter && isNoTabWithIdError(error)) {
+        console.warn('[Yahoo Bid] Skip bidding sync because tab no longer exists:', tab.id);
+        return null;
+      }
       console.error('[Yahoo Bid] Failed to extract bidding items:', error);
       return null;
     });
@@ -3984,6 +4113,11 @@ async function executeTransactionStartJob(job) {
       return;
     }
     const info = response.info || {};
+    const initialState = await getBundleActionState(tab.id).catch(() => null);
+    if (initialState?.cancelled) {
+      await updateTransactionStartStatus({ orderId: job.orderId, status: 'cancelled' });
+      return { processedProductIds: [job.productId] };
+    }
     if (info.available) {
       if (!info.quantityMatched) {
         await updateTransactionStartStatus({ orderId: job.orderId, error: 'bundle quantity mismatch' });
@@ -4317,6 +4451,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
     tab = await openTransactionPage(job);
     let state = await getPaymentPageState(tab.id);
     let storeConfirmationHandled = false;
+    if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
 
@@ -4327,6 +4462,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
       state = result.state;
     }
 
+    if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
 
@@ -4368,11 +4504,12 @@ async function executePaymentJob(job, paymentBatch = {}) {
       entryClicks += 1;
       tab = result.tab;
       state = result.state;
+      if (state?.cancelled) return { cancelled: true };
     }
 
     if (!state?.alreadyPaid && !state?.complete && !state?.hasReviewButton) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        nextState.cancelled || nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
         15000
       );
       if (reviewTab) {
@@ -4380,6 +4517,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
+    if (state?.cancelled) return { cancelled: true };
     if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
@@ -4397,7 +4535,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (state?.complete) return { success: true };
     if (!state?.hasReviewButton) {
       const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+        nextState.cancelled || nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
         15000
       );
       if (reviewTab) {
@@ -4414,6 +4552,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
       storeConfirmationHandled = true;
       storeConfirmationCompleted = true;
     }
+    if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
     if (!state?.hasReviewButton) {
@@ -4430,6 +4569,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
     tab = result.tab;
     state = result.state;
 
+    if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
     if (!state?.hasFinalizeButton) throw new Error('payment finalize button not found');
@@ -4443,7 +4583,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
 
     try {
       tab = await waitForPaymentStateAcrossTabs(tab, nextState =>
-        nextState.alreadyPaid || nextState.complete,
+        nextState.cancelled || nextState.alreadyPaid || nextState.complete,
         previousTabIds,
         PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS
       );
@@ -4451,6 +4591,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
       throw new Error(`payment completion page did not appear within 15s: ${e.message || e}`);
     }
     state = tab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
+    if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
     throw new Error('payment completion text not found');
@@ -4473,6 +4614,10 @@ async function runPaymentJobs() {
   for (const job of jobs) {
     try {
       const paymentResult = await executePaymentJob(job, result);
+      if (paymentResult?.cancelled) {
+        await updatePaymentStatus({ orderId: job.orderId, productId: job.productId, status: 'cancelled' });
+        continue;
+      }
       if (paymentResult?.alreadyPaid || paymentResult?.success) {
         await updatePaymentStatus({ orderId: job.orderId, productId: job.productId, status: 'success' });
         continue;
@@ -4702,8 +4847,11 @@ async function executeBidTask(task, options = {}) {
   console.log('[Yahoo Bid] Executing task:', task.product_url);
   let taskTab = null;
   let taskTimedOut = false;
+  const taskExecutionTimeoutMs = getTaskExecutionTimeoutMs(task);
+  const taskProgressExtensionMs = getTaskProgressExtensionMs(task);
+  const taskExecutionMaxTimeoutMs = getTaskExecutionMaxTimeoutMs(task);
   try {
-    await withTimeout((async () => {
+    await withProgressTimeout((async () => {
           if (!options.alreadyClaimed) {
           const markedProcessing = await markTaskStatus(task.id, 'processing');
           if (taskTimedOut) return;
@@ -4745,9 +4893,20 @@ async function executeBidTask(task, options = {}) {
             await closeTaskTab(tab.id);
           }
           console.log('[Yahoo Bid] Task completed:', task.id, result);
-    })(), TASK_EXECUTION_TIMEOUT_MS, () => {
+    })(), taskExecutionTimeoutMs, {
+      extensionMs: taskProgressExtensionMs,
+      maxTimeoutMs: taskExecutionMaxTimeoutMs,
+      registerProgressHandler: taskProgressExtensionMs
+        ? extend => registerBidProgressExtender(task.id, msg => {
+          const remainingMs = extend();
+          heartbeatProcessingTask(task.id).catch(() => {});
+          console.debug('[Yahoo Bid] Extended multi-bid task timeout:', task.id, msg?.stage || '', Math.round(remainingMs / 1000) + 's remaining');
+        })
+        : null,
+      errorFactory: elapsedMs => {
           taskTimedOut = true;
-          return buildTaskTimeoutError(TASK_EXECUTION_TIMEOUT_MS);
+          return buildTaskTimeoutError(elapsedMs);
+      }
     });
   } catch (e) {
     await chrome.storage.session.remove(['currentTask']);
@@ -4799,7 +4958,13 @@ chrome.alarms.onAlarm.addListener(alarm => {
 globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   shouldKeepTaskTabOpen,
   buildTaskTimeoutError,
+  getTaskExecutionTimeoutMs,
+  getTaskProgressExtensionMs,
+  getTaskExecutionMaxTimeoutMs,
   withTimeout,
+  withProgressTimeout,
+  registerBidProgressExtender,
+  handleBidProgressMessage,
   waitForCurrentTabNavigation,
   clickBundleActionAndFollowTab,
   completeNormalBundleRequest,
@@ -4834,6 +4999,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   assertPaymentAmountMatches,
   syncIdleYahooPages,
   syncMonitorYahooPages,
+  injectContentScript,
   runWorkflowAction,
   executeBidTask,
   pollBidPool,
@@ -4864,6 +5030,11 @@ startPolling();
 
 // Listen for messages from content script or client page
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'BID_PROGRESS') {
+    const extended = handleBidProgressMessage(msg);
+    if (sendResponse) sendResponse({ success: extended });
+    return true;
+  }
   if (msg.type === 'BID_RESULT') {
     const { taskId, result } = msg;
     if (result?.pendingFinal) {

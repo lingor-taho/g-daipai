@@ -322,10 +322,27 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-15 | 再入札价格输入后页面停留太短，几乎看不到价格就提交，排查失败页不方便 | `content.js` 新增再入札专用提交前等待 `MULTI_BID_REBID_SUBMIT_DELAY_MS=1000`：再入札写入价格后等待 1 秒再点击 `入札する`；普通金额输入页仍保留 800ms。新增测试确保再入札提交前等待至少 1000ms。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 多次出价再入札价格正确，但点击 `入札する` 后 Yahoo 直接进入失败页，怀疑提交方式被 Yahoo 判定为异常 | 根因排查到 `content.js` 的出价流程 `clickElement()` 同时手动派发 `MouseEvent('click')` 并调用 `el.click()`，对 Yahoo React 按钮可能等于双提交。已改为只执行一次原生 `el.click()`，保留 pointer/mouse down/up，不再额外派发 click 事件；新增测试确保再入札提交按钮只触发一次 click。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 多次出价商品 `v1233335580` 出价和再入札流程都正确，但后续突然关闭 tab 并显示“失败：响应超时” | 根因是 `executeBidTask()` 外层单任务总超时固定 30 秒，多次出价的商品页加载、金额确认、再入札循环都算在同一个 30 秒里。`background.js` 新增 `getTaskExecutionTimeoutMs()`：普通任务仍 30 秒，多次出价 `multi_bid` 单独延长到 120 秒，避免连续再入札被总超时误杀；普通出价卡死保护不变。验证：`node yahoo-plugin/background.test.js`、`node yahoo-plugin/content.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js` |
+| 2026-06-15 | 多次出价再入札价格基础优先级调整：用户确认应优先使用 Yahoo 输入框默认价反推当前税前价，而不是优先页面可见当前价 | `content.js` 的再入札计算改为 `输入框默认价 - Yahoo最低加价单位 + 用户设置multi_bid_increment` 优先；只有输入框不可用或反推失败时才 fallback 到页面可见当前价/Yahoo 脚本价。新增冲突测试：即使页面可见当前价更高，只要输入框默认价可反推，就按输入框公式计算。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 多次出价再入札时如果插件没获取到商品当前价，可能用错误低价计算下一口，例如税后 1760/税前 1600 时应出 1850，却填成 251 | `content.js` 新增从 Yahoo 价格输入框默认值反推当前税前价的兜底：默认输入价 = 当前税前价 + Yahoo 最低加价单位，按阶梯 `<1000=10`、`<5000=100`、`<10000=250`、`<50000=500`、`>=50000=1000` 反推当前价，再加用户设置的 `multi_bid_increment`。后续已调整为再入札优先使用输入框反推价；输入框不可用时才 fallback 到页面当前价/脚本价。测试覆盖 `1700-100+250=1850`、`5500-250+250=5500`、`7000-250+500=7250`。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 本地 Chrome 扩展错误页仍出现 `[Yahoo Bid] Failed to inject content script: Error: No tab with id ...`，以及本地 API 未启动时的 `Failed to fetch` 被记为插件错误 | `background.js` 将 `No tab with id` 注入失败统一降级为 `console.warn`，严格流程仍抛错给调用方处理但不再通过 `console.error` 写入 Chrome 扩展错误页；新增 `logBackgroundIssue()`，把 `Failed to fetch/ERR_CONNECTION/ECONNREFUSED` 等本地网络断开错误降级为 warning，用于 idle action、sync bidding/items、Yahoo login status 等轮询日志。注意：`Failed to fetch` 仍表示 API `localhost:3034` 不可达，需要启动服务。验证：`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js` |
+| 2026-06-15 | Yahoo 再入札确认按钮实际 DOM 为 `<button ... data-cl-params="_cl_vmodule:rebid;_cl_link:cnfbtn;...">入札する</button>`，按钮可能不在先前定位到的弹窗容器内，旧逻辑会认为弹窗内找不到精确按钮 | `content.js` 的 `findRebidSubmitButton()` 增加 Yahoo 再入札确认按钮专用识别：容器内精确 `入札する` 优先；若未找到，只接受全页面中精确文本 `入札する` 且 `data-cl-params` 同时包含 `_cl_vmodule:rebid` 和 `_cl_link:cnfbtn` 的按钮。仍不会点击外层 `値段を上げて入札`。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 多次出价再入札阶段可能拿 Yahoo 页面脚本里的旧当前价作为加价基础，例如商品从税后 990/税前 900 出到 1150 后，其他用户自动加价到税后 1375/税前 1250，下一次应出 1250 + 用户加价额 250 = 1500，而不是脚本旧价 900 + 250 = 1150 或弹窗默认 1350 | `content.js` 将出价当前价读取拆成“脚本价”和“可见当前价”；正常商品页仍优先 Yahoo 脚本税前价，但检测到 `再入札が必要です` 时优先读取页面可见最新 `現在 ...円(税込)` 并折算税前后加用户设置的 `multi_bid_increment`。回归测试覆盖脚本旧价 900、页面显示 1375(税込)、弹窗默认 1350 时最终填入 1500。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 多次出价仍可能在 `再入札が必要です` 弹窗上叠加新的“入札”窗口，原因是找不到弹窗内精确 `入札する` 时仍 fallback 到全页面 `値段を上げて入札` | `content.js` 移除再入札分支的全页面出价入口兜底：只要检测到 `再入札が必要です`，就只允许在包含该文案的弹窗/页面块内精确点击 `入札する`；找不到则返回 `rebid submit button not found in active dialog` 并关闭任务 tab，不再打开第二层入札窗口。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | 多次出价在金额输入页、确认页、再入札弹窗之间提交过快，Yahoo 可能还没刷新完就收到下一次点击，商品 `v1233335580` 本地表现为失败：系统原因 | `content.js` 的 multi_bid 流程新增提交节奏控制：填入价格后等待 800ms 再点 `確認する/入札する`，页面/弹窗切换后等待 2500ms 再进入下一步；Yahoo 系统错误、稍后重试、页面无法显示等文案纳入出价失败识别。新增回归测试确保价格输入后不会立即点击确认。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node src/server/routes/plugin.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
+| 2026-06-15 | Yahoo 系统错误页被插件识别后，如果错误消息是稳定英文 `Yahoo bid failed: Yahoo system error page`，用户端任务列表不应继续显示泛化的“失败：系统原因” | `src/shared/taskFailureReason.js` 新增 `Yahoo bid failed / Yahoo system error page / Yahoo error page / Yahoo access failure` 映射，显示为“失败：Yahoo页面错误”；`content.test.js` 覆盖 `v1233335580` 这类系统错误页返回稳定错误，`taskFailureReason.test.mjs` 覆盖前端标签。验证：`node yahoo-plugin/content.test.js`、`node src/client/src/utils/taskFailureReason.test.mjs`、`node --check src/shared/taskFailureReason.js` |
 | 2026-06-15 | 普通商品、无同捆、有固定运费时，Yahoo 可能跳过“取引情報を入力する”页，直接进入配送/支付信息输入页，插件旧逻辑会直接把订单标为待支付，未点 `決定する/確定する` | content 状态识别新增 `paymentReady`；普通无同捆固定运费交易开始流程在标记 `pending_payment` 前，若当前页已有 `決定する` 或 `確定する`，会先完成前置提交再进入支付步骤。相关取引页点击流程改为可从当前状态继续。验证：`node yahoo-plugin/background.test.js`、`node yahoo-plugin/content.test.js`、`node yahoo-plugin/encoding.test.js` |
 | 2026-06-15 | 手动导入订单确认后会自动触发交易开始，且确认导入后的批次信息仍留在当前页面 | 确认导入不再写 `transaction_start_requested` / `transaction_start_requested_source`，导入订单保持 `orders.order_status=NULL` 等待后续人工或定时交易开始；后台导入订单页新增“清空当前批次”按钮，调用 `DELETE /api/admin/manual-order-import/batches/:id` 删除当前批次和候选项。验证：`node src/server/routes/admin.orders.test.js`、`node src/admin/src/manualOrderImportState.test.js`、`npm run build --prefix src/admin` |
 | 2026-06-15 | 后台提交 PIN/文字验证码后，在插件调用 Win32 输入和等待 Yahoo 页面确认期间，后台仍可能重新显示输入框，看起来像输入错误 | 后台人工验证提示新增“服务器确认中”状态：提交答案后隐藏输入框，直到插件关闭挑战或发布新的错误/后续挑战；验证码通过后短暂显示“验证通过！”再关闭。服务端保存同一已回答挑战时保留 `answer/answeredAt`，避免重复上报清空确认态；插件延后到页面跳转判断后再关闭 PIN/验证码挑战。验证：`node src/admin/src/manualVerificationState.test.js`、`node src/server/services/manualCaptcha.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`npm run build --prefix src/admin` |
 | 2026-06-15 | 服务器 Chrome 插件加载的 `background.js` 片段开头出现 `锘縞onst`，并带有 `<有 ... 行代码未显示出来>` 截断标记，属于 BOM/复制转码损坏文件，Chrome 会把它当成非法 JS | 移除仓库 `yahoo-plugin/background.js` 开头 UTF-8 BOM；`yahoo-plugin/encoding.test.js` 扩展检查 BOM、BOM mojibake（`锘/縞`）和复制截断标记，避免损坏插件文件再次部署。服务器需重新复制/加载仓库里的完整 `yahoo-plugin` 文件，不要从聊天窗口或源码预览复制截断内容。验证：`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/background.js`、`node yahoo-plugin/background.test.js` |
+| 2026-06-15 | 普通商品点击 `取引連絡` 后进入 `落札者削除されたため、取引はできません。` 页面时，旧交易开始流程仍可能继续按固定运费订单写成待支付 | `content.js` 的交易页状态新增 `cancelled` 识别；`background.js` 在交易开始页面初始状态发现 `cancelled` 时直接上报订单状态 `cancelled` 并关闭交易 tab，不再点击后续按钮；`/api/plugin/transaction-start/status` 允许空状态订单更新为 `cancelled`。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node src/server/routes/plugin.test.js`、`node yahoo-plugin/encoding.test.js` |
+| 2026-06-15 | 插件 Service Worker 报 `[Yahoo Bid] Failed to inject content script: Error: No tab with id ...`，随后 `Monitor sync failed` | 根因是 A/B 入札/落札监控同步创建临时 `/my/bidding` 或 `/my/won` tab 后，tab 在等待加载/延迟期间已被关闭，后续仍尝试注入 `content.js`。`background.js` 新增 `No tab with id` 识别；仅监控同步的临时 tab 注入/发消息遇到 tab 消失时跳过本轮并记录 warning，不再作为插件错误抛出；出价、交易、付款流程仍保持严格失败。验证：`node yahoo-plugin/background.test.js`、`node --check yahoo-plugin/background.js`、`node yahoo-plugin/encoding.test.js` |
+| 2026-06-15 | 普通商品取消页如果是在付款流程打开，旧逻辑仍按付款页找按钮，后台提示 `付款失败：商品ID ...，原因：页面按钮未找到` | 付款页面状态识别新增 `落札者削除されたため、取引はできません。` 取消文案；`executePaymentJob` 在初始页、交易信息提交后、入口点击/等待、确认/最终页等待等阶段发现 `cancelled` 时直接返回取消；`runPaymentJobs` 上报 `status='cancelled'`；`/api/plugin/payment/status` 支持把待支付/待结算/待确认收货订单更新为 `cancelled` 并清理付款请求，不再写付款失败提示。验证：`node yahoo-plugin/background.test.js`、`node src/server/routes/plugin.test.js`、`node yahoo-plugin/content.test.js`、`node yahoo-plugin/encoding.test.js` |
+| 2026-06-15 | 多次出价在确认提交后出现 `再入札が必要です` 弹窗时，旧逻辑会全页查找出价入口，误点商品页外层 `値段を上げて入札`，导致在原弹窗上再叠一个“入札”窗口并最终超时 | `content.js` 的 multi_bid 流程新增再入札弹窗专用处理：检测到 `再入札が必要です` 时优先定位当前弹窗内精确文本 `入札する`，按当前价 + 多次出价加价额重新写入入札额后直接点击弹窗内按钮；只有找不到弹窗按钮时才兜底回外层入口。新增回归测试确保不会点击外层 `値段を上げて入札`，并会把 595 + 56 更新为 651。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js` |
+| 2026-06-15 | 多次出价加价基础需要明确为“页面最新当前价的税前金额 + 多次出价加价额”，不能用弹窗输入框默认价格，也不能把商城 `税込` 当前价直接当税前价 | `content.js` 新增出价专用当前价读取：Yahoo 脚本原始价格优先；若从页面 DOM/正文读到 `税込` 当前价，会先按 `floor(税込/1.1)` 转回税前再加价。回归测试覆盖输入框默认 `50`、页面 `44円(税込)` 时填 `290`，页面 `330円(税込)` 时填 `550`。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node src/server/routes/plugin.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js` |
+| 2026-06-15 | 确认商品 `j1233320198` 页面显示 `330円(税込)`，但 Yahoo 页面脚本/结构化数据暴露 `price: 300`，多次出价应优先使用这个税前价 | `content.test.js` 新增脚本税前价优先测试：即使 DOM 当前价显示为 `999円(税込)`、输入框默认 `50`，只要 Yahoo 脚本 `pageData.items.price=300`，一次加价 250 时仍填 `550`。说明“250”仅为测试例，实际使用用户设置的 `multi_bid_increment`。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.test.js` |
 | 2026-05-12 | `plugin.js` route 使用 `await` 但函数未声明 `async` | 添加 `async` |
 | 2026-05-12 | routes 中 `db.getOne/getAll` 缺少 `await` | 补齐 async/await |
 | 2026-05-12 | 服务端抓取 Yahoo 易被反爬 | 改为服务端 HTTP + Playwright fallback，并保留内存缓存兜底 |
@@ -2190,6 +2207,30 @@ npm run regression
 ```
 
 验证结果：以上命令均通过。
+
+---
+
+## 2026-06-15 Multi-bid timing and timeout update
+
+Implemented:
+
+- `yahoo-plugin/content.js`: reduced the multi-bid page step wait from 2500ms to 800ms. The explicit wait after filling the rebid price remains 1000ms before clicking `入札する`.
+- `yahoo-plugin/content.js`: `waitForBidOutcome()` now returns rebid-required after the rebid state is stable for 500ms instead of waiting for the full 10s outcome timeout.
+- `yahoo-plugin/content.js`: multi-bid pages report `BID_PROGRESS` to the background script when price is filled, confirm/final/rebid buttons are clicked, or the bid entry button is clicked.
+- `yahoo-plugin/background.js`: multi-bid task timeout is now extendable. Base timeout is 60s, every `BID_PROGRESS` extends the deadline by 10s, and the hard maximum is 10 minutes.
+- `yahoo-plugin/content.js`: cleaned several previously broken mojibake literals into stable Unicode escape / ASCII strings while validating the plugin after the timing change.
+
+Recent verification:
+
+```powershell
+node yahoo-plugin\content.test.js
+node yahoo-plugin\background.test.js
+node yahoo-plugin\encoding.test.js
+node --check yahoo-plugin\content.js
+node --check yahoo-plugin\background.js
+```
+
+Result: all commands passed.
 
 ---
 

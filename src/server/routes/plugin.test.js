@@ -7,6 +7,7 @@ const {
   expireOverduePendingTasks,
   failPricedOutPendingTasks,
   resetStaleProcessingTasks,
+  heartbeatProcessingTask,
   claimTaskForProcessing,
   claimReadyPluginTasks,
   sweepPendingTasks,
@@ -245,6 +246,25 @@ async function testResetStaleProcessingTasksReturnsOldProcessingToPending() {
   assert.match(calls[0].sql, /WHERE status = 'processing'/);
   assert.match(calls[0].sql, /datetime\(updated_at\) <= datetime\(\?\)/);
   assert.equal(calls[0].params[0], new Date(now - 60 * 1000).toISOString());
+}
+
+async function testHeartbeatProcessingTaskOnlyRefreshesProcessingUpdatedAt() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await heartbeatProcessingTask(42, fakeDb);
+
+  assert.equal(result.success, true);
+  assert.match(calls[0].sql, /SET updated_at = CURRENT_TIMESTAMP/);
+  assert.match(calls[0].sql, /WHERE id = \?/);
+  assert.match(calls[0].sql, /status = 'processing'/);
+  assert.doesNotMatch(calls[0].sql, /last_bid_at/);
+  assert.deepEqual(calls[0].params, [42]);
 }
 
 async function testClaimTaskForProcessingOnlyClaimsPendingTask() {
@@ -863,6 +883,33 @@ async function testUpdateTransactionStartStatusUpdatesBundleByProductIds() {
   const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql) && /SET order_status/.test(call.sql));
   assert.equal(statusUpdate.params[0], ORDER_STATUS_PENDING_BUNDLE);
   assert.equal(statusUpdate.params[1], 'bundle-20260601-c1133337781');
+}
+
+async function testUpdateTransactionStartStatusMarksOrderCancelled() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      if (/FROM orders o/.test(sql) && /WHERE o\.id IN/.test(sql)) {
+        return [{ order_id: 21, old_status: null, product_id: 'u1231877298' }];
+      }
+      return [];
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updateTransactionStartStatus({
+    orderId: 21,
+    status: ORDER_STATUS_CANCELLED
+  }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql) && /SET order_status/.test(call.sql));
+  assert.equal(statusUpdate.params[0], ORDER_STATUS_CANCELLED);
+  assert.match(statusUpdate.sql, /order_status IS NULL OR order_status = ''/);
 }
 
 async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask() {
@@ -1669,6 +1716,31 @@ async function testUpdatePaymentStatusFailureWritesConciseAlert() {
   assert.ok(alert.length < 80);
 }
 
+async function testUpdatePaymentStatusMarksCancelled() {
+  const calls = [];
+  const fakeDb = {
+    async getAll() {
+      return [{ order_id: 8, old_status: ORDER_STATUS_PENDING_SETTLEMENT, product_id: 'u1231877298' }];
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updatePaymentStatus({
+    orderId: 8,
+    productId: 'u1231877298',
+    status: 'cancelled'
+  }, fakeDb);
+
+  assert.equal(result.cancelled, true);
+  const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql));
+  assert.ok(statusUpdate);
+  assert.equal(statusUpdate.params[0], ORDER_STATUS_CANCELLED);
+  assert.equal(statusUpdate.params[1], 8);
+}
+
 async function testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating() {
   const calls = [];
   const fakeDb = {
@@ -1711,6 +1783,7 @@ testIdleGuardBlocksNearFutureBidTasks();
 testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
+testHeartbeatProcessingTaskOnlyRefreshesProcessingUpdatedAt();
 testClaimTaskForProcessingOnlyClaimsPendingTask();
 Promise.resolve().then(testClaimReadyPluginTasksClaimsMultipleReadyTasks).catch(err => {
   console.error(err);
@@ -1744,6 +1817,7 @@ Promise.all([
   testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun(),
   testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
+  testUpdateTransactionStartStatusMarksOrderCancelled(),
   testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
@@ -1769,6 +1843,7 @@ Promise.all([
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),
   testUpdatePaymentStatusFailureWritesConciseAlert(),
+  testUpdatePaymentStatusMarksCancelled(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
   testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput()
 ]).catch(err => {

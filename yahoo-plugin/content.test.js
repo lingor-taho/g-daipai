@@ -7,7 +7,7 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
   const code = fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8');
   const sandbox = {
     console,
-    setTimeout,
+    setTimeout: options.setTimeout || setTimeout,
     Event: class Event {
       constructor(type) {
         this.type = type;
@@ -209,8 +209,10 @@ async function testRebidRequiredFailsAfterOutcomeWait() {
 
 function testYahooBidAccessFailureTextIsDetected() {
   const api = loadContentForTest('\u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f \u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f \u518d\u8aad\u307f\u8fbc\u307f\u3059\u308b');
+  const systemErrorApi = loadContentForTest('\u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc \u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f\u3002\u3057\u3070\u3089\u304f\u6642\u9593\u3092\u304a\u3044\u3066\u304b\u3089\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002');
 
   assert.equal(api.isYahooBidAccessFailureText(), true);
+  assert.equal(systemErrorApi.isYahooBidAccessFailureText(), true);
 }
 
 async function testYahooBidAccessFailureClosesTask() {
@@ -223,6 +225,18 @@ async function testYahooBidAccessFailureClosesTask() {
   assert.equal(result.success, false);
   assert.equal(result.closeTab, true);
   assert.match(result.error, /\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9/);
+}
+
+async function testYahooSystemErrorPageReturnsStableBidError() {
+  const result = await loadAndExecuteBidForTest(
+    '\u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc \u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f\u3002\u3057\u3070\u3089\u304f\u6642\u9593\u3092\u304a\u3044\u3066\u304b\u3089\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002',
+    { maxPrice: 1000, strategy: 'direct' },
+    '/jp/auction/v1233335580/bid'
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.closeTab, true);
+  assert.match(result.error, /Yahoo bid failed/);
 }
 
 function testAcceptedBidTextIsHighestBidder() {
@@ -589,6 +603,16 @@ function testMultiBidDoesNotCapWhenNearCeilingEqualsMax() {
   assert.equal(result.success, true);
   assert.equal(result.bidPrice, 29000);
   assert.equal(result.cappedToMax, undefined);
+}
+
+function testInferCurrentPriceFromYahooDefaultBidPrice() {
+  const api = loadContentForTest('');
+
+  assert.equal(api.inferCurrentPriceFromYahooDefaultBidPrice(1700), 1600);
+  assert.equal(api.inferCurrentPriceFromYahooDefaultBidPrice(5500), 5250);
+  assert.equal(api.inferCurrentPriceFromYahooDefaultBidPrice(7000), 6750);
+  assert.equal(api.inferCurrentPriceFromYahooDefaultBidPrice(5000), 4900);
+  assert.equal(api.inferCurrentPriceFromYahooDefaultBidPrice(10000), 9750);
 }
 
 function testPlainBidEntryIsNotFinalAgree() {
@@ -1108,6 +1132,547 @@ async function testMultiBidClicksConfirmAfterInput() {
   assert.equal(confirmButton.clicked, true);
 }
 
+async function testMultiBidWaitsAfterPriceInputBeforeConfirmClick() {
+  let bodyText = '\u73fe\u5728 5,000\u5186 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 5,500\u5186 \u78ba\u8a8d\u3059\u308b';
+  let sawInputSubmitDelay = false;
+  const delays = [];
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  confirmButton.click = () => {
+    assert.equal(sawInputSubmitDelay, true);
+    confirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+  const currentPrice = createTestElement('5,000\u5186');
+
+  const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
+    getBodyText: () => bodyText,
+    setTimeout(fn, ms) {
+      delays.push(ms);
+      if (ms >= 700 && !confirmButton.clicked) {
+        sawInputSubmitDelay = true;
+      }
+      fn();
+      return 1;
+    },
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('button')) return [confirmButton];
+      if (selector === 'body *') return [confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(5500, {
+    maxPrice: 5500,
+    userMaxPrice: 6600,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 500
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(confirmButton.clicked, true);
+  assert.ok(delays.some(ms => ms >= 700));
+}
+
+async function testMultiBidRebidRequiredUsesTopDialogBidButton() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 606\u5186 \u5165\u672d\u3059\u308b \u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '';
+  const currentPrice = createTestElement('595\u5186');
+  const outerRaiseButton = createTestElement('\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d');
+  const modalBidButton = createTestElement('\u5165\u672d\u3059\u308b');
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d \u5165\u672d\u984d \u5165\u672d\u3059\u308b');
+  rebidDialog.querySelectorAll = selector => {
+    if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [modalBidButton];
+    return [];
+  };
+  outerRaiseButton.click = () => {
+    outerRaiseButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+  modalBidButton.click = () => {
+    modalBidButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+
+  const api = loadContentForTest(bodyText, '/jp/auction/g1233324435', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [outerRaiseButton, modalBidButton];
+      if (selector === 'body *') return [outerRaiseButton, modalBidButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 56
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(outerRaiseButton.clicked, false);
+  assert.equal(modalBidButton.clicked, true);
+  assert.equal(priceInput.value, '651');
+}
+
+async function testMultiBidRebidRequiredDoesNotFallbackToOuterRaiseButton() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d \u5165\u672d\u984d \u78ba\u8a8d\u3059\u308b \u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '1350';
+  const currentPrice = createTestElement('1,375\u5186\uff08\u7a0e\u8fbc\uff09');
+  const outerRaiseButton = createTestElement('\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d');
+  const nestedConfirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059');
+  rebidDialog.querySelectorAll = selector => {
+    if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [];
+    return [];
+  };
+  outerRaiseButton.click = () => {
+    outerRaiseButton.clicked = true;
+    bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d \u78ba\u8a8d\u3059\u308b';
+  };
+  nestedConfirmButton.click = () => {
+    nestedConfirmButton.clicked = true;
+  };
+
+  const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [outerRaiseButton, nestedConfirmButton];
+      if (selector === 'body *') return [outerRaiseButton, nestedConfirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 100
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(outerRaiseButton.clicked, false);
+  assert.equal(nestedConfirmButton.clicked, false);
+  assert.match(result.error, /rebid submit button not found/);
+}
+
+async function testMultiBidRebidRequiredUsesLatestVisibleCurrentPriceOverStaleScript() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u73fe\u5728 1,375\u5186\uff08\u7a0e\u8fbc\uff09 1,350\u5186\u304b\u3089\u5165\u672d\u3067\u304d\u307e\u3059 \u5165\u672d\u3059\u308b';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '1350';
+  const currentPrice = createTestElement('1,375\u5186\uff08\u7a0e\u8fbc\uff09');
+  const modalBidButton = createTestElement('\u5165\u672d\u3059\u308b');
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d\u3059\u308b');
+  const stalePageDataScript = {
+    textContent: 'var pageData = {"items":{"price":"900"}};',
+    type: 'text/javascript'
+  };
+  rebidDialog.querySelectorAll = selector => {
+    if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [modalBidButton];
+    return [];
+  };
+  modalBidButton.click = () => {
+    modalBidButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+
+  const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [stalePageDataScript];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [modalBidButton];
+      if (selector === 'body *') return [modalBidButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(modalBidButton.clicked, true);
+  assert.equal(priceInput.value, '1500');
+}
+
+async function testMultiBidRebidRequiredUsesYahooRebidConfirmButtonDataParams() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u73fe\u5728 1,375\u5186\uff08\u7a0e\u8fbc\uff09 1,350\u5186\u304b\u3089\u5165\u672d\u3067\u304d\u307e\u3059 \u5165\u672d\u3059\u308b \u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '1350';
+  const currentPrice = createTestElement('1,375\u5186\uff08\u7a0e\u8fbc\uff09');
+  const outerRaiseButton = createTestElement('\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d');
+  const rebidConfirmButton = createTestElement('\u5165\u672d\u3059\u308b');
+  rebidConfirmButton.getAttribute = name => {
+    if (name === 'data-cl-params') return '_cl_vmodule:rebid;_cl_link:cnfbtn;_cl_position:1';
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059');
+  rebidDialog.querySelectorAll = () => [];
+  outerRaiseButton.click = () => {
+    outerRaiseButton.clicked = true;
+  };
+  rebidConfirmButton.click = () => {
+    rebidConfirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+
+  const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [outerRaiseButton, rebidConfirmButton];
+      if (selector === 'body *') return [outerRaiseButton, rebidConfirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(outerRaiseButton.clicked, false);
+  assert.equal(rebidConfirmButton.clicked, true);
+  assert.equal(priceInput.value, '1500');
+}
+
+async function testMultiBidRebidSubmitButtonIsClickedOnlyOnce() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 1,700\u5186\u304b\u3089\u5165\u672d\u3067\u304d\u307e\u3059 \u5165\u672d\u3059\u308b';
+  let clickDispatchCount = 0;
+  let nativeClickCount = 0;
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '1700';
+  const rebidConfirmButton = createTestElement('\u5165\u672d\u3059\u308b');
+  rebidConfirmButton.getAttribute = name => {
+    if (name === 'data-cl-params') return '_cl_vmodule:rebid;_cl_link:cnfbtn;_cl_position:1';
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  rebidConfirmButton.dispatchEvent = event => {
+    if (event.type === 'click') clickDispatchCount += 1;
+  };
+  rebidConfirmButton.click = () => {
+    nativeClickCount += 1;
+    rebidConfirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059');
+  rebidDialog.querySelectorAll = () => [];
+
+  const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [rebidConfirmButton];
+      if (selector === 'body *') return [rebidConfirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(nativeClickCount + clickDispatchCount, 1);
+  assert.equal(priceInput.value, '1850');
+}
+
+async function testMultiBidRebidWaitsOneSecondAfterPriceInputBeforeSubmit() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 1,700\u5186\u304b\u3089\u5165\u672d\u3067\u304d\u307e\u3059 \u5165\u672d\u3059\u308b';
+  let sawRebidDelay = false;
+  const delays = [];
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '1700';
+  const rebidConfirmButton = createTestElement('\u5165\u672d\u3059\u308b');
+  rebidConfirmButton.getAttribute = name => {
+    if (name === 'data-cl-params') return '_cl_vmodule:rebid;_cl_link:cnfbtn;_cl_position:1';
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  rebidConfirmButton.click = () => {
+    assert.equal(sawRebidDelay, true);
+    rebidConfirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059');
+  rebidDialog.querySelectorAll = () => [];
+
+  const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+    getBodyText: () => bodyText,
+    setTimeout(fn, ms) {
+      delays.push(ms);
+      if (ms >= 1000 && !rebidConfirmButton.clicked) sawRebidDelay = true;
+      fn();
+      return 1;
+    },
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [rebidConfirmButton];
+      if (selector === 'body *') return [rebidConfirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(rebidConfirmButton.clicked, true);
+  assert.ok(delays.some(ms => ms >= 1000));
+}
+
+async function testMultiBidRebidRequiredFallsBackToDefaultInputPriceWhenCurrentMissing() {
+  async function runScenario(defaultInputValue, increment, expectedBidPrice) {
+    let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d\u3059\u308b';
+    const priceInput = createTestElement('');
+    priceInput.name = 'bid';
+    priceInput.value = String(defaultInputValue);
+    const rebidConfirmButton = createTestElement('\u5165\u672d\u3059\u308b');
+    rebidConfirmButton.getAttribute = name => {
+      if (name === 'data-cl-params') return '_cl_vmodule:rebid;_cl_link:cnfbtn;_cl_position:1';
+      if (name === 'aria-label') return '';
+      return '';
+    };
+    const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059');
+    rebidDialog.querySelectorAll = () => [];
+    rebidConfirmButton.click = () => {
+      rebidConfirmButton.clicked = true;
+      bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+    };
+
+    const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+      getBodyText: () => bodyText,
+      querySelector(selector) {
+        return selector === 'input[name="bid"]' ? priceInput : null;
+      },
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+        if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [rebidConfirmButton];
+        if (selector === 'body *') return [rebidConfirmButton];
+        return [];
+      }
+    });
+
+    const result = await api.executeBidV3(19800, {
+      maxPrice: 19800,
+      userMaxPrice: 21780,
+      strategy: 'multi_bid',
+      taxType: 'tax_included',
+      multiBidIncrement: increment
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(rebidConfirmButton.clicked, true);
+    assert.equal(priceInput.value, String(expectedBidPrice));
+  }
+
+  await runScenario(1700, 250, 1850);
+  await runScenario(5500, 250, 5500);
+  await runScenario(7000, 500, 7250);
+}
+
+async function testMultiBidRebidRequiredPrefersDefaultInputPriceOverVisibleCurrent() {
+  let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u73fe\u5728 2,200\u5186\uff08\u7a0e\u8fbc\uff09 1,700\u5186\u304b\u3089\u5165\u672d\u3067\u304d\u307e\u3059 \u5165\u672d\u3059\u308b';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '1700';
+  const currentPrice = createTestElement('2,200\u5186\uff08\u7a0e\u8fbc\uff09');
+  const rebidConfirmButton = createTestElement('\u5165\u672d\u3059\u308b');
+  rebidConfirmButton.getAttribute = name => {
+    if (name === 'data-cl-params') return '_cl_vmodule:rebid;_cl_link:cnfbtn;_cl_position:1';
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  const rebidDialog = createTestElement('\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059');
+  rebidDialog.querySelectorAll = () => [];
+  rebidConfirmButton.click = () => {
+    rebidConfirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+
+  const api = loadContentForTest(bodyText, '/jp/auction/v1233335580', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === '[role="dialog"], [aria-modal="true"], .ReactModal__Content, [class*="modal" i], [class*="dialog" i]') return [rebidDialog];
+      if (selector.includes('button') || selector.includes('a') || selector.includes('input')) return [rebidConfirmButton];
+      if (selector === 'body *') return [rebidConfirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(rebidConfirmButton.clicked, true);
+  assert.equal(priceInput.value, '1850');
+}
+
+async function testMultiBidUsesTaxExcludedLatestPagePriceNotInputDefault() {
+  async function runScenario(displayCurrentText, defaultInputValue, expectedBidPrice) {
+    let bodyText = `\u73fe\u5728 ${displayCurrentText} \u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 55\u5186 \u78ba\u8a8d\u3059\u308b`;
+    const priceInput = createTestElement('');
+    priceInput.name = 'bid';
+    priceInput.value = String(defaultInputValue);
+    const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+    confirmButton.click = () => {
+      confirmButton.clicked = true;
+      bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+    };
+    const currentPrice = createTestElement(displayCurrentText);
+
+    const api = loadContentForTest(bodyText, '/jp/auction/g1233324435/bid', {
+      getBodyText: () => bodyText,
+      querySelector(selector) {
+        if (selector === '[class*="currentPrice"]') return currentPrice;
+        return selector === 'input[name="bid"]' ? priceInput : null;
+      },
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector.includes('button')) return [confirmButton];
+        if (selector === 'body *') return [confirmButton];
+        return [];
+      }
+    });
+
+    const result = await api.executeBidV3(19800, {
+      maxPrice: 19800,
+      userMaxPrice: 21780,
+      strategy: 'multi_bid',
+      taxType: 'tax_included',
+      multiBidIncrement: 250
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(confirmButton.clicked, true);
+    assert.equal(priceInput.value, String(expectedBidPrice));
+  }
+
+  await runScenario('44\u5186\uff08\u7a0e\u8fbc\uff09', 50, 290);
+  await runScenario('330\u5186\uff08\u7a0e\u8fbc\uff09', 50, 550);
+}
+
+async function testMultiBidPrefersYahooScriptTaxExcludedPrice() {
+  let bodyText = '\u73fe\u5728 330\u5186\uff08\u7a0e\u8fbc\uff09 \u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 55\u5186 \u78ba\u8a8d\u3059\u308b';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '50';
+  const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  confirmButton.click = () => {
+    confirmButton.clicked = true;
+    bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
+  };
+  const currentPrice = createTestElement('999\u5186\uff08\u7a0e\u8fbc\uff09');
+  const pageDataScript = {
+    textContent: 'var pageData = {"items":{"price":"300"}};',
+    type: 'text/javascript'
+  };
+
+  const api = loadContentForTest(bodyText, '/jp/auction/j1233320198/bid', {
+    getBodyText: () => bodyText,
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [pageDataScript];
+      if (selector.includes('button')) return [confirmButton];
+      if (selector === 'body *') return [confirmButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(19800, {
+    maxPrice: 19800,
+    userMaxPrice: 21780,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(confirmButton.clicked, true);
+  assert.equal(priceInput.value, '550');
+}
+
 function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
   const orderContainer = createOrderContainer(
     '送料 10円 落札価格 2,530円 MD ゴールデンアックス',
@@ -1582,6 +2147,16 @@ function testBundleTransactionActionStateDetectsPaymentReadyPage() {
   assert.equal(state.paymentReady, true);
 }
 
+function testBundleTransactionActionStateDetectsBuyerDeletedCancellation() {
+  const api = loadContentForTest(
+    '\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3002 \u904e\u53bb\u306e\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8\u306e\u95b2\u89a7\u306e\u307f\u53ef\u80fd\u3067\u3059\u3002',
+    '/buyer/top'
+  );
+  const state = api.getBundleTransactionActionState();
+
+  assert.equal(state.cancelled, true);
+}
+
 function testExtractWaitingShippingScanResultFindsShippingFee() {
   const api = loadContentForTest(
     '\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 2,560\u5186\uff08\u843d\u672d\u4fa1\u683c\uff1a1,500\u5186 \u6570\u91cf\uff1a1\u500b \u9001\u6599\uff1a1,060\u5186\uff09 \u652f\u6255\u3044\u671f\u9650',
@@ -1862,6 +2437,7 @@ async function run() {
   await testRebidRequiredFailsAfterOutcomeWait();
   testYahooBidAccessFailureTextIsDetected();
   await testYahooBidAccessFailureClosesTask();
+  await testYahooSystemErrorPageReturnsStableBidError();
   testAcceptedBidTextIsHighestBidder();
   testProductPageHighestBidderNoticeDoesNotSkipNewBid();
   testAcceptedBuyoutTextIsSuccess();
@@ -1893,6 +2469,7 @@ async function run() {
   testMultiBidFailsWhenMaxPriceCannotMeetYahooMinIncrement();
   testMultiBidCapsToMaxWhenNextNormalBidWouldLeaveOneMinimumStep();
   testMultiBidDoesNotCapWhenNearCeilingEqualsMax();
+  testInferCurrentPriceFromYahooDefaultBidPrice();
   testPlainBidEntryIsNotFinalAgree();
   testExtractTaxIncludedTotal();
   testMultiBidInputPageDetection();
@@ -1910,6 +2487,17 @@ async function run() {
   await testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
   await testMultiBidClicksConfirmAfterInput();
+  await testMultiBidWaitsAfterPriceInputBeforeConfirmClick();
+  await testMultiBidRebidRequiredUsesTopDialogBidButton();
+  await testMultiBidRebidRequiredDoesNotFallbackToOuterRaiseButton();
+  await testMultiBidRebidRequiredUsesLatestVisibleCurrentPriceOverStaleScript();
+  await testMultiBidRebidRequiredUsesYahooRebidConfirmButtonDataParams();
+  await testMultiBidRebidSubmitButtonIsClickedOnlyOnce();
+  await testMultiBidRebidWaitsOneSecondAfterPriceInputBeforeSubmit();
+  await testMultiBidRebidRequiredFallsBackToDefaultInputPriceWhenCurrentMissing();
+  await testMultiBidRebidRequiredPrefersDefaultInputPriceOverVisibleCurrent();
+  await testMultiBidUsesTaxExcludedLatestPagePriceNotInputDefault();
+  await testMultiBidPrefersYahooScriptTaxExcludedPrice();
   testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount();
   testOrderHistoryExtractsTransactionUrl();
   testOrderHistoryIgnoresAuctionLinksWithoutTransactionContact();
@@ -1935,6 +2523,7 @@ async function run() {
   testBundleTransactionActionStateDetectsPlacementOkModal();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
   testBundleTransactionActionStateDetectsPaymentReadyPage();
+  testBundleTransactionActionStateDetectsBuyerDeletedCancellation();
   testExtractWaitingShippingScanResultFindsShippingFee();
   testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
   testExtractWaitingShippingScanResultDetectsPendingShipping();

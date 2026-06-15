@@ -1,6 +1,10 @@
 export function getTaskFailureLabel(errorMsg) {
   const text = String(errorMsg || '');
 
+  if (/Yahoo bid failed|Yahoo system error page|Yahoo error page|Yahoo.*access failure/i.test(text)) {
+    return '失败：Yahoo页面错误';
+  }
+
   if (
     /Current price is above max price before execution/i.test(text) ||
     /当前价格|税込合計金額|出价金额|加价后金额|高于最高价|above max price/i.test(text) ||

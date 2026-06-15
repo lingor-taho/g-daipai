@@ -13,7 +13,7 @@ function loadBackgroundForTest(overrides = {}) {
   const debuggerApi = overrides.debuggerApi || {};
   const windows = overrides.windows || {};
   const sandbox = {
-    console,
+    console: overrides.console || console,
     globalThis: {
       __G_DAIPAI_TRANSACTION_START_ENABLED__: overrides.transactionStartEnabled,
       __G_DAIPAI_RANDOM__: overrides.random
@@ -75,6 +75,32 @@ function loadBackgroundForTest(overrides = {}) {
   return sandbox.globalThis.__G_DAIPAI_BACKGROUND_TEST__;
 }
 
+async function testInjectContentScriptMissingTabDoesNotLogExtensionError() {
+  const errors = [];
+  const warnings = [];
+  const api = loadBackgroundForTest({
+    console: {
+      ...console,
+      error(...args) { errors.push(args); },
+      warn(...args) { warnings.push(args); }
+    },
+    scripting: {
+      async executeScript() {
+        throw new Error('No tab with id: 200483973');
+      }
+    }
+  });
+
+  await assert.rejects(
+    () => api.injectContentScript(200483973),
+    /No tab with id/
+  );
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0][0]), /tab no longer exists/);
+}
+
 function testMultiBidSuccessKeepsTabOpenForImmediateRebid() {
   const api = loadBackgroundForTest();
 
@@ -104,6 +130,28 @@ async function testWithTimeoutMarksCloseTab() {
       return true;
     }
   );
+}
+
+function testTaskExecutionTimeoutIsLongerForMultiBid() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.getTaskExecutionTimeoutMs({ strategy: 'direct' }), 30000);
+  assert.equal(api.getTaskExecutionTimeoutMs({ strategy: 'multi_bid' }), 180000);
+  assert.equal(api.getTaskProgressExtensionMs({ strategy: 'direct' }), 0);
+  assert.equal(api.getTaskProgressExtensionMs({ strategy: 'multi_bid' }), 60000);
+  assert.equal(api.getTaskExecutionMaxTimeoutMs({ strategy: 'multi_bid' }), 600000);
+}
+
+function testBidProgressMessageExtendsActiveMultiBidTimeout() {
+  const api = loadBackgroundForTest();
+  const calls = [];
+  const unregister = api.registerBidProgressExtender(123, msg => calls.push(msg.stage));
+
+  assert.equal(api.handleBidProgressMessage({ taskId: 123, stage: 'rebid-submitted' }), true);
+  assert.equal(api.handleBidProgressMessage({ taskId: 999, stage: 'other-task' }), false);
+  unregister();
+  assert.equal(api.handleBidProgressMessage({ taskId: 123, stage: 'after-unregister' }), false);
+  assert.deepEqual(calls, ['rebid-submitted']);
 }
 
 async function testBundleStartWaitsForDecideButtonState() {
@@ -762,6 +810,19 @@ function testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd() {
   assert.equal(state.hasReviewButton, true);
 }
 
+function testPaymentPageStateDetectsBuyerDeletedCancellation() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298',
+    bodyText: '\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3002\u904e\u53bb\u306e\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8\u306e\u95b2\u89a7\u306e\u307f\u53ef\u80fd\u3067\u3059\u3002',
+    controls: []
+  });
+
+  assert.equal(state.cancelled, true);
+  assert.equal(state.hasEasyPaymentButton, false);
+  assert.equal(state.hasReviewButton, false);
+}
+
 function testPaymentPageStateDetectsStoreConfirmationSection() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
@@ -1410,6 +1471,102 @@ async function testRunTransactionStartCompletesFixedShippingInfoBeforePendingPay
   assert.equal(statusCalls[0].status, 'pending_payment');
 }
 
+async function testRunTransactionStartMarksBuyerDeletedPageCancelled() {
+  const statusCalls = [];
+  let removedTabId = null;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async create(urlOrOptions) {
+        const url = typeof urlOrOptions === 'string' ? urlOrOptions : urlOrOptions?.url;
+        return { id: 79, url, status: 'complete', windowId: 3 };
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298', status: 'complete', windowId: 3 };
+      },
+      async query() {
+        return [{ id: 79, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298', status: 'complete', windowId: 3 }];
+      },
+      async sendMessage(id, message) {
+        if (message.type === 'EXTRACT_TRANSACTION_START_INFO') {
+          return { success: true, loginStatus: { status: 'ok' }, info: { available: false } };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              cancelled: true,
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298'
+            }
+          };
+        }
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          return { success: false, error: 'cancelled page should not be clicked' };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removedTabId = id;
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 79,
+                productId: 'u1231877298',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298',
+                shippingFeeText: '230\u5186'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runTransactionStartJobs();
+
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].orderId, 79);
+  assert.equal(statusCalls[0].status, 'cancelled');
+  assert.equal(removedTabId, 79);
+}
+
+async function testMonitorSyncSkipsTabThatDisappearsBeforeInjection() {
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    fetch: async url => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    },
+    tabs: {
+      async create(details) {
+        return { id: details.url.includes('/my/bidding') ? 57600239 : 57600240, url: details.url };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript(details) {
+        throw new Error(`No tab with id: ${details?.target?.tabId}`);
+      }
+    }
+  });
+
+  await api.syncMonitorYahooPages();
+}
+
 async function testRunPaymentJobsCompletesNormalItemPayment() {
   const calls = [];
   let removedTabId = null;
@@ -1453,6 +1610,78 @@ async function testRunPaymentJobsCompletesNormalItemPayment() {
   assert.equal(calls[0].productId, 'p8');
   assert.equal(calls[0].status, 'success');
   assert.equal(removedTabId, 9);
+}
+
+async function testRunPaymentJobsMarksBuyerDeletedPageCancelled() {
+  const calls = [];
+  let removedTabId = null;
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() {
+        return { id: 89, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298', status: 'complete' };
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298', status: 'complete' };
+      },
+      async query() {
+        return [{ id: 89, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298', status: 'complete' }];
+      },
+      async remove(id) {
+        removedTabId = id;
+      }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length) {
+          return [{ result: { success: false, error: 'cancelled page should not be clicked' } }];
+        }
+        return [{
+          result: {
+            success: true,
+            state: {
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298',
+              cancelled: true,
+              bodyText: '落札者削除されたため、取引はできません。過去の取引メッセージの閲覧のみ可能です。'
+            }
+          }
+        }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              paymentPageStaySeconds: 1,
+              jobs: [{
+                orderId: 89,
+                productId: 'u1231877298',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298',
+                finalPrice: 350,
+                effectiveShippingFeeText: '230\u5186'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].orderId, 89);
+  assert.equal(calls[0].productId, 'u1231877298');
+  assert.equal(calls[0].status, 'cancelled');
+  assert.equal(removedTabId, 89);
 }
 
 async function testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput() {
@@ -4061,9 +4290,12 @@ async function testFailedBidDoesNotImmediatelySyncWonPage() {
 }
 
 async function run() {
+  await testInjectContentScriptMissingTabDoesNotLogExtensionError();
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();
   await testWithTimeoutMarksCloseTab();
+  testTaskExecutionTimeoutIsLongerForMultiBid();
+  testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testNormalBundleRequestCanStartFromInputPage();
@@ -4086,6 +4318,7 @@ async function run() {
   testPaymentPageStateKeepsSelectedShippingOption();
   testPaymentPageStateDetectsPaymentMethodFee();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
+  testPaymentPageStateDetectsBuyerDeletedCancellation();
   testPaymentPageStateDetectsStoreConfirmationSection();
   testBuildStoreOptionsUrlUsesProductId();
   await testStoreConfirmationChangeUsesCartoptSelector();
@@ -4104,7 +4337,10 @@ async function run() {
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
   await testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment();
+  await testRunTransactionStartMarksBuyerDeletedPageCancelled();
+  await testMonitorSyncSkipsTabThatDisappearsBeforeInjection();
   await testRunPaymentJobsCompletesNormalItemPayment();
+  await testRunPaymentJobsMarksBuyerDeletedPageCancelled();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput();
   await testRunPaymentJobsMarksAlreadyPaidAsSuccess();

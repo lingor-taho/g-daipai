@@ -935,6 +935,21 @@ router.patch('/task/:id/touch', async (req, res) => {
   res.json({ success: true });
 });
 
+async function heartbeatProcessingTask(taskId, database = db) {
+  const result = await database.query(
+    `UPDATE tasks
+     SET updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND status = 'processing'`,
+    [taskId]
+  );
+  return { success: (result.rowCount || 0) > 0 };
+}
+
+router.patch('/task/:id/heartbeat', async (req, res) => {
+  res.json(await heartbeatProcessingTask(req.params.id));
+});
+
 function normalizeYenAmount(value) {
   if (value === null || value === undefined || value === '') return null;
   const amount = Number(String(value).replace(/[^\d]/g, ''));
@@ -1255,7 +1270,8 @@ function normalizeOrderStatus(value) {
   return [
     ORDER_STATUS_PENDING_PAYMENT,
     ORDER_STATUS_WAITING_SHIPPING,
-    ORDER_STATUS_PENDING_BUNDLE
+    ORDER_STATUS_PENDING_BUNDLE,
+    ORDER_STATUS_CANCELLED
   ].includes(value) ? value : null;
 }
 
@@ -2341,6 +2357,33 @@ async function updatePaymentStatus(payload = {}, database = db) {
     throw err;
   }
   const paymentStatus = String(payload.status || '').trim();
+  if (paymentStatus === 'cancelled') {
+    const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND order_status IN (?, ?, ?)`,
+      [
+        ORDER_STATUS_CANCELLED,
+        orderId,
+        ORDER_STATUS_PENDING_PAYMENT,
+        ORDER_STATUS_PENDING_SETTLEMENT,
+        ORDER_STATUS_PENDING_RECEIPT
+      ]
+    );
+    await savePaymentConfigValue(database, 'payment_requested', '0');
+    if (result.rowCount) {
+      await savePaymentConfigValue(database, 'payment_alert_message', '');
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: ORDER_STATUS_CANCELLED,
+        source: 'payment_cancelled_page',
+        metadata: { orderId, productId: payload.productId || '' }
+      }).catch(() => null);
+    }
+    return { updated: result.rowCount || 0, cancelled: true };
+  }
   const isSuccessfulPayment = paymentStatus === 'success'
     || paymentStatus === 'already_paid'
     || payload.alreadyPaid === true;
@@ -2687,6 +2730,7 @@ module.exports.updateConfirmReceiptStatus = updateConfirmReceiptStatus;
 module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
+module.exports.heartbeatProcessingTask = heartbeatProcessingTask;
 module.exports.claimTaskForProcessing = claimTaskForProcessing;
 module.exports.claimReadyPluginTasks = claimReadyPluginTasks;
 module.exports.sweepPendingTasks = sweepPendingTasks;
