@@ -475,6 +475,37 @@ function inferCurrentPriceFromYahooDefaultBidPrice(defaultBidPrice) {
   return 0;
 }
 
+function resolveThreeStageMultiBidPrice({ currentPrice, maxPrice, increment }) {
+  const current = Number(currentPrice || 0);
+  const max = Number(maxPrice || 0);
+  const step = Number(increment || 0);
+  if (!current || !max || !step) return 0;
+
+  const minIncrement = getYahooMinBidIncrement(current);
+  const minimumValidBid = current + Math.max(minIncrement, 1);
+  const firstTarget = Math.ceil(max * 0.5);
+  const finalStart = Math.floor(max - (step * 10));
+  if (firstTarget >= finalStart) {
+    return current + step;
+  }
+
+  if (current >= finalStart) {
+    return current + step;
+  }
+
+  const middleSpan = finalStart - firstTarget;
+  const middleStepCount = Math.max(1, Math.min(5, Math.floor(middleSpan / step)));
+  const middleStep = Math.max(step, Math.ceil(middleSpan / middleStepCount));
+  const candidates = [firstTarget];
+  for (let target = firstTarget + middleStep; target < finalStart; target += middleStep) {
+    candidates.push(target);
+  }
+  candidates.push(finalStart);
+
+  const stagedCandidate = candidates.find(candidate => candidate >= minimumValidBid);
+  return stagedCandidate || (current + step);
+}
+
 function resolveMultiBidNextBidPrice({ currentPrice, maxPrice, userMaxPrice, increment, taxType }) {
   const current = Number(currentPrice || 0);
   const max = Number(maxPrice || 0);
@@ -485,11 +516,11 @@ function resolveMultiBidNextBidPrice({ currentPrice, maxPrice, userMaxPrice, inc
   }
 
   const minIncrement = getYahooMinBidIncrement(current);
-  const normalBidPrice = current + step;
-  const normalBidTaxIncludedPrice = getTaxIncludedBidPrice(normalBidPrice, taxType);
+  const nextBidPrice = resolveThreeStageMultiBidPrice({ currentPrice: current, maxPrice: max, increment: step }) || (current + step);
+  const nextBidTaxIncludedPrice = getTaxIncludedBidPrice(nextBidPrice, taxType);
   const maxBidTaxIncludedPrice = getTaxIncludedBidPrice(max, taxType);
   const canBidAtMax = max - current >= minIncrement && maxBidTaxIncludedPrice <= userMax;
-  const shouldCapToMax = normalBidTaxIncludedPrice > userMax ||
+  const shouldCapToMax = nextBidTaxIncludedPrice > userMax ||
     current + minIncrement * 2 + step > max;
 
   if (shouldCapToMax && canBidAtMax) {
@@ -501,11 +532,11 @@ function resolveMultiBidNextBidPrice({ currentPrice, maxPrice, userMaxPrice, inc
     };
   }
 
-  if (normalBidTaxIncludedPrice > userMax) {
+  if (nextBidTaxIncludedPrice > userMax) {
     return {
       success: false,
-      error: `bid amount ${normalBidTaxIncludedPrice} JPY \u5df2\u9ad8\u4e8e\u6700\u9ad8\u4ef7 ${userMax} JPY; stop bidding`,
-      currentPrice: normalBidTaxIncludedPrice,
+      error: `bid amount ${nextBidTaxIncludedPrice} JPY \u5df2\u9ad8\u4e8e\u6700\u9ad8\u4ef7 ${userMax} JPY; stop bidding`,
+      currentPrice: nextBidTaxIncludedPrice,
       maxPrice: userMax,
       closeTab: true
     };
@@ -513,7 +544,7 @@ function resolveMultiBidNextBidPrice({ currentPrice, maxPrice, userMaxPrice, inc
 
   return {
     success: true,
-    bidPrice: Math.floor(normalBidPrice),
+    bidPrice: Math.floor(nextBidPrice),
     minIncrement
   };
 }

@@ -605,6 +605,62 @@ function testMultiBidDoesNotCapWhenNearCeilingEqualsMax() {
   assert.equal(result.cappedToMax, undefined);
 }
 
+function testMultiBidUsesThreeStageFirstTargetForLowCurrentPrice() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 1,
+    maxPrice: 10000,
+    userMaxPrice: 10000,
+    increment: 250,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 5000);
+}
+
+function testMultiBidUsesFiveStepMiddleRange() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 5000,
+    maxPrice: 10000,
+    userMaxPrice: 10000,
+    increment: 250,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 5500);
+}
+
+function testMultiBidRebalancesShortMiddleRange() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 3100,
+    maxPrice: 6200,
+    userMaxPrice: 6200,
+    increment: 250,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 3400);
+}
+
+function testMultiBidUsesFixedIncrementInFinalReserveRange() {
+  const api = loadContentForTest('');
+  const result = api.resolveMultiBidNextBidPrice({
+    currentPrice: 8000,
+    maxPrice: 10000,
+    userMaxPrice: 10000,
+    increment: 250,
+    taxType: 'tax_zero'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.bidPrice, 8250);
+}
+
 function testInferCurrentPriceFromYahooDefaultBidPrice() {
   const api = loadContentForTest('');
 
@@ -1218,9 +1274,9 @@ async function testMultiBidRebidRequiredUsesTopDialogBidButton() {
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(1000, {
+    maxPrice: 1000,
+    userMaxPrice: 1100,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 56
@@ -1268,9 +1324,9 @@ async function testMultiBidRebidRequiredDoesNotFallbackToOuterRaiseButton() {
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(3000, {
+    maxPrice: 3000,
+    userMaxPrice: 3300,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 100
@@ -1318,9 +1374,9 @@ async function testMultiBidRebidRequiredUsesLatestVisibleCurrentPriceOverStaleSc
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(3000, {
+    maxPrice: 3000,
+    userMaxPrice: 3300,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 250
@@ -1369,9 +1425,9 @@ async function testMultiBidRebidRequiredUsesYahooRebidConfirmButtonDataParams() 
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(4000, {
+    maxPrice: 4000,
+    userMaxPrice: 4400,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 250
@@ -1421,9 +1477,9 @@ async function testMultiBidRebidSubmitButtonIsClickedOnlyOnce() {
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(4000, {
+    maxPrice: 4000,
+    userMaxPrice: 4400,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 250
@@ -1489,7 +1545,7 @@ async function testMultiBidRebidWaitsOneSecondAfterPriceInputBeforeSubmit() {
 }
 
 async function testMultiBidRebidRequiredFallsBackToDefaultInputPriceWhenCurrentMissing() {
-  async function runScenario(defaultInputValue, increment, expectedBidPrice) {
+  async function runScenario(defaultInputValue, increment, maxPrice, userMaxPrice, expectedBidPrice) {
     let bodyText = '\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059 \u5165\u672d\u3059\u308b';
     const priceInput = createTestElement('');
     priceInput.name = 'bid';
@@ -1521,9 +1577,9 @@ async function testMultiBidRebidRequiredFallsBackToDefaultInputPriceWhenCurrentM
       }
     });
 
-    const result = await api.executeBidV3(19800, {
-      maxPrice: 19800,
-      userMaxPrice: 21780,
+    const result = await api.executeBidV3(maxPrice, {
+      maxPrice,
+      userMaxPrice,
       strategy: 'multi_bid',
       taxType: 'tax_included',
       multiBidIncrement: increment
@@ -1534,9 +1590,9 @@ async function testMultiBidRebidRequiredFallsBackToDefaultInputPriceWhenCurrentM
     assert.equal(priceInput.value, String(expectedBidPrice));
   }
 
-  await runScenario(1700, 250, 1850);
-  await runScenario(5500, 250, 5500);
-  await runScenario(7000, 500, 7250);
+  await runScenario(1700, 250, 4000, 4400, 1850);
+  await runScenario(5500, 250, 6000, 6600, 5500);
+  await runScenario(7000, 500, 9000, 9900, 7250);
 }
 
 async function testMultiBidRebidRequiredPrefersDefaultInputPriceOverVisibleCurrent() {
@@ -1573,9 +1629,9 @@ async function testMultiBidRebidRequiredPrefersDefaultInputPriceOverVisibleCurre
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(4000, {
+    maxPrice: 4000,
+    userMaxPrice: 4400,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 250
@@ -1613,9 +1669,9 @@ async function testMultiBidUsesTaxExcludedLatestPagePriceNotInputDefault() {
       }
     });
 
-    const result = await api.executeBidV3(19800, {
-      maxPrice: 19800,
-      userMaxPrice: 21780,
+    const result = await api.executeBidV3(3000, {
+      maxPrice: 3000,
+      userMaxPrice: 3300,
       strategy: 'multi_bid',
       taxType: 'tax_included',
       multiBidIncrement: 250
@@ -1660,9 +1716,9 @@ async function testMultiBidPrefersYahooScriptTaxExcludedPrice() {
     }
   });
 
-  const result = await api.executeBidV3(19800, {
-    maxPrice: 19800,
-    userMaxPrice: 21780,
+  const result = await api.executeBidV3(3000, {
+    maxPrice: 3000,
+    userMaxPrice: 3300,
     strategy: 'multi_bid',
     taxType: 'tax_included',
     multiBidIncrement: 250
@@ -2478,6 +2534,10 @@ async function run() {
   testMultiBidFailsWhenMaxPriceCannotMeetYahooMinIncrement();
   testMultiBidCapsToMaxWhenNextNormalBidWouldLeaveOneMinimumStep();
   testMultiBidDoesNotCapWhenNearCeilingEqualsMax();
+  testMultiBidUsesThreeStageFirstTargetForLowCurrentPrice();
+  testMultiBidUsesFiveStepMiddleRange();
+  testMultiBidRebalancesShortMiddleRange();
+  testMultiBidUsesFixedIncrementInFinalReserveRange();
   testInferCurrentPriceFromYahooDefaultBidPrice();
   testPlainBidEntryIsNotFinalAgree();
   testExtractTaxIncludedTotal();
