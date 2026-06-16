@@ -14,21 +14,21 @@ type BackfillResult = {
 };
 
 const text = {
-  pageTitle: '\u5f85\u6536\u8d27\u8865\u8868\u683c',
-  failed: '\u5f85\u6536\u8d27\u8865\u8868\u683c\u5931\u8d25',
-  limitLabel: '\u672c\u6b21\u6700\u591a\u5904\u7406\u8ba2\u5355\u6570',
-  limitRequired: '\u8bf7\u8f93\u5165\u5904\u7406\u6570\u91cf',
-  start: '\u5f00\u59cb\u8865\u5199',
-  resultTitle: '\u8865\u5199\u7ed3\u679c',
-  success: '\u6210\u529f',
-  skipped: '\u8df3\u8fc7',
-  error: '\u5931\u8d25',
-  orderId: '\u8ba2\u5355 ID',
-  productId: '\u5546\u54c1 ID',
-  status: '\u72b6\u6001',
-  appendedRows: '\u8ffd\u52a0\u884c\u6570',
-  updatedRange: '\u8868\u683c\u8303\u56f4',
-  note: '\u8bf4\u660e',
+  pageTitle: '待收货补表格',
+  failed: '待收货补表格失败',
+  limitLabel: '本次最多处理订单数',
+  limitRequired: '请输入处理数量',
+  start: '开始补写',
+  resultTitle: '补写结果',
+  success: '成功',
+  skipped: '跳过',
+  error: '失败',
+  orderId: '订单 ID',
+  productId: '商品 ID',
+  status: '状态',
+  appendedRows: '追加行数',
+  updatedRange: '表格范围',
+  note: '说明',
   description: (sheetName: string) =>
     `将订单状态已经是“待收货”且尚未写入 Google 表格的订单批量追加到“${sheetName || '-代拍表-'}”。字段为：落札日期、用户名、商品链接、商品标题、落札价、运费、同捆运费、总价、物流、单号。系统内通过 google_sheet_appended_at 防止重复追加；如果表格外部已有手工行，当前不会读取表格做二次去重。表头为空时会自动写入表头。`
 };
@@ -63,7 +63,7 @@ export default function ReceiptSheetBackfillPage() {
       const data = await runReceiptSheetBackfill(Number(values.limit || 100));
       setResults(data.results || []);
       message.success(
-        `\u8865\u5199\u5b8c\u6210\uff1a\u8ffd\u52a0 ${data.appended || 0} \u6761\uff0c\u8df3\u8fc7 ${data.skipped || 0} \u6761\uff0c\u5931\u8d25 ${data.failed || 0} \u6761`
+        `补写完成：追加 ${data.appended || 0} 条，跳过 ${data.skipped || 0} 条，失败 ${data.failed || 0} 条`
       );
     } catch (e: any) {
       message.error(e.message || text.failed);
