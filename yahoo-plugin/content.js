@@ -21,6 +21,7 @@ const MULTI_BID_INPUT_SUBMIT_DELAY_MS = 800;
 const MULTI_BID_REBID_SUBMIT_DELAY_MS = 1000;
 const MULTI_BID_PAGE_STEP_DELAY_MS = 2000;
 const MULTI_BID_REBID_STABLE_DELAY_MS = 6000;
+const DIRECT_BID_FINAL_OUTCOME_TIMEOUT_MS = 3000;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1078,7 +1079,9 @@ async function executeBidV3(maxPrice, options = {}) {
     if (userMaxError) return userMaxError;
     if (isBuyoutFinalPurchase) window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__ = true;
     clickElement(finalAgreeBtn);
-    const outcome = await waitForBidOutcome();
+    const outcome = await waitForBidOutcome(
+      isBuyoutFinalPurchase ? 10000 : DIRECT_BID_FINAL_OUTCOME_TIMEOUT_MS
+    );
     if (isBuyoutFinalPurchase && !outcome.success) {
       return { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'buyout-final-waiting' };
     }

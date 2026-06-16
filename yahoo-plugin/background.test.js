@@ -142,6 +142,19 @@ function testTaskExecutionTimeoutIsLongerForMultiBid() {
   assert.equal(api.getTaskExecutionMaxTimeoutMs({ strategy: 'multi_bid' }), 600000);
 }
 
+function testPendingFinalRetryDelayIsShortForDirectBid() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.getPendingFinalRetryDelayMs(
+    { strategy: 'direct', bid_mode: 'bid' },
+    { pendingFinal: true, stage: 'confirm-clicked' }
+  ), 1500);
+  assert.equal(api.getPendingFinalRetryDelayMs(
+    { strategy: 'direct', bid_mode: 'buyout' },
+    { pendingFinal: true, stage: 'buyout-final-waiting' }
+  ), 10000);
+}
+
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
   const api = loadBackgroundForTest();
   const calls = [];
@@ -4519,6 +4532,7 @@ async function run() {
   testAlreadyHighestMultiBidClosesTab();
   await testWithTimeoutMarksCloseTab();
   testTaskExecutionTimeoutIsLongerForMultiBid();
+  testPendingFinalRetryDelayIsShortForDirectBid();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();

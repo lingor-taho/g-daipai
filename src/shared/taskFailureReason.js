@@ -21,7 +21,7 @@ export function getTaskFailureLabel(errorMsg) {
   }
 
   if (
-    /outbid after bid|再入札|最高价未超过当前最高出价/i.test(text) ||
+    /outbid after bid|Rebid required|current bid is not high enough|再入札|最高价未超过当前最高出价/i.test(text) ||
     /鍐嶅叆鏈|鏈€楂樹环鏈秴杩囧綋鍓嶆渶楂樺嚭浠/i.test(text)
   ) {
     return '失败：出价后被超过';

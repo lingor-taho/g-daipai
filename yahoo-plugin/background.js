@@ -9,6 +9,7 @@ const MULTI_BID_TASK_EXECUTION_TIMEOUT_MS = 180000;
 const MULTI_BID_TASK_PROGRESS_EXTENSION_MS = 60000;
 const MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
+const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = false;
@@ -138,6 +139,13 @@ function getTaskProgressExtensionMs(task = {}) {
 
 function getTaskExecutionMaxTimeoutMs(task = {}) {
   return task?.strategy === 'multi_bid' ? MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS : getTaskExecutionTimeoutMs(task);
+}
+
+function getPendingFinalRetryDelayMs(task = {}, result = {}) {
+  if (task?.bid_mode === 'buyout' || /buyout-final/i.test(String(result?.stage || ''))) {
+    return BID_PENDING_FINAL_RETRY_DELAY_MS;
+  }
+  return BID_PENDING_FINAL_FAST_RETRY_DELAY_MS;
 }
 
 function withTimeout(promise, timeoutMs, errorFactory = () => buildTaskTimeoutError(timeoutMs)) {
@@ -509,7 +517,7 @@ async function executeTaskInTabV2(tab, task) {
   if (result.pendingFinal) {
     let finalResult = result;
     for (let attempt = 0; attempt < 3 && finalResult?.pendingFinal; attempt += 1) {
-      await sleep(BID_PENDING_FINAL_RETRY_DELAY_MS);
+      await sleep(getPendingFinalRetryDelayMs(task, finalResult));
       await injectContentScript(tab.id);
       try {
         finalResult = await sendBidMessageV2(tab.id, task);
@@ -4993,6 +5001,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   getTaskExecutionTimeoutMs,
   getTaskProgressExtensionMs,
   getTaskExecutionMaxTimeoutMs,
+  getPendingFinalRetryDelayMs,
   withTimeout,
   withProgressTimeout,
   registerBidProgressExtender,

@@ -22,6 +22,10 @@ assert.equal(
   '失败：出价后被超过'
 );
 assert.equal(
+  getTaskFailureLabel('Rebid required: current bid is not high enough'),
+  '失败：出价后被超过'
+);
+assert.equal(
   getTaskFailureLabel('商品页加载超时'),
   '失败：响应超时'
 );

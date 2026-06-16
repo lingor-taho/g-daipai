@@ -8,6 +8,7 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
   const sandbox = {
     console,
     setTimeout: options.setTimeout || setTimeout,
+    Date: options.Date || Date,
     Event: class Event {
       constructor(type) {
         this.type = type;
@@ -850,6 +851,45 @@ async function testDirectBidSubmitConfirmRequestsFormSubmit() {
   assert.equal(result.success, true);
   assert.equal(result.pendingFinal, true);
   assert.equal(form.submittedWith, confirmButton);
+}
+
+async function testDirectBidFinalConfirmUsesShortOutcomeWait() {
+  let now = 0;
+  const waits = [];
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048 \u5165\u672d\u3059\u308b');
+
+  const fakeDate = class extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [now]));
+    }
+    static now() {
+      return now;
+    }
+  };
+
+  const api = loadContentForTest('\u5165\u672d\u5185\u5bb9\u306e\u78ba\u8a8d \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048 \u5165\u672d\u3059\u308b', '/jp/auction/x1230699905/bid/confirm', {
+    Date: fakeDate,
+    setTimeout(fn, ms) {
+      waits.push(ms);
+      now += ms;
+      fn();
+      return 1;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('button') || selector.includes('a')) return [finalAgreeButton];
+      if (selector === 'body *') return [finalAgreeButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(400, { maxPrice: 400, strategy: 'direct', bidMode: 'bid' });
+
+  assert.equal(finalAgreeButton.clicked, true);
+  assert.equal(result.success, false);
+  assert.match(result.error, /bid result confirmation timeout/);
+  assert.equal(now, 3000);
+  assert.ok(waits.length <= 6);
 }
 
 async function testBuyoutClicksInstantBuyThenFinalAgree() {
@@ -2732,6 +2772,7 @@ async function run() {
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
   await testDirectBidClicksConfirmInsideBidModalOnly();
   await testDirectBidSubmitConfirmRequestsFormSubmit();
+  await testDirectBidFinalConfirmUsesShortOutcomeWait();
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
   await testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation();
