@@ -8,14 +8,18 @@ const {
 } = require('./shippingRules.cjs');
 
 assert.equal(normalizeShippingFeeText('送料 1,000円'), '1000円');
-assert.equal(normalizeShippingFeeText('送料 無料'), '');
+assert.equal(normalizeShippingFeeText('送料 無料'), '無料');
+assert.equal(normalizeShippingFeeText('送料 出品者負担'), '出品者負担');
+assert.equal(normalizeShippingFeeText('送料 着払い'), '着払い');
 assert.equal(parseShippingFeeToNumber('送料 無料'), 0);
+assert.equal(parseShippingFeeToNumber('送料 出品者負担'), 0);
 assert.equal(parseShippingFeeToNumber('送料 着払い'), 0);
 assert.equal(parseShippingFeeToNumber('送料 落札者負担'), 0);
 assert.equal(parseShippingFeeToNumber('送料 1,000円'), 1000);
 assert.equal(parseShippingFeeToNumber('全国一律 230円'), 230);
 
 assert.equal(canSettleShippingFeeText('送料 無料'), true);
+assert.equal(canSettleShippingFeeText('送料 出品者負担'), true);
 assert.equal(canSettleShippingFeeText('全国一律 230円'), true);
 assert.equal(canSettleShippingFeeText('送料 着払い'), true);
 assert.equal(canSettleShippingFeeText('送料 落札者負担'), false);

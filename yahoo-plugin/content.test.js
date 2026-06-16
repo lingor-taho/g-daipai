@@ -2345,6 +2345,30 @@ function testExtractBundleScanResultExtractsPaymentShippingFee() {
   assert.equal(result.bundleShippingFeeText, '1620\u5186');
 }
 
+function testExtractBundleScanResultKeepsSellerPaidPaymentShippingText() {
+  const api = loadContentForTest('\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 2,800\u5186\uff08\u843d\u672d\u5408\u8a08\u91d1\u984d\uff1a2,800\u5186 \u9001\u6599\uff1a\u51fa\u54c1\u8005\u8ca0\u62c5\uff09 Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'shipping_ready');
+  assert.equal(result.bundleShippingFeeText, '\u51fa\u54c1\u8005\u8ca0\u62c5');
+}
+
+function testExtractBundleScanResultKeepsFreePaymentShippingText() {
+  const api = loadContentForTest('\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 2,800\u5186\uff08\u843d\u672d\u5408\u8a08\u91d1\u984d\uff1a2,800\u5186 \u9001\u6599\uff1a\u7121\u6599\uff09 Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'shipping_ready');
+  assert.equal(result.bundleShippingFeeText, '\u7121\u6599');
+}
+
+function testExtractBundleScanResultKeepsCodPaymentShippingText() {
+  const api = loadContentForTest('\u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a 2,800\u5186\uff08\u843d\u672d\u5408\u8a08\u91d1\u984d\uff1a2,800\u5186 \u9001\u6599\uff1a\u7740\u6255\u3044\uff09 Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046', '/seller/top');
+  const result = api.extractBundleScanResult();
+
+  assert.equal(result.type, 'shipping_ready');
+  assert.equal(result.bundleShippingFeeText, '\u7740\u6255\u3044');
+}
+
 function testExtractBundleScanResultDetectsBundleRejected() {
   const api = loadContentForTest('\u53d6\u5f15\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002 \u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f\u305f\u3081\u3001\u5546\u54c1\u3054\u3068\u306b\u53d6\u5f15\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002', '/seller/top');
   const result = api.extractBundleScanResult();
@@ -2389,6 +2413,28 @@ function testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields() 
   assert.equal(result.type, 'shipped');
   assert.equal(result.shippingCompany, '\u65e5\u672c\u90f5\u4fbf');
   assert.equal(result.trackingNumber, '628620458093');
+}
+
+function testExtractPendingShipmentScanResultFallsBackToStoreInfoName() {
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u65e5\u672c\u90f5\u4fbf' },
+          { textContent: '\u30b9\u30c8\u30a2\u60c5\u5831' },
+          { textContent: '\u30b9\u30c8\u30a2\u540d \u30ed\u30ed\u30de\u5546\u4e8b' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u65e5\u672c\u90f5\u4fbf');
+  assert.equal(result.trackingNumber, '\u30ed\u30ed\u30de\u5546\u4e8b');
+  assert.equal(result.trackingFallback, 'store_info_name');
 }
 
 function testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber() {
@@ -2626,11 +2672,15 @@ async function run() {
   testExtractBundleScanResultPrefersInputRequiredWhenInputLinkExists();
   testExtractBundleScanResultExtractsDeliveryMethodShippingFee();
   testExtractBundleScanResultExtractsPaymentShippingFee();
+  testExtractBundleScanResultKeepsSellerPaidPaymentShippingText();
+  testExtractBundleScanResultKeepsFreePaymentShippingText();
+  testExtractBundleScanResultKeepsCodPaymentShippingText();
   testExtractBundleScanResultDetectsBundleRejected();
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsStoreShipped();
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();
+  testExtractPendingShipmentScanResultFallsBackToStoreInfoName();
   testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber();
   testExtractPendingShipmentScanResultDetectsNormalShipped();
   testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber();

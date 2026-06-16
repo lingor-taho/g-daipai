@@ -1582,6 +1582,8 @@ function extractBundleShippingFeeText(text = getBodyText()) {
   const source = String(text || '');
   const paymentMatch = source.match(/\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,240}\u9001\u6599\s*[:\uff1a]\s*([\d,]+)\s*\u5186/);
   if (paymentMatch) return normalizeYenText(paymentMatch[1]);
+  const paymentTextShippingMatch = source.match(/\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,240}\u9001\u6599\s*[:\uff1a]\s*(\u51fa\u54c1\u8005\u8ca0\u62c5|\u7121\u6599|\u7740\u6255\u3044)/);
+  if (paymentTextShippingMatch) return paymentTextShippingMatch[1];
   const deliveryMatch = source.match(/\u914d\u9001\u65b9\u6cd5[\s\S]{0,160}[\uff08(]\s*([\d,]+)\s*\u5186\s*[\uff09)]/);
   if (deliveryMatch) return normalizeYenText(deliveryMatch[1]);
   return '';
@@ -1714,6 +1716,45 @@ function extractSellerInfoName(text = getBodyText()) {
   return extractNameValueFromSellerInfoBlock(extractSellerInfoSectionText(source));
 }
 
+function extractStoreNameValueFromStoreInfoBlock(value) {
+  const source = String(value || '');
+  const match = source.match(/\u30b9\u30c8\u30a2\u540d\s*[:\uff1a]?\s*([^\n\r]+)/);
+  if (!match?.[1]) return '';
+  return normalizeNameValue(match[1].replace(/\s*(?:\u4f4f\u6240|\u30b9\u30c8\u30a2\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b)[\s\S]*$/, ''));
+}
+
+function extractStoreInfoSectionText(value) {
+  const source = String(value || '');
+  const storeInfoLabel = '\u30b9\u30c8\u30a2\u60c5\u5831';
+  const storeInfoIndex = source.indexOf(storeInfoLabel);
+  if (storeInfoIndex < 0) return '';
+  let section = source.slice(storeInfoIndex);
+  const nextSection = section.slice(storeInfoLabel.length).search(/(?:\u304a\u5c4a\u3051\u60c5\u5831|\u304a\u652f\u6255\u3044\u60c5\u5831|\u843d\u672d\u8005\u60c5\u5831|\u304a\u5c4a\u3051\u5148|\u51fa\u54c1\u8005\u60c5\u5831)/);
+  if (nextSection >= 0) {
+    section = section.slice(0, storeInfoLabel.length + nextSection);
+  }
+  return section;
+}
+
+function extractStoreInfoName(text = getBodyText()) {
+  const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
+  let inStoreInfo = false;
+  for (const element of elements) {
+    const rawText = String(element?.textContent || '');
+    const normalized = normalizeTextValue(rawText, 512);
+    if (/\u30b9\u30c8\u30a2\u60c5\u5831/.test(normalized)) {
+      inStoreInfo = true;
+    } else if (inStoreInfo && /(?:\u304a\u5c4a\u3051\u60c5\u5831|\u304a\u652f\u6255\u3044\u60c5\u5831|\u843d\u672d\u8005\u60c5\u5831|\u304a\u5c4a\u3051\u5148|\u51fa\u54c1\u8005\u60c5\u5831)/.test(normalized)) {
+      inStoreInfo = false;
+    }
+    if (!inStoreInfo && !/\u30b9\u30c8\u30a2\u60c5\u5831/.test(normalized)) continue;
+    const name = extractStoreNameValueFromStoreInfoBlock(extractStoreInfoSectionText(rawText) || rawText);
+    if (name) return name;
+  }
+  const source = String(text || '');
+  return extractStoreNameValueFromStoreInfoBlock(extractStoreInfoSectionText(source));
+}
+
 function hasUnregisteredTrackingNumber(text = getBodyText()) {
   const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7'], text);
   if (/\u672a\u767b\u9332|\u53cd\u6620\u3055\u308c\u308b\u307e\u3067\u304a\u5f85\u3061/.test(labeledTrackingNumber)) return true;
@@ -1775,12 +1816,15 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
   const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(source);
   if (storeShipped) {
     const trackingNumber = extractTrackingNumberFromText(source);
+    const storeInfoName = extractStoreInfoName(source);
     const sellerName = extractSellerName(source);
     return {
       type: 'shipped',
       shippingCompany: extractShippingCompany(source),
-      trackingNumber: trackingNumber || sellerName,
-      trackingFallback: trackingNumber ? '' : (sellerName ? 'seller_name' : '')
+      trackingNumber: trackingNumber || storeInfoName || sellerName,
+      trackingFallback: trackingNumber
+        ? ''
+        : (storeInfoName ? 'store_info_name' : (sellerName ? 'seller_name' : ''))
     };
   }
   if (normalShipped) {
@@ -2002,4 +2046,3 @@ window.__G_DAIPAI_TEST__ = {
   findWonHistoryNextPageUrl
 };
 })();
-

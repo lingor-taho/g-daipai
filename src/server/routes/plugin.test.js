@@ -1251,6 +1251,26 @@ async function testUpdateScanStatusCompletesBundleGroupWithShippingFee() {
   assert.equal(queries[0].params[6], 20);
 }
 
+async function testUpdateScanStatusCompletesBundleGroupWithNonNumericShippingFee() {
+  const queries = [];
+  const fakeDb = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rowCount: 2 };
+    }
+  };
+
+  const result = await updateScanStatus({ orderId: 24, bundleShippingFeeText: '\u51fa\u54c1\u8005\u8ca0\u62c5' }, fakeDb);
+
+  assert.equal(result.updated, 2);
+  assert.equal(result.bundleShippingFeeText, '\u51fa\u54c1\u8005\u8ca0\u62c5');
+  assert.equal(queries[0].params[0], 24);
+  assert.equal(queries[0].params[1], '\u51fa\u54c1\u8005\u8ca0\u62c5');
+  assert.equal(queries[0].params[2], '0\u5186');
+  assert.equal(queries[0].params[4], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(queries[0].params[5], ORDER_STATUS_BUNDLE_COMPLETED);
+}
+
 async function testUpdateScanStatusRejectsBundleGroupToEmptyStatus() {
   const queries = [];
   const fakeDb = {
@@ -1898,6 +1918,7 @@ Promise.all([
   testUpdateScanStatusWritesShippingAndPendingPayment(),
   testUpdateScanStatusKeepsWaitingShippingWhenShippingPending(),
   testUpdateScanStatusCompletesBundleGroupWithShippingFee(),
+  testUpdateScanStatusCompletesBundleGroupWithNonNumericShippingFee(),
   testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
   testGetPaymentJobsIncludesBundleFinalPriceTotal(),
