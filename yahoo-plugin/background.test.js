@@ -4118,6 +4118,90 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
   assert.equal(typedPins.join('').includes('123456'), true);
 }
 
+async function testCaptchaAnswerClosesCaptchaAndShowsPinWhenPinTabAppears() {
+  let stage = 'captcha';
+  const calls = [];
+  const typedPins = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (stage === 'done') return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1230839418', status: 'complete', active: true, windowId: 3 };
+        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: stage === 'captcha', windowId: 3 };
+        if (id === 9) return { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: stage === 'pin', windowId: 3 };
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1230839418', status: 'complete', windowId: 3 };
+      },
+      async query() {
+        if (stage === 'done') return [];
+        if (stage === 'pin') {
+          return [
+            { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: false, windowId: 3 },
+            { id: 9, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', active: true, windowId: 3 }
+          ];
+        }
+        return [
+          { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: true, windowId: 3 }
+        ];
+      },
+      async update(id, props) {
+        return { id, url: id === 9 ? 'https://login.yahoo.co.jp/config/login?auth_lv=1' : 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', active: props?.active, windowId: 3 };
+      },
+      async reload() {},
+      async captureVisibleTab() {
+        return 'data:image/png;base64,abc';
+      }
+    },
+    scripting: {
+      async executeScript(payload) {
+        if (payload.files) return undefined;
+        if (String(payload.func || '').includes('captchaAnswer')) {
+          stage = 'pin';
+          return [{ result: { success: true } }];
+        }
+        return [{ result: false }];
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand(target, command, params) {
+        if (command === 'Input.dispatchKeyEvent' && params.type === 'char') {
+          typedPins.push(params.text);
+        }
+        if (typedPins.join('') === '123456') {
+          stage = 'done';
+        }
+      },
+      async detach() {}
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/manual-captcha/challenge')) {
+        const body = JSON.parse(options.body || '{}');
+        calls.push(`challenge:${body.type}`);
+        return { async json() { return { success: true }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/answer/')) {
+        const isPinAnswer = String(url).includes('/pin-');
+        return { async json() { return { answered: true, answer: isPinAnswer ? '123456' : 'abcd' }; } };
+      }
+      if (String(url).includes('/api/plugin/manual-captcha/close')) {
+        const body = JSON.parse(options.body || '{}');
+        calls.push(`close:${String(body.id || '').startsWith('captcha-') ? 'captcha' : 'pin'}`);
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  const result = await api.handleManualVerificationIfPresent(
+    { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 },
+    { productId: 'j1230839418', source: 'test' }
+  );
+
+  assert.equal(result.handled, true);
+  assert.deepEqual(calls.slice(0, 3), ['challenge:captcha', 'close:captcha', 'challenge:pin']);
+  assert.equal(calls.includes('close:pin'), true);
+  assert.equal(typedPins.join(''), '123456');
+}
+
 function testYahooLoginPageCountsAsTransactionTab() {
   const api = loadBackgroundForTest();
 
@@ -4461,6 +4545,7 @@ async function run() {
   await testManualVerificationTransitionPrefersCaptchaAfterPinInput();
   await testManualVerificationTransitionKeepsCurrentCaptchaOverOldActivePin();
   await testManualVerificationReusesPinWhenCaptchaReturnsToPinPage();
+  await testCaptchaAnswerClosesCaptchaAndShowsPinWhenPinTabAppears();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
   await testTransactionCleanupKeepsManualVerificationTabsOpen();

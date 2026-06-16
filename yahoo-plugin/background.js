@@ -3460,6 +3460,14 @@ async function findManualVerificationTransitionTab(current, previousTabIds = new
     if (!candidates.some(candidate => candidate.id === tab.id)) candidates.push(tab);
   }
   if (!candidates.length) return currentTab || current;
+  if (options.preferPin) {
+    const activePin = candidates.find(tab => tab.active && isLikelyManualPinTab(tab));
+    if (activePin) return activePin;
+    const newPins = candidates.filter(tab => !previous.has(tab.id) && isLikelyManualPinTab(tab));
+    if (newPins.length) return newPins.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+    const anyPin = candidates.find(isLikelyManualPinTab);
+    if (anyPin) return anyPin;
+  }
   if (currentTab?.id && isManualVerificationTab(currentTab)) {
     ignoreDuplicateManualVerificationTabs(candidates, currentTab);
     return currentTab;
@@ -3546,9 +3554,9 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       const fillResult = await fillManualCaptchaAnswer(current.id, answer);
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
       if (pinAnswer) canReusePinAfterCaptcha = true;
-      current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds);
+      current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds, { preferPin: true });
       rememberManualVerificationTab(current);
-      if (!await isStillManualVerificationPage(current)) await closeManualCaptchaChallenge(id);
+      if (!isManualCaptchaTab(current)) await closeManualCaptchaChallenge(id);
       await sleep(500);
       continue;
     }
