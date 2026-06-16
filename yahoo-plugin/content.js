@@ -1799,20 +1799,29 @@ function hasUnregisteredTrackingNumber(text = getBodyText()) {
   return /(?:\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7)\s*[:\uff1a]?\s*\u672a\u767b\u9332/.test(String(text || ''));
 }
 
-function extractTrackingNumberFromText(text = getBodyText()) {
+function normalizeTrackingNumberCandidate(candidate) {
+  const digits = String(candidate || '').replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 12) return '';
+  if (digits.startsWith('0')) return '';
+  return digits;
+}
+
+function extractTrackingNumberFromText(text = getBodyText(), options = {}) {
+  const includeUnlabeled = options.includeUnlabeled !== false;
   const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7'], text);
   if (labeledTrackingNumber) {
     const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){10,12}/g) || [];
     for (const candidate of labeledMatches) {
-      const digits = candidate.replace(/\D/g, '');
-      if (digits.length >= 10 && digits.length <= 12) return digits;
+      const digits = normalizeTrackingNumberCandidate(candidate);
+      if (digits) return digits;
     }
   }
+  if (!includeUnlabeled) return '';
   const source = String(text || '');
   const matches = source.match(/(?:\d[\s-]*){10,12}/g) || [];
   for (const candidate of matches) {
-    const digits = candidate.replace(/\D/g, '');
-    if (digits.length >= 10 && digits.length <= 12) return digits;
+    const digits = normalizeTrackingNumberCandidate(candidate);
+    if (digits) return digits;
   }
   return '';
 }
@@ -1853,7 +1862,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
   const storeShipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(source);
   const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(source);
   if (storeShipped) {
-    const trackingNumber = extractTrackingNumberFromText(source);
+    const trackingNumber = extractTrackingNumberFromText(source, { includeUnlabeled: false });
     const storeInfoName = extractStoreInfoName(source);
     const sellerName = extractSellerName(source);
     return {
