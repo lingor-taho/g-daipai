@@ -2959,6 +2959,15 @@ async function ensureManualPinChallenge(tab, context = {}) {
   return { posted: true, id };
 }
 
+async function closeAnsweredManualChallengeIfVerificationGone(verificationTabs = []) {
+  if (Array.isArray(verificationTabs) && verificationTabs.length) return false;
+  const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
+  if (!current?.found || !current.answered || !current.id) return false;
+  await closeManualCaptchaChallenge(current.id);
+  console.warn('[Yahoo Bid] Closed answered manual verification challenge because no PIN/captcha page remains:', current.id);
+  return true;
+}
+
 async function pauseIdleWorkForOpenManualPin() {
   const lockedTab = await getManualVerificationLockedTab();
   if (lockedTab?.id) {
@@ -2994,6 +3003,9 @@ async function pauseIdleWorkForOpenManualPin() {
   const verificationTabs = await getOpenManualVerificationTabs();
   const pinTabs = verificationTabs.filter(isLikelyManualPinTab);
   const captchaTabs = verificationTabs.filter(isManualCaptchaTab);
+  if (!verificationTabs.length) {
+    await closeAnsweredManualChallengeIfVerificationGone(verificationTabs);
+  }
   if (verificationTabs.length) {
     manualVerificationFlowActive = true;
   } else if (manualVerificationFlowActive) {

@@ -3328,6 +3328,51 @@ async function testIdleSyncSkipsNonBidWorkWhenManualPinTabExists() {
   assert.equal(fetchCalls.some(url => url.includes('/api/plugin/idle-action/next')), false);
 }
 
+async function testIdleSyncClosesAnsweredChallengeWhenNoVerificationTabsRemain() {
+  let closedChallengeId = '';
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async query() {
+        return [
+          { id: 31, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=I1232762424', status: 'complete', active: true }
+        ];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/current')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              found: true,
+              id: 'pin-I1232762424-old',
+              type: 'pin',
+              answered: true,
+              answer: '123456',
+              productId: 'I1232762424'
+            };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/manual-captcha/close')) {
+        const body = JSON.parse(options.body || '{}');
+        closedChallengeId = body.id;
+        return { async json() { return { success: true, closed: 1 }; } };
+      }
+      return { async json() { return { task: null, canIdleSync: true }; } };
+    }
+  });
+
+  await api.syncIdleYahooPages();
+
+  assert.equal(closedChallengeId, 'pin-I1232762424-old');
+}
+
 async function testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts() {
   let phase = 'pin';
   const fetchCalls = [];
@@ -4532,6 +4577,7 @@ async function run() {
   testManualCaptchaTabDetection();
   testLikelyManualPinTabDetection();
   await testIdleSyncSkipsNonBidWorkWhenManualPinTabExists();
+  await testIdleSyncClosesAnsweredChallengeWhenNoVerificationTabsRemain();
   await testIdleSyncStaysPausedDuringCaptchaAfterPinFlowStarts();
   await testIdleSyncPostsCaptchaWhenManualCaptchaTabAlreadyOpen();
   await testIdleSyncPostsPinWhenActivePinTabOverridesStaleCaptcha();
