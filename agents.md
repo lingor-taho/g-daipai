@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-15
+**最后更新**: 2026-06-16
 
 ---
 
@@ -322,6 +322,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-16 | Chrome 扩展错误页出现 `Unexpected end of input`、`Could not establish connection. Receiving end does not exist`、`Frame with ID 0 was removed`、`Monitor sync failed` 等插件错误；其中 `Unexpected end of input` 指向服务器加载的 `background.js` 在约 1543 行被截断，属于部署文件不完整 | 仓库 `background.js` 语法正常且完整；需用仓库完整 `yahoo-plugin` 重新覆盖并在 Chrome 扩展页重新加载。代码侧将 A/B 监控同步临时 `/my/bidding`、`/my/won` tab 的 `Frame with ID ... was removed`、`Receiving end does not exist` 识别为页面关闭/刷新竞态，降级为 `console.warn` 并跳过本轮，不再写入 Chrome 扩展错误页；出价、交易开始、付款等严格流程仍保持失败上抛。验证：`node yahoo-plugin/background.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js` |
 | 2026-06-15 | 对比历史提交确认乱码不是 Yahoo 页面问题，而是源码文件曾被 UTF-8 按 GBK/ANSI 解码后再次保存，导致日文/中文注释和少量运行字符串变成 `闂/閻/濠/婵/鈧/锟` 等不可逆乱码 | 新增 `.editorconfig` 和 `.gitattributes`，统一文本文件 `UTF-8 + LF`；清理 `content.js` 中已写入的乱码注释，恢复 `cleanupProductTitle()` 的 `商品 {auctionId}` fallback 为 `\u5546\u54c1` escape；`encoding.test.js` 增加常见 mojibake 字符检测，插件文件再次出现 BOM、替换符、GBK/ANSI 乱码或复制截断标记时测试直接失败。验证：`node yahoo-plugin/encoding.test.js`、`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node --check yahoo-plugin/content.js`、`git diff --check` |
 | 2026-06-15 | 对比 `4ebdc8e` 发现当时落札价还能抓到，后续版本抓不到的直接差异在 `yahoo-plugin/content.js`：`extractOrderHistory()` 内查找纯价格 DOM 叶子节点的正则从 `数字+円` 被转码损坏成 `数字+闂?`，导致部分 Yahoo 落札记录的独立价格节点无法解析 | 将纯价格节点匹配改为稳定 ASCII 写法 `(?:\u5186|JPY)`，移除乱码 `闂...` 兜底，避免误抓或漏抓；新增真实 `円` 叶子价格测试，覆盖标题编号和落札价粘连时仍优先取独立价格节点。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js` |
 | 2026-06-15 | 后台“落札商品更新”后，同批商品一个能更新落札价、另一个仍为空；原因不是抓价程序整体失效，而是某条 Yahoo 落札记录未解析到价格时服务端仍清除 `force_orders_resync`，并且同商品多任务时可能只标记最新 task、没有标记已有订单所在 task | `orders-resync/run` 改为优先标记已有订单对应的 task；插件 `/orders/sync` 查询任务时优先选择 `force_orders_resync=1` 的 task。同步时若 `order.price` 缺失，不再更新订单、不清除强制刷新标记，返回 `missingPrice` 让下次同步继续重试。验证：`node src/server/routes/plugin.test.js`、`node src/server/routes/admin.orders.test.js`、`node --check src/server/routes/plugin.js`、`node --check src/server/routes/admin.js` |

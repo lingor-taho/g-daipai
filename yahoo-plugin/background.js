@@ -215,6 +215,11 @@ function isNoTabWithIdError(error) {
   return /No tab with id/i.test(error?.message || String(error || ''));
 }
 
+function isContentScriptTargetGoneError(error) {
+  const text = error?.message || String(error || '');
+  return isNoTabWithIdError(error) || /Frame with ID \d+ was removed|The tab was closed/i.test(text);
+}
+
 function isTransientFetchError(error) {
   const text = error?.message || String(error || '');
   return /Failed to fetch|NetworkError|Load failed|ERR_CONNECTION|ECONNREFUSED|ECONNRESET/i.test(text);
@@ -334,6 +339,11 @@ async function injectContentScript(tabId, options = {}) {
   } catch (e) {
     if (isNoTabWithIdError(e)) {
       console.warn('[Yahoo Bid] Skip injecting content script because tab no longer exists:', tabId);
+      if (options.ignoreMissingTab) return false;
+      throw e;
+    }
+    if (isContentScriptTargetGoneError(e)) {
+      console.warn('[Yahoo Bid] Skip injecting content script because content script target disappeared:', tabId, e.message || e);
       if (options.ignoreMissingTab) return false;
       throw e;
     }
@@ -2662,8 +2672,8 @@ async function openWonPageForSync(options = {}) {
     const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
     if (!injected) return null;
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ORDER_HISTORY' }).catch(error => {
-      if (closeAfter && isNoTabWithIdError(error)) {
-        console.warn('[Yahoo Bid] Skip order history sync because tab no longer exists:', tab.id);
+      if (closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
+        console.warn('[Yahoo Bid] Skip order history sync because message receiver is gone:', tab.id, error.message || error);
         return null;
       }
       console.error('[Yahoo Bid] Failed to extract order history:', error);
@@ -2831,8 +2841,8 @@ async function openBiddingPageForSync(options = {}) {
     const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
     if (!injected) return null;
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
-      if (closeAfter && isNoTabWithIdError(error)) {
-        console.warn('[Yahoo Bid] Skip bidding sync because tab no longer exists:', tab.id);
+      if (closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
+        console.warn('[Yahoo Bid] Skip bidding sync because message receiver is gone:', tab.id, error.message || error);
         return null;
       }
       console.error('[Yahoo Bid] Failed to extract bidding items:', error);

@@ -1543,8 +1543,15 @@ async function testRunTransactionStartMarksBuyerDeletedPageCancelled() {
 }
 
 async function testMonitorSyncSkipsTabThatDisappearsBeforeInjection() {
+  const errors = [];
+  const warnings = [];
   const api = loadBackgroundForTest({
     disableAutoStart: true,
+    console: {
+      ...console,
+      error(...args) { errors.push(args); },
+      warn(...args) { warnings.push(args); }
+    },
     fetch: async url => {
       if (String(url).includes('/api/plugin/config')) {
         return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
@@ -1565,6 +1572,77 @@ async function testMonitorSyncSkipsTabThatDisappearsBeforeInjection() {
   });
 
   await api.syncMonitorYahooPages();
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.some(entry => /tab no longer exists/.test(String(entry[0]))), true);
+}
+
+async function testMonitorSyncSkipsFrameRemovedBeforeInjection() {
+  const errors = [];
+  const warnings = [];
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    console: {
+      ...console,
+      error(...args) { errors.push(args); },
+      warn(...args) { warnings.push(args); }
+    },
+    fetch: async url => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    },
+    tabs: {
+      async create(details) {
+        return { id: details.url.includes('/my/bidding') ? 57600239 : 57600240, url: details.url };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript() {
+        throw new Error('Frame with ID 0 was removed.');
+      }
+    }
+  });
+
+  await api.syncMonitorYahooPages();
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.some(entry => /content script target disappeared/.test(String(entry[0]))), true);
+}
+
+async function testMonitorSyncSkipsClosedMessageReceiver() {
+  const errors = [];
+  const warnings = [];
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    console: {
+      ...console,
+      error(...args) { errors.push(args); },
+      warn(...args) { warnings.push(args); }
+    },
+    fetch: async url => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    },
+    tabs: {
+      async create(details) {
+        return { id: details.url.includes('/my/bidding') ? 57600239 : 57600240, url: details.url };
+      },
+      async sendMessage() {
+        throw new Error('Could not establish connection. Receiving end does not exist.');
+      },
+      async remove() {}
+    }
+  });
+
+  await api.syncMonitorYahooPages();
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.some(entry => /message receiver is gone/.test(String(entry[0]))), true);
 }
 
 async function testRunPaymentJobsCompletesNormalItemPayment() {
@@ -4339,6 +4417,8 @@ async function run() {
   await testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment();
   await testRunTransactionStartMarksBuyerDeletedPageCancelled();
   await testMonitorSyncSkipsTabThatDisappearsBeforeInjection();
+  await testMonitorSyncSkipsFrameRemovedBeforeInjection();
+  await testMonitorSyncSkipsClosedMessageReceiver();
   await testRunPaymentJobsCompletesNormalItemPayment();
   await testRunPaymentJobsMarksBuyerDeletedPageCancelled();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
