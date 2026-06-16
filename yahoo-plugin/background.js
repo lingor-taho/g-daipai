@@ -4267,11 +4267,13 @@ function buildScanStatusPayload(job) {
       return {
         orderId: job.orderId,
         shipped: true,
+        trackingRescanRequested: job.trackingRescanRequested === true,
         shippingCompany: result.shippingCompany || '',
         trackingNumber: result.trackingNumber || ''
       };
     }
     if (result.type === 'pending_shipment') {
+      if (job.trackingRescanRequested === true) return null;
       const sinceMs = parseTimeMs(job.pendingShipmentSince);
       const daysOverdue = Number.isFinite(sinceMs)
         ? Math.floor((Date.now() - sinceMs) / (24 * 60 * 60 * 1000))

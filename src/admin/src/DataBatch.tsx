@@ -4,6 +4,7 @@ import ProductTypeRefreshPage from './ProductTypeRefresh';
 import OrdersResyncPage from './OrdersResync';
 import OrderStatusRefreshPage from './OrderStatusRefresh';
 import ReceiptSheetBackfillPage from './ReceiptSheetBackfill';
+import TrackingRescanPage from './TrackingRescan';
 import ProductDataDeletePage from './ProductDataDelete';
 
 const labels = {
@@ -12,6 +13,7 @@ const labels = {
   ordersResync: '\u843d\u672d\u5546\u54c1\u66f4\u65b0',
   orderStatus: '\u8ba2\u5355\u72b6\u6001\u66f4\u65b0',
   receiptSheetBackfill: '\u5f85\u6536\u8d27\u8865\u8868\u683c',
+  trackingRescan: '\u5355\u53f7\u91cd\u626b',
   productDataDelete: '\u5220\u9664\u5546\u54c1\u6570\u636e'
 };
 
@@ -45,6 +47,11 @@ export default function DataBatchPage() {
           key: 'receiptSheetBackfill',
           label: labels.receiptSheetBackfill,
           children: <ReceiptSheetBackfillPage />
+        },
+        {
+          key: 'trackingRescan',
+          label: labels.trackingRescan,
+          children: <TrackingRescanPage />
         },
         {
           key: 'productDataDelete',

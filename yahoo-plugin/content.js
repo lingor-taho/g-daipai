@@ -1634,6 +1634,7 @@ const SHIPMENT_LABELS = [
   '\u914d\u9001\u65b9\u6cd5',
   '\u4f1d\u7968\u756a\u53f7',
   '\u8ffd\u8de1\u756a\u53f7',
+  '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7',
   '\u914d\u9001\u5e0c\u671b\u65e5',
   '\u914d\u9001\u5e0c\u671b\u6642\u9593',
   '\u8cfc\u5165\u65e5\u6642',
@@ -1756,13 +1757,13 @@ function extractStoreInfoName(text = getBodyText()) {
 }
 
 function hasUnregisteredTrackingNumber(text = getBodyText()) {
-  const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7'], text);
+  const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7'], text);
   if (/\u672a\u767b\u9332|\u53cd\u6620\u3055\u308c\u308b\u307e\u3067\u304a\u5f85\u3061/.test(labeledTrackingNumber)) return true;
-  return /(?:\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7)\s*[:\uff1a]?\s*\u672a\u767b\u9332/.test(String(text || ''));
+  return /(?:\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7)\s*[:\uff1a]?\s*\u672a\u767b\u9332/.test(String(text || ''));
 }
 
 function extractTrackingNumberFromText(text = getBodyText()) {
-  const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7'], text);
+  const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7'], text);
   if (labeledTrackingNumber) {
     const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){10,12}/g) || [];
     for (const candidate of labeledMatches) {

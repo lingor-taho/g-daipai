@@ -6,24 +6,34 @@ const {
   buildAppendRowsFormatRequest,
   extractSpreadsheetId,
   getGoogleSheetsCredentialPath,
-  getSheetConfig
+  getSheetConfig,
+  updateRowsByProductId
 } = require('./googleSheets');
 
 function withEnv(key, value, fn) {
   const oldValue = process.env[key];
+  const restore = () => {
+    if (oldValue === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = oldValue;
+    }
+  };
   if (value === undefined) {
     delete process.env[key];
   } else {
     process.env[key] = value;
   }
   try {
-    fn();
-  } finally {
-    if (oldValue === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = oldValue;
+    const result = fn();
+    if (result && typeof result.then === 'function') {
+      return result.finally(restore);
     }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
   }
 }
 
@@ -67,6 +77,19 @@ async function testApplyConfigFromDbOverridesEnv() {
   assert.equal(getSheetConfig().sheetName, '-custom-sheet-');
   assert.equal(getGoogleSheetsCredentialPath(), path.resolve('config/db-service-account.json'));
   applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
+}
+
+async function testUpdateRowsByProductIdSkipsWhenUnconfigured() {
+  applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
+  await withEnv('GOOGLE_APPLICATION_CREDENTIALS', undefined, async () => {
+    await withEnv('GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON', undefined, async () => {
+      await withEnv('GOOGLE_SHEETS_CLIENT_EMAIL', undefined, async () => {
+        const result = await updateRowsByProductId('m123456789', ['2026-06-16']);
+        assert.equal(result.skipped, true);
+        assert.equal(result.reason, 'google sheets not configured');
+      });
+    });
+  });
 }
 
 function testAppendRowFormatSetsBlackText() {
@@ -120,6 +143,7 @@ async function run() {
   testAppendRowFormatSetsBlackText();
   testAppendRowFormatUsesWhiteBackgroundByDefault();
   await testApplyConfigFromDbOverridesEnv();
+  await testUpdateRowsByProductIdSkipsWhenUnconfigured();
 }
 
 run().catch(error => {

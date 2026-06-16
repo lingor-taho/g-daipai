@@ -1052,13 +1052,38 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
   assert.equal(calls[0].params[0], ORDER_STATUS_PENDING_SHIPMENT);
   assert.equal(calls[0].params[1], ORDER_STATUS_WAITING_SHIPPING);
   assert.equal(calls[0].params[2], ORDER_STATUS_PENDING_BUNDLE);
-  assert.equal(calls[0].params[3], ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(calls[0].params[3], ORDER_STATUS_PENDING_RECEIPT);
+  assert.equal(calls[0].params[4], ORDER_STATUS_PENDING_SHIPMENT);
   assert.equal(result.total, 1);
   assert.equal(result.jobs.length, 1);
   assert.equal(result.jobs[0].orderId, 11);
   assert.equal(result.jobs[0].productId, 'm111111111');
   assert.equal(result.jobs[0].orderStatus, ORDER_STATUS_WAITING_SHIPPING);
   assert.equal(result.jobs[0].transactionUrl, 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m111111111');
+}
+
+async function testGetScanJobsReturnsTrackingRescanAsPendingShipment() {
+  const fakeDb = {
+    async getAll() {
+      return [{
+        order_id: 12,
+        transaction_url: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m222222222',
+        product_id: 'm222222222',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/m222222222',
+        product_title: 'sample',
+        order_status: ORDER_STATUS_PENDING_RECEIPT,
+        tracking_rescan_requested: 1,
+        shipping_fee_text: '\u7121\u6599'
+      }];
+    }
+  };
+
+  const result = await getScanJobs(fakeDb);
+
+  assert.equal(result.jobs.length, 1);
+  assert.equal(result.jobs[0].orderStatus, ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(result.jobs[0].originalOrderStatus, ORDER_STATUS_PENDING_RECEIPT);
+  assert.equal(result.jobs[0].trackingRescanRequested, true);
 }
 
 async function testUpdateScanStatusMarksPendingShipmentAsShipped() {
@@ -1093,6 +1118,41 @@ async function testUpdateScanStatusMarksPendingShipmentAsShipped() {
   assert.equal(statusUpdate.params[2], '628620458093');
   assert.equal(statusUpdate.params[3], 31);
   assert.equal(statusUpdate.params[4], ORDER_STATUS_PENDING_SHIPMENT);
+}
+
+async function testUpdateScanStatusRefreshesTrackingForRescanOrder() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      return [{ order_id: 41, order_status: ORDER_STATUS_PENDING_RECEIPT }];
+    },
+    async getOne(sql, params) {
+      calls.push({ sql, params });
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: /UPDATE orders/.test(sql) ? 1 : 0 };
+    }
+  };
+
+  const result = await updateScanStatus({
+    orderId: 41,
+    shipped: true,
+    trackingRescanRequested: true,
+    shippingCompany: '\u30e4\u30de\u30c8\u904b\u8f38',
+    trackingNumber: '123456789012'
+  }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  assert.equal(result.trackingRescanRequested, true);
+  const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql) && /tracking_rescan_requested = 0/.test(call.sql));
+  assert.ok(statusUpdate);
+  assert.match(statusUpdate.sql, /COALESCE\(tracking_rescan_requested, 0\) = 1/);
+  assert.equal(statusUpdate.params[1], '\u30e4\u30de\u30c8\u904b\u8f38');
+  assert.equal(statusUpdate.params[2], '123456789012');
+  assert.equal(statusUpdate.params[3], 41);
 }
 
 function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
@@ -1911,7 +1971,9 @@ Promise.all([
   testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce(),
   testSyncYahooWonOrdersKeepsForcedResyncWhenPriceMissing(),
   testGetScanJobsReturnsWaitingShippingOnly(),
+  testGetScanJobsReturnsTrackingRescanAsPendingShipment(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
+  testUpdateScanStatusRefreshesTrackingForRescanOrder(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),
   testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
   testUpdateScanStatusMarksPendingShipmentAsCancelled(),

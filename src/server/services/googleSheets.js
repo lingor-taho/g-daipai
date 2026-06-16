@@ -303,6 +303,56 @@ async function findRowsByProductIdWithAnyColor(productId, targetHex) {
   return { matched: matches.length > 0, rows: matches };
 }
 
+async function findRowsByProductId(productId) {
+  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', matched: false, rows: [] };
+  const { spreadsheetId, sheetName } = getSheetConfig();
+  const range = `${sheetName}!A:J`;
+  const data = await googleRequest(
+    `${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(startRow,rowData(values(formattedValue,userEnteredValue,effectiveValue))))`
+  );
+  const matches = [];
+  for (const sheet of data.sheets || []) {
+    for (const grid of sheet.data || []) {
+      const startRow = Number(grid.startRow || 0);
+      const rows = Array.isArray(grid.rowData) ? grid.rowData : [];
+      rows.forEach((rowData, index) => {
+        if (!rowMatchesProductId(rowData, productId)) return;
+        matches.push({ rowNumber: startRow + index + 1 });
+      });
+    }
+  }
+  return { matched: matches.length > 0, rows: matches };
+}
+
+async function updateRowsByProductId(productId, row) {
+  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', updatedRows: 0 };
+  if (!productId) return { skipped: true, reason: 'missing product id', updatedRows: 0 };
+  if (!Array.isArray(row) || !row.length) return { skipped: true, reason: 'missing row data', updatedRows: 0 };
+  const { spreadsheetId, sheetName } = getSheetConfig();
+  const found = await findRowsByProductId(productId);
+  if (found.skipped) return { ...found, updatedRows: 0 };
+  if (!found.rows.length) return { skipped: true, reason: 'google sheet row not found', matched: false, updatedRows: 0 };
+  const values = row.slice(0, 10);
+  while (values.length < 10) values.push('');
+  const data = found.rows.map(match => ({
+    range: `${sheetName}!A${match.rowNumber}:J${match.rowNumber}`,
+    values: [values]
+  }));
+  await googleRequest(`${spreadsheetId}/values:batchUpdate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      valueInputOption: 'USER_ENTERED',
+      data
+    })
+  });
+  return {
+    skipped: false,
+    matched: true,
+    updatedRows: data.length,
+    rows: found.rows
+  };
+}
+
 async function ensureHeaderRow(spreadsheetId, sheetName) {
   const range = encodeURIComponent(`${sheetName}!A1:J1`);
   const data = await googleRequest(`${spreadsheetId}/values/${range}?majorDimension=ROWS`);
@@ -419,9 +469,11 @@ module.exports = {
   buildAppendRowsFormatRequest,
   ensureHeaderRow,
   extractSpreadsheetId,
+  findRowsByProductId,
   findRowsByProductIdWithAnyColor,
   getGoogleSheetsCredentialPath,
   getSheetConfig,
   googleColorToHex,
-  isGoogleSheetsConfigured
+  isGoogleSheetsConfigured,
+  updateRowsByProductId
 };

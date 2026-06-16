@@ -11,7 +11,8 @@ const {
   appendRows: appendGoogleSheetRows,
   applyGoogleSheetsConfigFromDb,
   findRowsByProductIdWithAnyColor,
-  isGoogleSheetsConfigured
+  isGoogleSheetsConfigured,
+  updateRowsByProductId
 } = require('../services/googleSheets');
 const {
   saveCaptchaChallenge,
@@ -1506,6 +1507,43 @@ async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
   return appendResult;
 }
 
+async function updatePendingReceiptOrderGoogleSheet(orderId, database = db) {
+  await applyGoogleSheetsConfigFromDb(database);
+  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
+  const order = await database.getOne(
+    `SELECT o.id,
+            o.won_at,
+            o.created_at,
+            o.final_price,
+            o.order_status,
+            o.bundle_group_id,
+            o.bundle_shipping_fee_text,
+            t.product_id,
+            t.product_url,
+            t.product_title,
+            t.shipping_fee_text,
+            t.tax_type,
+            o.shipping_company,
+            o.tracking_number,
+            u.username,
+            ufo.rate_adjustment AS user_rate_adjustment,
+            ufo.bank_fee_jpy AS user_bank_fee_jpy,
+            ufo.handling_fee_cny AS user_handling_fee_cny,
+            ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     INNER JOIN users u ON t.user_id = u.id
+     LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
+     WHERE o.id = ?
+       AND o.order_status IN (?, ?)`,
+    [orderId, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]
+  );
+  if (!order) return { skipped: true, reason: 'order not updateable' };
+  const baseConfig = await getSheetFinanceBaseConfig(database);
+  const row = buildDaipaiSheetRow(order, baseConfig);
+  return updateRowsByProductId(order.product_id, row);
+}
+
 function parseShipmentAlerts(value) {
   try {
     const parsed = JSON.parse(String(value || '[]'));
@@ -1777,6 +1815,7 @@ async function getScanJobs(database = db) {
             o.order_status,
             o.transaction_url,
             o.bundle_group_id,
+            o.tracking_rescan_requested,
             COALESCE((
               SELECT MAX(l.created_at)
               FROM order_status_change_logs l
@@ -1790,15 +1829,18 @@ async function getScanJobs(database = db) {
             t.shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
-     WHERE o.order_status IN (?, ?, ?)
+     WHERE (o.order_status IN (?, ?, ?)
+            OR (o.order_status = ? AND COALESCE(o.tracking_rescan_requested, 0) = 1))
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
-    [ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE, ORDER_STATUS_PENDING_SHIPMENT]
+    [ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_PENDING_SHIPMENT]
   );
   return {
     jobs: rows.map(row => ({
       orderId: row.order_id,
-      orderStatus: row.order_status,
+      orderStatus: Number(row.tracking_rescan_requested || 0) === 1 ? ORDER_STATUS_PENDING_SHIPMENT : row.order_status,
+      originalOrderStatus: row.order_status,
+      trackingRescanRequested: Number(row.tracking_rescan_requested || 0) === 1,
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
@@ -1844,6 +1886,7 @@ async function updateScanStatus(payload = {}, database = db) {
   if (payload.shipped === true) {
     const shippingCompany = normalizePlainText(payload.shippingCompany);
     const trackingNumber = normalizePlainText(payload.trackingNumber);
+    const trackingRescanRequested = payload.trackingRescanRequested === true;
     if (!trackingNumber) {
       const err = new Error('valid trackingNumber is required');
       err.statusCode = 400;
@@ -1855,10 +1898,11 @@ async function updateScanStatus(payload = {}, database = db) {
        SET order_status = ?,
            shipping_company = ?,
            tracking_number = ?,
+           tracking_rescan_requested = 0,
            shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
-         AND order_status = ?`,
+         AND (order_status = ? OR COALESCE(tracking_rescan_requested, 0) = 1)`,
       [ORDER_STATUS_PENDING_RECEIPT, shippingCompany || null, trackingNumber, orderId, ORDER_STATUS_PENDING_SHIPMENT]
     );
     if (result.rowCount) {
@@ -1866,13 +1910,19 @@ async function updateScanStatus(payload = {}, database = db) {
       await writeOrderStatusAuditLogs(database, beforeRows, {
         status: ORDER_STATUS_PENDING_RECEIPT,
         source: 'scan_pending_shipment_shipped',
-        metadata: { orderId, shippingCompany, trackingNumber }
-      }).catch(() => null);
-      await appendPendingReceiptOrderToGoogleSheet(orderId, database).catch(error => {
-        console.warn('[Yahoo Bid] Google Sheet append skipped/failed:', error.message || error);
-      });
+          metadata: { orderId, shippingCompany, trackingNumber }
+        }).catch(() => null);
+      if (trackingRescanRequested) {
+        await updatePendingReceiptOrderGoogleSheet(orderId, database).catch(error => {
+          console.warn('[Yahoo Bid] Google Sheet update skipped/failed:', error.message || error);
+        });
+      } else {
+        await appendPendingReceiptOrderToGoogleSheet(orderId, database).catch(error => {
+          console.warn('[Yahoo Bid] Google Sheet append skipped/failed:', error.message || error);
+        });
+      }
     }
-    return { updated: result.rowCount || 0, shipped: true, shippingCompany, trackingNumber };
+    return { updated: result.rowCount || 0, shipped: true, shippingCompany, trackingNumber, trackingRescanRequested };
   }
   if (payload.pendingShipment === true) {
     const daysOverdue = Number(payload.daysOverdue || 0);

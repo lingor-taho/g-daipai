@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS orders (
   transaction_start_error TEXT,
   shipping_company VARCHAR(128),
   tracking_number VARCHAR(128),
+  tracking_rescan_requested INTEGER DEFAULT 0,
   shipped_at DATETIME,
   settled_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

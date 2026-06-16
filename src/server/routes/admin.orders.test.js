@@ -27,6 +27,7 @@ const {
   normalizeManualOrderImportSummary,
   backfillStoreBundle,
   markProductOrdersForResync,
+  markTrackingRescanByProductId,
   ORDER_STATUS_PENDING_SHIPMENT,
   ORDER_STATUS_BUNDLE_COMPLETED
 } = require('./admin');
@@ -790,6 +791,30 @@ async function testMarkProductOrdersForResyncPrefersExistingOrderTasks() {
   assert.deepEqual(updateCall.params, [11, 12]);
 }
 
+async function testMarkTrackingRescanByProductIdMarksPendingReceiptOrders() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [{ order_id: 201 }, { order_id: 202 }];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 2 };
+    }
+  };
+
+  const result = await markTrackingRescanByProductId(fakeDb, 'm123456789');
+
+  assert.equal(result.success, true);
+  assert.equal(result.productId, 'm123456789');
+  assert.deepEqual(result.orderIds, [201, 202]);
+  assert.equal(result.markedCount, 2);
+  assert.match(calls[0].sql, /o\.order_status = \?/);
+  assert.match(calls[1].sql, /tracking_rescan_requested = 1/);
+  assert.deepEqual(calls[1].params, [201, 202]);
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testStoreBidderPaysShippingCanSettleAsFree();
@@ -830,7 +855,8 @@ Promise.all([
   testDeleteProductDataCanRemoveOrphanBiddingItem(),
   testReassignOrderOwnerUpdatesSourceAndSameProductTasks(),
   testReassignOrderOwnerRejectsAdminUser(),
-  testMarkProductOrdersForResyncPrefersExistingOrderTasks()
+  testMarkProductOrdersForResyncPrefersExistingOrderTasks(),
+  testMarkTrackingRescanByProductIdMarksPendingReceiptOrders()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

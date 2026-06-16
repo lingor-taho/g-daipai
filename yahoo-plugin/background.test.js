@@ -688,6 +688,18 @@ function testBuildScanStatusPayloadSkipsPendingShipping() {
   assert.equal(payload.pending, true);
 }
 
+function testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 11,
+    orderStatus: 'pending_shipment',
+    trackingRescanRequested: true,
+    result: { type: 'pending_shipment' }
+  });
+
+  assert.equal(payload, null);
+}
+
 function testBuildScanStatusPayloadHandlesBundleShippingFee() {
   const api = loadBackgroundForTest();
   const payload = api.buildScanStatusPayload({
@@ -4517,6 +4529,7 @@ async function run() {
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
   testBuildScanStatusPayloadSkipsPendingShipping();
+  testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan();
   testBuildScanStatusPayloadHandlesBundleShippingFee();
   testBuildScanStatusPayloadHandlesBundleRejected();
   testBundleInputActionCanRunFromWaitingAgreementState();

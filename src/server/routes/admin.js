@@ -2042,6 +2042,40 @@ async function markProductOrdersForResync(database, productId) {
   };
 }
 
+async function markTrackingRescanByProductId(database, productId) {
+  const normalizedProductId = normalizeAuctionUrl(productId)?.auctionId || String(productId || '').trim().toLowerCase();
+  if (!normalizedProductId) {
+    return { productId: '', success: false, error: '商品 ID 无效' };
+  }
+
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id
+     FROM orders o
+     INNER JOIN tasks t ON t.id = o.task_id
+     WHERE t.product_id = ?
+       AND o.order_status = ?
+     ORDER BY datetime(COALESCE(o.shipped_at, o.updated_at, o.created_at)) DESC, o.id DESC`,
+    [normalizedProductId, ORDER_STATUS_PENDING_RECEIPT]
+  );
+  if (!rows.length) {
+    return { productId: normalizedProductId, success: false, error: '没有可重扫单号的待收货订单' };
+  }
+  const orderIds = rows.map(row => row.order_id).filter(Boolean);
+  const updateResult = await database.query(
+    `UPDATE orders
+     SET tracking_rescan_requested = 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (${buildPlaceholders(orderIds)})`,
+    orderIds
+  );
+  return {
+    productId: normalizedProductId,
+    success: true,
+    orderIds,
+    markedCount: updateResult.rowCount || 0
+  };
+}
+
 function normalizeProductType(value) {
   if (value === 'normal' || value === 'store') return value;
   if (value === 'tax_zero') return 'normal';
@@ -2322,6 +2356,35 @@ router.post('/orders-resync/run', async (req, res) => {
   });
 });
 
+router.post('/tracking-rescan/run', async (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: 'productIds is required' });
+  }
+
+  const results = [];
+  for (const productId of productIds) {
+    try {
+      results.push(await markTrackingRescanByProductId(db, productId));
+    } catch (error) {
+      results.push({ productId, success: false, error: error.message || '单号重扫标记失败' });
+    }
+  }
+  const marked = results.filter(item => item.success).length;
+  if (marked > 0) {
+    await requestScan(db).catch(() => null);
+  }
+
+  res.json({
+    success: true,
+    results,
+    marked,
+    failed: results.filter(item => !item.success).length
+  });
+});
+
 router.post('/product-data-delete/run', async (req, res) => {
   const productIds = Array.isArray(req.body?.productIds)
     ? parseShippingRefreshIds(req.body.productIds.join('\n'))
@@ -2500,6 +2563,7 @@ module.exports.confirmManualOrderImport = confirmManualOrderImport;
 module.exports.deleteManualOrderImportBatch = deleteManualOrderImportBatch;
 module.exports.normalizeManualOrderImportSummary = normalizeManualOrderImportSummary;
 module.exports.markProductOrdersForResync = markProductOrdersForResync;
+module.exports.markTrackingRescanByProductId = markTrackingRescanByProductId;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
