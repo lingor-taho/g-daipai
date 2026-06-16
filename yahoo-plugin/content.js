@@ -1721,7 +1721,13 @@ function extractStoreNameValueFromStoreInfoBlock(value) {
   const source = String(value || '');
   const match = source.match(/\u30b9\u30c8\u30a2\u540d\s*[:\uff1a]?\s*([^\n\r]+)/);
   if (!match?.[1]) return '';
-  return normalizeNameValue(match[1].replace(/\s*(?:\u4f4f\u6240|\u30b9\u30c8\u30a2\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b)[\s\S]*$/, ''));
+  return normalizeStoreNameValue(match[1]);
+}
+
+function normalizeStoreNameValue(value) {
+  return normalizeNameValue(String(value || '')
+    .replace(/^\s*\u30b9\u30c8\u30a2\u540d\s*[:\uff1a]?\s*/, '')
+    .replace(/\s*(?:\u4f4f\u6240|\u30b9\u30c8\u30a2\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b)[\s\S]*$/, ''));
 }
 
 function extractStoreInfoSectionText(value) {
@@ -1737,7 +1743,38 @@ function extractStoreInfoSectionText(value) {
   return section;
 }
 
+function extractStructuredStoreInfoName() {
+  const sections = Array.from(document.querySelectorAll('section') || []);
+  for (const section of sections) {
+    const sectionText = String(section?.textContent || '');
+    if (!/\u30b9\u30c8\u30a2\u60c5\u5831/.test(sectionText)) continue;
+
+    const rows = Array.from(section.querySelectorAll?.('dl, li, tr') || []);
+    const candidates = rows.length ? rows : [section];
+    for (const row of candidates) {
+      const rowText = String(row?.textContent || '');
+      const labels = Array.from(row.querySelectorAll?.('dt, th') || []);
+      const hasStoreNameLabel = labels.some(label => normalizeTextValue(label?.textContent || '') === '\u30b9\u30c8\u30a2\u540d') ||
+        /\u30b9\u30c8\u30a2\u540d/.test(rowText);
+      if (!hasStoreNameLabel) continue;
+
+      const values = Array.from(row.querySelectorAll?.('dd, td') || []);
+      for (const valueElement of values) {
+        const name = normalizeStoreNameValue(valueElement?.textContent || '');
+        if (name) return name;
+      }
+
+      const name = extractStoreNameValueFromStoreInfoBlock(rowText);
+      if (name) return name;
+    }
+  }
+  return '';
+}
+
 function extractStoreInfoName(text = getBodyText()) {
+  const structuredName = extractStructuredStoreInfoName();
+  if (structuredName) return structuredName;
+
   const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
   let inStoreInfo = false;
   for (const element of elements) {

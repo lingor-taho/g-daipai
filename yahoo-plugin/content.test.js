@@ -2437,6 +2437,44 @@ function testExtractPendingShipmentScanResultFallsBackToStoreInfoName() {
   assert.equal(result.trackingFallback, 'store_info_name');
 }
 
+function testExtractPendingShipmentScanResultFallsBackToStructuredStoreInfoName() {
+  const storeSection = {
+    textContent: '\u30b9\u30c8\u30a2\u60c5\u5831\u30b9\u30c8\u30a2\u540dSOFTomo\u30b9\u30c8\u30a2\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b',
+    querySelectorAll(selector) {
+      if (selector === 'dl, li, tr') {
+        return [
+          {
+            textContent: '\u30b9\u30c8\u30a2\u540dSOFTomo\u30b9\u30c8\u30a2\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b',
+            querySelectorAll(innerSelector) {
+              if (innerSelector === 'dt, th') return [{ textContent: '\u30b9\u30c8\u30a2\u540d' }];
+              if (innerSelector === 'dd, td') {
+                return [{ textContent: 'SOFTomo\u30b9\u30c8\u30a2\u60c5\u5831\u3092\u78ba\u8a8d\u3059\u308b\u203b\u8cfc\u5165\u306b\u3064\u3044\u3066\u306e\u8cea\u554f\u306f\u76f4\u63a5\u30b9\u30c8\u30a2\u306b\u304a\u554f\u3044\u5408\u308f\u305b\u304f\u3060\u3055\u3044\u3002' }];
+              }
+              return [];
+            }
+          }
+        ];
+      }
+      return [];
+    }
+  };
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'tr, dl, div, li, p') return [];
+        if (selector === 'section') return [storeSection];
+        return [];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, 'SOFTomo');
+  assert.equal(result.trackingFallback, 'store_info_name');
+}
+
 function testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber() {
   const api = loadContentForTest(
     '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
@@ -2701,6 +2739,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsStoreShipped();
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();
   testExtractPendingShipmentScanResultFallsBackToStoreInfoName();
+  testExtractPendingShipmentScanResultFallsBackToStructuredStoreInfoName();
   testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber();
   testExtractPendingShipmentScanResultDetectsNormalShipped();
   testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber();
