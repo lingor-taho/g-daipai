@@ -1126,6 +1126,7 @@ function testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProduct
 
   assert.equal(api.parseYenAmount('\u9001\u6599 \u7121\u6599'), 0);
   assert.equal(api.parseYenAmount('\u9001\u6599 \u7740\u6255\u3044'), 0);
+  assert.equal(api.parseYenAmount('\u9001\u6599 \u51fa\u54c1\u8005\u8ca0\u62c5'), 0);
   assert.equal(api.getExpectedPaymentAmountJpy({
     finalPrice: 56000,
     effectiveShippingFeeText: '\u9001\u6599 \u7121\u6599'
@@ -1133,6 +1134,10 @@ function testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProduct
   assert.equal(api.getExpectedPaymentAmountJpy({
     finalPrice: 56000,
     effectiveShippingFeeText: '\u9001\u6599 \u7740\u6255\u3044'
+  }), 56000);
+  assert.equal(api.getExpectedPaymentAmountJpy({
+    finalPrice: 56000,
+    effectiveShippingFeeText: '\u9001\u6599 \u51fa\u54c1\u8005\u8ca0\u62c5'
   }), 56000);
   assert.doesNotThrow(() => api.assertPaymentAmountMatches(
     { finalPrice: 56000, productType: 'normal', effectiveShippingFeeText: '\u9001\u6599 \u7121\u6599' },

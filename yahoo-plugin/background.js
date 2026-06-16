@@ -783,7 +783,7 @@ function buildConfirmReceiptFailurePayload(job, error) {
 
 function parseYenAmount(value) {
   const text = String(value || '').replace(/\s+/g, '');
-  if (!text || /\u7121\u6599|\u7740\u6255\u3044/.test(text)) return 0;
+  if (!text || /\u7121\u6599|\u7740\u6255\u3044|\u51fa\u54c1\u8005\u8ca0\u62c5/.test(text)) return 0;
   const match = text.match(/([\d,]+)\s*\u5186/);
   if (!match) return null;
   return Number(match[1].replace(/,/g, '')) || 0;
