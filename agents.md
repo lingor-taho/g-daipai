@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-16
+**最后更新**: 2026-06-17
 
 ---
 
@@ -323,6 +323,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-17 | 服务器 Chrome 中 Yahoo PIN 页被关闭或当前没有任何 PIN/验证码页时，后台仍可能继续显示“Yahoo 需要 PIN 码验证”，尤其是未提交 PIN 的 `manual_captcha_challenge` 会残留 | `background.js` 将无验证页时的兜底清理从“只关闭已回答 challenge”改为“关闭所有残留 PIN challenge，已回答验证码也继续关闭；未回答文字验证码不自动关闭”。新增回归测试覆盖服务端残留未回答 PIN challenge、Chrome 已无验证页时会调用 `/api/plugin/manual-captcha/close`。验证：`node yahoo-plugin/background.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js` |
 | 2026-06-16 | 即时拍进入 Yahoo `入札内容の確認` 弹窗后，点击最终 `上記に同意のうえ 入札する` 后仍使用通用 10 秒结果等待，用户看到确认弹窗停留时间偏长 | `content.js` 新增普通即时拍最终确认结果等待 `DIRECT_BID_FINAL_OUTCOME_TIMEOUT_MS=3000`，只把 `direct + bid` 最终确认后的 `waitForBidOutcome()` 缩短到 3 秒；多次出价和即決/购买确认仍保留原 10 秒等待。新增回归测试覆盖截图中的 `上記に同意のうえ 入札する` 弹窗。验证：`node yahoo-plugin/content.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
 | 2026-06-16 | 即时拍填价后固定等待 10 秒才回到 Yahoo 确认/失败页，导致本地即时拍反馈慢；Yahoo 返回 `Rebid required: current bid is not high enough` 时前端未归类，显示成“失败：系统原因” | `background.js` 新增 pending final 等待区分：普通即时拍确认后 1.5 秒重试注入，商城/即決最终购买仍保留 10 秒长等待；`taskFailureReason.js` 将 `Rebid required` / `current bid is not high enough` 归类为“失败：出价后被超过”。验证：`node yahoo-plugin/background.test.js`、`node src/client/src/utils/taskFailureReason.test.mjs`、`node --check yahoo-plugin/background.js`、`node --check src/shared/taskFailureReason.js` |
 | 2026-06-16 | 商城商品待发货扫描不应从全文兜底抓任意 `10-12` 位数字作为单号；同时所有商品都不能把 `0` 开头的 10/11 位电话当物流单号 | `content.js` 将物流单号候选统一走 `normalizeTrackingNumberCandidate()`，排除 `0` 开头数字候选；商城 `商品が発送されました` 分支只从 `伝票番号` / `追跡番号` / `お問い合わせ番号` 标签字段抓真实数字单号，不再扫描全文。商城无有效标签单号时直接按 `ストア情報 / ストア名` 兜底，再兜底顶部 `出品者`。新增回归测试覆盖商城全文无标签 `123456789012` 会改取 `SOFTomo`，以及普通商品 `080-9609-6438`、`0123456789` 不会被当单号。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
