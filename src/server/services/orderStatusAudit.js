@@ -25,11 +25,12 @@ async function getOrderStatusAuditRows(database, orderIds = []) {
             o.bundle_group_id,
             o.transaction_start_error,
             t.product_id,
-            t.product_type,
-            t.shipping_fee_text,
-            t.tax_type
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type) AS tax_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE o.id IN (${placeholders})`,
     ids
   );
@@ -109,11 +110,12 @@ async function backfillMissingOrderStatusAuditLogs(database, limit = 50) {
             o.bundle_group_id,
             o.transaction_start_error,
             t.product_id,
-            t.product_type,
-            t.shipping_fee_text,
-            t.tax_type
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type) AS tax_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE o.order_status IS NOT NULL
        AND o.order_status <> ''
        AND NOT EXISTS (

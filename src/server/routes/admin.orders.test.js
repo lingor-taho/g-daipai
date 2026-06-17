@@ -6,6 +6,8 @@ const {
   buildOrderSettlement,
   buildAdminOrdersListQuery,
   buildAdminOrdersUserWonDateRangeQuery,
+  buildOrderStatusDebugOrdersQuery,
+  buildAdminLogsQuery,
   mapAdminOrderListItem,
   resolveSettlementOrderStatus,
   ORDER_STATUS_PENDING_SETTLEMENT,
@@ -28,6 +30,8 @@ const {
   backfillStoreBundle,
   markProductOrdersForResync,
   markTrackingRescanByProductId,
+  refreshProductShippingFee,
+  refreshProductType,
   ORDER_STATUS_PENDING_SHIPMENT,
   ORDER_STATUS_BUNDLE_COMPLETED
 } = require('./admin');
@@ -336,11 +340,33 @@ function testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly() {
   });
 
   assert.match(query.sql, /u\.id = \?/);
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_url, o\.product_url, t\.product_url\) AS product_url/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) AS tax_type/);
+  assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type, CASE WHEN COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);
   assert.match(query.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) >= \?/);
   assert.match(query.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) <= \?/);
   assert.doesNotMatch(query.sql, /created_at/);
   assert.doesNotMatch(query.sql, /LIMIT/);
   assert.deepEqual(query.params, [12, '2026-06-09', '2026-06-10']);
+}
+
+function testOrderStatusDebugOrdersQueryUsesProductsFallback() {
+  const query = buildOrderStatusDebugOrdersQuery('a123456789');
+
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.deepEqual(query.params, ['a123456789']);
+}
+
+function testAdminLogsQueryUsesProductTitleFallback() {
+  const query = buildAdminLogsQuery({ pageSize: 50, offset: 100 });
+
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.deepEqual(query.params, [50, 100]);
 }
 
 function testMapAdminOrderListItemUsesEffectiveBundleShipping() {
@@ -815,6 +841,93 @@ async function testMarkTrackingRescanByProductIdMarksPendingReceiptOrders() {
   assert.deepEqual(calls[1].params, [201, 202]);
 }
 
+async function testRefreshProductShippingFeeDualWritesProducts() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/COUNT\(\*\) AS count FROM tasks/.test(sql)) return { count: 2 };
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /UPDATE tasks/.test(sql) ? 2 : 1 };
+    }
+  };
+  const fakeProductService = {
+    async fetchProduct(url) {
+      calls.push({ type: 'fetchProduct', url });
+      return {
+        data: {
+          title: 'product title',
+          imageUrl: 'https://example.com/image.jpg',
+          currentPrice: 1200,
+          buyoutPrice: 5000,
+          bidCount: 3,
+          taxType: 'tax_zero',
+          productType: 'normal',
+          shippingFeeText: '送料 880円',
+          endTime: '2026-06-20T12:00:00+09:00'
+        }
+      };
+    }
+  };
+
+  const result = await refreshProductShippingFee(fakeDb, fakeProductService, 'A123456789');
+
+  assert.equal(result.success, true);
+  assert.equal(result.productId, 'a123456789');
+  assert.equal(result.shippingFeeText, '送料 880円');
+  assert.equal(result.updatedCount, 2);
+  assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), true);
+  const productInsert = calls.find(call => call.type === 'query' && /INSERT INTO products/.test(call.sql));
+  assert.ok(productInsert);
+  assert.equal(productInsert.params[0], 'a123456789');
+  assert.equal(productInsert.params[8], 'normal');
+  assert.equal(productInsert.params[9], '送料 880円');
+}
+
+async function testRefreshProductTypeDualWritesProducts() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/COUNT\(\*\) AS count FROM tasks/.test(sql)) return { count: 1 };
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /UPDATE tasks/.test(sql) ? 1 : 1 };
+    }
+  };
+  const fakeProductService = {
+    async fetchProduct(url) {
+      calls.push({ type: 'fetchProduct', url });
+      return {
+        data: {
+          taxType: 'tax_included',
+          productType: 'store',
+          shippingFeeText: '送料 無料'
+        }
+      };
+    }
+  };
+
+  const result = await refreshProductType(fakeDb, fakeProductService, 'https://auctions.yahoo.co.jp/jp/auction/s123456789');
+
+  assert.equal(result.success, true);
+  assert.equal(result.productId, 's123456789');
+  assert.equal(result.productType, 'store');
+  assert.equal(result.productTypeText, '商城商品');
+  assert.equal(result.updatedCount, 1);
+  assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), true);
+  const productInsert = calls.find(call => call.type === 'query' && /INSERT INTO products/.test(call.sql));
+  assert.ok(productInsert);
+  assert.equal(productInsert.params[0], 's123456789');
+  assert.equal(productInsert.params[7], 'tax_included');
+  assert.equal(productInsert.params[8], 'store');
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testStoreBidderPaysShippingCanSettleAsFree();
@@ -828,6 +941,8 @@ testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
 testAdminOrdersQueryIncludesProductType();
 testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();
+testOrderStatusDebugOrdersQueryUsesProductsFallback();
+testAdminLogsQueryUsesProductTitleFallback();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testMapAdminOrderListItemAllowsStoreBidderPaysShipping();
 testSettlementStatusUsesPendingSettlement();
@@ -856,7 +971,9 @@ Promise.all([
   testReassignOrderOwnerUpdatesSourceAndSameProductTasks(),
   testReassignOrderOwnerRejectsAdminUser(),
   testMarkProductOrdersForResyncPrefersExistingOrderTasks(),
-  testMarkTrackingRescanByProductIdMarksPendingReceiptOrders()
+  testMarkTrackingRescanByProductIdMarksPendingReceiptOrders(),
+  testRefreshProductShippingFeeDualWritesProducts(),
+  testRefreshProductTypeDualWritesProducts()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

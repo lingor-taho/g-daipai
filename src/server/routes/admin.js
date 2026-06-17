@@ -199,7 +199,7 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
     sql: `SELECT o.id,
             o.task_id,
             o.product_title,
-            COALESCE(o.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_url, o.product_url, t.product_url) AS product_url,
             o.final_price,
             o.won_at,
             o.won_time_text,
@@ -220,9 +220,9 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
             o.has_user_finance_override,
             o.total_amount_cny,
             t.product_id,
-            t.shipping_fee_text,
-            t.tax_type,
-            t.product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
             u.id AS user_id,
             u.username,
             ufo.rate_adjustment,
@@ -231,6 +231,7 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
             ufo.large_amount_fee_cny AS user_large_amount_fee_cny
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      LEFT JOIN users u ON t.user_id = u.id
      LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE t.status = 'success'
@@ -240,6 +241,36 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
        AND substr(COALESCE(o.won_at, ''), 1, 10) <= ?
      ORDER BY datetime(o.won_at) DESC, o.id DESC`,
     params: [userId, fromDate, toDate]
+  };
+}
+
+function buildOrderStatusDebugOrdersQuery(productId) {
+  return {
+    sql: `SELECT o.id, o.task_id, o.order_status, o.final_price, o.won_at, o.won_time_text,
+            o.created_at, o.updated_at, o.transaction_started_at, o.transaction_start_error,
+            o.bundle_group_id, o.bundle_shipping_fee_text,
+            t.product_id,
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE t.product_id = ?
+     ORDER BY o.id DESC`,
+    params: [productId]
+  };
+}
+
+function buildAdminLogsQuery({ pageSize, offset }) {
+  return {
+    sql: `SELECT bl.*, COALESCE(p.product_title, t.product_title) AS product_title, ya.account_name
+     FROM bid_logs bl
+     LEFT JOIN tasks t ON bl.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
+     LEFT JOIN yahoo_accounts ya ON bl.account_id = ya.id
+     ORDER BY bl.created_at DESC
+     LIMIT ? OFFSET ?`,
+    params: [pageSize, offset]
   };
 }
 
@@ -734,17 +765,8 @@ router.get('/orders/status-debug/:productId', async (req, res) => {
      ORDER BY id DESC`,
     [productId]
   );
-  const orders = await db.getAll(
-    `SELECT o.id, o.task_id, o.order_status, o.final_price, o.won_at, o.won_time_text,
-            o.created_at, o.updated_at, o.transaction_started_at, o.transaction_start_error,
-            o.bundle_group_id, o.bundle_shipping_fee_text,
-            t.product_id, t.product_type, t.shipping_fee_text
-     FROM orders o
-     INNER JOIN tasks t ON o.task_id = t.id
-     WHERE t.product_id = ?
-     ORDER BY o.id DESC`,
-    [productId]
-  );
+  const ordersQuery = buildOrderStatusDebugOrdersQuery(productId);
+  const orders = await db.getAll(ordersQuery.sql, ordersQuery.params);
   const logs = await db.getAll(
     `SELECT l.*
      FROM order_status_change_logs l
@@ -2083,6 +2105,99 @@ function normalizeProductType(value) {
   return '';
 }
 
+function normalizeProductRefreshId(productId) {
+  return normalizeAuctionUrl(productId)?.auctionId || String(productId || '').trim().toLowerCase();
+}
+
+function buildFetchedProductSnapshot(productId, productData = {}) {
+  const taxType = productData.taxType || productData.tax_type || null;
+  const productType = normalizeProductType(productData.productType || productData.product_type || taxType) || null;
+  return {
+    product_id: productId,
+    product_url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+    product_title: productData.title || productData.productTitle || productData.product_title || null,
+    product_image_url: productData.imageUrl || productData.productImageUrl || productData.product_image_url || null,
+    current_price: productData.currentPrice || productData.current_price || null,
+    buyout_price: productData.buyoutPrice || productData.buyout_price || null,
+    bid_count: productData.bidCount || productData.bid_count || null,
+    tax_type: taxType,
+    product_type: productType,
+    shipping_fee_text: productData.shippingFeeText || productData.shipping_fee_text || null,
+    end_time: productData.endTime || productData.end_time || null
+  };
+}
+
+async function refreshProductShippingFee(database, service, productId) {
+  const normalizedProductId = normalizeProductRefreshId(productId);
+  if (!normalizedProductId) {
+    return { productId: '', success: false, error: '商品 ID 无效' };
+  }
+  const taskCount = await database.getOne('SELECT COUNT(*) AS count FROM tasks WHERE product_id = ?', [normalizedProductId]);
+  if (!taskCount?.count) {
+    return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
+  }
+
+  const product = await service.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${normalizedProductId}`);
+  const productData = product?.data || {};
+  const shippingFeeText = String(productData.shippingFeeText || productData.shipping_fee_text || '').trim();
+  if (!shippingFeeText) {
+    return { productId: normalizedProductId, success: false, error: '未解析到运费，未更新' };
+  }
+  const updateResult = await database.query(
+    `UPDATE tasks
+     SET shipping_fee_text = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE product_id = ?`,
+    [shippingFeeText, normalizedProductId]
+  );
+  await upsertProductSnapshot(database, {
+    ...buildFetchedProductSnapshot(normalizedProductId, productData),
+    shipping_fee_text: shippingFeeText
+  }, { source: 'fetch' });
+  return {
+    productId: normalizedProductId,
+    success: true,
+    shippingFeeText,
+    updatedCount: updateResult.rowCount || 0
+  };
+}
+
+async function refreshProductType(database, service, productId) {
+  const normalizedProductId = normalizeProductRefreshId(productId);
+  if (!normalizedProductId) {
+    return { productId: '', success: false, error: '商品 ID 无效' };
+  }
+  const taskCount = await database.getOne('SELECT COUNT(*) AS count FROM tasks WHERE product_id = ?', [normalizedProductId]);
+  if (!taskCount?.count) {
+    return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
+  }
+
+  const product = await service.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${normalizedProductId}`);
+  const productData = product?.data || {};
+  const productType = normalizeProductType(productData.productType || productData.product_type || productData.taxType || productData.tax_type);
+  if (!productType) {
+    return { productId: normalizedProductId, success: false, error: '未解析到商品类型，未更新' };
+  }
+  const updateResult = await database.query(
+    `UPDATE tasks
+     SET product_type = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE product_id = ?`,
+    [productType, normalizedProductId]
+  );
+  await upsertProductSnapshot(database, {
+    ...buildFetchedProductSnapshot(normalizedProductId, productData),
+    product_type: productType
+  }, { source: 'fetch' });
+  return {
+    productId: normalizedProductId,
+    success: true,
+    productType,
+    productTypeText: productType === 'store' ? '商城商品' : '普通商品',
+    updatedCount: updateResult.rowCount || 0
+  };
+}
+
 function buildPlaceholders(values) {
   return values.map(() => '?').join(',');
 }
@@ -2187,32 +2302,8 @@ router.post('/shipping-refresh/run', async (req, res) => {
 
   const results = [];
   for (const productId of productIds) {
-    const taskCount = await db.getOne('SELECT COUNT(*) AS count FROM tasks WHERE product_id = ?', [productId]);
-    if (!taskCount?.count) {
-      results.push({ productId, success: false, error: '系统中没有这个商品' });
-      continue;
-    }
-
     try {
-      const product = await productService.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${productId}`);
-      const shippingFeeText = String(product?.data?.shippingFeeText || '').trim();
-      if (!shippingFeeText) {
-        results.push({ productId, success: false, error: '未解析到运费，未更新' });
-        continue;
-      }
-      const updateResult = await db.query(
-        `UPDATE tasks
-         SET shipping_fee_text = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE product_id = ?`,
-        [shippingFeeText, productId]
-      );
-      results.push({
-        productId,
-        success: true,
-        shippingFeeText,
-        updatedCount: updateResult.rowCount || 0
-      });
+      results.push(await refreshProductShippingFee(db, productService, productId));
     } catch (err) {
       results.push({ productId, success: false, error: err.message || '运费更新失败' });
     }
@@ -2236,33 +2327,8 @@ router.post('/product-type-refresh/run', async (req, res) => {
 
   const results = [];
   for (const productId of productIds) {
-    const taskCount = await db.getOne('SELECT COUNT(*) AS count FROM tasks WHERE product_id = ?', [productId]);
-    if (!taskCount?.count) {
-      results.push({ productId, success: false, error: '系统中没有这个商品' });
-      continue;
-    }
-
     try {
-      const product = await productService.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${productId}`);
-      const productType = normalizeProductType(product?.data?.productType || product?.data?.taxType);
-      if (!productType) {
-        results.push({ productId, success: false, error: '未解析到商品类型，未更新' });
-        continue;
-      }
-      const updateResult = await db.query(
-        `UPDATE tasks
-         SET product_type = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE product_id = ?`,
-        [productType, productId]
-      );
-      results.push({
-        productId,
-        success: true,
-        productType,
-        productTypeText: productType === 'store' ? '商城商品' : '普通商品',
-        updatedCount: updateResult.rowCount || 0
-      });
+      results.push(await refreshProductType(db, productService, productId));
     } catch (err) {
       results.push({ productId, success: false, error: err.message || '商品类型更新失败' });
     }
@@ -2524,15 +2590,8 @@ router.get('/data-cleanup/logs', async (req, res) => {
 router.get('/logs', async (req, res) => {
   const { current = 1, pageSize = 50 } = req.query;
   const offset = (current - 1) * pageSize;
-  const items = await db.getAll(
-    `SELECT bl.*, t.product_title, ya.account_name
-     FROM bid_logs bl
-     LEFT JOIN tasks t ON bl.task_id = t.id
-     LEFT JOIN yahoo_accounts ya ON bl.account_id = ya.id
-     ORDER BY bl.created_at DESC
-     LIMIT ? OFFSET ?`,
-    [pageSize, offset]
-  );
+  const logsQuery = buildAdminLogsQuery({ pageSize, offset });
+  const items = await db.getAll(logsQuery.sql, logsQuery.params);
   res.json({ items });
 });
 
@@ -2541,6 +2600,8 @@ module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
 module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
+module.exports.buildOrderStatusDebugOrdersQuery = buildOrderStatusDebugOrdersQuery;
+module.exports.buildAdminLogsQuery = buildAdminLogsQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.calculateOrderPayable = calculateOrderPayable;
@@ -2554,6 +2615,8 @@ module.exports.getEffectiveShippingFeeText = getEffectiveShippingFeeText;
 module.exports.resolveSettlementOrderStatus = resolveSettlementOrderStatus;
 module.exports.normalizeOrderStatusRefreshTarget = normalizeOrderStatusRefreshTarget;
 module.exports.normalizeProductType = normalizeProductType;
+module.exports.refreshProductShippingFee = refreshProductShippingFee;
+module.exports.refreshProductType = refreshProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.parseStoreBundleChildProductIds = parseStoreBundleChildProductIds;
 module.exports.backfillStoreBundle = backfillStoreBundle;
