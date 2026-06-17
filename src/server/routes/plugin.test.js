@@ -931,7 +931,7 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) return tasks.get(params[0]) || null;
-      if (/SELECT id FROM orders WHERE task_id/.test(sql)) return existingOrders.get(params[0]) || null;
+      if (/FROM orders WHERE task_id/.test(sql)) return existingOrders.get(params[0]) || null;
       if (/SELECT \* FROM tasks WHERE id/.test(sql)) return taskRows.get(params[0]) || null;
       return null;
     },
@@ -966,7 +966,7 @@ async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) return { id: 77, force_orders_resync: 1 };
-      if (/SELECT id FROM orders WHERE task_id/.test(sql)) return { id: 177 };
+      if (/FROM orders WHERE task_id/.test(sql)) return { id: 177 };
       if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
         return {
           id: 77,
@@ -1003,13 +1003,58 @@ async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
   assert.equal(orderUpdate.params[3], 6600);
 }
 
+async function testSyncYahooWonOrdersMovesExistingPendingShipmentWithTrackingToPendingReceipt() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) return { id: 88, force_orders_resync: 0 };
+      if (/FROM orders WHERE task_id/.test(sql)) {
+        return {
+          id: 188,
+          order_status: ORDER_STATUS_PENDING_SHIPMENT,
+          tracking_number: ''
+        };
+      }
+      return null;
+    },
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /UPDATE orders/.test(sql) ? 1 : 0 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    {
+      productId: 'l1233674201',
+      price: '6,800円',
+      wonTimeText: '6/15 22:38',
+      transactionUrl: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=l1233674201',
+      trackingNumber: '490459840452'
+    }
+  ], fakeDb);
+
+  assert.equal(result.skippedExisting, 0);
+  assert.equal(result.updated, 1);
+  const orderUpdate = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql) && /order_status = \?/.test(call.sql));
+  assert.ok(orderUpdate);
+  assert.equal(orderUpdate.params[0], ORDER_STATUS_PENDING_RECEIPT);
+  assert.equal(orderUpdate.params[1], '490459840452');
+  assert.equal(orderUpdate.params[2], 'https://contact.auctions.yahoo.co.jp/seller/top?aid=l1233674201');
+  assert.equal(orderUpdate.params[3], 188);
+}
+
 async function testSyncYahooWonOrdersKeepsForcedResyncWhenPriceMissing() {
   const calls = [];
   const fakeDb = {
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) return { id: 77, force_orders_resync: 1 };
-      if (/SELECT id FROM orders WHERE task_id/.test(sql)) return { id: 177 };
+      if (/FROM orders WHERE task_id/.test(sql)) return { id: 177 };
       return null;
     },
     async query(sql, params) {
@@ -1050,10 +1095,10 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
 
   assert.match(calls[0].sql, /o\.order_status IN/);
   assert.equal(calls[0].params[0], ORDER_STATUS_PENDING_SHIPMENT);
-  assert.equal(calls[0].params[1], ORDER_STATUS_WAITING_SHIPPING);
-  assert.equal(calls[0].params[2], ORDER_STATUS_PENDING_BUNDLE);
-  assert.equal(calls[0].params[3], ORDER_STATUS_PENDING_RECEIPT);
-  assert.equal(calls[0].params[4], ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(calls[0].params[1], ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(calls[0].params[2], ORDER_STATUS_WAITING_SHIPPING);
+  assert.equal(calls[0].params[3], ORDER_STATUS_PENDING_BUNDLE);
+  assert.equal(calls[0].params[4], ORDER_STATUS_PENDING_RECEIPT);
   assert.equal(result.total, 1);
   assert.equal(result.jobs.length, 1);
   assert.equal(result.jobs[0].orderId, 11);
@@ -1969,6 +2014,7 @@ Promise.all([
   testUpdateTransactionStartStatusMarksOrderCancelled(),
   testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
   testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce(),
+  testSyncYahooWonOrdersMovesExistingPendingShipmentWithTrackingToPendingReceipt(),
   testSyncYahooWonOrdersKeepsForcedResyncWhenPriceMissing(),
   testGetScanJobsReturnsWaitingShippingOnly(),
   testGetScanJobsReturnsTrackingRescanAsPendingShipment(),

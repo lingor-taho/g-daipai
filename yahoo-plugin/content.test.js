@@ -2455,6 +2455,42 @@ function testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields() 
   assert.equal(result.trackingNumber, '628620458093');
 }
 
+function testExtractPendingShipmentScanResultExtractsSagawaStoreShipmentFromTradeInfo() {
+  const api = loadContentForTest(
+    [
+      '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002',
+      '\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+      '\u30b9\u30c8\u30a2\u304b\u3089\u8cfc\u5165\u3057\u305f\u5546\u54c1\u306f\u53d7\u53d6\u9023\u7d61\u306f\u5fc5\u8981\u3042\u308a\u307e\u305b\u3093\u3002',
+      '\u53d6\u5f15\u60c5\u5831',
+      '\u8cfc\u5165\u65e5\u6642 \uff1a 2026\u5e746\u670815\u65e5 21\u664238\u5206',
+      '\u6ce8\u6587\u756a\u53f7 \uff1a vectorpremium-11247014',
+      '\u914d\u9001\u60c5\u5831',
+      '\u914d\u9001\u696d\u8005 \uff1a \u4f50\u5ddd\u6025\u4fbf',
+      '\u914d\u9001\u5e0c\u671b\u65e5 \uff1a \u6307\u5b9a\u306a\u3057',
+      '\u914d\u9001\u5e0c\u671b\u6642\u9593 \uff1a \u6307\u5b9a\u306a\u3057',
+      '\u4f1d\u7968\u756a\u53f7 \uff1a 490459840452',
+      '\u914d\u9001\u72b6\u6cc1\u3092\u8abf\u3079\u308b\uff08\u5916\u90e8\u30b5\u30a4\u30c8\uff09'
+    ].join('\n'),
+    '/seller/top',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u4f50\u5ddd\u6025\u4fbf' },
+          { textContent: '\u914d\u9001\u5e0c\u671b\u65e5 \uff1a \u6307\u5b9a\u306a\u3057' },
+          { textContent: '\u914d\u9001\u5e0c\u671b\u6642\u9593 \uff1a \u6307\u5b9a\u306a\u3057' },
+          { textContent: '\u4f1d\u7968\u756a\u53f7 \uff1a 490459840452\n\u914d\u9001\u72b6\u6cc1\u3092\u8abf\u3079\u308b\uff08\u5916\u90e8\u30b5\u30a4\u30c8\uff09' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u4f50\u5ddd\u6025\u4fbf');
+  assert.equal(result.trackingNumber, '490459840452');
+  assert.equal(result.trackingFallback, '');
+}
+
 function testExtractPendingShipmentScanResultFallsBackToStoreInfoName() {
   const api = loadContentForTest(
     '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
@@ -2836,6 +2872,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsStoreShipped();
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();
+  testExtractPendingShipmentScanResultExtractsSagawaStoreShipmentFromTradeInfo();
   testExtractPendingShipmentScanResultFallsBackToStoreInfoName();
   testExtractPendingShipmentScanResultFallsBackToStructuredStoreInfoName();
   testExtractPendingShipmentScanResultStoreDoesNotUseUnlabeledBodyNumber();

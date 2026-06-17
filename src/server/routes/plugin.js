@@ -1544,6 +1544,50 @@ async function updatePendingReceiptOrderGoogleSheet(orderId, database = db) {
   return updateRowsByProductId(order.product_id, row);
 }
 
+async function updateExistingWonOrderFromSync(existingOrder = {}, order = {}, database = db) {
+  const orderId = Number(existingOrder.id || 0);
+  if (!Number.isInteger(orderId) || orderId <= 0) return { updated: false };
+  const trackingNumber = normalizePlainText(order.trackingNumber);
+  if (!trackingNumber) return { updated: false };
+  if (existingOrder.order_status !== ORDER_STATUS_PENDING_SHIPMENT) {
+    await database.query(
+      `UPDATE orders
+       SET tracking_number = COALESCE(NULLIF(?, ''), tracking_number),
+           transaction_url = COALESCE(NULLIF(?, ''), transaction_url),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [trackingNumber, String(order.transactionUrl || '').trim(), orderId]
+    );
+    return { updated: false };
+  }
+
+  const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+  const result = await database.query(
+    `UPDATE orders
+     SET order_status = ?,
+         tracking_number = ?,
+         transaction_url = COALESCE(NULLIF(?, ''), transaction_url),
+         tracking_rescan_requested = 0,
+         shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND order_status = ?`,
+    [ORDER_STATUS_PENDING_RECEIPT, trackingNumber, String(order.transactionUrl || '').trim(), orderId, ORDER_STATUS_PENDING_SHIPMENT]
+  );
+  if (result.rowCount) {
+    await autoCloseShipmentAlerts(orderId, database).catch(() => null);
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status: ORDER_STATUS_PENDING_RECEIPT,
+      source: 'won_sync_tracking_shipped',
+      metadata: { orderId, trackingNumber }
+    }).catch(() => null);
+    await appendPendingReceiptOrderToGoogleSheet(orderId, database).catch(error => {
+      console.warn('[Yahoo Bid] Google Sheet append skipped/failed:', error.message || error);
+    });
+  }
+  return { updated: Boolean(result.rowCount) };
+}
+
 function parseShipmentAlerts(value) {
   try {
     const parsed = JSON.parse(String(value || '[]'));
@@ -1572,8 +1616,13 @@ async function syncYahooWonOrders(orders = [], database = db) {
     );
     if (!task) continue;
     const isForced = Number(task.force_orders_resync || 0) === 1;
-    const existingOrder = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [task.id]);
+    const existingOrder = await database.getOne('SELECT id, order_status, tracking_number FROM orders WHERE task_id = ?', [task.id]);
     if (existingOrder && !isForced) {
+      const existingUpdate = await updateExistingWonOrderFromSync(existingOrder, order, database);
+      if (existingUpdate.updated) {
+        updated += 1;
+        continue;
+      }
       skippedExisting += 1;
       continue;
     }
@@ -1833,7 +1882,7 @@ async function getScanJobs(database = db) {
             OR (o.order_status = ? AND COALESCE(o.tracking_rescan_requested, 0) = 1))
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
-    [ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_PENDING_SHIPMENT]
+    [ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_WAITING_SHIPPING, ORDER_STATUS_PENDING_BUNDLE, ORDER_STATUS_PENDING_RECEIPT]
   );
   return {
     jobs: rows.map(row => ({
