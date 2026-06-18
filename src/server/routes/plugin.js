@@ -1203,12 +1203,13 @@ async function getTransactionStartJobs(database = db, options = {}) {
     `SELECT o.id AS order_id,
             o.transaction_url,
             t.product_id,
-            t.product_url,
-            t.product_title,
-            t.product_type,
-            t.shipping_fee_text
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE (o.order_status IS NULL OR o.order_status = '')
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`
   );
@@ -1458,10 +1459,10 @@ async function getOrdersForSheetAppend(orderId, database = db) {
             o.bundle_shipping_fee_text,
             o.google_sheet_appended_at,
             t.product_id,
-            t.product_url,
-            t.product_title,
-            t.shipping_fee_text,
-            t.tax_type,
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type) AS tax_type,
             o.shipping_company,
             o.tracking_number,
             u.username,
@@ -1471,6 +1472,7 @@ async function getOrdersForSheetAppend(orderId, database = db) {
             ufo.large_amount_fee_cny AS user_large_amount_fee_cny
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      INNER JOIN users u ON t.user_id = u.id
      LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE ${where}
@@ -1507,10 +1509,8 @@ async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
   return appendResult;
 }
 
-async function updatePendingReceiptOrderGoogleSheet(orderId, database = db) {
-  await applyGoogleSheetsConfigFromDb(database);
-  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
-  const order = await database.getOne(
+async function getOrderForSheetUpdate(orderId, database = db) {
+  return database.getOne(
     `SELECT o.id,
             o.won_at,
             o.created_at,
@@ -1519,10 +1519,10 @@ async function updatePendingReceiptOrderGoogleSheet(orderId, database = db) {
             o.bundle_group_id,
             o.bundle_shipping_fee_text,
             t.product_id,
-            t.product_url,
-            t.product_title,
-            t.shipping_fee_text,
-            t.tax_type,
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.tax_type, t.tax_type) AS tax_type,
             o.shipping_company,
             o.tracking_number,
             u.username,
@@ -1532,12 +1532,19 @@ async function updatePendingReceiptOrderGoogleSheet(orderId, database = db) {
             ufo.large_amount_fee_cny AS user_large_amount_fee_cny
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      INNER JOIN users u ON t.user_id = u.id
      LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
      WHERE o.id = ?
        AND o.order_status IN (?, ?)`,
     [orderId, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]
   );
+}
+
+async function updatePendingReceiptOrderGoogleSheet(orderId, database = db) {
+  await applyGoogleSheetsConfigFromDb(database);
+  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
+  const order = await getOrderForSheetUpdate(orderId, database);
   if (!order) return { skipped: true, reason: 'order not updateable' };
   const baseConfig = await getSheetFinanceBaseConfig(database);
   const row = buildDaipaiSheetRow(order, baseConfig);
@@ -1872,12 +1879,13 @@ async function getScanJobs(database = db) {
                 AND l.new_status = ?
             ), o.updated_at, o.created_at) AS pending_shipment_since,
             t.product_id,
-            t.product_url,
-            t.product_title,
-            t.product_type,
-            t.shipping_fee_text
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE (o.order_status IN (?, ?, ?)
             OR (o.order_status = ? AND COALESCE(o.tracking_rescan_requested, 0) = 1))
        AND t.status = 'success'
@@ -2205,11 +2213,12 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
             o.transaction_url,
             o.bundle_group_id,
             t.product_id,
-            t.product_url,
-            t.product_title,
-            t.product_type
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.product_type, t.product_type) AS product_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE o.order_status IN (?, ?, ?)
        AND t.status = 'success'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
@@ -2373,12 +2382,13 @@ async function getPaymentJobs(database = db, options = {}) {
             o.bundle_shipping_fee_text,
             o.bundle_group_id,
             t.product_id,
-            t.product_url,
-            t.product_title,
-            t.product_type,
-            t.shipping_fee_text
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE o.order_status = ?
        AND o.total_amount_cny IS NOT NULL
        AND t.status = 'success'
@@ -2848,6 +2858,7 @@ module.exports.updateScanStatus = updateScanStatus;
 module.exports.buildDaipaiSheetRow = buildDaipaiSheetRow;
 module.exports.calculateSheetPayable = calculateSheetPayable;
 module.exports.getOrdersForSheetAppend = getOrdersForSheetAppend;
+module.exports.getOrderForSheetUpdate = getOrderForSheetUpdate;
 module.exports.appendPendingReceiptOrderToGoogleSheet = appendPendingReceiptOrderToGoogleSheet;
 module.exports.calculateOverdueShipmentDays = calculateOverdueShipmentDays;
 module.exports.addPendingShipmentAlert = addPendingShipmentAlert;

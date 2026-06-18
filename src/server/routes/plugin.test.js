@@ -38,6 +38,7 @@ const {
   updateScanStatus,
   buildDaipaiSheetRow,
   getOrdersForSheetAppend,
+  getOrderForSheetUpdate,
   getPaymentJobs,
   getConfirmReceiptJobs,
   summarizePaymentError,
@@ -809,6 +810,11 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.equal(result.jobs[0].transactionUrl, '');
   assert.equal(result.jobs[1].productId, 'n2');
   assert.equal(result.jobs[2].productId, 'n3');
+  assert.match(queries[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(queries[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+  assert.match(queries[0].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(queries[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(queries[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.doesNotMatch(queries[0].sql, /t\.status = 'success'/);
   assert.doesNotMatch(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
   assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
@@ -1099,6 +1105,11 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
   assert.equal(calls[0].params[2], ORDER_STATUS_WAITING_SHIPPING);
   assert.equal(calls[0].params[3], ORDER_STATUS_PENDING_BUNDLE);
   assert.equal(calls[0].params[4], ORDER_STATUS_PENDING_RECEIPT);
+  assert.match(calls[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(calls[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+  assert.match(calls[0].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(calls[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(calls[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.equal(result.total, 1);
   assert.equal(result.jobs.length, 1);
   assert.equal(result.jobs[0].orderId, 11);
@@ -1245,6 +1256,11 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
     async getAll(sql, params) {
       calls.push({ sql, params });
       assert.match(sql, /o\.bundle_group_id = \?/);
+      assert.match(sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+      assert.match(sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+      assert.match(sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+      assert.match(sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+      assert.match(sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
       assert.deepEqual(params, ['bundle-a', ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
       return [
         { id: 13, product_id: 'c1135451955', bundle_shipping_fee_text: '0円' },
@@ -1259,6 +1275,33 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
   assert.equal(result.bundleGroupId, 'bundle-a');
   assert.deepEqual(result.orders.map(order => order.id), [13, 14]);
   assert.equal(calls.length, 3);
+}
+
+async function testGetOrderForSheetUpdateUsesProductSnapshotFields() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ sql, params });
+      return {
+        id: 15,
+        product_id: 'm1233193360',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/m1233193360',
+        product_title: 'sheet update item',
+        shipping_fee_text: '1940\u5186',
+        tax_type: 'tax_zero'
+      };
+    }
+  };
+
+  const order = await getOrderForSheetUpdate(15, fakeDb);
+
+  assert.equal(order.id, 15);
+  assert.match(calls[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(calls[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+  assert.match(calls[0].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(calls[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(calls[0].sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+  assert.deepEqual(calls[0].params, [15, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
 }
 
 async function testUpdateScanStatusMarksPendingShipmentAsCancelled() {
@@ -1430,6 +1473,11 @@ async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
       }
       assert.match(sql, /o\.order_status = \?/);
       assert.match(sql, /o\.total_amount_cny IS NOT NULL/);
+      assert.match(sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+      assert.match(sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+      assert.match(sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+      assert.match(sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+      assert.match(sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
       assert.match(sql, /ORDER BY datetime\(COALESCE\(o\.won_at, o\.created_at\)\) ASC, o\.id ASC/);
       assert.deepEqual(params.slice(0, 3), [
         ORDER_STATUS_PENDING_SETTLEMENT,
@@ -1794,6 +1842,10 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
     ORDER_STATUS_PENDING_PAYMENT,
     ORDER_STATUS_PENDING_SETTLEMENT
   ]);
+  assert.match(calls[1].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(calls[1].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+  assert.match(calls[1].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(calls[1].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
   assert.equal(result.jobs.length, 3);
   assert.equal(result.jobs[0].jobType, 'confirm_receipt');
   assert.equal(result.jobs[1].jobType, 'cancel_check');
@@ -2043,6 +2095,7 @@ Promise.all([
   testUpdateScanStatusRefreshesTrackingForRescanOrder(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),
   testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
+  testGetOrderForSheetUpdateUsesProductSnapshotFields(),
   testUpdateScanStatusMarksPendingShipmentAsCancelled(),
   testUpdateScanStatusWritesShippingAndPendingPayment(),
   testUpdateScanStatusKeepsWaitingShippingWhenShippingPending(),
