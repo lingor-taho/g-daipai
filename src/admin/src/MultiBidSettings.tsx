@@ -18,10 +18,15 @@ const PREFECTURE_OPTIONS = [
 ].map(([value, label]) => ({ value, label }));
 
 async function saveMultiBidConfig(values: any) {
+  const body = {
+    ...values,
+    workerIntervalMs: Math.round(Number(values.workerIntervalSeconds ?? 10) * 1000)
+  };
+  delete body.workerIntervalSeconds;
   const res = await fetch('/api/admin/multi-bid-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(values)
+    body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || '保存失败');
@@ -70,6 +75,7 @@ export default function MultiBidSettingsPage() {
     fetchAdminJson('/api/admin/multi-bid-config')
       .then(data => {
         form.setFieldsValue({
+          workerIntervalSeconds: (data.workerIntervalMs ?? 10000) / 1000,
           startHours: data.startHours ?? 0.5,
           intervalMinutes: data.intervalMinutes ?? 5,
           multiBidMinPrice: data.multiBidMinPrice ?? 5000,
@@ -154,6 +160,7 @@ export default function MultiBidSettingsPage() {
         onFinish={handleSave}
         className="admin-config-form"
         initialValues={{
+          workerIntervalSeconds: 10,
           startHours: 0.5,
           intervalMinutes: 5,
           multiBidMinPrice: 5000,
@@ -176,7 +183,20 @@ export default function MultiBidSettingsPage() {
         }}
         style={{ maxWidth: 640 }}
       >
-        <Card title="多次出价配置">
+        <Card title="插件轮询配置">
+          <Form.Item
+            name="workerIntervalSeconds"
+            label="请求任务间隔"
+            rules={[{ required: true, message: '请输入请求任务间隔' }]}
+          >
+            <InputNumber min={1} max={60} step={1} precision={0} addonAfter="秒" style={{ width: '100%' }} />
+          </Form.Item>
+          <Typography.Text type="secondary">
+            插件按这个间隔请求待出价任务，默认 10 秒；调低后会更频繁检查队列。
+          </Typography.Text>
+        </Card>
+
+        <Card title="多次出价配置" style={{ marginTop: 16 }}>
           <Form.Item
             name="multiBidMinPrice"
             label="多次出价最低最高价"

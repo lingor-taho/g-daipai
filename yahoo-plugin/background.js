@@ -1,5 +1,5 @@
 const API_BASES = ['http://127.0.0.1:3034', 'http://localhost:3034'];
-const POLL_INTERVAL_MS = 10000;
+const DEFAULT_POLL_INTERVAL_MS = 10000;
 const POLL_ALARM_NAME = 'poll-pending-tasks';
 const AUTO_BID_ENABLED = true;
 const TRANSACTION_START_ENABLED = globalThis.__G_DAIPAI_TRANSACTION_START_ENABLED__ !== false;
@@ -15,6 +15,8 @@ const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGg
 const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = false;
 
 let fetchFailureCount = 0;
+let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
+let pollIntervalTimerId = null;
 let idleSyncIntervalMs = 5 * 60 * 1000;
 let bidConcurrencyLimit = 2;
 let lastIdleSyncAt = 0;
@@ -2659,11 +2661,36 @@ async function refreshPluginConfig() {
   try {
     const res = await apiFetch('/api/plugin/config');
     const config = await res.json();
-    const intervalMinutes = Number(config?.idleSyncIntervalMinutes || 5);
-    idleSyncIntervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
-    bidConcurrencyLimit = Math.max(1, Math.min(10, Math.floor(Number(config?.bidConcurrencyLimit || 2))));
+    applyPluginConfig(config);
   } catch (e) {
     console.warn('[Yahoo Bid] Failed to refresh plugin config:', e.message || e);
+  }
+}
+
+function normalizeWorkerIntervalMs(value) {
+  const interval = Math.floor(Number(value));
+  return Number.isFinite(interval) && interval >= 1000 ? interval : DEFAULT_POLL_INTERVAL_MS;
+}
+
+function schedulePollingInterval() {
+  if (pollIntervalTimerId !== null && pollIntervalTimerId !== undefined) {
+    clearInterval(pollIntervalTimerId);
+  }
+  pollIntervalTimerId = setInterval(pollAndExecute, pollIntervalMs);
+  return pollIntervalTimerId;
+}
+
+function applyPluginConfig(config = {}) {
+  const intervalMinutes = Number(config?.idleSyncIntervalMinutes || 5);
+  idleSyncIntervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
+  bidConcurrencyLimit = Math.max(1, Math.min(10, Math.floor(Number(config?.bidConcurrencyLimit || 2))));
+  const nextPollIntervalMs = normalizeWorkerIntervalMs(config?.workerIntervalMs);
+  if (nextPollIntervalMs !== pollIntervalMs) {
+    pollIntervalMs = nextPollIntervalMs;
+    if (pollIntervalTimerId !== null && pollIntervalTimerId !== undefined) {
+      schedulePollingInterval();
+      console.log('[Yahoo Bid] Poll interval updated to', pollIntervalMs / 1000, 's');
+    }
   }
 }
 
@@ -4986,8 +5013,9 @@ async function pollAndExecute() {
 
 async function startPolling() {
   chrome.alarms.create(POLL_ALARM_NAME, { periodInMinutes: 1 });
-  setInterval(pollAndExecute, POLL_INTERVAL_MS);
-  console.log('[Yahoo Bid] Extension started, polling every', POLL_INTERVAL_MS / 1000, 's');
+  schedulePollingInterval();
+  refreshPluginConfig().catch(() => {});
+  console.log('[Yahoo Bid] Extension started, polling every', pollIntervalMs / 1000, 's');
 }
 
 chrome.runtime.onInstalled.addListener(startPolling);
@@ -5049,6 +5077,9 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   runTransactionStartJobs,
   runPaymentJobs,
   runConfirmReceiptJobs,
+  normalizeWorkerIntervalMs,
+  applyPluginConfig,
+  getPollIntervalMs: () => pollIntervalMs,
   buildConfirmReceiptPageStateFromSnapshot,
   buildPaymentFailurePayload,
   isManualCaptchaTab,

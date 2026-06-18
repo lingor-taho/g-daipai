@@ -18,9 +18,10 @@ function loadBackgroundForTest(overrides = {}) {
       __G_DAIPAI_TRANSACTION_START_ENABLED__: overrides.transactionStartEnabled,
       __G_DAIPAI_RANDOM__: overrides.random
     },
-    setInterval() {},
+    setInterval(...args) { return overrides.setInterval ? overrides.setInterval(...args) : undefined; },
     setTimeout(fn, ms) { return overrides.setTimeout ? overrides.setTimeout(fn, ms) : fn(); },
     clearTimeout() {},
+    clearInterval(...args) { return overrides.clearInterval ? overrides.clearInterval(...args) : undefined; },
     Date: overrides.Date || Date,
     URL,
     URLSearchParams,
@@ -4571,6 +4572,31 @@ async function testFailedBidDoesNotImmediatelySyncWonPage() {
   assert.equal(statusBodies.some(body => body.status === 'failed'), true);
 }
 
+function testWorkerIntervalConfigReschedulesPollingTimer() {
+  const intervals = [];
+  const cleared = [];
+  const api = loadBackgroundForTest({
+    setInterval(_fn, ms) {
+      intervals.push(ms);
+      return intervals.length;
+    },
+    clearInterval(id) {
+      cleared.push(id);
+    }
+  });
+
+  assert.equal(intervals[0], 10000);
+  api.applyPluginConfig({ workerIntervalMs: 5000 });
+  assert.equal(api.getPollIntervalMs(), 5000);
+  assert.deepEqual(intervals, [10000, 5000]);
+  assert.deepEqual(cleared, [1]);
+
+  api.applyPluginConfig({ workerIntervalMs: 0 });
+  assert.equal(api.getPollIntervalMs(), 10000);
+  assert.deepEqual(intervals, [10000, 5000, 10000]);
+  assert.deepEqual(cleared, [1, 2]);
+}
+
 async function run() {
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
@@ -4675,6 +4701,7 @@ async function run() {
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
+  testWorkerIntervalConfigReschedulesPollingTimer();
 }
 
 run().catch(err => {
