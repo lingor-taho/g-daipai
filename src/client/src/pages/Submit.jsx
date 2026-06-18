@@ -8,7 +8,6 @@ import UserNav from '../components/UserNav';
 import UserFooter from '../components/UserFooter';
 import TaskList from './TaskList';
 import { runDeduped } from '../utils/requestDedupe';
-import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, pageStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -478,11 +477,22 @@ export default function Submit() {
   }
 
   return (
-    <div style={pageStyle}>
+    <div style={{ padding: 16 }}>
       <UserNav />
-      <div style={{ ...cardStyle, padding: 14 }}>
-        <div style={{ ...sectionTitleStyle, marginBottom: 10 }}>商品ID / 商品链接 / 商品名称</div>
-        <div style={inputBoxStyle}>
+      <div style={{
+        background: '#fff',
+        border: '1px solid #d6e4ff',
+        borderRadius: 8,
+        padding: 14,
+        boxShadow: '0 2px 8px rgba(22, 119, 255, 0.08)'
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#1f2937', marginBottom: 10 }}>商品链接 / 商品名称</div>
+        <div style={{
+          border: '1px solid #1677ff',
+          borderRadius: 8,
+          padding: '10px 12px',
+          background: '#f8fbff'
+        }}>
           <Input
             placeholder="粘贴 Yahoo 拍卖商品链接或输入商品名称"
             value={url}
@@ -499,7 +509,7 @@ export default function Submit() {
           color="primary"
           fill="outline"
           block
-          style={{ ...outlineButtonStyle, marginTop: 12 }}
+          style={{ marginTop: 12 }}
         >
           {fetching ? '获取中...' : '获取商品信息'}
         </Button>
@@ -509,7 +519,7 @@ export default function Submit() {
 
       {product && (
         <>
-          <List style={{ ...listStyle, marginTop: 12 }}>
+          <List style={{ marginTop: 12 }}>
             {getBuyoutPrice(product) > 0 && (
               <List.Item
                 prefix="即決"
@@ -577,7 +587,7 @@ export default function Submit() {
                     background: 'transparent',
                     padding: 0,
                     color: bidCurrency === 'jpy' ? '#8b1a1a' : '#999',
-                    fontWeight: 400
+                    fontWeight: bidCurrency === 'jpy' ? 700 : 400
                   }}
                 >
                   日元
@@ -592,7 +602,7 @@ export default function Submit() {
                     background: 'transparent',
                     padding: 0,
                     color: bidCurrency === 'cny' ? '#8b1a1a' : '#999',
-                    fontWeight: 400,
+                    fontWeight: bidCurrency === 'cny' ? 700 : 400,
                     opacity: websiteRate?.rate ? 1 : 0.45
                   }}
                 >
@@ -601,13 +611,13 @@ export default function Submit() {
               </span>
             </List.Item>
             <List.Item>
-              <div style={{ textAlign: 'right', color: colors.danger, fontSize: 13, fontWeight: 400 }}>
+              <div style={{ textAlign: 'right', color: '#d4380d', fontSize: 13, fontWeight: 600 }}>
                 {renderActualBidText()}
               </div>
             </List.Item>
           </List>
 
-          <List style={{ ...listStyle, marginTop: 12 }}>
+          <List style={{ marginTop: 12 }}>
             <List.Item
               prefix="出价策略"
               clickable={!buyoutSelected && !buyoutOnly}
@@ -634,7 +644,7 @@ export default function Submit() {
           />
           {strategy === 'multi_bid' && !buyoutSelected && !buyoutOnly && (
             <>
-              <List style={{ ...listStyle, marginTop: 12 }}>
+              <List style={{ marginTop: 12 }}>
                 <List.Item
                   prefix="每次加价额度"
                   extra={
@@ -650,7 +660,7 @@ export default function Submit() {
                   <span style={{ color: '#999', fontSize: 12 }}>日元</span>
                 </List.Item>
               </List>
-              <div style={{ ...cardStyle, marginTop: 10, padding: '10px 12px', color: colors.accent, fontSize: 13, lineHeight: 1.5, background: '#f8fbff' }}>
+              <div style={{ padding: '8px 16px 0', color: '#d4380d', fontSize: 13, lineHeight: 1.5 }}>
                 多次出价标准：最高价不低于{multiBidConfig.minPrice}日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
                 <br />
                 提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(getInputYenPrice(), product, storeBidPriceMode))}日元
@@ -658,8 +668,8 @@ export default function Submit() {
             </>
           )}
 
-          <div style={{ padding: '14px 0 16px' }}>
-            <Button block color="primary" loading={submitting} disabled={submitting} onClick={handleSubmit} style={primaryButtonStyle}>
+          <div style={{ padding: '0 16px 16px' }}>
+            <Button block color="primary" loading={submitting} disabled={submitting} onClick={handleSubmit}>
               {submitting ? '提交中...' : '提交任务'}
             </Button>
           </div>
@@ -671,4 +681,3 @@ export default function Submit() {
     </div>
   );
 }
-

@@ -1,14 +1,12 @@
-import { colors } from '../styles';
-
 export default function UserFooter() {
   return (
     <div
       style={{
         margin: '28px 0 10px',
         paddingTop: 12,
-        borderTop: `1px solid ${colors.border}`,
+        borderTop: '1px solid #eee',
         textAlign: 'center',
-        color: colors.faint,
+        color: '#999',
         fontSize: 12
       }}
     >

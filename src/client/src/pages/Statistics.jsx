@@ -6,7 +6,6 @@ import { getWonStats } from '../utils/api';
 import { USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { buildWonStatsCsv, downloadCsv } from '../utils/wonStats';
-import { cardStyle, colors, outlineButtonStyle, pageStyle, sectionTitleStyle } from '../styles';
 
 function formatJPY(value) {
   const amount = Number(value || 0);
@@ -84,18 +83,18 @@ export default function Statistics() {
   }
 
   return (
-    <div style={pageStyle}>
+    <div style={{ padding: 16 }}>
       <UserNav />
 
-      <div style={{ ...cardStyle, padding: 14, marginBottom: 12 }}>
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 14, marginBottom: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
           <div>
-            <div style={sectionTitleStyle}>近30天落札统计</div>
-            <div style={{ fontSize: 12, color: colors.muted, marginTop: 4 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>近30天落札统计</div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
               合计 {formatJPY(totalAmount)} / {totalCount} 件
             </div>
           </div>
-          <Button size="small" color="primary" fill="outline" style={outlineButtonStyle} disabled={!items.length} onClick={handleExport}>
+          <Button size="small" color="primary" fill="outline" disabled={!items.length} onClick={handleExport}>
             导出CSV
           </Button>
         </div>
@@ -114,7 +113,7 @@ export default function Statistics() {
 
         {!loading && daily.length > 0 && (
           <>
-            <div style={{ minHeight: 42, marginBottom: 8, fontSize: 13, color: colors.text, background: '#f8fbff', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '9px 10px', boxSizing: 'border-box' }}>
+            <div style={{ minHeight: 42, marginBottom: 8, fontSize: 13, color: '#374151' }}>
               {activeItem ? (
                 <>
                   <strong>{activeItem.date}</strong>
@@ -131,10 +130,8 @@ export default function Statistics() {
                   gridTemplateColumns: `repeat(${daily.length}, minmax(16px, 1fr))`,
                   gap: 6,
                   alignItems: 'end',
-                  borderLeft: `1px solid ${colors.border}`,
-                  borderBottom: `1px solid ${colors.border}`,
-                  borderRadius: 8,
-                  background: '#ffffff',
+                  borderLeft: '1px solid #e5e7eb',
+                  borderBottom: '1px solid #e5e7eb',
                   padding: '12px 8px 22px 8px',
                   position: 'relative'
                 }}
@@ -169,12 +166,11 @@ export default function Statistics() {
                           maxWidth: 24,
                           height,
                           borderRadius: '5px 5px 0 0',
-                          background: selected ? colors.accent : colors.accent2,
-                          boxShadow: selected ? '0 4px 10px rgba(37, 99, 235, 0.22)' : '0 4px 10px rgba(59, 130, 246, 0.14)',
-                          transition: 'height 160ms ease, background 120ms ease, box-shadow 120ms ease'
+                          background: selected ? '#ef4444' : '#1677ff',
+                          transition: 'height 160ms ease, background 120ms ease'
                         }}
                       />
-                      <span style={{ fontSize: 10, color: selected ? colors.text : colors.muted, height: 12, fontWeight: selected ? 700 : 400 }}>
+                      <span style={{ fontSize: 10, color: selected ? '#111827' : '#6b7280', height: 12 }}>
                         {formatShortDate(item.date)}
                       </span>
                     </button>

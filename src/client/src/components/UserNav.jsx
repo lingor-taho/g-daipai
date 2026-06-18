@@ -3,7 +3,6 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, List, Popup, SearchBar, Toast } from 'antd-mobile';
 import { getActingUsers, getClientSiteConfig } from '../utils/api';
 import { runDeduped } from '../utils/requestDedupe';
-import { colors } from '../styles';
 
 const items = [
   { to: '/submit', label: '提交任务' },
@@ -109,58 +108,40 @@ export default function UserNav() {
         `}
       </style>
 
-      <div
-        style={{
-          margin: '-20px -20px 14px',
-          padding: siteConfig.noticeText ? '16px 20px 14px' : '10px 20px 0',
-          background: '#ffffff',
-          borderBottom: `1px solid ${colors.border}`,
-          boxShadow: '0 6px 18px rgba(37, 99, 235, 0.05)'
-        }}
-      >
-        {siteConfig.noticeText && (
-          <div
-            style={{
-              border: `1px solid ${colors.border}`,
-              background: '#f8fbff',
-              color: colors.accent,
-              borderRadius: 8,
-              minHeight: 38,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'hidden',
-              boxShadow: '0 3px 10px rgba(37, 99, 235, 0.06)'
-            }}
-          >
-            <div style={{ width: '100%', overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 15, fontWeight: 600, textAlign: 'center' }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  padding: '0 16px',
-                  animation: siteConfig.noticeMarquee ? 'clientNoticeMarquee 14s linear infinite' : 'none'
-                }}
-              >
-                {siteConfig.noticeText}
-              </span>
-            </div>
+      {siteConfig.noticeText && (
+        <div
+          style={{
+            marginBottom: 10,
+            border: '1px solid #d6e4ff',
+            background: '#f8fbff',
+            color: '#1677ff',
+            borderRadius: 8,
+            minHeight: 38,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden'
+          }}
+        >
+          <div style={{ width: '100%', overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 15, textAlign: 'center' }}>
+            <span
+              style={{
+                display: 'inline-block',
+                padding: '0 16px',
+                animation: siteConfig.noticeMarquee ? 'clientNoticeMarquee 14s linear infinite' : 'none'
+              }}
+            >
+              {siteConfig.noticeText}
+            </span>
           </div>
-        )}
-      </div>
-
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 10,
-          padding: '0 2px'
-        }}
-      >
-        <div style={{ fontSize: 14, color: colors.muted }}>
-          登录用户：<span style={{ fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
         </div>
-        <Button size="mini" fill="outline" color="primary" onClick={logout}>退出</Button>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 14, color: '#666' }}>
+          登录用户：<span style={{ fontWeight: 700, color: '#333' }}>{localStorage.getItem('username') || '-'}</span>
+        </div>
+        <Button size="mini" fill="outline" onClick={logout}>退出</Button>
       </div>
 
       {showSwitcher && (
@@ -173,17 +154,16 @@ export default function UserNav() {
             marginBottom: 10,
             padding: '10px 12px',
             borderRadius: 8,
-            background: '#ffffff',
-            border: `1px solid ${colors.border}`,
+            background: '#fff',
+            border: '1px solid #e5e7eb',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            fontSize: 14,
-            boxShadow: '0 3px 12px rgba(37, 99, 235, 0.05)'
+            fontSize: 14
           }}
         >
-          <span style={{ color: colors.muted }}>当前账号</span>
-          <span style={{ fontWeight: 700, color: colors.accent }}>{selectedUser?.username || localStorage.getItem('actingUsername') || '-'}</span>
+          <span style={{ color: '#666' }}>当前账号</span>
+          <span style={{ fontWeight: 700, color: '#1677ff' }}>{selectedUser?.username || localStorage.getItem('actingUsername') || '-'}</span>
         </div>
       )}
 
@@ -199,10 +179,9 @@ export default function UserNav() {
               padding: '9px 6px',
               fontSize: 14,
               fontWeight: 600,
-              color: isActive ? '#fff' : colors.text,
-              background: isActive ? colors.accent : '#ffffff',
-              border: `1px solid ${isActive ? colors.accent : colors.border}`,
-              boxShadow: isActive ? '0 6px 14px rgba(37, 99, 235, 0.18)' : '0 3px 10px rgba(37, 99, 235, 0.04)'
+              color: isActive ? '#fff' : '#333',
+              background: isActive ? '#1677ff' : '#fff',
+              border: `1px solid ${isActive ? '#1677ff' : '#eee'}`
             })}
           >
             {item.label}

@@ -323,6 +323,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-18 | 用户端整体样式尝试改为蓝白/卡片化后，与期望的原始简洁列表和默认控件风格不一致 | 已将用户端提交页、商品卡、入札中、落札商品、统计页、任务列表恢复到 2026-06-18 样式改动前的默认展示风格；删除共享样式 `src/client/src/styles.js`。仅保留登录页标题文字“日本Yahoo代拍系统”、登录后顶部公告栏、各用户端页面底部 copyright。验证：`npm run build --prefix src/client` |
 | 2026-06-18 | 用户端暖色系视觉与最新要求不符，需要改为简约蓝白风格、纯白背景和偏蓝按钮 | 用户端共享样式切换为蓝白色板：页面背景改为纯白，卡片/输入框/列表使用浅蓝边框和轻量蓝色阴影，主按钮统一为蓝色；登录页、公告栏、导航、页脚、商品卡、提交提示、落札完成状态和统计图表移除暖色硬编码并统一蓝白简约风。验证：`npm run build --prefix src/client` |
 | 2026-06-18 | 用户端提交表单、任务列表、入札中/落札列表和统计图表视觉风格仍偏默认控件，和新登录页/公告栏风格不统一 | 新增用户端共享样式 `src/client/src/styles.js`，统一页面背景、卡片、按钮、输入框、列表项、缩略图、分页和图表配色；提交页商品输入卡、商品卡、策略/价格表单、提交按钮改为暖色卡片 + 青色主按钮；入札中/落札商品/任务列表改为卡片式列表；统计页图表改为柔和卡片和青色/金色柱体。验证：`npm run build --prefix src/client` |
 | 2026-06-18 | 用户端入口和登录后页面缺少正式品牌感、通知栏和统一页脚；运营通知无法从后台配置 | 用户端登录标题改为“日本Yahoo代拍系统”，登录页和登录后导航统一改为偏日系的暖色轻量视觉；登录后顶部新增后台可配置通知栏，支持文字滚动开关；所有用户端页面底部新增 `© 2026 Kumohiro Co., Ltd.`。后台系统配置新增“用户端通知栏”卡片，读写 `client_notice_text` / `client_notice_marquee`；用户端新增 `/api/task/site-config` 读取通知配置。验证：`node src/server/routes/task.test.js`、`node --check src/server/routes/task.js`、`node --check src/server/routes/admin.js`、`npm run build --prefix src/client`、`npm run build --prefix src/admin` |
