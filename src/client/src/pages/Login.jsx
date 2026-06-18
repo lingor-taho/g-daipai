@@ -21,9 +21,20 @@ export default function Login() {
       localStorage.removeItem('actingUserBidStrategyScope');
       navigate('/submit');
     } catch (e) {
-      Toast.show({ content: e.response?.data?.error || '登录失败' });
+      Toast.show({ content: '用户名或密码错误，请联系管理员！' });
     }
   }
+
+  const inputWrapStyle = {
+    height: 44,
+    border: `1px solid ${colors.borderStrong}`,
+    borderRadius: 8,
+    padding: '0 12px',
+    display: 'flex',
+    alignItems: 'center',
+    background: '#fff',
+    boxSizing: 'border-box'
+  };
 
   return (
     <div
@@ -57,9 +68,13 @@ export default function Login() {
             boxShadow: '0 14px 32px rgba(37, 99, 235, 0.08)'
           }}
         >
-          <Input placeholder="用户名" value={username} onChange={setUsername} />
+          <div style={inputWrapStyle}>
+            <Input placeholder="用户名" value={username} onChange={setUsername} />
+          </div>
           <div style={{ height: 12 }} />
-          <Input placeholder="密码" type="password" value={password} onChange={setPassword} />
+          <div style={inputWrapStyle}>
+            <Input placeholder="密码" type="password" value={password} onChange={setPassword} />
+          </div>
           <div style={{ height: 26 }} />
           <Button
             block
