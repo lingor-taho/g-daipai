@@ -1,5 +1,6 @@
 import { getBuyoutPrice } from '../utils/bidPrice';
 import { formatTotalAmount } from '../utils/totalAmount';
+import { cardStyle, colors } from '../styles';
 
 function getDisplayPrice(price, taxType) {
   const value = Number(price || 0);
@@ -37,34 +38,34 @@ export default function ProductCard({ product }) {
   const bidCount = Number(product.bidCount ?? product.bid_count ?? 0);
 
   return (
-    <div style={{ margin: 16, border: '1px solid #eee', borderRadius: 8, overflow: 'hidden', background: '#fff', display: 'flex' }}>
+    <div style={{ ...cardStyle, margin: '14px 0', overflow: 'hidden', display: 'flex' }}>
       {product.imageUrl && (
         <img src={product.imageUrl} alt={product.title}
-          style={{ width: 150, height: 150, objectFit: 'cover', flex: '0 0 150px' }} />
+          style={{ width: 136, height: 136, objectFit: 'cover', flex: '0 0 136px', background: colors.cardSoft }} />
       )}
       <div style={{ padding: 12, minWidth: 0, flex: 1 }}>
-        <div style={{ color: productType === 'store' ? '#d4380d' : '#1677ff', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+        <div style={{ display: 'inline-block', color: productType === 'store' ? '#1d4ed8' : colors.accent, background: '#eff6ff', border: `1px solid ${colors.border}`, borderRadius: 6, padding: '2px 7px', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
           {productTypeLabel}
         </div>
-        <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 8 }}>{product.title}</div>
-        <div style={{ color: '#ff6600', fontSize: 16, fontWeight: 600 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, lineHeight: 1.35, color: colors.text }}>{product.title}</div>
+        <div style={{ color: colors.danger, fontSize: 16, fontWeight: 600 }}>
           当前价格: {price}円（{taxLabel}）
           {shippingFeeText ? <span>　运费：{shippingFeeText}</span> : null}
         </div>
         {buyoutPrice > 0 && (
-          <div style={{ color: '#d4380d', fontSize: 14, fontWeight: 600, marginTop: 4 }}>
+          <div style={{ color: colors.accent, fontSize: 14, fontWeight: 500, marginTop: 4 }}>
             即決价格: {buyoutPrice.toLocaleString('ja-JP')}円（{taxLabel}）
           </div>
         )}
-        <div style={{ color: '#111827', fontSize: 14, fontWeight: 600, marginTop: 4 }}>
+        <div style={{ color: colors.text, fontSize: 14, fontWeight: 500, marginTop: 4 }}>
           当前合计金额：{formatTotalAmount(displayPrice, shippingFeeText)}
         </div>
-        <div style={{ color: '#4b5563', fontSize: 13, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{ color: colors.muted, fontSize: 13, marginTop: 5, display: 'flex', alignItems: 'center', gap: 4 }}>
           <BidCountIcon />
           <span>拍卖次数：{Number.isFinite(bidCount) && bidCount >= 0 ? bidCount : 0}件</span>
         </div>
         {product.endTime && (
-          <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>截止: {product.endTime}</div>
+          <div style={{ fontSize: 12, color: colors.faint, marginTop: 4 }}>截止: {product.endTime}</div>
         )}
       </div>
     </div>
