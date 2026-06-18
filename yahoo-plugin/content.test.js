@@ -2730,6 +2730,33 @@ function testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields()
   assert.equal(result.trackingNumber, '751242160303');
 }
 
+function testExtractPendingShipmentScanResultSkipsOwnProductIdNumber() {
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      '\u30aa\u30fc\u30af\u30b7\u30e7\u30f3ID\uff1a x1233207430',
+      '\u914d\u9001\u65b9\u6cd5 \uff1a \u98db\u811a\u5b85\u914d\u4fbf',
+      '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u304a\u5c4a\u3051\u756a\u53f7 390166447193'
+    ].join('\n'),
+    '/buyer/top',
+    {
+      href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=x1233207430&seller_auc_user_id=abc',
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u98db\u811a\u5b85\u914d\u4fbf' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u98db\u811a\u5b85\u914d\u4fbf');
+  assert.equal(result.trackingNumber, '390166447193');
+  assert.equal(result.trackingFallback, '');
+}
+
 function testExtractPendingShipmentScanResultExtractsInquiryNumberLabel() {
   const api = loadContentForTest(
     '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
@@ -2948,6 +2975,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsNormalShipped();
   testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber();
   testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields();
+  testExtractPendingShipmentScanResultSkipsOwnProductIdNumber();
   testExtractPendingShipmentScanResultExtractsInquiryNumberLabel();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
   testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();

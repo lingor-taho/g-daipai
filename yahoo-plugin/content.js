@@ -1837,20 +1837,40 @@ function hasUnregisteredTrackingNumber(text = getBodyText()) {
   return /(?:\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7)\s*[:\uff1a]?\s*\u672a\u767b\u9332/.test(String(text || ''));
 }
 
-function normalizeTrackingNumberCandidate(candidate) {
+function getCurrentAuctionId() {
+  const href = String(window.location?.href || '');
+  const match = href.match(/[?&](?:aid|auctionId)=([a-zA-Z]?\d{8,10})\b/i) ||
+    href.match(/\/jp\/auction\/([a-zA-Z]?\d{8,10})\b/i) ||
+    href.match(/\b([a-zA-Z]\d{8,10})\b/i);
+  return match ? String(match[1] || '').toLowerCase() : '';
+}
+
+function isOwnProductIdTrackingCandidate(digits, auctionId = getCurrentAuctionId()) {
+  const productDigits = String(auctionId || '').replace(/\D/g, '');
+  const candidateDigits = String(digits || '').replace(/\D/g, '');
+  return Boolean(
+    productDigits &&
+    candidateDigits &&
+    candidateDigits === productDigits
+  );
+}
+
+function normalizeTrackingNumberCandidate(candidate, options = {}) {
   const digits = String(candidate || '').replace(/\D/g, '');
   if (digits.length < 10 || digits.length > 12) return '';
   if (digits.startsWith('0')) return '';
+  if (isOwnProductIdTrackingCandidate(digits, options.auctionId)) return '';
   return digits;
 }
 
 function extractTrackingNumberFromText(text = getBodyText(), options = {}) {
   const includeUnlabeled = options.includeUnlabeled !== false;
+  const auctionId = options.auctionId || getCurrentAuctionId();
   const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7'], text);
   if (labeledTrackingNumber) {
     const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){10,12}/g) || [];
     for (const candidate of labeledMatches) {
-      const digits = normalizeTrackingNumberCandidate(candidate);
+      const digits = normalizeTrackingNumberCandidate(candidate, { auctionId });
       if (digits) return digits;
     }
   }
@@ -1858,7 +1878,7 @@ function extractTrackingNumberFromText(text = getBodyText(), options = {}) {
   const source = String(text || '');
   const matches = source.match(/(?:\d[\s-]*){10,12}/g) || [];
   for (const candidate of matches) {
-    const digits = normalizeTrackingNumberCandidate(candidate);
+    const digits = normalizeTrackingNumberCandidate(candidate, { auctionId });
     if (digits) return digits;
   }
   return '';
