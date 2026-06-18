@@ -80,7 +80,6 @@ export const listStyle = {
 
 export const itemCardStyle = {
   border: 0,
-  borderBottom: '1px solid #eee',
   borderRadius: 0,
   background: '#fff',
   boxShadow: 'none'
