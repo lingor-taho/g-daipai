@@ -134,6 +134,49 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
   return toIsoOrNull(Math.max(endMs - getStrategyLeadMs(task), nowMs));
 }
 
+function buildAdminTasksListQuery({ pageSize, offset }) {
+  return {
+    sql: `SELECT t.*,
+            COALESCE(p.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            COALESCE(p.product_image_url, t.product_image_url) AS product_image_url,
+            COALESCE(p.current_price, t.current_price) AS current_price,
+            COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
+            COALESCE(p.bid_count, t.bid_count) AS bid_count,
+            COALESCE(p.tax_type, t.tax_type) AS tax_type,
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            COALESCE(p.end_time, t.end_time) AS end_time,
+            u.username
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     LEFT JOIN users u ON u.id = t.user_id
+     ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
+    params: [pageSize, offset]
+  };
+}
+
+function buildAdminPendingTasksQuery() {
+  return {
+    sql: `SELECT t.id,
+            t.product_id,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            t.max_price,
+            t.strategy,
+            t.start_minutes_before,
+            t.start_seconds_before,
+            t.status,
+            t.last_bid_at,
+            COALESCE(p.end_time, t.end_time) AS end_time,
+            t.created_at
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE t.status = 'pending' OR (t.status = 'bidding' AND t.strategy = 'multi_bid')
+     ORDER BY t.created_at ASC LIMIT 100`,
+    params: []
+  };
+}
+
 function buildAdminOrdersListQuery({ pageSize, offset }) {
   return {
     sql: `SELECT o.*,
@@ -628,13 +671,8 @@ router.get('/accounts/stats', async (req, res) => {
 router.get('/tasks', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
   const offset = (current - 1) * pageSize;
-  const items = await db.getAll(
-    `SELECT t.*, u.username
-     FROM tasks t
-     LEFT JOIN users u ON u.id = t.user_id
-     ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
-    [pageSize, offset]
-  );
+  const tasksQuery = buildAdminTasksListQuery({ pageSize, offset });
+  const items = await db.getAll(tasksQuery.sql, tasksQuery.params);
   const multiBidConfig = await getPluginMultiBidConfig();
   const nowMs = Date.now();
   const mappedItems = items.map(item => ({
@@ -664,9 +702,8 @@ router.get('/tasks/stats', async (req, res) => {
   const rows = await db.getAll(
     'SELECT status, COUNT(*) as count FROM tasks GROUP BY status'
   );
-  const pendingTasks = await db.getAll(
-    "SELECT id, product_id, product_title, max_price, strategy, start_minutes_before, start_seconds_before, status, last_bid_at, end_time, created_at FROM tasks WHERE status = 'pending' OR (status = 'bidding' AND strategy = 'multi_bid') ORDER BY created_at ASC LIMIT 100"
-  );
+  const pendingTasksQuery = buildAdminPendingTasksQuery();
+  const pendingTasks = await db.getAll(pendingTasksQuery.sql, pendingTasksQuery.params);
   const nextTask = chooseNextPluginTask(pendingTasks, Date.now(), await getPluginMultiBidConfig());
   const stats = {
     total: 0,
@@ -953,9 +990,10 @@ async function backfillStoreBundle(database, payload = {}, options = {}) {
     `SELECT o.id AS order_id,
             o.order_status,
             t.product_id,
-            COALESCE(t.product_type, CASE WHEN COALESCE(t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type
+            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
      WHERE LOWER(t.product_id) IN (${placeholders})
        AND t.status = 'success'`,
     allProductIds
@@ -2589,6 +2627,8 @@ router.get('/logs', async (req, res) => {
 module.exports = router;
 module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
 module.exports.buildOrderSettlement = buildOrderSettlement;
+module.exports.buildAdminTasksListQuery = buildAdminTasksListQuery;
+module.exports.buildAdminPendingTasksQuery = buildAdminPendingTasksQuery;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
 module.exports.buildOrderStatusDebugOrdersQuery = buildOrderStatusDebugOrdersQuery;

@@ -4,6 +4,8 @@ const {
   calculateOrderPayable,
   canSettleShippingFeeText,
   buildOrderSettlement,
+  buildAdminTasksListQuery,
+  buildAdminPendingTasksQuery,
   buildAdminOrdersListQuery,
   buildAdminOrdersUserWonDateRangeQuery,
   buildOrderStatusDebugOrdersQuery,
@@ -318,6 +320,30 @@ function testNormalizeProductTypeForBatchRefresh() {
   assert.equal(normalizeProductType('tax_zero'), 'normal');
   assert.equal(normalizeProductType('tax_included'), 'store');
   assert.equal(normalizeProductType(''), '');
+}
+
+function testAdminTasksListQueryUsesProductsFallback() {
+  const query = buildAdminTasksListQuery({ pageSize: 20, offset: 40 });
+
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(query.sql, /COALESCE\(p\.product_image_url, t\.product_image_url\) AS product_image_url/);
+  assert.match(query.sql, /COALESCE\(p\.current_price, t\.current_price\) AS current_price/);
+  assert.match(query.sql, /COALESCE\(p\.buyout_price, t\.buyout_price\) AS buyout_price/);
+  assert.match(query.sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+  assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /COALESCE\(p\.end_time, t\.end_time\) AS end_time/);
+  assert.deepEqual(query.params, [20, 40]);
+}
+
+function testAdminPendingTasksQueryUsesProductsFallback() {
+  const query = buildAdminPendingTasksQuery();
+
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(query.sql, /COALESCE\(p\.end_time, t\.end_time\) AS end_time/);
+  assert.match(query.sql, /WHERE t\.status = 'pending' OR \(t\.status = 'bidding' AND t\.strategy = 'multi_bid'\)/);
 }
 
 function testAdminOrdersQueryIncludesProductType() {
@@ -679,6 +705,9 @@ async function testBackfillStoreBundleMarksMainPendingShipmentAndChildrenComplet
   assert.deepEqual(result.childProductIds, ['s100000002', 's100000003']);
   assert.equal(result.bundleShippingFeeText, '780円');
   assert.equal(result.bundleGroupId, 'store-bundle-s100000001-12345');
+  const selectCall = calls.find(call => call.type === 'getAll' && /LOWER\(t\.product_id\)/.test(call.sql));
+  assert.match(selectCall.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(selectCall.sql, /COALESCE\(p\.product_type, t\.product_type, CASE WHEN COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);
   const mainUpdate = calls.find(call => call.type === 'query' && /WHERE id = \?/.test(call.sql) && /bundle_shipping_fee_text = \?/.test(call.sql));
   assert.deepEqual(mainUpdate.params, ['store-bundle-s100000001-12345', '780円', ORDER_STATUS_PENDING_SHIPMENT, 101]);
   const childUpdate = calls.find(call => call.type === 'query' && /WHERE id IN/.test(call.sql));
@@ -939,6 +968,8 @@ testBuildOrderSettlementUsesSubmittedRateAndOverrides();
 testBuildOrderSettlementPrefersBundleShippingFee();
 testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
+testAdminTasksListQueryUsesProductsFallback();
+testAdminPendingTasksQueryUsesProductsFallback();
 testAdminOrdersQueryIncludesProductType();
 testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();
 testOrderStatusDebugOrdersQueryUsesProductsFallback();

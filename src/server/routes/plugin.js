@@ -1082,9 +1082,14 @@ async function syncBiddingItems(items, database = db) {
     if (!itemStatus) continue;
     const rawPrice = normalizeYenAmount(item.price);
     // /my/bidding 列表页"現在 ××円"对商城商品是税后值，对普通商品是税前。
-    // 数据库 current_price 统一存税前口径，写入前按 task 的 tax_type 折回税前。
+    // 数据库 current_price 统一存税前口径，写入前按商品快照的 tax_type 折回税前。
     const taskTaxRow = await database.getOne(
-      "SELECT tax_type FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1",
+      `SELECT COALESCE(p.tax_type, t.tax_type) AS tax_type
+       FROM tasks t
+       LEFT JOIN products p ON p.product_id = t.product_id
+       WHERE t.product_id = ?
+       ORDER BY t.id DESC
+       LIMIT 1`,
       [productId]
     );
     const taxType = taskTaxRow?.tax_type === 'tax_included' ? 'tax_included' : 'tax_zero';
@@ -2071,17 +2076,18 @@ async function updateScanStatus(payload = {}, database = db) {
   const taskSnapshot = typeof database.getOne === 'function'
     ? await database.getOne(
       `SELECT t.product_id,
-              t.product_url,
-              t.product_title,
-              t.product_image_url,
-              t.current_price,
-              t.buyout_price,
-              t.bid_count,
-              t.tax_type,
-              t.product_type,
-              t.end_time
+              COALESCE(p.product_url, t.product_url) AS product_url,
+              COALESCE(p.product_title, t.product_title) AS product_title,
+              COALESCE(p.product_image_url, t.product_image_url) AS product_image_url,
+              COALESCE(p.current_price, t.current_price) AS current_price,
+              COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
+              COALESCE(p.bid_count, t.bid_count) AS bid_count,
+              COALESCE(p.tax_type, t.tax_type) AS tax_type,
+              COALESCE(p.product_type, t.product_type) AS product_type,
+              COALESCE(p.end_time, t.end_time) AS end_time
        FROM tasks t
        INNER JOIN orders o ON o.task_id = t.id
+       LEFT JOIN products p ON p.product_id = t.product_id
        WHERE o.id = ?
          AND o.order_status = ?
        LIMIT 1`,

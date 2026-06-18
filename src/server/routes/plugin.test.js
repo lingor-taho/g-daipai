@@ -384,7 +384,8 @@ async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
     async getAll() {
       return [];
     },
-    async getOne() {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
       return { tax_type: 'tax_included' };
     }
   };
@@ -396,6 +397,9 @@ async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
   // INSERT INTO bidding_items 鐨?current_price 鍙傛暟锛堢 5 涓紝0-indexed=4锛夊簲璇ユ槸鎶樺洖绋庡墠鐨?10093
   const insertCall = calls.find(c => /INSERT INTO bidding_items/.test(c.sql));
   assert.equal(insertCall.params[4], 10093);
+  const taxQuery = calls.find(call => call.type === 'getOne');
+  assert.match(taxQuery.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(taxQuery.sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
 }
 
 function testNormalizeYahooWonTimeTextInfersCurrentYear() {
@@ -1357,6 +1361,10 @@ async function testUpdateScanStatusWritesShippingAndPendingPayment() {
   assert.equal(result.updated, 1);
   assert.equal(result.shippingFeeText, '1060\u5186');
   assert.match(queries[0].sql, /FROM tasks t/);
+  assert.match(queries[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(queries[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
+  assert.match(queries[0].sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+  assert.match(queries[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
   assert.equal(queries[0].params[0], 11);
   assert.equal(queries[0].params[1], ORDER_STATUS_WAITING_SHIPPING);
   assert.match(queries[1].sql, /UPDATE tasks/);
