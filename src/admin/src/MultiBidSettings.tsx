@@ -76,6 +76,8 @@ export default function MultiBidSettingsPage() {
       .then(data => {
         form.setFieldsValue({
           workerIntervalSeconds: (data.workerIntervalMs ?? 10000) / 1000,
+          clientNoticeText: data.clientNoticeText || '',
+          clientNoticeMarquee: Boolean(data.clientNoticeMarquee),
           startHours: data.startHours ?? 0.5,
           intervalMinutes: data.intervalMinutes ?? 5,
           multiBidMinPrice: data.multiBidMinPrice ?? 5000,
@@ -161,6 +163,8 @@ export default function MultiBidSettingsPage() {
         className="admin-config-form"
         initialValues={{
           workerIntervalSeconds: 10,
+          clientNoticeText: '',
+          clientNoticeMarquee: false,
           startHours: 0.5,
           intervalMinutes: 5,
           multiBidMinPrice: 5000,
@@ -193,6 +197,24 @@ export default function MultiBidSettingsPage() {
           </Form.Item>
           <Typography.Text type="secondary">
             插件按这个间隔请求待出价任务，默认 10 秒；调低后会更频繁检查队列。
+          </Typography.Text>
+        </Card>
+
+        <Card title="用户端通知栏" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="clientNoticeText"
+            label="通知文字"
+          >
+            <Input.TextArea rows={3} maxLength={500} showCount placeholder="留空则不显示通知栏" />
+          </Form.Item>
+          <Form.Item
+            name="clientNoticeMarquee"
+            valuePropName="checked"
+          >
+            <Checkbox>文字滚动显示</Checkbox>
+          </Form.Item>
+          <Typography.Text type="secondary">
+            登录后的用户端页面顶部会显示该通知，可按需要开启横向滚动。
           </Typography.Text>
         </Card>
 

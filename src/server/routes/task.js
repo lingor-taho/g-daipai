@@ -152,6 +152,17 @@ function buildClientManualVerificationAlert(user, challenge) {
   return { show: true, message: '后端有事情要处理！', type: 'pin' };
 }
 
+async function getClientSiteConfig(database = db) {
+  const rows = await database.getAll(
+    "SELECT key, value FROM config WHERE key IN ('client_notice_text', 'client_notice_marquee')"
+  );
+  const values = Object.fromEntries((rows || []).map(row => [row.key, row.value]));
+  return {
+    noticeText: String(values.client_notice_text || ''),
+    noticeMarquee: Number(values.client_notice_marquee || 0) === 1
+  };
+}
+
 function assertBidStrategyAllowed(context, strategy) {
   const loginUser = context?.loginUser || null;
   const actingUser = context?.actingUser || context;
@@ -566,6 +577,14 @@ router.get('/website-rate', async (req, res) => {
   }
 });
 
+router.get('/site-config', async (req, res) => {
+  try {
+    res.json(await getClientSiteConfig());
+  } catch (e) {
+    res.status(500).json({ error: e.message || '获取配置失败' });
+  }
+});
+
 // GET /api/task/won-stats - 近 N 天落札统计和导出明细
 router.get('/won-stats', async (req, res) => {
   try {
@@ -766,3 +785,4 @@ module.exports.findTaskByClientRequestId = findTaskByClientRequestId;
 module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;
 module.exports.assertBidStrategyAllowed = assertBidStrategyAllowed;
 module.exports.buildClientManualVerificationAlert = buildClientManualVerificationAlert;
+module.exports.getClientSiteConfig = getClientSiteConfig;

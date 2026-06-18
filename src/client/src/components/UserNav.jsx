@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, List, Popup, SearchBar, Toast } from 'antd-mobile';
-import { getActingUsers } from '../utils/api';
+import { getActingUsers, getClientSiteConfig } from '../utils/api';
 import { runDeduped } from '../utils/requestDedupe';
+import { colors } from '../styles';
 
 const items = [
   { to: '/submit', label: '提交任务' },
@@ -33,6 +34,7 @@ export default function UserNav() {
   const [selectedId, setSelectedId] = useState(localStorage.getItem('actingUserId') || '');
   const [pickerVisible, setPickerVisible] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [siteConfig, setSiteConfig] = useState({ noticeText: '', noticeMarquee: false });
 
   async function loadActingUsers() {
     try {
@@ -53,6 +55,14 @@ export default function UserNav() {
 
   useEffect(() => {
     loadActingUsers();
+    getClientSiteConfig()
+      .then(res => {
+        setSiteConfig({
+          noticeText: res.data?.noticeText || '',
+          noticeMarquee: Boolean(res.data?.noticeMarquee)
+        });
+      })
+      .catch(() => {});
   }, []);
 
   const selectedUser = users.find(user => String(user.id) === String(selectedId));
@@ -90,11 +100,67 @@ export default function UserNav() {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <div style={{ fontSize: 14, color: '#666' }}>
-          登录用户：<span style={{ fontWeight: 700, color: '#333' }}>{localStorage.getItem('username') || '-'}</span>
+      <style>
+        {`
+          @keyframes clientNoticeMarquee {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+          }
+        `}
+      </style>
+
+      <div
+        style={{
+          margin: '-20px -20px 14px',
+          padding: siteConfig.noticeText ? '16px 20px 14px' : '10px 20px 0',
+          background: '#ffffff',
+          borderBottom: `1px solid ${colors.border}`,
+          boxShadow: '0 6px 18px rgba(37, 99, 235, 0.05)'
+        }}
+      >
+        {siteConfig.noticeText && (
+          <div
+            style={{
+              border: `1px solid ${colors.border}`,
+              background: '#f8fbff',
+              color: colors.accent,
+              borderRadius: 8,
+              minHeight: 38,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              boxShadow: '0 3px 10px rgba(37, 99, 235, 0.06)'
+            }}
+          >
+            <div style={{ width: '100%', overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 15, fontWeight: 600, textAlign: 'center' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  padding: '0 16px',
+                  animation: siteConfig.noticeMarquee ? 'clientNoticeMarquee 14s linear infinite' : 'none'
+                }}
+              >
+                {siteConfig.noticeText}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 10,
+          padding: '0 2px'
+        }}
+      >
+        <div style={{ fontSize: 14, color: colors.muted }}>
+          登录用户：<span style={{ fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
         </div>
-        <Button size="mini" fill="outline" onClick={logout}>退出</Button>
+        <Button size="mini" fill="outline" color="primary" onClick={logout}>退出</Button>
       </div>
 
       {showSwitcher && (
@@ -107,16 +173,17 @@ export default function UserNav() {
             marginBottom: 10,
             padding: '10px 12px',
             borderRadius: 8,
-            background: '#fff',
-            border: '1px solid #e5e7eb',
+            background: '#ffffff',
+            border: `1px solid ${colors.border}`,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            fontSize: 14
+            fontSize: 14,
+            boxShadow: '0 3px 12px rgba(37, 99, 235, 0.05)'
           }}
         >
-          <span style={{ color: '#666' }}>当前账号</span>
-          <span style={{ fontWeight: 700, color: '#1677ff' }}>{selectedUser?.username || localStorage.getItem('actingUsername') || '-'}</span>
+          <span style={{ color: colors.muted }}>当前账号</span>
+          <span style={{ fontWeight: 700, color: colors.accent }}>{selectedUser?.username || localStorage.getItem('actingUsername') || '-'}</span>
         </div>
       )}
 
@@ -132,9 +199,10 @@ export default function UserNav() {
               padding: '9px 6px',
               fontSize: 14,
               fontWeight: 600,
-              color: isActive ? '#fff' : '#333',
-              background: isActive ? '#1677ff' : '#fff',
-              border: `1px solid ${isActive ? '#1677ff' : '#eee'}`
+              color: isActive ? '#fff' : colors.text,
+              background: isActive ? colors.accent : '#ffffff',
+              border: `1px solid ${isActive ? colors.accent : colors.border}`,
+              boxShadow: isActive ? '0 6px 14px rgba(37, 99, 235, 0.18)' : '0 3px 10px rgba(37, 99, 235, 0.04)'
             })}
           >
             {item.label}

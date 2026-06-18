@@ -80,6 +80,7 @@ export const cancelTask = (id) => api.patch(`/task/${id}/cancel`);
 export const getTaskStats = () => api.get('/task/stats');
 export const getManualVerificationAlert = () => api.get('/task/manual-verification-alert');
 export const getWebsiteRate = () => api.get('/task/website-rate');
+export const getClientSiteConfig = () => api.get('/task/site-config');
 export const getPluginConfig = () => api.get('/plugin/config');
 
 export function createGetProductInfo({ apiClient = api } = {}) {

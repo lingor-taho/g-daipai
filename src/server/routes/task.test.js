@@ -27,7 +27,8 @@ const {
   findTaskByClientRequestId,
   normalizeBidStrategyScope,
   assertBidStrategyAllowed,
-  buildClientManualVerificationAlert
+  buildClientManualVerificationAlert,
+  getClientSiteConfig
 } = require('./task');
 const {
   calculateWebsiteRate,
@@ -117,6 +118,22 @@ function testClientManualVerificationAlertOnlyShowsPinForClientAdmin() {
     buildClientManualVerificationAlert({ user_level: 1 }, { type: 'pin', id: 'pin-1' }),
     { show: false, message: '', type: '' }
   );
+}
+
+async function testGetClientSiteConfigReadsNoticeSettings() {
+  const fakeDb = {
+    async getAll(sql) {
+      assert.match(sql, /client_notice_text/);
+      return [
+        { key: 'client_notice_text', value: '今日汇率已更新' },
+        { key: 'client_notice_marquee', value: '1' }
+      ];
+    }
+  };
+  assert.deepEqual(await getClientSiteConfig(fakeDb), {
+    noticeText: '今日汇率已更新',
+    noticeMarquee: true
+  });
 }
 
 function testSubmitForcesBuyoutModeForBuyoutOnlyProducts() {
@@ -593,6 +610,7 @@ testWebsiteRateCacheValidity();
 Promise.all([
   testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope(),
   testFindTaskByClientRequestIdSkipsEmptyId(),
+  testGetClientSiteConfigReadsNoticeSettings(),
   testWebsiteRateProviderUsesCacheUntilExpiry()
 ]).catch(err => {
   console.error(err);

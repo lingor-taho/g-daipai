@@ -2,11 +2,13 @@
 import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
 import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
 import UserNav from '../components/UserNav';
+import UserFooter from '../components/UserFooter';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
 import { getTaskFailureLabel } from '../utils/taskFailureReason';
 import { getTaskStatCards } from '../utils/taskStats';
+import { cardStyle, colors, itemCardStyle, listStyle, pageButtonStyle, pageStyle } from '../styles';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -112,22 +114,22 @@ export default function TaskList({ limit = 10, embedded = false }) {
   return (
     <>
       {!embedded && (
-        <div style={{ padding: 16, paddingBottom: 0 }}>
+        <div style={{ ...pageStyle, paddingBottom: 0 }}>
           <UserNav />
         </div>
       )}
       {stats && (
         <div style={{ margin: '12px 0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
           {getTaskStatCards(stats).map(({ label, value }) => (
-            <div key={label} style={{ background: '#fff', border: '1px solid #eee', borderRadius: 8, padding: 10 }}>
-              <div style={{ fontSize: 12, color: '#666' }}>{label}</div>
-              <div style={{ fontSize: 18, fontWeight: 600, marginTop: 4 }}>{value}</div>
+            <div key={label} style={{ ...cardStyle, padding: 10, background: '#ffffff' }}>
+              <div style={{ fontSize: 12, color: colors.muted }}>{label}</div>
+              <div style={{ fontSize: 19, fontWeight: 600, marginTop: 4, color: colors.text }}>{value}</div>
             </div>
           ))}
         </div>
       )}
 
-      <List header="任务列表" style={{ marginTop: embedded ? 12 : 8 }}>
+      <List header="任务列表" style={{ ...listStyle, marginTop: embedded ? 12 : 8 }}>
         {tasks.length === 0 && <List.Item>暂无任务</List.Item>}
         {tasks.map(task => {
           const s = STATUS_MAP[task.status] || { label: task.status, color: 'default' };
@@ -138,6 +140,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
           const cancelable = canCancelTask(task);
           return (
             <List.Item key={task.id}
+              style={itemCardStyle}
               extra={
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Tag color={s.color}>{statusLabel}</Tag>
@@ -155,27 +158,28 @@ export default function TaskList({ limit = 10, embedded = false }) {
                 </div>
               }
               description={
-                <div style={{ fontSize: 12, color: '#666' }}>
+                <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.65 }}>
                   ID: {auctionId}，策略: <span style={getStrategyTextStyle(task.strategy)}>{strategyLabel}</span>，最高出价：
-                  <span style={{ color: '#dc2626', fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
+                  <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
                   {task.created_at ? (
                     <>，提交时间：{formatBeijingDateTime(task.created_at)}</>
                   ) : null}
                 </div>
               }
             >
-              <div style={{ fontWeight: 500 }}>{task.product_title || ('商品 ' + auctionId)}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, lineHeight: 1.35 }}>{task.product_title || ('商品 ' + auctionId)}</div>
             </List.Item>
           );
         })}
       </List>
       {total > limit && (
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '12px 0' }}>
-          <Button size="mini" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</Button>
-          <span style={{ fontSize: 12, color: '#666' }}>{page} / {Math.ceil(total / limit)}</span>
-          <Button size="mini" disabled={page >= Math.ceil(total / limit)} onClick={() => setPage(value => value + 1)}>下一页</Button>
+          <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</Button>
+          <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{page} / {Math.ceil(total / limit)}</span>
+          <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page >= Math.ceil(total / limit)} onClick={() => setPage(value => value + 1)}>下一页</Button>
         </div>
       )}
+      {!embedded && <UserFooter />}
     </>
   );
 }
