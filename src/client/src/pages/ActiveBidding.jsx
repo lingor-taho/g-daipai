@@ -7,6 +7,7 @@ import { getActiveBiddingTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatTotalAmount } from '../utils/totalAmount';
+import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle, pageButtonStyle, pageStyle } from '../styles';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -100,13 +101,14 @@ export default function ActiveBidding() {
   }, [fetchItems]);
 
   return (
-    <div style={{ padding: 16 }}>
+    <div style={pageStyle}>
       <UserNav />
       <List
+        style={listStyle}
         header={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
             <span>入札中</span>
-            <Button size="mini" fill="none" onClick={() => fetchItems(page)}>刷新</Button>
+            <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={() => fetchItems(page)}>刷新</Button>
           </div>
         }
       >
@@ -127,16 +129,16 @@ export default function ActiveBidding() {
           const canRebid = item.strategy === 'direct';
           const displayPrice = getDisplayPrice(item);
           return (
-            <List.Item key={item.id}>
+            <List.Item key={item.id} style={itemCardStyle}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 {item.product_image_url ? (
                   <img
                     src={item.product_image_url}
                     alt={title}
-                    style={{ width: 86, height: 86, objectFit: 'cover', borderRadius: 8, border: '1px solid #eee', flex: '0 0 86px' }}
+                    style={imageThumbStyle}
                   />
                 ) : (
-                  <div style={{ width: 86, height: 86, borderRadius: 8, border: '1px solid #eee', background: '#f5f5f5', flex: '0 0 86px' }} />
+                  <div style={imageThumbStyle} />
                 )}
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
@@ -145,17 +147,17 @@ export default function ActiveBidding() {
                     ) : (
                       <Tag color="primary">最高价入札中</Tag>
                     )}
-                    <span style={{ fontSize: 12, color: '#666' }}>{strategy}</span>
+                    <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6, color: colors.text }}>
                     {title}
                   </div>
-                  <div style={{ fontSize: 12, color: '#666', lineHeight: 1.7 }}>
+                  <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
-                    当前价格：<span style={{ color: '#dc2626', fontWeight: 700 }}>{formatJPY(displayPrice)}</span>
+                    当前价格：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
                     {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
                     <br />
-                    当前合计金额：<span style={{ color: '#111827', fontWeight: 700 }}>{formatTotalAmount(displayPrice, item.shipping_fee_text)}</span>
+                    当前合计金额：<span style={{ color: colors.text, fontWeight: 600 }}>{formatTotalAmount(displayPrice, item.shipping_fee_text)}</span>
                     {item.updated_at ? (
                       <>
                         <br />
@@ -170,7 +172,7 @@ export default function ActiveBidding() {
                     color="danger"
                     fill="outline"
                     onClick={() => navigate(`/submit?url=${encodeURIComponent(getProductUrl(item))}`)}
-                    style={{ flex: '0 0 auto', marginTop: 26 }}
+                    style={{ ...outlineButtonStyle, flex: '0 0 auto', marginTop: 26, '--text-color': colors.danger }}
                   >
                     再入札
                   </Button>
@@ -181,9 +183,9 @@ export default function ActiveBidding() {
         })}
         {!loading && total > pageSize && (
           <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <Button size="mini" disabled={page <= 1} onClick={() => fetchItems(page - 1)}>上一页</Button>
-            <span style={{ fontSize: 12, color: '#666' }}>{page} / {totalPages}</span>
-            <Button size="mini" disabled={page >= totalPages} onClick={() => fetchItems(page + 1)}>下一页</Button>
+            <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page <= 1} onClick={() => fetchItems(page - 1)}>上一页</Button>
+            <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{page} / {totalPages}</span>
+            <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page >= totalPages} onClick={() => fetchItems(page + 1)}>下一页</Button>
           </div>
         )}
       </List>
