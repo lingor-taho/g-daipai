@@ -867,6 +867,36 @@ async function executeBidV3(maxPrice, options = {}) {
     return matched || (checkboxes.length === 1 ? checkboxes[0] : null);
   }
 
+  function hasBulkPurchasePrompt() {
+    return /\u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b/.test(getBodyText());
+  }
+
+  function isBulkPurchaseCheckboxChecked(el) {
+    return el?.checked === true || el?.getAttribute?.('aria-checked') === 'true';
+  }
+
+  function findBulkPurchaseClickTarget(el) {
+    const label = el?.closest?.('label');
+    return label && isClickableElement(label) ? label : el;
+  }
+
+  function findBulkPurchaseInstantBuyButton() {
+    const selector = clickableSelector();
+    return [...document.querySelectorAll(selector)].find(el => {
+      return isClickableElement(el) && /\u4eca\u3059\u3050\u843d\u672d/.test(textOf(el));
+    }) || null;
+  }
+
+  async function waitForBulkPurchaseInstantBuyButton(timeoutMs = 2500) {
+    const deadline = Date.now() + timeoutMs;
+    let button = findBulkPurchaseInstantBuyButton();
+    while (!button && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      button = findBulkPurchaseInstantBuyButton();
+    }
+    return button;
+  }
+
   function isClickableElement(el) {
     if (!el || el.disabled || isUnsafeClickableTarget(el)) return false;
     const style = window.getComputedStyle(el);
@@ -1053,12 +1083,17 @@ async function executeBidV3(maxPrice, options = {}) {
 
   if (bidMode === 'buyout') {
     const bulkPurchaseCheckbox = findBulkPurchaseCheckbox();
-    const checked = bulkPurchaseCheckbox?.checked === true ||
-      bulkPurchaseCheckbox?.getAttribute?.('aria-checked') === 'true';
+    const checked = isBulkPurchaseCheckboxChecked(bulkPurchaseCheckbox);
     if (bulkPurchaseCheckbox && !checked) {
-      clickElement(bulkPurchaseCheckbox);
-      await new Promise(resolve => setTimeout(resolve, 800));
+      clickElement(findBulkPurchaseClickTarget(bulkPurchaseCheckbox));
+      const instantBuyButton = await waitForBulkPurchaseInstantBuyButton();
+      if (!instantBuyButton) {
+        return { success: false, error: 'bulk purchase checkbox did not activate', closeTab: true };
+      }
       return executeBidV3(numericMaxPrice, options);
+    }
+    if (hasBulkPurchasePrompt() && !findBuyoutFinalPurchaseButton() && !findBulkPurchaseInstantBuyButton()) {
+      return { success: false, error: 'bulk purchase flow did not activate', closeTab: true };
     }
   }
 
