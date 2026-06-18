@@ -2092,6 +2092,27 @@ async function updateScanStatus(payload = {}, database = db) {
     throw err;
   }
 
+  const taskSnapshot = typeof database.getOne === 'function'
+    ? await database.getOne(
+      `SELECT t.product_id,
+              t.product_url,
+              t.product_title,
+              t.product_image_url,
+              t.current_price,
+              t.buyout_price,
+              t.bid_count,
+              t.tax_type,
+              t.product_type,
+              t.end_time
+       FROM tasks t
+       INNER JOIN orders o ON o.task_id = t.id
+       WHERE o.id = ?
+         AND o.order_status = ?
+       LIMIT 1`,
+      [orderId, ORDER_STATUS_WAITING_SHIPPING]
+    )
+    : null;
+
   await database.query(
     `UPDATE tasks
      SET shipping_fee_text = ?,
@@ -2104,6 +2125,12 @@ async function updateScanStatus(payload = {}, database = db) {
      )`,
     [shippingFeeText, orderId, ORDER_STATUS_WAITING_SHIPPING]
   );
+  if (taskSnapshot?.product_id) {
+    await upsertProductSnapshot(database, {
+      ...taskSnapshot,
+      shipping_fee_text: shippingFeeText
+    }, { source: 'fetch' });
+  }
   const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
   const result = await database.query(
     `UPDATE orders

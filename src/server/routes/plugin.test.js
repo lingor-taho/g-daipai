@@ -1291,6 +1291,21 @@ async function testUpdateScanStatusMarksPendingShipmentAsCancelled() {
 async function testUpdateScanStatusWritesShippingAndPendingPayment() {
   const queries = [];
   const fakeDb = {
+    async getOne(sql, params) {
+      queries.push({ sql, params });
+      return {
+        product_id: 'm1233193360',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/m1233193360',
+        product_title: 'test product',
+        product_image_url: '',
+        current_price: 1000,
+        buyout_price: null,
+        bid_count: 0,
+        tax_type: 'tax_zero',
+        product_type: 'normal',
+        end_time: null
+      };
+    },
     async query(sql, params) {
       queries.push({ sql, params });
       return { rowCount: 1 };
@@ -1301,16 +1316,22 @@ async function testUpdateScanStatusWritesShippingAndPendingPayment() {
 
   assert.equal(result.updated, 1);
   assert.equal(result.shippingFeeText, '1060\u5186');
-  assert.match(queries[0].sql, /UPDATE tasks/);
-  assert.match(queries[0].sql, /WHERE id = \(/);
-  assert.doesNotMatch(queries[0].sql, /product_id = \(/);
-  assert.match(queries[0].sql, /SELECT task_id/);
-  assert.equal(queries[0].params[0], '1060\u5186');
-  assert.equal(queries[0].params[1], 11);
-  assert.match(queries[1].sql, /UPDATE orders/);
-  assert.equal(queries[1].params[0], ORDER_STATUS_PENDING_PAYMENT);
+  assert.match(queries[0].sql, /FROM tasks t/);
+  assert.equal(queries[0].params[0], 11);
+  assert.equal(queries[0].params[1], ORDER_STATUS_WAITING_SHIPPING);
+  assert.match(queries[1].sql, /UPDATE tasks/);
+  assert.match(queries[1].sql, /WHERE id = \(/);
+  assert.doesNotMatch(queries[1].sql, /product_id = \(/);
+  assert.match(queries[1].sql, /SELECT task_id/);
+  assert.equal(queries[1].params[0], '1060\u5186');
   assert.equal(queries[1].params[1], 11);
-  assert.equal(queries[1].params[2], ORDER_STATUS_WAITING_SHIPPING);
+  assert.match(queries[2].sql, /INSERT INTO products/);
+  assert.equal(queries[2].params[0], 'm1233193360');
+  assert.equal(queries[2].params[9], '1060\u5186');
+  assert.match(queries[3].sql, /UPDATE orders/);
+  assert.equal(queries[3].params[0], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(queries[3].params[1], 11);
+  assert.equal(queries[3].params[2], ORDER_STATUS_WAITING_SHIPPING);
 }
 
 async function testUpdateScanStatusKeepsWaitingShippingWhenShippingPending() {
