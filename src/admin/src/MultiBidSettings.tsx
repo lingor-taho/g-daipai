@@ -76,7 +76,6 @@ export default function MultiBidSettingsPage() {
           bidConcurrencyLimit: data.bidConcurrencyLimit ?? 2,
           yahooShippingPrefCode: data.yahooShippingPrefCode || '27',
           idleSyncIntervalMinutes: data.idleSyncIntervalMinutes ?? 5,
-          idleBidGuardMinutes: data.idleBidGuardMinutes ?? 15,
           transactionStartHour: data.transactionStartHour ?? 1,
           confirmReceiptHour: data.confirmReceiptHour ?? 18,
           confirmReceiptColor: data.confirmReceiptColor || '#ffff00',
@@ -161,7 +160,6 @@ export default function MultiBidSettingsPage() {
           bidConcurrencyLimit: 2,
           yahooShippingPrefCode: '27',
           idleSyncIntervalMinutes: 5,
-          idleBidGuardMinutes: 15,
           transactionStartHour: 1,
           confirmReceiptHour: 18,
           confirmReceiptColor: '#ffff00',
@@ -214,13 +212,6 @@ export default function MultiBidSettingsPage() {
             <InputNumber min={1} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
-            name="idleBidGuardMinutes"
-            label="出价保护窗口"
-            rules={[{ required: true, message: '请输入出价保护窗口' }]}
-          >
-            <InputNumber min={0} step={1} precision={0} addonAfter="分钟" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
             name="bidConcurrencyLimit"
             label="出价并发任务数"
             rules={[{ required: true, message: '请输入出价并发任务数' }]}
@@ -235,7 +226,7 @@ export default function MultiBidSettingsPage() {
             <Select options={PREFECTURE_OPTIONS} />
           </Form.Item>
           <Typography.Text type="secondary">
-            并行调度后，入札 / 落札监控不再受保护窗口影响；填 0 表示关闭保护窗口兼容配置。
+            并行调度后，出价任务、入札 / 落札监控和订单工作流按独立执行线运行。
           </Typography.Text>
         </Card>
 

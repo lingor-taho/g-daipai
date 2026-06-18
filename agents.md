@@ -116,7 +116,7 @@ D:/www/g-daipai/
 - `bidding_items`: 插件从 Yahoo `/my/bidding` 同步的入札中商品状态，`status` 支持 `highest`、`outbid`、`stale`。
 - `user_finance_overrides`: 特殊用户费用参数，按用户覆盖汇率调节、银行手续费、手续费(RMB)、大金额费用。
 - `exchange_config`: 汇率配置。
-- `config`: 全局配置，如多次出价开始时间、间隔、最低最高价、空闲同步间隔、出价保护窗口、数据清理参数。
+- `config`: 全局配置，如多次出价开始时间、间隔、最低最高价、空闲同步间隔、出价并发数、数据清理参数。
 
 `tasks.status` 常用值：`pending`、`processing`、`bidding`、`success`、`failed`、`cancelled`。
 
@@ -143,7 +143,7 @@ D:/www/g-daipai/
 
 已保存方案文档：`docs/superpowers/specs/2026-06-14-plugin-parallel-scheduler-design.md`。实施计划：`docs/superpowers/plans/2026-06-14-plugin-parallel-scheduler-plan.md`。
 
-已把插件调度改为 3 条独立执行线：出价并行池、A/B 入札/落札监控同步、C/D/E/F/G 订单工作流。出价和 A/B、订单工作流三者可并行；PIN/验证码锁只影响 C/D/E/F/G；C/D/E/F/G 内部继续串行，并保持 G 导入优先于 C 交易开始、D 扫描、E 付款、F 确认收货。服务端新增 `/api/plugin/tasks?limit=N` 批量领取并 claim 出价任务，后台系统配置新增出价并发数（默认 2）和 Yahoo shipment API 都道府県代码选择（默认大阪 27）。A/B 监控按原同步间隔执行，不再受出价保护窗口限制，并在完成后关闭自己创建的入札/落札 tab。
+已把插件调度改为 3 条独立执行线：出价并行池、A/B 入札/落札监控同步、C/D/E/F/G 订单工作流。出价和 A/B、订单工作流三者可并行；PIN/验证码锁只影响 C/D/E/F/G；C/D/E/F/G 内部继续串行，并保持 G 导入优先于 C 交易开始、D 扫描、E 付款、F 确认收货。服务端新增 `/api/plugin/tasks?limit=N` 批量领取并 claim 出价任务，后台系统配置新增出价并发数（默认 2）和 Yahoo shipment API 都道府県代码选择（默认大阪 27）。A/B 监控按原同步间隔独立执行，并在完成后关闭自己创建的入札/落札 tab。
 
 最近验证命令：`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node src/server/routes/plugin.test.js`、`node src/server/routes/proxy.test.js`、`npm run build --prefix src/admin`。
 
@@ -198,7 +198,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 多次出价任务在已出价后仍会继续按间隔执行；如果后续同步发现 `current_price > max_price`，或再次执行时下一口加价后金额超过用户最高价，会标记为 failed，不再一直停留在“已出价”。
 
-`/api/plugin/task` 会同时返回 `canIdleSync`。插件只有在没有可执行任务，并且后台配置的“出价保护窗口”（默认 10 分钟）内没有即将出价的任务时，才会执行入札中/落札空闲同步。
+`/api/plugin/task` 保留 `canIdleSync` 兼容返回；并行调度后，入札/落札监控同步由独立执行线按空闲同步间隔执行，不再使用“出价保护窗口”阻塞监控。
 
 ### 入札中同步
 
@@ -323,6 +323,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-18 | 并行调度已稳定后，后台仍保留“出价保护窗口”配置，服务端和插件 API 也继续暴露 `idleBidGuardMinutes`，容易让人误以为入札/落札监控仍会被临近出价阻塞 | 移除出价保护窗口功能面：后台系统配置删除该输入项；`/api/admin/multi-bid-config` 不再读写 `idle_bid_guard_minutes`；插件 `/api/plugin/task` 和 `/api/plugin/config` 不再返回 `idleBidGuardMinutes`；删除服务端 guard 计算函数和旧测试，新增回归测试确认残留数据库 key 不再被查询或返回。验证：`node src/server/routes/plugin.test.js`、`node --check src/server/routes/plugin.js`、`node --check src/server/routes/admin.js`、`node --check yahoo-plugin/background.js` |
 | 2026-06-18 | 商城商品即決购买确认页如果显示“この出品者の他の商品とまとめて購入する”复选框，插件点击 checkbox 后没有确认页面已切到“今すぐ落札する”流程；在 checkbox 未真正生效或图 3 未出现时，后续逻辑可能继续点击右侧 `確認する`，导致跳过まとめて購入流程并最终落札判断依赖后续同步修正 | `content.js` 的 buyout 流程改为：命中まとめて購入 checkbox 时优先点击外层 `label`，点击后必须等待 `今すぐ落札する` 出现；若未出现则返回明确错误 `bulk purchase checkbox did not activate / bulk purchase flow did not activate` 并关闭任务 tab，不再继续点击右侧 `確認する`。新增回归测试覆盖 checkbox 已勾但图 3 未出现时不得点击 `確認する` 或最终落札按钮。真实页面手动验证 `k1226361177`：图 3 点击 `今すぐ落札する` 可到图 4 弹窗，未点击最终落札。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js` |
 | 2026-06-18 | 三表模型进入 Operational Query Switch：生产 parity 已归零后，运行时队列仍有多处直接读取 `tasks` 商品快照字段，后续如果 `products` 已修正但旧任务字段残留，会让付款、交易开始、扫描、确认收货或 Google 表继续拿到旧标题/运费/商品类型 | 将插件运行查询逐步切到 `products` 优先、`tasks` 回退：`getTransactionStartJobs()`、`getPaymentJobs()`、`getScanJobs()`、`getConfirmReceiptJobs()`、Google 表追加 `getOrdersForSheetAppend()`、Google 表更新 `getOrderForSheetUpdate()` 均使用 `LEFT JOIN products` 和 `COALESCE(products, tasks)`；不改变订单状态流转、付款金额公式、扫描条件、Google 表列结构或旧 `tasks` 字段写入。新增测试断言这些运行查询必须 join `products`。验证：`node src/server/routes/plugin.test.js`、`node --check src/server/routes/plugin.js`、`node --check src/server/routes/plugin.test.js`、`node scripts/check-product-parity.test.js` |
 | 2026-06-18 | 生产三表 parity 检查发现 `productsLatestTaskSnapshotMismatch: 1`，明细为商品 `m1233193360`：`tasks.shipping_fee_text` 已在待运费扫描后更新为 `1940円`，但 `products.shipping_fee_text` 仍停留在旧值 `落札者負担`；根因是 `/api/plugin/scan/status` 的 `waiting_shipping -> pending_payment` 分支只更新订单对应 `tasks.shipping_fee_text`，没有同步写入 `products` 商品快照 | `updateScanStatus()` 在写入待运费扫描结果前读取订单对应 task 商品快照，更新 `tasks.shipping_fee_text` 后同步调用 `upsertProductSnapshot()` 写入 `products.shipping_fee_text`，避免后续扫描再次制造 parity mismatch。新增回归测试覆盖待运费扫描写运费时必须 `INSERT INTO products`。生产已有单条历史差异可用一次性 SQL 将 `products.shipping_fee_text` 对齐到最新 task 后重新运行 parity。验证：`node src/server/routes/plugin.test.js`、`node --check src/server/routes/plugin.js`、`node --check src/server/routes/plugin.test.js`、`node scripts/check-product-parity.test.js` |
@@ -381,7 +382,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 | 2026-05-25 | 落札价错误使用用户最高价/任务价格 | `final_price` 改为只使用 Yahoo 落札页抓到的价格 |
 | 2026-05-25 | 客户端允许最高价低于/等于当前价提交 | 提交前阻断并提示当前价 |
 | 2026-05-27 | 插件商品缓存和运费来源不统一 | 删除 `/api/proxy/cache`，插件不再写商品缓存，落札同步不再更新运费 |
-| 2026-05-27 | 空闲同步可能挤占临近出价 | `/api/plugin/task` 增加出价保护窗口，默认 10 分钟内有任务时禁止空闲同步 |
+| 2026-05-27 | 空闲同步可能挤占临近出价 | `/api/plugin/task` 曾增加出价保护窗口，默认 10 分钟内有任务时禁止空闲同步；该功能已在 2026-06-18 并行调度稳定后移除 |
 | 2026-05-27 | 历史运费错误缺少修复入口 | 后台新增“运费更新”，按商品 ID 批量走服务端解析并更新任务运费 |
 | 2026-05-27 | 多次出价最低价仍有硬编码风险 | 后台“多次出价配置”增加最低最高价参数，前后端统一读取，默认 `5000円` |
 | 2026-05-27 | 后台订单排序与用户端不一致 | 后台订单改为按 Yahoo 落札时间 `won_at` 优先倒序 |
@@ -521,7 +522,7 @@ npm run build
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
 | 🔴 紧急 | 生产 Yahoo 落札页价格抽取需要实测 | 需确认实际 `/my/won` DOM 不会抽到错误容器或其他金额 |
-| 🟡 中期 | 查询 worker 与出价 worker 隔离 | 已增加出价保护窗口；后续如查询订单操作变重，可考虑同一插件不同角色，或两个 Chrome Profile 分别负责出价/查询 |
+| 🟡 中期 | 查询 worker 与出价 worker 隔离 | 当前已使用出价并行池、监控同步、订单工作流三条执行线；后续如查询订单操作变重，可考虑同一插件不同角色，或两个 Chrome Profile 分别负责出价/查询 |
 | 🟡 中期 | 落札后实际运费更新 | 当前运费只来自商品提交时的服务端解析，落札后“落札者負担”更新为实际金额的逻辑尚未开发 |
 | 🟡 中期 | 多次出价完整生产验证 | 需真实 Yahoo 登录态和临近结束商品测试 |
 | 🟡 中期 | 订单管理页面完善 | Admin Orders 已有基础列表，业务流程未完整 |

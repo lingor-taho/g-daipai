@@ -54,7 +54,6 @@ const { upsertProductSnapshot } = require('../services/productRepository');
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
 const DEFAULT_IDLE_SYNC_INTERVAL_MINUTES = 5;
-const DEFAULT_IDLE_BID_GUARD_MINUTES = 10;
 const DEFAULT_BID_CONCURRENCY_LIMIT = 2;
 const DEFAULT_TRANSACTION_START_HOUR = 1;
 const TRANSACTION_START_DELAY_MINUTES = 1;
@@ -207,11 +206,6 @@ function getMultiBidIntervalMs(config = {}) {
   return Math.max(minutes > 0 ? minutes : DEFAULT_MULTI_BID_INTERVAL_MINUTES, 1) * 60 * 1000;
 }
 
-function getIdleBidGuardMs(config = {}) {
-  const minutes = Number(config.idleBidGuardMinutes ?? config.idle_bid_guard_minutes ?? DEFAULT_IDLE_BID_GUARD_MINUTES);
-  return Math.max(minutes > 0 ? minutes : DEFAULT_IDLE_BID_GUARD_MINUTES, 1) * 60 * 1000;
-}
-
 function isMultiBidIntervalReady(task, nowMs, config = {}) {
   if (!isMultiBidTask(task)) return true;
   const referenceTime = task.last_bid_at || (task.status === 'bidding' ? task.updated_at || task.created_at : null);
@@ -258,30 +252,6 @@ function chooseNextPluginTask(tasks, nowMs = Date.now(), config = {}) {
     return new Date(a.created_at || 0) - new Date(b.created_at || 0);
   });
   return readyTasks[0] || null;
-}
-
-function getNextTaskDispatchMs(task, nowMs = Date.now(), config = {}) {
-  if (!task) return null;
-  const endMs = parseTimeMs(task.end_time);
-  if (endMs && endMs <= nowMs) return null;
-  if (isDirectTask(task) || isTaskNeedingEndTimeRefresh(task)) return nowMs;
-
-  const leadStartMs = endMs ? endMs - getStrategyLeadMs({ ...task, ...config }) : nowMs;
-  if (isMultiBidTask(task)) {
-    const referenceTime = task.last_bid_at || (task.status === 'bidding' ? task.updated_at || task.created_at : null);
-    const lastBidMs = parseTimeMs(referenceTime);
-    const intervalReadyMs = lastBidMs ? lastBidMs + getMultiBidIntervalMs(config) : nowMs;
-    return Math.max(nowMs, leadStartMs, intervalReadyMs);
-  }
-  return Math.max(nowMs, leadStartMs);
-}
-
-function hasTaskWithinIdleGuard(tasks, nowMs = Date.now(), config = {}) {
-  const guardUntilMs = nowMs + getIdleBidGuardMs(config);
-  return tasks.some(task => {
-    const nextMs = getNextTaskDispatchMs(task, nowMs, config);
-    return Number.isFinite(nextMs) && nextMs <= guardUntilMs;
-  });
 }
 
 async function expireOverduePendingTasks(database = db, nowMs = Date.now()) {
@@ -386,14 +356,13 @@ async function sweepPendingTasks(database = db, nowMs = Date.now()) {
 
 async function getMultiBidConfig(database = db) {
   const rows = await database.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'bid_concurrency_limit', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'multi_bid_min_price', 'bid_concurrency_limit', 'transaction_start_hour', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   return {
     multiBidStartHours: Number(values.multi_bid_start_hours || DEFAULT_MULTI_BID_START_HOURS),
     multiBidIntervalMinutes: Number(values.multi_bid_interval_minutes || DEFAULT_MULTI_BID_INTERVAL_MINUTES),
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || DEFAULT_IDLE_SYNC_INTERVAL_MINUTES),
-    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes ?? DEFAULT_IDLE_BID_GUARD_MINUTES),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
     bidConcurrencyLimit: Math.max(1, Math.min(10, Math.floor(Number(values.bid_concurrency_limit || DEFAULT_BID_CONCURRENCY_LIMIT)))),
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
@@ -848,8 +817,7 @@ router.get('/task', async (req, res) => {
   res.json({
     task: withMultiBidDispatchConfig(task, multiBidConfig) || null,
     canIdleSync: true,
-    bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit,
-    idleBidGuardMinutes: multiBidConfig.idleBidGuardMinutes
+    bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit
   });
 });
 
@@ -2795,7 +2763,6 @@ router.get('/config', async (req, res) => {
     multiBidStartHours: multiBidConfig.multiBidStartHours,
     multiBidIntervalMinutes: multiBidConfig.multiBidIntervalMinutes,
     idleSyncIntervalMinutes: multiBidConfig.idleSyncIntervalMinutes,
-    idleBidGuardMinutes: multiBidConfig.idleBidGuardMinutes,
     multiBidMinPrice: multiBidConfig.multiBidMinPrice,
     bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit,
     transactionStartHour: multiBidConfig.transactionStartHour,
@@ -2812,13 +2779,10 @@ module.exports.buildWindowsSendKeysScript = buildWindowsSendKeysScript;
 module.exports.typeManualPinWithSystemKeyboard = typeManualPinWithSystemKeyboard;
 module.exports.getMultiBidStartMs = getMultiBidStartMs;
 module.exports.getMultiBidIntervalMs = getMultiBidIntervalMs;
-module.exports.getIdleBidGuardMs = getIdleBidGuardMs;
 module.exports.isMultiBidTask = isMultiBidTask;
 module.exports.isTaskNeedingEndTimeRefresh = isTaskNeedingEndTimeRefresh;
 module.exports.isTaskReadyForDispatch = isTaskReadyForDispatch;
 module.exports.chooseNextPluginTask = chooseNextPluginTask;
-module.exports.getNextTaskDispatchMs = getNextTaskDispatchMs;
-module.exports.hasTaskWithinIdleGuard = hasTaskWithinIdleGuard;
 module.exports.getMultiBidConfig = getMultiBidConfig;
 module.exports.DEFAULT_MULTI_BID_MIN_PRICE = DEFAULT_MULTI_BID_MIN_PRICE;
 module.exports.DEFAULT_PAYMENT_JOB_LIMIT = DEFAULT_PAYMENT_JOB_LIMIT;

@@ -13,9 +13,7 @@ const {
   sweepPendingTasks,
   getMultiBidStartMs,
   getMultiBidIntervalMs,
-  getIdleBidGuardMs,
-  getNextTaskDispatchMs,
-  hasTaskWithinIdleGuard,
+  getMultiBidConfig,
   isMultiBidTask,
   syncBiddingItems,
   resolveOrderFinalPrice,
@@ -171,29 +169,6 @@ function testChooseRefreshTaskWhenNoExecutableTaskExists() {
   assert.equal(task.id, 2);
 }
 
-function testIdleGuardBlocksNearFutureBidTasks() {
-  const config = { idleBidGuardMinutes: 10 };
-  assert.equal(getIdleBidGuardMs(config), 10 * 60 * 1000);
-  assert.equal(getNextTaskDispatchMs({
-    id: 1,
-    strategy: '10min',
-    end_time: minutesFromNow(19),
-    created_at: minutesFromNow(-10)
-  }, now, config), now + 9 * 60 * 1000);
-  assert.equal(hasTaskWithinIdleGuard([{
-    id: 1,
-    strategy: '10min',
-    end_time: minutesFromNow(19),
-    created_at: minutesFromNow(-10)
-  }], now, config), true);
-  assert.equal(hasTaskWithinIdleGuard([{
-    id: 2,
-    strategy: '10min',
-    end_time: minutesFromNow(21),
-    created_at: minutesFromNow(-10)
-  }], now, config), false);
-}
-
 async function testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed() {
   const calls = [];
   const fakeDb = {
@@ -247,6 +222,28 @@ async function testResetStaleProcessingTasksReturnsOldProcessingToPending() {
   assert.match(calls[0].sql, /WHERE status = 'processing'/);
   assert.match(calls[0].sql, /datetime\(updated_at\) <= datetime\(\?\)/);
   assert.equal(calls[0].params[0], new Date(now - 60 * 1000).toISOString());
+}
+
+async function testGetMultiBidConfigDoesNotExposeIdleBidGuard() {
+  let capturedSql = '';
+  const fakeDb = {
+    async getAll(sql) {
+      capturedSql = sql;
+      return [
+        { key: 'multi_bid_start_hours', value: '0.5' },
+        { key: 'multi_bid_interval_minutes', value: '5' },
+        { key: 'idle_sync_interval_minutes', value: '2' },
+        { key: 'idle_bid_guard_minutes', value: '99' },
+        { key: 'multi_bid_min_price', value: '5000' },
+        { key: 'bid_concurrency_limit', value: '2' }
+      ];
+    }
+  };
+
+  const config = await getMultiBidConfig(fakeDb);
+
+  assert.equal(Object.hasOwn(config, 'idleBidGuardMinutes'), false);
+  assert.doesNotMatch(capturedSql, /idle_bid_guard_minutes/);
 }
 
 async function testHeartbeatProcessingTaskOnlyRefreshesProcessingUpdatedAt() {
@@ -2046,7 +2043,6 @@ testMultiBidPendingTaskWithRecentTouchStillWaitsForInterval();
 testMultiBidIntervalParsesSqliteUtcTimestamp();
 testChooseNextTaskSkipsFutureTimedTask();
 testChooseRefreshTaskWhenNoExecutableTaskExists();
-testIdleGuardBlocksNearFutureBidTasks();
 testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
@@ -2082,6 +2078,7 @@ Promise.all([
   testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThreshold(),
   testGetTransactionStartJobsHandlesStoreAndMissingUrl(),
   testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun(),
+  testGetMultiBidConfigDoesNotExposeIdleBidGuard(),
   testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testUpdateTransactionStartStatusMarksOrderCancelled(),

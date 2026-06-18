@@ -1255,7 +1255,7 @@ async function saveUserFinanceOverride(body = {}) {
 async function getMultiBidConfig() {
   await applyGoogleSheetsConfigFromDb(db);
   const rows = await db.getAll(
-    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'idle_bid_guard_minutes', 'multi_bid_min_price', 'bid_concurrency_limit', 'yahoo_shipping_pref_code', 'transaction_start_hour', 'confirm_receipt_hour', 'confirm_receipt_color', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
+    "SELECT key, value FROM config WHERE key IN ('multi_bid_start_hours', 'multi_bid_interval_minutes', 'idle_sync_interval_minutes', 'multi_bid_min_price', 'bid_concurrency_limit', 'yahoo_shipping_pref_code', 'transaction_start_hour', 'confirm_receipt_hour', 'confirm_receipt_color', 'scan_start_hour', 'scan_end_hour', 'scan_every_idle_runs', 'payment_job_limit', 'payment_job_limit_min', 'payment_job_limit_max', 'payment_page_stay_seconds')"
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const legacyPaymentJobLimit = normalizePositiveIntegerConfig(values.payment_job_limit, 3);
@@ -1265,7 +1265,6 @@ async function getMultiBidConfig() {
     startHours: Number(values.multi_bid_start_hours || 0.5),
     intervalMinutes: Number(values.multi_bid_interval_minutes || 5),
     idleSyncIntervalMinutes: Number(values.idle_sync_interval_minutes || 5),
-    idleBidGuardMinutes: Number(values.idle_bid_guard_minutes ?? 10),
     multiBidMinPrice: Number(values.multi_bid_min_price || DEFAULT_MULTI_BID_MIN_PRICE),
     bidConcurrencyLimit: normalizePositiveIntegerConfig(values.bid_concurrency_limit, 2),
     yahooShippingPrefCode: normalizeYahooShippingPrefCode(values.yahoo_shipping_pref_code || '27'),
@@ -1303,7 +1302,6 @@ router.put('/multi-bid-config', async (req, res) => {
   const startHours = Number(req.body.startHours);
   const intervalMinutes = Number(req.body.intervalMinutes);
   const idleSyncIntervalMinutes = Number(req.body.idleSyncIntervalMinutes ?? 5);
-  const idleBidGuardMinutes = Number(req.body.idleBidGuardMinutes ?? 10);
   const multiBidMinPrice = Number(req.body.multiBidMinPrice ?? DEFAULT_MULTI_BID_MIN_PRICE);
   const bidConcurrencyLimit = normalizePositiveIntegerConfig(req.body.bidConcurrencyLimit ?? 2, 2);
   const yahooShippingPrefCode = normalizeYahooShippingPrefCode(req.body.yahooShippingPrefCode ?? '27', '');
@@ -1329,9 +1327,6 @@ router.put('/multi-bid-config', async (req, res) => {
   }
   if (!Number.isFinite(idleSyncIntervalMinutes) || idleSyncIntervalMinutes <= 0) {
     return res.status(400).json({ error: 'valid idleSyncIntervalMinutes is required' });
-  }
-  if (!Number.isFinite(idleBidGuardMinutes) || idleBidGuardMinutes < 0) {
-    return res.status(400).json({ error: 'valid idleBidGuardMinutes is required' });
   }
   if (!Number.isFinite(multiBidMinPrice) || multiBidMinPrice <= 0 || Math.floor(multiBidMinPrice) !== multiBidMinPrice) {
     return res.status(400).json({ error: 'valid multiBidMinPrice is required' });
@@ -1381,10 +1376,6 @@ router.put('/multi-bid-config', async (req, res) => {
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('idle_sync_interval_minutes', ?, CURRENT_TIMESTAMP)`,
     [String(idleSyncIntervalMinutes)]
-  );
-  await db.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('idle_bid_guard_minutes', ?, CURRENT_TIMESTAMP)`,
-    [String(idleBidGuardMinutes)]
   );
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('multi_bid_min_price', ?, CURRENT_TIMESTAMP)`,
@@ -1453,7 +1444,7 @@ router.put('/multi-bid-config', async (req, res) => {
     );
     applyGoogleSheetsConfig({ googleSheetId, googleSheetName, googleCredentialPath });
   }
-  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, idleBidGuardMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds, googleSheetName });
+  res.json({ success: true, startHours, intervalMinutes, idleSyncIntervalMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds, googleSheetName });
 });
 
 router.post('/transaction-start/request', async (req, res) => {

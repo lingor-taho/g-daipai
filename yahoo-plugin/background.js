@@ -50,14 +50,13 @@ async function fetchPendingTask() {
     const data = await res.json();
     return {
       task: data.task || null,
-      canIdleSync: data.canIdleSync === true,
-      idleBidGuardMinutes: Number(data.idleBidGuardMinutes || 10)
+      canIdleSync: data.canIdleSync === true
     };
   } catch (e) {
     fetchFailureCount += 1;
     const log = fetchFailureCount === 1 || fetchFailureCount % 6 === 0 ? console.warn : console.debug;
     log('[Yahoo Bid] API unavailable, polling will retry:', e.message || e);
-    return { task: null, canIdleSync: false, idleBidGuardMinutes: 10 };
+    return { task: null, canIdleSync: false };
   }
 }
 
