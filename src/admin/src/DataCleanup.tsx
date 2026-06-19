@@ -1,5 +1,21 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, InputNumber, Space, Switch, Table, Typography, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Card,
+  DatePicker,
+  Descriptions,
+  Form,
+  InputNumber,
+  Modal,
+  Space,
+  Switch,
+  Table,
+  Tabs,
+  Typography,
+  message
+} from 'antd';
+import type { Dayjs } from 'dayjs';
 import { authHeaders, fetchAdminJson, getAdminHttpErrorMessage } from './utils/auth';
 
 function formatDateTime(value: string | null | undefined) {
@@ -43,10 +59,56 @@ async function runCleanup(retentionDays: number) {
   return data;
 }
 
+async function previewWonDateCleanup(cleanupDate: string) {
+  const res = await fetch('/api/admin/data-cleanup/won-date/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ cleanupDate })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(getAdminHttpErrorMessage(res.status, data, '预览失败'));
+  return data;
+}
+
+async function runWonDateCleanup(cleanupDate: string) {
+  const res = await fetch('/api/admin/data-cleanup/won-date/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ cleanupDate, confirm: true })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(getAdminHttpErrorMessage(res.status, data, '执行失败'));
+  return data;
+}
+
+function countText(value: unknown) {
+  return `${Number(value || 0)} 条`;
+}
+
+function ForceCleanupSummary({ summary }: { summary: any }) {
+  if (!summary) return null;
+  return (
+    <Descriptions size="small" bordered column={2}>
+      <Descriptions.Item label="截止落札日期">{summary.cutoffDate}</Descriptions.Item>
+      <Descriptions.Item label="合计">{countText(summary.totalCount)}</Descriptions.Item>
+      <Descriptions.Item label="商品信息">{countText(summary.productCount)}</Descriptions.Item>
+      <Descriptions.Item label="任务">{countText(summary.taskCount)}</Descriptions.Item>
+      <Descriptions.Item label="落札订单">{countText(summary.orderCount)}</Descriptions.Item>
+      <Descriptions.Item label="出价日志">{countText(summary.bidLogCount)}</Descriptions.Item>
+      <Descriptions.Item label="订单状态日志">{countText(summary.orderStatusLogCount)}</Descriptions.Item>
+      <Descriptions.Item label="入札缓存">{countText(summary.biddingItemCount)}</Descriptions.Item>
+    </Descriptions>
+  );
+}
+
 export default function DataCleanupPage() {
   const [form] = Form.useForm();
+  const [forceForm] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [forceRunning, setForceRunning] = useState(false);
+  const [forcePreview, setForcePreview] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -113,6 +175,56 @@ export default function DataCleanupPage() {
     }
   }
 
+  async function handleForcePreview() {
+    const values = await forceForm.validateFields();
+    const cleanupDate = (values.cleanupDate as Dayjs).format('YYYY-MM-DD');
+    setPreviewing(true);
+    try {
+      const result = await previewWonDateCleanup(cleanupDate);
+      setForcePreview(result);
+      if (Number(result.totalCount || 0) === 0) {
+        message.info('没有符合条件的数据');
+      }
+    } catch (e: any) {
+      message.error(e.message || '预览失败');
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function executeForceCleanup(cleanupDate: string) {
+    setForceRunning(true);
+    try {
+      const result = await runWonDateCleanup(cleanupDate);
+      setForcePreview(result);
+      if (Number(result.totalCount || 0) > 0) {
+        message.success(`强制清理完成，共清理 ${result.totalCount} 条关联数据`);
+      } else {
+        message.info('强制清理完成：没有符合条件的数据');
+      }
+      await fetchLogs(1);
+    } catch (e: any) {
+      message.error(e.message || '执行失败');
+    } finally {
+      setForceRunning(false);
+    }
+  }
+
+  async function handleForceRun() {
+    const values = await forceForm.validateFields();
+    const cleanupDate = (values.cleanupDate as Dayjs).format('YYYY-MM-DD');
+    const preview = forcePreview?.cutoffDate === cleanupDate ? forcePreview : await previewWonDateCleanup(cleanupDate);
+    setForcePreview(preview);
+    Modal.confirm({
+      title: '确认按落札日期强制清理？',
+      content: `将删除 ${cleanupDate} 及之前落札订单关联的任务、订单、商品信息和日志，共 ${Number(preview.totalCount || 0)} 条关联数据。执行前请确认已经备份数据库。`,
+      okText: '确认清理',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => executeForceCleanup(cleanupDate)
+    });
+  }
+
   const columns = [
     { title: '操作时间', dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) },
     { title: '类型', dataIndex: 'run_type', render: (_: any, row: any) => row.run_type === 'auto' ? '自动' : '手动' },
@@ -130,7 +242,7 @@ export default function DataCleanupPage() {
     }
   ];
 
-  return (
+  const regularCleanup = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Form
         form={form}
@@ -184,5 +296,45 @@ export default function DataCleanupPage() {
         />
       </Card>
     </Space>
+  );
+
+  const forceCleanup = (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Alert
+        type="warning"
+        showIcon
+        message="按日期强制清理会删除成功落札订单"
+        description="清理依据为落札日期 won_at。选择某一天后，会清理这一天及之前落札订单关联的任务、落札订单、商品信息、出价日志、订单状态日志和入札缓存。执行前请先备份 SQLite 数据库。"
+      />
+      <Card title="按日期强制清理">
+        <Form form={forceForm} layout="vertical" style={{ maxWidth: 560 }}>
+          <Form.Item
+            name="cleanupDate"
+            label="清理到哪个落札日期"
+            rules={[{ required: true, message: '请选择落札日期' }]}
+          >
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Space>
+            <Button onClick={handleForcePreview} loading={previewing}>预览数量</Button>
+            <Button danger type="primary" onClick={handleForceRun} loading={forceRunning}>确认清理</Button>
+          </Space>
+        </Form>
+      </Card>
+      {forcePreview && (
+        <Card title="预览结果">
+          <ForceCleanupSummary summary={forcePreview} />
+        </Card>
+      )}
+    </Space>
+  );
+
+  return (
+    <Tabs
+      items={[
+        { key: 'regular', label: '日常清理', children: regularCleanup },
+        { key: 'force-date', label: '按日期强制清理', children: forceCleanup }
+      ]}
+    />
   );
 }

@@ -29,6 +29,10 @@ const {
   saveDataCleanupConfig
 } = require('../services/dataCleanup');
 const {
+  previewWonDateCleanup,
+  runWonDateCleanup
+} = require('../services/forceDateCleanup');
+const {
   getOrderStatusAuditRows,
   writeOrderStatusAuditLogs,
   backfillMissingOrderStatusAuditLogs
@@ -2643,6 +2647,27 @@ router.post('/data-cleanup/run', async (req, res) => {
     runType: 'manual'
   });
   res.json({ success: true, ...result });
+});
+
+router.post('/data-cleanup/won-date/preview', async (req, res) => {
+  try {
+    const result = await previewWonDateCleanup(db, req.body?.cleanupDate);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'valid cleanup date is required' });
+  }
+});
+
+router.post('/data-cleanup/won-date/run', async (req, res) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({ error: 'confirm is required' });
+  }
+  try {
+    const result = await runWonDateCleanup(db, req.body?.cleanupDate);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'valid cleanup date is required' });
+  }
 });
 
 router.get('/data-cleanup/logs', async (req, res) => {
