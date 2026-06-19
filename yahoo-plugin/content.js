@@ -1086,13 +1086,17 @@ async function executeBidV3(maxPrice, options = {}) {
     const checked = isBulkPurchaseCheckboxChecked(bulkPurchaseCheckbox);
     if (bulkPurchaseCheckbox && !checked) {
       clickElement(findBulkPurchaseClickTarget(bulkPurchaseCheckbox));
-      const instantBuyButton = await waitForBulkPurchaseInstantBuyButton();
+      const instantBuyButton = await waitForBulkPurchaseInstantBuyButton(10000);
       if (!instantBuyButton) {
-        return { success: false, error: 'bulk purchase checkbox did not activate', closeTab: true };
+        return { success: false, error: 'bulk purchase instant buy button did not appear after checkbox click', closeTab: true };
       }
+      clickElement(instantBuyButton);
+      await new Promise(resolve => setTimeout(resolve, 1200));
       return executeBidV3(numericMaxPrice, options);
     }
-    if (hasBulkPurchasePrompt() && !findBuyoutFinalPurchaseButton() && !findBulkPurchaseInstantBuyButton()) {
+    if (hasBulkPurchasePrompt() &&
+      !findBuyoutFinalPurchaseButton() &&
+      !findBulkPurchaseInstantBuyButton()) {
       return { success: false, error: 'bulk purchase flow did not activate', closeTab: true };
     }
   }

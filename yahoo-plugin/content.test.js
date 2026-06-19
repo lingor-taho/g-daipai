@@ -1060,24 +1060,19 @@ async function testStoreBuyoutIgnoresPriceInputAndClicksPurchaseButton() {
   assert.notEqual(result.stage, 'confirm-clicked');
 }
 
-async function testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates() {
+async function testStoreBuyoutWaitsForInstantBuyAfterBulkPurchaseCheckbox() {
   let stage = 'review';
   const bulkCheckbox = createTestElement('');
-  const reviewConfirmLink = createTestElement('\u78ba\u8a8d\u3059\u308b');
+  const instantBuyButton = createTestElement('\u4eca\u3059\u3050\u843d\u672d\u3059\u308b');
   const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b');
-  reviewConfirmLink.tagName = 'A';
-  reviewConfirmLink.getAttribute = name => {
-    if (name === 'data-cl-params') return '_cl_link:confirm;_cl_position:1;';
-    if (name === 'href') return reviewConfirmLink.href;
-    return '';
-  };
-  reviewConfirmLink.click = () => {
-    reviewConfirmLink.clicked = true;
-    stage = 'final';
-  };
   bulkCheckbox.click = () => {
     bulkCheckbox.clicked = true;
     bulkCheckbox.checked = true;
+    stage = 'instant';
+  };
+  instantBuyButton.click = () => {
+    instantBuyButton.clicked = true;
+    stage = 'final';
   };
   finalAgreeButton.click = () => {
     finalAgreeButton.clicked = true;
@@ -1093,6 +1088,8 @@ async function testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates()
       if (stage === 'review') {
         return '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d \u3053\u306e\u51fa\u54c1\u8005\u304b\u3089\u4ed6\u306e\u5546\u54c1\u3092\u307e\u3068\u3081\u3066\u624b\u7d9a\u304d\u3059\u308b\u5834\u5408\u306f\u30c1\u30a7\u30c3\u30af\u3092\u5165\u308c\u3066\u4e0b\u3055\u3044\u3002 \u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b \u78ba\u8a8d\u3059\u308b';
       }
+      if (stage === 'instant') return '\u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b \u4eca\u3059\u3050\u843d\u672d\u3059\u308b';
+      if (stage === 'success') return '\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
       return '\u78ba\u8a8d \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u843d\u672d\u3059\u308b';
     },
     querySelectorAll(selector) {
@@ -1103,7 +1100,8 @@ async function testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates()
         return stage === 'review' ? [bulkCheckbox] : [];
       }
       if (selector.includes('button') || selector === 'body *') {
-        if (stage === 'review') return [bulkCheckbox, reviewConfirmLink];
+        if (stage === 'review') return [bulkCheckbox];
+        if (stage === 'instant') return [instantBuyButton];
         if (stage === 'final') return [finalAgreeButton];
       }
       return [];
@@ -1119,10 +1117,9 @@ async function testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates()
   });
 
   assert.equal(bulkCheckbox.clicked, true);
-  assert.equal(reviewConfirmLink.clicked, false);
-  assert.equal(finalAgreeButton.clicked, false);
-  assert.equal(result.success, false);
-  assert.match(result.error, /bulk purchase/i);
+  assert.equal(instantBuyButton.clicked, true);
+  assert.equal(finalAgreeButton.clicked, true);
+  assert.equal(result.success, true);
 }
 
 async function testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation() {
@@ -3203,7 +3200,7 @@ async function run() {
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
   await testStoreBuyoutIgnoresPriceInputAndClicksPurchaseButton();
-  await testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates();
+  await testStoreBuyoutWaitsForInstantBuyAfterBulkPurchaseCheckbox();
   await testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation();
   await testStoreBuyoutReviewSkipsPayPayBenefitConfirmLink();
   await testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm();
