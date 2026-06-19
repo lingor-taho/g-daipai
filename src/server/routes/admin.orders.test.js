@@ -352,6 +352,8 @@ function testAdminPendingTasksQueryUsesProductsFallback() {
 
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
   assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(query.sql, /CASE WHEN COALESCE\(t\.bid_mode, 'bid'\) = 'buyout'/);
+  assert.match(query.sql, /THEN COALESCE\(t\.user_max_price, t\.buyout_price, t\.max_price\)/);
   assert.match(query.sql, /COALESCE\(p\.end_time, t\.end_time\) AS end_time/);
   assert.match(query.sql, /WHERE t\.status = 'pending' OR \(t\.status = 'bidding' AND t\.strategy = 'multi_bid'\)/);
 }

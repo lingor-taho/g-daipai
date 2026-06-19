@@ -165,7 +165,10 @@ function buildAdminPendingTasksQuery() {
     sql: `SELECT t.id,
             t.product_id,
             COALESCE(p.product_title, t.product_title) AS product_title,
-            t.max_price,
+            CASE WHEN COALESCE(t.bid_mode, 'bid') = 'buyout'
+              THEN COALESCE(t.user_max_price, t.buyout_price, t.max_price)
+              ELSE t.max_price
+            END AS max_price,
             t.strategy,
             t.start_minutes_before,
             t.start_seconds_before,
@@ -921,6 +924,9 @@ router.get('/tasks', async (req, res) => {
   const nowMs = Date.now();
   const mappedItems = items.map(item => ({
     ...item,
+    max_price: item.bid_mode === 'buyout'
+      ? Number(item.user_max_price || item.buyout_price || item.max_price || 0)
+      : item.max_price,
     next_execute_at: getNextExecuteAt(item, multiBidConfig, nowMs)
   }));
   const countResult = await db.getOne('SELECT COUNT(*) as total FROM tasks');

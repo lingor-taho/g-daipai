@@ -348,6 +348,18 @@ function testProductDataAddsTaxToStoreBuyoutPriceFromPageData() {
   assert.equal(product.buyoutPrice, 275100);
 }
 
+function testProductDataRoundsUpTaxIncludedStoreBuyoutPriceFromPageData() {
+  const api = loadContentForTest('\u73fe\u5728 3,142\u5186 \uff08\u7a0e\u8fbc\uff09 \u8cfc\u5165\u624b\u7d9a\u304d\u3078', '/jp/auction/u1051658399', {
+    scripts: [
+      'var pageData = {"items":{"productID":"u1051658399","price":"2856","winPrice":"2856","productName":"store buyout"}};'
+    ]
+  });
+  const product = api.extractProductData();
+
+  assert.equal(product.taxType, 'tax_included');
+  assert.equal(product.buyoutPrice, 3142);
+}
+
 function testProductDataPrefersPageDataProductName() {
   const api = loadContentForTest('', '/jp/auction/v1184829642', {
     scripts: [
@@ -3107,6 +3119,7 @@ async function run() {
   testBidEntryButtonTextAvoidsHelpLinks();
   testProductDataExtractsBuyoutPriceFromPageData();
   testProductDataAddsTaxToStoreBuyoutPriceFromPageData();
+  testProductDataRoundsUpTaxIncludedStoreBuyoutPriceFromPageData();
   testProductDataPrefersPageDataProductName();
   testProductDataExtractsTaxType();
   testProductDataExtractsShippingFeeText();

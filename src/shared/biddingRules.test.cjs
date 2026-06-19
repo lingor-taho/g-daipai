@@ -69,7 +69,7 @@ assert.deepEqual(resolveBuyoutTaskPrices({
 }), {
   buyoutPrice: 275100,
   userMaxPrice: 275100,
-  bidMaxPrice: 250090
+  bidMaxPrice: 275100
 });
 
 console.log('bidding rules tests passed');

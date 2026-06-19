@@ -263,6 +263,27 @@ async function testParseStoreBuyoutPriceAddsTaxForPageDataWinPrice() {
   assert.equal(product.taxType, 'tax_included');
 }
 
+async function testParseStoreBuyoutPriceRoundsUpTaxIncludedPageDataWinPrice() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Store Buyout Round Test - Yahoo!</title>
+        <script>
+          var pageData = {"items":{"price":"2856","winPrice":"2856","bids":"0"}};
+        </script>
+      </head>
+      <body>
+        <dt>\u73fe\u5728</dt>
+        <dd><span>3,142\u5186</span><span>\uff08\u7a0e\u8fbc\uff09</span></dd>
+        <a href="https://buy.auctions.yahoo.co.jp/order/confirm">\u8cfc\u5165\u624b\u7d9a\u304d\u3078</a>
+      </body>
+    </html>
+  `, 'u1051658399', 'https://auctions.yahoo.co.jp/jp/auction/u1051658399');
+
+  assert.equal(product.taxType, 'tax_included');
+  assert.equal(product.buyoutPrice, 3142);
+}
+
 async function testParseStoreTaxTypeFromTaxIncludedLabel() {
   const product = parseProductHtml(`
     <html>
@@ -816,6 +837,7 @@ async function run() {
   await testParseNormalBuyoutProductKeepsBidAvailable();
   await testParseStoreBuyoutOnlyProductFromPurchaseButton();
   await testParseStoreBuyoutPriceAddsTaxForPageDataWinPrice();
+  await testParseStoreBuyoutPriceRoundsUpTaxIncludedPageDataWinPrice();
   await testParseStoreTaxTypeFromTaxIncludedLabel();
   await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();

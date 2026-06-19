@@ -4,7 +4,8 @@ const fs = require('fs');
 const { chromium } = require('playwright');
 const {
   normalizeProductType,
-  taxExcludedToTaxIncluded
+  taxExcludedToTaxIncluded,
+  normalizeTaxType
 } = require('../../shared/priceRules.cjs');
 const db = require('../models');
 
@@ -175,7 +176,12 @@ function extractBuyoutPrice(html) {
   return 0;
 }
 
-const toTaxIncludedPrice = taxExcludedToTaxIncluded;
+function toTaxIncludedBuyoutPrice(value, taxType) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  if (normalizeTaxType(taxType) !== 'tax_included' || number < 10) return Math.floor(number);
+  return Math.round(number * 1.1);
+}
 
 function extractBidCount(html) {
   const pageDataItems = extractPageDataItems(html);
@@ -372,7 +378,7 @@ function parseProductHtml(html, auctionId, standardUrl) {
     ? extractStorePurchaseTaxIncludedPrice(html)
     : 0;
   const buyoutPrice = storePurchaseTaxIncludedPrice ||
-    (pageDataBuyoutPrice > 0 ? toTaxIncludedPrice(pageDataBuyoutPrice, taxType) : rawBuyoutPrice);
+    (pageDataBuyoutPrice > 0 ? toTaxIncludedBuyoutPrice(pageDataBuyoutPrice, taxType) : rawBuyoutPrice);
   return {
     auctionId,
     standardUrl,

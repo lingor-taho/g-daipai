@@ -323,7 +323,7 @@ function testStoreBuyoutPriceIsAlreadyTaxIncluded() {
     {
       buyoutPrice: 2460,
       userMaxPrice: 2460,
-      bidMaxPrice: 2236
+      bidMaxPrice: 2460
     }
   );
   assert.deepEqual(

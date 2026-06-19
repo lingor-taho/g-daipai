@@ -9,7 +9,6 @@ const {
   DEFAULT_MULTI_BID_MIN_PRICE
 } = require('./domainConstants.cjs');
 const {
-  normalizeTaxType,
   taxIncludedToTaxExcluded
 } = require('./priceRules.cjs');
 
@@ -42,19 +41,11 @@ function shouldSplitDirectBidByYahooLowPriceRule({ strategy, bidMode, currentPri
 }
 
 function resolveBuyoutTaskPrices({ fetchedBuyoutPrice, submittedBuyoutPrice, inputMaxPrice, taxType }) {
-  const resolvedTaxType = normalizeTaxType(taxType);
   const value = Number(fetchedBuyoutPrice || submittedBuyoutPrice || inputMaxPrice || 0);
   if (!Number.isFinite(value) || value <= 0) {
     return { buyoutPrice: 0, userMaxPrice: 0, bidMaxPrice: 0 };
   }
   const buyoutPrice = Math.floor(value);
-  if (resolvedTaxType === 'tax_included') {
-    return {
-      buyoutPrice,
-      userMaxPrice: buyoutPrice,
-      bidMaxPrice: taxIncludedToTaxExcluded(buyoutPrice, resolvedTaxType)
-    };
-  }
   return {
     buyoutPrice,
     userMaxPrice: buyoutPrice,

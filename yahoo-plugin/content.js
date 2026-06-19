@@ -115,7 +115,7 @@ function extractProductData() {
     const pageDataItems = getPageDataItems();
     if (pageDataItems && Object.prototype.hasOwnProperty.call(pageDataItems, 'winPrice')) {
       const value = parseYen(pageDataItems.winPrice);
-      return getTaxType() === 'tax_included' && value >= 10 ? Math.floor(value * 1.1) : value;
+      return getTaxType() === 'tax_included' && value >= 10 ? Math.round(value * 1.1) : value;
     }
 
     const bodyText = document.body.textContent || '';
