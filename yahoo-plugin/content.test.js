@@ -1015,6 +1015,51 @@ async function testStoreBuyoutClicksPurchaseFlow() {
   assert.equal(finalAgreeButton.clicked, true);
 }
 
+async function testStoreBuyoutIgnoresPriceInputAndClicksPurchaseButton() {
+  let stage = 'product';
+  const purchaseButton = createTestElement('\u8cfc\u5165\u624b\u7d9a\u304d\u3078');
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+  priceInput.value = '';
+  purchaseButton.click = () => {
+    purchaseButton.clicked = true;
+    stage = 'next';
+  };
+
+  const api = loadContentForTest('', '/jp/auction/q1222339778', {
+    getBodyText: () => {
+      if (stage === 'product') return '\u4fa1\u683c 1,047\u5186\uff08\u7a0e\u8fbc\uff09 \u8cfc\u5165\u624b\u7d9a\u304d\u3078';
+      return '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d';
+    },
+    querySelector(selector) {
+      return selector === 'input[name="bid"]' ? priceInput : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') {
+        return stage === 'product'
+          ? [{ textContent: 'var pageData = {"items":{"productID":"q1222339778","price":"952","winPrice":"952","productName":"store buyout"}};' }]
+          : [];
+      }
+      if (selector.includes('button') || selector === 'body *') {
+        return stage === 'product' ? [purchaseButton] : [];
+      }
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(1047, {
+    maxPrice: 1047,
+    userMaxPrice: 1047,
+    bidMode: 'buyout',
+    taxType: 'tax_included',
+    strategy: 'direct'
+  });
+
+  assert.equal(purchaseButton.clicked, true);
+  assert.equal(priceInput.value, '');
+  assert.notEqual(result.stage, 'confirm-clicked');
+}
+
 async function testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates() {
   let stage = 'review';
   const bulkCheckbox = createTestElement('');
@@ -3157,6 +3202,7 @@ async function run() {
   await testDirectBidFinalConfirmUsesShortOutcomeWait();
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
+  await testStoreBuyoutIgnoresPriceInputAndClicksPurchaseButton();
   await testStoreBuyoutDoesNotClickReviewConfirmBeforeBulkFlowActivates();
   await testStoreBuyoutSkipsCurrentPriceAboveTaxExcludedMaxValidation();
   await testStoreBuyoutReviewSkipsPayPayBenefitConfirmLink();

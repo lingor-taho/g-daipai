@@ -1124,7 +1124,7 @@ async function executeBidV3(maxPrice, options = {}) {
     return { success: true, bidPrice: numericMaxPrice, stage: 'final-submitted' };
   }
 
-  const priceInput = findPriceInput();
+  const priceInput = bidMode === 'buyout' ? null : findPriceInput();
   if (priceInput) {
     const priceError = validateCurrentPrice();
     if (priceError) return priceError;
