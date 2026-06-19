@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, List, Popup, SearchBar, Toast } from 'antd-mobile';
 import { getActingUsers, getClientSiteConfig } from '../utils/api';
 import { runDeduped } from '../utils/requestDedupe';
-import { colors } from '../styles';
+import { applyClientTheme, colors, getClientTheme, themeOptions } from '../styles';
 
 const items = [
   { to: '/submit', label: '提交任务' },
@@ -35,6 +35,7 @@ export default function UserNav() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [siteConfig, setSiteConfig] = useState({ noticeText: '', noticeMarquee: false });
+  const [themeName, setThemeName] = useState(getClientTheme());
 
   async function loadActingUsers() {
     try {
@@ -98,6 +99,11 @@ export default function UserNav() {
     navigate('/login', { replace: true });
   }
 
+  function changeTheme(nextTheme) {
+    const applied = applyClientTheme(nextTheme);
+    setThemeName(applied);
+  }
+
   return (
     <>
       <style>
@@ -113,16 +119,16 @@ export default function UserNav() {
         style={{
           margin: '-20px -20px 14px',
           padding: siteConfig.noticeText ? '16px 20px 14px' : '10px 20px 0',
-          background: '#ffffff',
+          background: colors.card,
           borderBottom: `1px solid ${colors.border}`,
-          boxShadow: '0 6px 18px rgba(37, 99, 235, 0.05)'
+          boxShadow: `0 6px 18px ${colors.shadow}`
         }}
       >
         {siteConfig.noticeText && (
           <div
             style={{
               border: `1px solid ${colors.border}`,
-              background: '#f8fbff',
+              background: colors.noticeBg,
               color: colors.accent,
               borderRadius: 8,
               minHeight: 38,
@@ -130,7 +136,7 @@ export default function UserNav() {
               alignItems: 'center',
               justifyContent: 'center',
               overflow: 'hidden',
-              boxShadow: '0 3px 10px rgba(37, 99, 235, 0.06)'
+              boxShadow: `0 3px 10px ${colors.shadow}`
             }}
           >
             <div style={{ width: '100%', overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 15, fontWeight: 600, textAlign: 'center' }}>
@@ -157,10 +163,36 @@ export default function UserNav() {
           padding: '0 2px'
         }}
       >
-        <div style={{ fontSize: 14, color: colors.muted }}>
-          登录用户：<span style={{ fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ fontSize: 14, color: colors.muted }}>
+            登录用户：<span style={{ fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
+          </div>
+          <Button size="mini" fill="outline" color="primary" onClick={logout}>退出</Button>
         </div>
-        <Button size="mini" fill="outline" color="primary" onClick={logout}>退出</Button>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, color: colors.muted }}>
+            <span>风格</span>
+            <select
+              value={themeName}
+              onChange={event => changeTheme(event.target.value)}
+              style={{
+                height: 28,
+                minWidth: 82,
+                border: `1px solid ${colors.borderStrong}`,
+                borderRadius: 7,
+                color: colors.text,
+                background: colors.card,
+                padding: '0 6px',
+                fontSize: 13,
+                outline: 'none'
+              }}
+            >
+              {themeOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {showSwitcher && (
@@ -173,13 +205,13 @@ export default function UserNav() {
             marginBottom: 10,
             padding: '10px 12px',
             borderRadius: 8,
-            background: '#ffffff',
+            background: colors.card,
             border: `1px solid ${colors.border}`,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             fontSize: 14,
-            boxShadow: '0 3px 12px rgba(37, 99, 235, 0.05)'
+            boxShadow: `0 3px 12px ${colors.shadow}`
           }}
         >
           <span style={{ color: colors.muted }}>当前账号</span>
@@ -200,9 +232,9 @@ export default function UserNav() {
               fontSize: 14,
               fontWeight: 600,
               color: isActive ? '#fff' : colors.text,
-              background: isActive ? colors.accent : '#ffffff',
+              background: isActive ? colors.accent : colors.card,
               border: `1px solid ${isActive ? colors.accent : colors.border}`,
-              boxShadow: isActive ? '0 6px 14px rgba(37, 99, 235, 0.18)' : '0 3px 10px rgba(37, 99, 235, 0.04)'
+              boxShadow: isActive ? `0 6px 14px ${colors.buttonShadow}` : `0 3px 10px ${colors.shadow}`
             })}
           >
             {item.label}

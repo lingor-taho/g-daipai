@@ -114,7 +114,7 @@ export default function Statistics() {
 
         {!loading && daily.length > 0 && (
           <>
-            <div style={{ minHeight: 42, marginBottom: 8, fontSize: 13, color: colors.text, background: '#f8fbff', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '9px 10px', boxSizing: 'border-box' }}>
+            <div style={{ minHeight: 42, marginBottom: 8, fontSize: 13, color: colors.text, background: colors.cardSoft, border: `1px solid ${colors.border}`, borderRadius: 8, padding: '9px 10px', boxSizing: 'border-box' }}>
               {activeItem ? (
                 <>
                   <strong>{activeItem.date}</strong>
@@ -134,7 +134,7 @@ export default function Statistics() {
                   borderLeft: `1px solid ${colors.border}`,
                   borderBottom: `1px solid ${colors.border}`,
                   borderRadius: 8,
-                  background: '#ffffff',
+                  background: colors.card,
                   padding: '12px 8px 22px 8px',
                   position: 'relative'
                 }}
@@ -170,7 +170,7 @@ export default function Statistics() {
                           height,
                           borderRadius: '5px 5px 0 0',
                           background: selected ? colors.accent : colors.accent2,
-                          boxShadow: selected ? '0 4px 10px rgba(37, 99, 235, 0.22)' : '0 4px 10px rgba(59, 130, 246, 0.14)',
+                          boxShadow: selected ? `0 4px 10px ${colors.buttonShadow}` : `0 4px 10px ${colors.shadow}`,
                           transition: 'height 160ms ease, background 120ms ease, box-shadow 120ms ease'
                         }}
                       />

@@ -650,7 +650,7 @@ export default function Submit() {
                   <span style={{ color: '#999', fontSize: 12 }}>日元</span>
                 </List.Item>
               </List>
-              <div style={{ ...cardStyle, marginTop: 10, padding: '10px 12px', color: colors.accent, fontSize: 13, lineHeight: 1.5, background: '#f8fbff' }}>
+              <div style={{ ...cardStyle, marginTop: 10, padding: '10px 12px', color: colors.accent, fontSize: 13, lineHeight: 1.5, background: colors.cardSoft }}>
                 多次出价标准：最高价不低于{multiBidConfig.minPrice}日元，商品结束前{multiBidConfig.startHours}小时开始，每{multiBidConfig.intervalMinutes}分钟自动加价。
                 <br />
                 提示：输入金额应&gt;= {getMinMultiBidIncrement(getSubmitMaxPrice(getInputYenPrice(), product, storeBidPriceMode))}日元
@@ -671,4 +671,3 @@ export default function Submit() {
     </div>
   );
 }
-

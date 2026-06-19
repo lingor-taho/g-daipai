@@ -40,8 +40,8 @@ function renderOrderStatusTag(status) {
 }
 
 function getWonItemStyle(item) {
-  if (item.order_status === 'cancelled') return { ...itemCardStyle, background: '#fff1f0' };
-  if (item.order_status === 'completed') return { ...itemCardStyle, background: '#e6f4ff' };
+  if (item.order_status === 'cancelled') return { ...itemCardStyle, background: colors.cancelledBg };
+  if (item.order_status === 'completed') return { ...itemCardStyle, background: colors.completedBg };
   return itemCardStyle;
 }
 

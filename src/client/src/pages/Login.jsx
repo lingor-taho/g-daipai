@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Input, Button, Toast } from 'antd-mobile';
 import { login } from '../utils/api';
-import { colors, primaryButtonStyle } from '../styles';
+import { getThemeVariables, primaryButtonStyle } from '../styles';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
+  const colors = getThemeVariables('classic');
 
   async function handleLogin() {
     if (!username || !password) return Toast.show({ content: '请输入用户名和密码' });
@@ -32,8 +33,15 @@ export default function Login() {
     padding: '0 12px',
     display: 'flex',
     alignItems: 'center',
-    background: '#fff',
+    background: colors.card,
     boxSizing: 'border-box'
+  };
+  const loginButtonStyle = {
+    ...primaryButtonStyle,
+    '--background-color': colors.accent,
+    '--border-color': colors.accent,
+    boxShadow: `0 6px 14px ${colors.buttonShadow}`,
+    color: '#111315'
   };
 
   return (
@@ -42,10 +50,11 @@ export default function Login() {
         minHeight: '100vh',
         boxSizing: 'border-box',
         padding: '44px 20px 22px',
-        background: '#ffffff',
+        background: colors.page,
         color: colors.text,
         display: 'flex',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        position: 'relative'
       }}
     >
       <div style={{ maxWidth: 420, width: '100%', margin: '0 auto', flex: 1 }}>
@@ -61,11 +70,11 @@ export default function Login() {
 
         <div
           style={{
-            background: 'rgba(255, 255, 255, 0.88)',
+            background: colors.card,
             border: `1px solid ${colors.border}`,
             borderRadius: 8,
             padding: 18,
-            boxShadow: '0 14px 32px rgba(37, 99, 235, 0.08)'
+            boxShadow: `0 14px 32px ${colors.shadow}`
           }}
         >
           <div style={inputWrapStyle}>
@@ -80,7 +89,7 @@ export default function Login() {
             block
             color="primary"
             onClick={handleLogin}
-            style={primaryButtonStyle}
+            style={loginButtonStyle}
           >
             登录
           </Button>

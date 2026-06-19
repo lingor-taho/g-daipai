@@ -39,7 +39,7 @@ function canCancelTask(task) {
 }
 
 function getStrategyTextStyle(strategy) {
-  if (strategy === 'multi_bid') return { color: '#2563eb', fontWeight: 600 };
+  if (strategy === 'multi_bid') return { color: colors.accent, fontWeight: 600 };
   if (/^\d+min$/.test(strategy || '')) return { color: '#7c3aed', fontWeight: 600 };
   return { color: '#4b5563', fontWeight: 600 };
 }
@@ -121,7 +121,7 @@ export default function TaskList({ limit = 10, embedded = false }) {
       {stats && (
         <div style={{ margin: '12px 0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
           {getTaskStatCards(stats).map(({ label, value }) => (
-            <div key={label} style={{ ...cardStyle, padding: 10, background: '#ffffff' }}>
+            <div key={label} style={{ ...cardStyle, padding: 10, background: colors.card }}>
               <div style={{ fontSize: 12, color: colors.muted }}>{label}</div>
               <div style={{ fontSize: 19, fontWeight: 600, marginTop: 4, color: colors.text }}>{value}</div>
             </div>
