@@ -327,6 +327,205 @@ function buildOrderStatusDebugTasksQuery(productId) {
   };
 }
 
+function buildProductDebugTasksQuery(productId) {
+  return {
+    sql: `SELECT t.id,
+            t.user_id,
+            u.username,
+            t.product_id,
+            t.product_url AS task_product_url,
+            p.product_url AS product_product_url,
+            COALESCE(p.product_title, t.product_title) AS product_title,
+            t.status,
+            t.strategy,
+            t.bid_mode,
+            t.current_price AS task_current_price,
+            p.current_price AS product_current_price,
+            COALESCE(p.current_price, t.current_price) AS display_current_price,
+            t.max_price,
+            t.user_max_price,
+            t.buyout_price AS task_buyout_price,
+            p.buyout_price AS product_buyout_price,
+            t.bid_count AS task_bid_count,
+            p.bid_count AS product_bid_count,
+            t.tax_type AS task_tax_type,
+            p.tax_type AS product_tax_type,
+            COALESCE(p.tax_type, t.tax_type) AS effective_tax_type,
+            t.product_type AS task_product_type,
+            p.product_type AS product_product_type,
+            COALESCE(p.product_type, t.product_type) AS effective_product_type,
+            t.shipping_fee_text AS task_shipping_fee_text,
+            p.shipping_fee_text AS product_shipping_fee_text,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS effective_shipping_fee_text,
+            t.end_time AS task_end_time,
+            p.end_time AS product_end_time,
+            COALESCE(p.end_time, t.end_time) AS effective_end_time,
+            t.is_highest_bidder,
+            t.last_bid_at,
+            t.error_msg,
+            t.pending_followup_max_price,
+            t.force_orders_resync,
+            t.buyout_auto_paid,
+            t.created_at,
+            t.updated_at
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     LEFT JOIN users u ON u.id = t.user_id
+     WHERE t.product_id = ?
+     ORDER BY datetime(t.created_at) DESC, t.id DESC
+     LIMIT 100`,
+    params: [productId]
+  };
+}
+
+function buildProductDebugBidLogsQuery(productId) {
+  return {
+    sql: `SELECT bl.id,
+            bl.task_id,
+            bl.account_id,
+            bl.bid_price,
+            bl.result,
+            bl.error_msg,
+            bl.created_at,
+            t.product_id,
+            u.username
+     FROM bid_logs bl
+     INNER JOIN tasks t ON t.id = bl.task_id
+     LEFT JOIN users u ON u.id = t.user_id
+     WHERE t.product_id = ?
+     ORDER BY datetime(bl.created_at) DESC, bl.id DESC
+     LIMIT 100`,
+    params: [productId]
+  };
+}
+
+function buildProductDebugOrdersQuery(productId) {
+  return {
+    sql: `SELECT o.id,
+            o.task_id,
+            COALESCE(o.product_id, t.product_id) AS product_id,
+            u.username,
+            o.order_status,
+            o.final_price,
+            o.won_at,
+            o.won_time_text,
+            o.transaction_url,
+            o.transaction_started_at,
+            o.transaction_start_error,
+            o.bundle_group_id,
+            o.bundle_shipping_fee_text,
+            o.tracking_number,
+            o.shipping_company,
+            o.shipped_at,
+            o.google_sheet_appended_at,
+            o.tracking_rescan_requested,
+            o.created_at,
+            o.updated_at
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN users u ON u.id = t.user_id
+     WHERE t.product_id = ? OR o.product_id = ?
+     ORDER BY datetime(o.created_at) DESC, o.id DESC
+     LIMIT 100`,
+    params: [productId, productId]
+  };
+}
+
+function buildProductDebugOrderLogsQuery(productId) {
+  return {
+    sql: `SELECT l.id,
+            l.order_id,
+            l.product_id,
+            l.old_status,
+            l.new_status,
+            l.source,
+            l.metadata,
+            l.created_at
+     FROM order_status_change_logs l
+     WHERE l.product_id = ?
+        OR l.order_id IN (
+          SELECT o.id
+          FROM orders o
+          INNER JOIN tasks t ON o.task_id = t.id
+          WHERE t.product_id = ? OR o.product_id = ?
+        )
+     ORDER BY datetime(l.created_at) DESC, l.id DESC
+     LIMIT 100`,
+    params: [productId, productId, productId]
+  };
+}
+
+function buildProductDebugDiagnosticsQuery(productId) {
+  return {
+    sql: `SELECT id,
+            type,
+            level,
+            product_id,
+            order_id,
+            action,
+            method,
+            message,
+            diagnostics,
+            url,
+            created_at
+     FROM plugin_diagnostics
+     WHERE product_id = ?
+        OR order_id IN (
+          SELECT o.id
+          FROM orders o
+          INNER JOIN tasks t ON o.task_id = t.id
+          WHERE t.product_id = ? OR o.product_id = ?
+        )
+     ORDER BY datetime(created_at) DESC, id DESC
+     LIMIT 100`,
+    params: [productId, productId, productId]
+  };
+}
+
+function buildProductDebugSnapshotQuery(productId) {
+  return {
+    sql: `SELECT *
+     FROM products
+     WHERE product_id = ?
+     LIMIT 1`,
+    params: [productId]
+  };
+}
+
+function buildProductDebugBiddingItemsQuery(productId) {
+  return {
+    sql: `SELECT *
+     FROM bidding_items
+     WHERE product_id = ?
+     ORDER BY datetime(synced_at) DESC, id DESC
+     LIMIT 20`,
+    params: [productId]
+  };
+}
+
+function buildProductDebugConfigQuery() {
+  return {
+    sql: `SELECT key, value, updated_at
+     FROM config
+     WHERE key IN (
+       'yahoo_login_status',
+       'yahoo_login_message',
+       'worker_interval_ms',
+       'bid_concurrency_limit',
+       'multi_bid_start_hours',
+       'multi_bid_interval_minutes',
+       'multi_bid_min_price',
+       'idle_sync_interval_minutes',
+       'transaction_start_flag',
+       'payment_flag',
+       'confirm_receipt_flag',
+       'manual_order_import_flag'
+     )
+     ORDER BY key`,
+    params: []
+  };
+}
+
 function buildOrderSettlementSelectQuery(orderId) {
   return {
     sql: `SELECT o.*,
@@ -859,6 +1058,64 @@ router.get('/orders/status-debug/:productId', async (req, res) => {
     "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'orders'"
   ).all();
   res.json({ productId, tasks, orders, logs, ordersTableInfo: tableInfo, orderTriggers: triggers });
+});
+
+router.get('/debug/product/:productId', async (req, res) => {
+  const productId = extractAuctionId(req.params.productId || req.query.productId || '');
+  if (!productId) {
+    return res.status(400).json({ error: 'valid product id is required' });
+  }
+
+  const tasksQuery = buildProductDebugTasksQuery(productId);
+  const bidLogsQuery = buildProductDebugBidLogsQuery(productId);
+  const ordersQuery = buildProductDebugOrdersQuery(productId);
+  const orderLogsQuery = buildProductDebugOrderLogsQuery(productId);
+  const diagnosticsQuery = buildProductDebugDiagnosticsQuery(productId);
+  const snapshotQuery = buildProductDebugSnapshotQuery(productId);
+  const biddingItemsQuery = buildProductDebugBiddingItemsQuery(productId);
+  const configQuery = buildProductDebugConfigQuery();
+
+  const [
+    tasks,
+    bidLogs,
+    orders,
+    orderLogs,
+    diagnostics,
+    productSnapshot,
+    biddingItems,
+    configRows
+  ] = await Promise.all([
+    db.getAll(tasksQuery.sql, tasksQuery.params),
+    db.getAll(bidLogsQuery.sql, bidLogsQuery.params),
+    db.getAll(ordersQuery.sql, ordersQuery.params),
+    db.getAll(orderLogsQuery.sql, orderLogsQuery.params),
+    db.getAll(diagnosticsQuery.sql, diagnosticsQuery.params),
+    db.getOne(snapshotQuery.sql, snapshotQuery.params),
+    db.getAll(biddingItemsQuery.sql, biddingItemsQuery.params),
+    db.getAll(configQuery.sql, configQuery.params)
+  ]);
+
+  res.json({
+    productId,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      taskCount: tasks.length,
+      failedTaskCount: tasks.filter(task => task.status === 'failed').length,
+      latestTask: tasks[0] || null,
+      latestError: tasks.find(task => task.error_msg)?.error_msg || bidLogs.find(log => log.error_msg)?.error_msg || null,
+      bidLogCount: bidLogs.length,
+      orderCount: orders.length,
+      diagnosticCount: diagnostics.length
+    },
+    productSnapshot: productSnapshot || null,
+    tasks,
+    bidLogs,
+    orders,
+    orderLogs,
+    diagnostics,
+    biddingItems,
+    config: configRows
+  });
 });
 
 // 财务统计
@@ -2703,6 +2960,14 @@ module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
 module.exports.buildOrderStatusDebugOrdersQuery = buildOrderStatusDebugOrdersQuery;
 module.exports.buildOrderStatusDebugTasksQuery = buildOrderStatusDebugTasksQuery;
+module.exports.buildProductDebugTasksQuery = buildProductDebugTasksQuery;
+module.exports.buildProductDebugBidLogsQuery = buildProductDebugBidLogsQuery;
+module.exports.buildProductDebugOrdersQuery = buildProductDebugOrdersQuery;
+module.exports.buildProductDebugOrderLogsQuery = buildProductDebugOrderLogsQuery;
+module.exports.buildProductDebugDiagnosticsQuery = buildProductDebugDiagnosticsQuery;
+module.exports.buildProductDebugSnapshotQuery = buildProductDebugSnapshotQuery;
+module.exports.buildProductDebugBiddingItemsQuery = buildProductDebugBiddingItemsQuery;
+module.exports.buildProductDebugConfigQuery = buildProductDebugConfigQuery;
 module.exports.buildOrderSettlementSelectQuery = buildOrderSettlementSelectQuery;
 module.exports.buildAdminLogsQuery = buildAdminLogsQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;

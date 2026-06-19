@@ -10,6 +10,14 @@ const {
   buildAdminOrdersUserWonDateRangeQuery,
   buildOrderStatusDebugOrdersQuery,
   buildOrderStatusDebugTasksQuery,
+  buildProductDebugTasksQuery,
+  buildProductDebugBidLogsQuery,
+  buildProductDebugOrdersQuery,
+  buildProductDebugOrderLogsQuery,
+  buildProductDebugDiagnosticsQuery,
+  buildProductDebugSnapshotQuery,
+  buildProductDebugBiddingItemsQuery,
+  buildProductDebugConfigQuery,
   buildOrderSettlementSelectQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
@@ -396,6 +404,42 @@ function testOrderStatusDebugTasksQueryUsesProductsFallback() {
   assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
   assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.deepEqual(query.params, ['a123456789']);
+}
+
+function testProductDebugQueriesExposeTaskErrorsAndRelatedLogs() {
+  const tasksQuery = buildProductDebugTasksQuery('u1051658399');
+  assert.match(tasksQuery.sql, /t\.error_msg/);
+  assert.match(tasksQuery.sql, /t\.max_price/);
+  assert.match(tasksQuery.sql, /t\.user_max_price/);
+  assert.match(tasksQuery.sql, /t\.current_price AS task_current_price/);
+  assert.match(tasksQuery.sql, /p\.current_price AS product_current_price/);
+  assert.match(tasksQuery.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.deepEqual(tasksQuery.params, ['u1051658399']);
+
+  const bidLogsQuery = buildProductDebugBidLogsQuery('u1051658399');
+  assert.match(bidLogsQuery.sql, /FROM bid_logs bl/);
+  assert.match(bidLogsQuery.sql, /bl\.error_msg/);
+  assert.match(bidLogsQuery.sql, /INNER JOIN tasks t ON t\.id = bl\.task_id/);
+  assert.deepEqual(bidLogsQuery.params, ['u1051658399']);
+
+  const ordersQuery = buildProductDebugOrdersQuery('u1051658399');
+  assert.match(ordersQuery.sql, /FROM orders o/);
+  assert.match(ordersQuery.sql, /o\.transaction_start_error/);
+  assert.deepEqual(ordersQuery.params, ['u1051658399', 'u1051658399']);
+
+  const orderLogsQuery = buildProductDebugOrderLogsQuery('u1051658399');
+  assert.match(orderLogsQuery.sql, /FROM order_status_change_logs l/);
+  assert.match(orderLogsQuery.sql, /l\.metadata/);
+  assert.deepEqual(orderLogsQuery.params, ['u1051658399', 'u1051658399', 'u1051658399']);
+
+  const diagnosticsQuery = buildProductDebugDiagnosticsQuery('u1051658399');
+  assert.match(diagnosticsQuery.sql, /FROM plugin_diagnostics/);
+  assert.match(diagnosticsQuery.sql, /diagnostics/);
+  assert.deepEqual(diagnosticsQuery.params, ['u1051658399', 'u1051658399', 'u1051658399']);
+
+  assert.match(buildProductDebugSnapshotQuery('u1051658399').sql, /FROM products/);
+  assert.match(buildProductDebugBiddingItemsQuery('u1051658399').sql, /FROM bidding_items/);
+  assert.match(buildProductDebugConfigQuery().sql, /yahoo_login_status/);
 }
 
 function testOrderSettlementSelectQueryUsesProductsFallback() {
@@ -995,6 +1039,7 @@ testAdminOrdersQueryIncludesProductType();
 testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();
 testOrderStatusDebugOrdersQueryUsesProductsFallback();
 testOrderStatusDebugTasksQueryUsesProductsFallback();
+testProductDebugQueriesExposeTaskErrorsAndRelatedLogs();
 testOrderSettlementSelectQueryUsesProductsFallback();
 testAdminLogsQueryUsesProductTitleFallback();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
