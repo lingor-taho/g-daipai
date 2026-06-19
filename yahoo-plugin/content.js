@@ -853,13 +853,21 @@ async function executeBidV3(maxPrice, options = {}) {
     if (!/\u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b/.test(getBodyText())) {
       return null;
     }
+    const cssEscape = value => {
+      try {
+        if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(String(value));
+      } catch (_) {}
+      return String(value).replace(/["\\]/g, '\\$&');
+    };
     const checkboxes = [
       ...document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')
-    ].filter(el => isClickableElement(el));
+    ];
     const matched = checkboxes.find(el => {
+      const forLabel = el.id ? document.querySelector?.(`label[for="${cssEscape(el.id)}"]`) : null;
       const labelText = [
         textOf(el),
         el.closest?.('label')?.textContent || '',
+        forLabel?.textContent || '',
         el.parentElement?.textContent || ''
       ].join(' ');
       return /\u3053\u306e\u51fa\u54c1\u8005.*\u4ed6\u306e\u5546\u54c1.*\u307e\u3068\u3081\u3066\u8cfc\u5165/.test(labelText);
@@ -876,8 +884,30 @@ async function executeBidV3(maxPrice, options = {}) {
   }
 
   function findBulkPurchaseClickTarget(el) {
-    const label = el?.closest?.('label');
-    return label && isClickableElement(label) ? label : el;
+    const cssEscape = value => {
+      try {
+        if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(String(value));
+      } catch (_) {}
+      return String(value).replace(/["\\]/g, '\\$&');
+    };
+    const closestLabel = el?.closest?.('label');
+    const forLabel = el?.id ? document.querySelector?.(`label[for="${cssEscape(el.id)}"]`) : null;
+    const parent = el?.parentElement || null;
+    return [closestLabel, forLabel, parent, el].find(candidate => candidate && isClickableElement(candidate)) || el;
+  }
+
+  function forceCheckCheckbox(el) {
+    if (!el) return;
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+      if (descriptor?.set && el instanceof HTMLInputElement) descriptor.set.call(el, true);
+      else el.checked = true;
+    } catch (_) {
+      el.checked = true;
+    }
+    el.setAttribute?.('aria-checked', 'true');
+    el.dispatchEvent?.(new Event('input', { bubbles: true }));
+    el.dispatchEvent?.(new Event('change', { bubbles: true }));
   }
 
   function findBulkPurchaseInstantBuyButton() {
@@ -1086,6 +1116,7 @@ async function executeBidV3(maxPrice, options = {}) {
     const checked = isBulkPurchaseCheckboxChecked(bulkPurchaseCheckbox);
     if (bulkPurchaseCheckbox && !checked) {
       clickElement(findBulkPurchaseClickTarget(bulkPurchaseCheckbox));
+      if (!isBulkPurchaseCheckboxChecked(bulkPurchaseCheckbox)) forceCheckCheckbox(bulkPurchaseCheckbox);
       const instantBuyButton = await waitForBulkPurchaseInstantBuyButton(10000);
       if (!instantBuyButton) {
         return { success: false, error: 'bulk purchase instant buy button did not appear after checkbox click', closeTab: true };
