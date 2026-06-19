@@ -323,6 +323,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-19 | 后台调试 API 仍依赖后台登录 token，Codex 无法通过命令行直接读取生产服务器 `tasks.error_msg/bid_logs.error_msg`，排查商品错误还需要人工复制 token | 新增独立只读调试路由 `GET /api/debug/product/:productId`，通过环境变量 `ADMIN_DEBUG_TOKEN` 开启并校验 `X-Admin-Debug-Token` 请求头或 `debugKey` 参数；未配置 token 时返回 404，避免裸露。该接口返回与后台商品调试相同的任务、出价日志、订单、订单日志、插件诊断、商品快照、入札中缓存和关键配置，方便 Codex 直接按商品 ID 排查生产错误。验证：`node src/server/routes/debug.test.js`、`node src/server/routes/admin.orders.test.js`、`node --check src/server/routes/debug.js`、`node --check src/server/index.js`、`node --check src/config/index.js` |
 | 2026-06-19 | 生产服务器出价失败只能在后台看到“系统原因/响应超时”等归类，排查具体商品仍需要进服务器数据库查 `tasks.error_msg`、`bid_logs.error_msg` 和插件诊断 | 新增后台只读调试接口 `GET /api/admin/debug/product/:productId`，后台鉴权后按商品 ID 一次返回商品快照、任务完整错误原文、出价日志、订单、订单状态日志、插件诊断、入札中缓存和关键配置；用于生产排查所有商品相关错误，不改变任何数据。验证：`node src/server/routes/admin.orders.test.js`、`node --check src/server/routes/admin.js`、`node --check src/server/routes/admin.orders.test.js` |
 | 2026-06-19 | 后台导入订单页手机端“读取落札商品”按钮没有整行显示，宽度只跟文字内容走 | 为导入订单提交按钮 Form.Item 增加独立移动端样式，避开日期/最多翻页两列表单规则，按钮恢复整行自适应宽度。验证：`npm.cmd run build --prefix src/admin` |
 | 2026-06-19 | 后台移动端表单修正后仍有回归：特殊用户设置和导入订单前三项标签/输入框在手机端变成上下两行；订单页顶部按钮两列布局不符合实际使用习惯 | 移动端表单改为作用到 Ant Design 内层 `.ant-form-item-row` 的两列网格，保证“银行手续费/手续费/大金额费用”和“开始日期/结束日期/最多翻页”标签与输入框同一行；订单页顶部恢复纵向按钮布局，结算汇率一行，下面“结算 / 支付 / 导出CSV”三个按钮各占一整行。验证：`npm.cmd run build --prefix src/admin` |

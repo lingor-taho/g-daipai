@@ -5,6 +5,7 @@ const adminRoutes = require('./routes/admin');
 const proxyRoutes = require('./routes/proxy');
 const authRoutes = require('./routes/auth');
 const pluginRoutes = require('./routes/plugin');
+const debugRoutes = require('./routes/debug');
 const db = require('./models');
 const {
   deleteStaleTaskData,
@@ -60,6 +61,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/plugin', pluginRoutes);
+app.use('/api/debug', debugRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
