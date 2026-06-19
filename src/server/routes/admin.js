@@ -304,6 +304,47 @@ function buildOrderStatusDebugOrdersQuery(productId) {
   };
 }
 
+function buildOrderStatusDebugTasksQuery(productId) {
+  return {
+    sql: `SELECT t.id,
+            t.product_id,
+            t.status,
+            t.strategy,
+            COALESCE(p.product_type, t.product_type) AS product_type,
+            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            t.created_at,
+            t.updated_at,
+            t.last_bid_at
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE t.product_id = ?
+     ORDER BY t.id DESC`,
+    params: [productId]
+  };
+}
+
+function buildOrderSettlementSelectQuery(orderId) {
+  return {
+    sql: `SELECT o.*,
+              COALESCE(o.product_id, t.product_id) AS product_id,
+              COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+              COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
+              COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+              u.id AS user_id,
+              ufo.rate_adjustment,
+              ufo.bank_fee_jpy AS user_bank_fee_jpy,
+              ufo.handling_fee_cny AS user_handling_fee_cny,
+              ufo.large_amount_fee_cny AS user_large_amount_fee_cny
+       FROM orders o
+       INNER JOIN tasks t ON o.task_id = t.id
+       LEFT JOIN products p ON p.product_id = COALESCE(o.product_id, t.product_id)
+       LEFT JOIN users u ON t.user_id = u.id
+       LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
+       WHERE o.id = ? AND t.status = 'success'`,
+    params: [orderId]
+  };
+}
+
 function buildAdminLogsQuery({ pageSize, offset }) {
   return {
     sql: `SELECT bl.*, COALESCE(p.product_title, t.product_title) AS product_title, ya.account_name
@@ -794,14 +835,8 @@ router.get('/orders/status-debug/:productId', async (req, res) => {
   if (!productId) {
     return res.status(400).json({ error: 'valid product id is required' });
   }
-  const tasks = await db.getAll(
-    `SELECT id, product_id, status, strategy, product_type, shipping_fee_text,
-            created_at, updated_at, last_bid_at
-     FROM tasks
-     WHERE product_id = ?
-     ORDER BY id DESC`,
-    [productId]
-  );
+  const tasksQuery = buildOrderStatusDebugTasksQuery(productId);
+  const tasks = await db.getAll(tasksQuery.sql, tasksQuery.params);
   const ordersQuery = buildOrderStatusDebugOrdersQuery(productId);
   const orders = await db.getAll(ordersQuery.sql, ordersQuery.params);
   const logs = await db.getAll(
@@ -1071,19 +1106,8 @@ router.post('/orders/settle', async (req, res) => {
   const results = [];
 
   for (const orderId of orderIds) {
-    const order = await db.getOne(
-      `SELECT o.*, t.product_id, t.shipping_fee_text, t.tax_type, t.product_type, u.id AS user_id,
-              ufo.rate_adjustment,
-              ufo.bank_fee_jpy AS user_bank_fee_jpy,
-              ufo.handling_fee_cny AS user_handling_fee_cny,
-              ufo.large_amount_fee_cny AS user_large_amount_fee_cny
-       FROM orders o
-       INNER JOIN tasks t ON o.task_id = t.id
-       LEFT JOIN users u ON t.user_id = u.id
-       LEFT JOIN user_finance_overrides ufo ON ufo.user_id = u.id
-       WHERE o.id = ? AND t.status = 'success'`,
-      [orderId]
-    );
+    const orderQuery = buildOrderSettlementSelectQuery(orderId);
+    const order = await db.getOne(orderQuery.sql, orderQuery.params);
 
     if (!order) {
       results.push({ orderId, success: false, error: '订单不存在' });
@@ -2653,6 +2677,8 @@ module.exports.buildAdminPendingTasksQuery = buildAdminPendingTasksQuery;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
 module.exports.buildOrderStatusDebugOrdersQuery = buildOrderStatusDebugOrdersQuery;
+module.exports.buildOrderStatusDebugTasksQuery = buildOrderStatusDebugTasksQuery;
+module.exports.buildOrderSettlementSelectQuery = buildOrderSettlementSelectQuery;
 module.exports.buildAdminLogsQuery = buildAdminLogsQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.reassignOrderOwner = reassignOrderOwner;

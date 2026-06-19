@@ -323,6 +323,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-19 | 三表模型需要把“只读路径残留扫描”固化，避免后续代码重新直接读取 `tasks` 商品快照字段；人工扫描发现后台订单状态调试任务列表和订单结算查询仍直接读 `tasks.product_type/shipping_fee_text/tax_type` | 新增 `scripts/check-product-read-paths.js` 只读扫描脚本，检查服务端读路径中 `tasks` 商品快照字段必须通过 `products` fallback；修正后台状态调试任务查询和订单结算查询为 `LEFT JOIN products` + `COALESCE(products, tasks)`；新增脚本测试和后台查询断言。验证：`node scripts/check-product-read-paths.test.js`、`node scripts/check-product-read-paths.js`、`node src/server/routes/admin.orders.test.js`、`node --check src/server/routes/admin.js`、`node --check scripts/check-product-read-paths.js` |
 | 2026-06-19 | 用户端登录后顶部操作区里“退出”和“风格”都在右侧，退出按钮离用户名较远 | 调整 `UserNav` 顶部布局：左侧显示“登录用户 + 退出”并保持适当间距，右侧只保留“风格”下拉。验证：`npm run build --prefix src/client`、`node --check src/client/src/styles.js` |
 | 2026-06-19 | 夜晚主题下，落札商品列表中带状态底色的商品仍使用浅红/浅蓝硬编码背景，导致白色标题在浅色背景上不可读 | 新增主题级 `cancelledBg` / `completedBg` 颜色变量，落札商品取消/完成状态背景改为跟随主题；夜晚主题下使用深色状态背景，保证标题和详情可读。验证：`npm run build --prefix src/client`、`node --check src/client/src/styles.js` |
 | 2026-06-19 | 登录页不应显示风格选择，也不应跟随登录后的风格选择；原“古典”主题与日系过于相近，后续改为夜晚模式 | 登录页移除风格下拉，并固定使用经典蓝白样式展示；登录后风格选择保留。原 `古典` 选项改名为 `夜晚`，配色调整为深蓝灰夜间模式（蓝色主色、青色辅色、深色卡片），与日系风格拉开差异。验证：`npm run build --prefix src/client`、`node --check src/client/src/styles.js` |

@@ -9,6 +9,8 @@ const {
   buildAdminOrdersListQuery,
   buildAdminOrdersUserWonDateRangeQuery,
   buildOrderStatusDebugOrdersQuery,
+  buildOrderStatusDebugTasksQuery,
+  buildOrderSettlementSelectQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
   resolveSettlementOrderStatus,
@@ -385,6 +387,25 @@ function testOrderStatusDebugOrdersQueryUsesProductsFallback() {
   assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
   assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
   assert.deepEqual(query.params, ['a123456789']);
+}
+
+function testOrderStatusDebugTasksQueryUsesProductsFallback() {
+  const query = buildOrderStatusDebugTasksQuery('a123456789');
+
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.deepEqual(query.params, ['a123456789']);
+}
+
+function testOrderSettlementSelectQueryUsesProductsFallback() {
+  const query = buildOrderSettlementSelectQuery(123);
+
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = COALESCE\(o\.product_id, t\.product_id\)/);
+  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) AS tax_type/);
+  assert.match(query.sql, /COALESCE\(p\.product_type, t\.product_type, CASE WHEN COALESCE\(p\.tax_type, t\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);
+  assert.deepEqual(query.params, [123]);
 }
 
 function testAdminLogsQueryUsesProductTitleFallback() {
@@ -973,6 +994,8 @@ testAdminPendingTasksQueryUsesProductsFallback();
 testAdminOrdersQueryIncludesProductType();
 testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();
 testOrderStatusDebugOrdersQueryUsesProductsFallback();
+testOrderStatusDebugTasksQueryUsesProductsFallback();
+testOrderSettlementSelectQueryUsesProductsFallback();
 testAdminLogsQueryUsesProductTitleFallback();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testMapAdminOrderListItemAllowsStoreBidderPaysShipping();
