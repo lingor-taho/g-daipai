@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-18
+**最后更新**: 2026-06-19
 
 ---
 
@@ -323,6 +323,9 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-19 | 真实输入诊断此前主要停留在插件 console 或订单错误字段，后续生产出错时无法仅通过 API 自行查询完整上下文 | 新增 `plugin_diagnostics` 持久化表和 `/api/plugin/diagnostics` 读写接口，保存真实输入、交易开始、付款和 PIN 相关诊断；插件在同捆/付款/配送変更 debugger 鼠标兜底以及 PIN Win32/debugger 输入时自动 POST 诊断；服务端交易开始失败、付款失败也同步落库。可按 `productId`、`orderId`、`type`、`limit` 查询，便于直接通过生产 API 排查。验证：`node yahoo-plugin/background.test.js`、`node src/server/routes/plugin.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js`、`node --check src/server/routes/plugin.js`、`node --check src/server/routes/plugin.test.js`、`node --check src/server/models/index.js` |
+| 2026-06-19 | 生产服务器无人值守运行时，真实鼠标/键盘兜底路径失败后缺少足够上下文，难以判断是 Chrome 未聚焦、窗口不在前台、页面未跳转还是按钮定位问题 | 插件真实输入路径增加诊断日志：同捆、付款确认、付款配送変更的 Chrome debugger 鼠标点击返回/错误中包含 `method/action/tabId/windowId/tabStatus/tabActive/windowFocused/windowState/title/url/text/point`；PIN 的 Win32/System SendKeys 和 debugger keyboard 路径记录 `method/windowTitle/stdout/url/tabStatus` 等信息。服务端 Win32 PIN 脚本 stdout 增加 `matchedTitle/foregroundHandle`。不改变实际点击和输入顺序。验证：`node yahoo-plugin/background.test.js`、`node src/server/routes/plugin.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js`、`node --check src/server/routes/plugin.js`、`node --check src/server/routes/plugin.test.js` |
+| 2026-06-19 | 生产服务器普通商品同捆交易开始偶发失败时，后台只显示 `bundle next page did not appear`，无法判断卡在关闭弹窗、开始同捆、确认地域还是最终决定哪一步 | 插件同捆动作等待下一页超时日志增加 action 名：后续会记录为 `bundle start next page did not appear`、`bundle decide next page did not appear`、`bundle confirm next page did not appear` 等，便于定位无人值守服务器 Chrome/RDP 会话下的具体失败步骤；不改变实际点击流程。验证：`node yahoo-plugin/background.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js` |
 | 2026-06-18 | 用户端需要保留蓝白色调，但列表页不应使用卡片边框；期望只有原版的淡灰横向分隔线 | 回滚“恢复用户端样式”提交，恢复蓝白色调、公告栏、copyright、后台通知配置等改动；仅将共享列表样式改为无外框、无圆角、无阴影，列表项只保留 `1px #eee` 底部分隔线；落札商品取消/完了状态只保留淡背景，不覆盖左右边框。验证：`npm run build --prefix src/client` |
 | 2026-06-18 | 用户端暖色系视觉与最新要求不符，需要改为简约蓝白风格、纯白背景和偏蓝按钮 | 用户端共享样式切换为蓝白色板：页面背景改为纯白，卡片/输入框/列表使用浅蓝边框和轻量蓝色阴影，主按钮统一为蓝色；登录页、公告栏、导航、页脚、商品卡、提交提示、落札完成状态和统计图表移除暖色硬编码并统一蓝白简约风。验证：`npm run build --prefix src/client` |
 | 2026-06-18 | 用户端提交表单、任务列表、入札中/落札列表和统计图表视觉风格仍偏默认控件，和新登录页/公告栏风格不统一 | 新增用户端共享样式 `src/client/src/styles.js`，统一页面背景、卡片、按钮、输入框、列表项、缩略图、分页和图表配色；提交页商品输入卡、商品卡、策略/价格表单、提交按钮改为暖色卡片 + 青色主按钮；入札中/落札商品/任务列表改为卡片式列表；统计页图表改为柔和卡片和青色/金色柱体。验证：`npm run build --prefix src/client` |

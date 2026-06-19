@@ -85,6 +85,32 @@ db.prepare(`
 `).run();
 
 db.prepare(`
+  CREATE TABLE IF NOT EXISTS plugin_diagnostics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type VARCHAR(64),
+    level VARCHAR(16) DEFAULT 'info',
+    product_id VARCHAR(32),
+    order_id INTEGER,
+    action VARCHAR(64),
+    method VARCHAR(64),
+    message TEXT,
+    diagnostics TEXT,
+    url TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_plugin_diagnostics_product_created
+  ON plugin_diagnostics(product_id, created_at)
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_plugin_diagnostics_created
+  ON plugin_diagnostics(created_at)
+`).run();
+
+db.prepare(`
   CREATE TABLE IF NOT EXISTS bidding_items (
     product_id VARCHAR(32) PRIMARY KEY,
     product_url TEXT,

@@ -129,6 +129,26 @@ CREATE TABLE IF NOT EXISTS bidding_items (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS plugin_diagnostics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type VARCHAR(64),
+  level VARCHAR(16) DEFAULT 'info',
+  product_id VARCHAR(32),
+  order_id INTEGER,
+  action VARCHAR(64),
+  method VARCHAR(64),
+  message TEXT,
+  diagnostics TEXT,
+  url TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_diagnostics_product_created
+ON plugin_diagnostics(product_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_diagnostics_created
+ON plugin_diagnostics(created_at);
+
 CREATE TABLE IF NOT EXISTS data_cleanup_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_type VARCHAR(32) NOT NULL,

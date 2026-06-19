@@ -127,6 +127,7 @@ public static class GDaipaiNativeInput {
     '$targetWindow = $null',
     "if ($targetTitle) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($targetTitle) } | Select-Object -First 1 }",
     "if (-not $targetWindow) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -match 'Yahoo|再認証|Chrome' } | Sort-Object StartTime -Descending | Select-Object -First 1 }",
+    '$matchedTitle = if ($targetWindow) { $targetWindow.MainWindowTitle } else { "" }',
     '$activated = $false',
     'if ($targetWindow) { [GDaipaiNativeInput]::SetForegroundWindow($targetWindow.MainWindowHandle) | Out-Null; $activated = $true }',
     'foreach ($title in $titleCandidates) { if (-not $activated -and $title) { $activated = $shell.AppActivate($title) } }',
@@ -140,7 +141,7 @@ public static class GDaipaiNativeInput {
     `$pin = ${quotePowerShellString(pin)}`,
     'foreach ($char in $pin.ToCharArray()) { $vk = [byte][int][char]$char; [GDaipaiNativeInput]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [GDaipaiNativeInput]::keybd_event($vk, 0, 0x0002, [UIntPtr]::Zero); Start-Sleep -Milliseconds 120 }',
     'Start-Sleep -Milliseconds 700',
-    "Write-Output ('typed=' + $pin.Length + '; clicked=' + $clicked + '; activated=' + $activated)"
+    "Write-Output ('typed=' + $pin.Length + '; clicked=' + $clicked + '; activated=' + $activated + '; matchedTitle=' + $matchedTitle + '; foregroundHandle=' + $handle)"
   ].join('\n');
 }
 
@@ -174,6 +175,7 @@ function typeManualPinWithSystemKeyboard(pinCode, options = {}) {
       resolve({
         success: true,
         digits: pin.length,
+        windowTitle: String(options.windowTitle || '').trim().slice(0, 200),
         stdout: String(stdout || '').trim()
       });
     });
@@ -1295,6 +1297,22 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
       error,
       updated: result.rowCount || 0
     }).catch(() => null);
+    const productIds = Array.isArray(payload.productIds) && payload.productIds.length
+      ? payload.productIds
+      : [payload.productId || ''];
+    for (const productId of productIds) {
+      await savePluginDiagnostic(database, {
+        type: 'transaction_start',
+        level: 'error',
+        productId,
+        orderId: orderIds[0],
+        action: payload.action || '',
+        method: payload.method || '',
+        message: error,
+        diagnostics: payload.diagnostics || error,
+        url: payload.url || ''
+      }).catch(() => null);
+    }
     return { updated: result.rowCount || 0 };
   }
 
@@ -1346,6 +1364,61 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
 
 function normalizePlainText(value, maxLength = 128) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function normalizeDiagnosticText(value, maxLength = 2000) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+async function savePluginDiagnostic(database = db, payload = {}) {
+  const type = normalizePlainText(payload.type || 'general', 64);
+  const levelValue = normalizePlainText(payload.level || 'info', 16).toLowerCase();
+  const level = ['debug', 'info', 'warn', 'error'].includes(levelValue) ? levelValue : 'info';
+  const productId = normalizePlainText(payload.productId || payload.product_id || '', 32).toLowerCase();
+  const orderId = Number(payload.orderId || payload.order_id || 0);
+  const action = normalizePlainText(payload.action || '', 64);
+  const method = normalizePlainText(payload.method || '', 64);
+  const message = normalizeDiagnosticText(payload.message || payload.error || '', 1000);
+  const diagnostics = normalizeDiagnosticText(payload.diagnostics || '', 3000);
+  const url = normalizeDiagnosticText(payload.url || '', 1000);
+  const result = await database.query(
+    `INSERT INTO plugin_diagnostics
+       (type, level, product_id, order_id, action, method, message, diagnostics, url, created_at)
+     VALUES (?, ?, NULLIF(?, ''), NULLIF(?, 0), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), CURRENT_TIMESTAMP)`,
+    [type, level, productId, Number.isInteger(orderId) && orderId > 0 ? orderId : 0, action, method, message, diagnostics, url]
+  );
+  return { inserted: result.rowCount || 0 };
+}
+
+async function getPluginDiagnostics(database = db, filters = {}) {
+  const where = [];
+  const params = [];
+  const productId = normalizePlainText(filters.productId || filters.product_id || '', 32).toLowerCase();
+  const orderId = Number(filters.orderId || filters.order_id || 0);
+  const type = normalizePlainText(filters.type || '', 64);
+  if (productId) {
+    where.push('product_id = ?');
+    params.push(productId);
+  }
+  if (Number.isInteger(orderId) && orderId > 0) {
+    where.push('order_id = ?');
+    params.push(orderId);
+  }
+  if (type) {
+    where.push('type = ?');
+    params.push(type);
+  }
+  const rawLimit = Number(filters.limit || 100);
+  const limit = Math.min(500, Math.max(1, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 100));
+  const rows = await database.getAll(
+    `SELECT id, type, level, product_id, order_id, action, method, message, diagnostics, url, created_at
+     FROM plugin_diagnostics
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY datetime(created_at) DESC, id DESC
+     LIMIT ?`,
+    [...params, limit]
+  );
+  return { diagnostics: rows, total: rows.length };
 }
 
 const getTaxIncludedFinalPrice = taxExcludedToTaxIncluded;
@@ -2463,6 +2536,17 @@ async function updatePaymentStatus(payload = {}, database = db) {
     const reason = summarizePaymentError(error);
     await savePaymentConfigValue(database, 'payment_requested', '0');
     await savePaymentConfigValue(database, 'payment_alert_message', `付款失败：商品ID ${productId}，原因：${reason}`);
+    await savePluginDiagnostic(database, {
+      type: 'payment',
+      level: 'error',
+      productId,
+      orderId: payload.orderId,
+      action: payload.action || '',
+      method: payload.method || '',
+      message: error,
+      diagnostics: payload.diagnostics || error,
+      url: payload.url || ''
+    }).catch(() => null);
     return { paymentRequested: 0 };
   }
 
@@ -2547,6 +2631,24 @@ router.post('/orders/sync', async (req, res) => {
   const result = await syncYahooWonOrders(orders, db);
   await setYahooLoginStatus('ok');
   res.json({ success: true, ...result });
+});
+
+router.post('/diagnostics', async (req, res) => {
+  try {
+    const result = await savePluginDiagnostic(db, req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'diagnostic save failed' });
+  }
+});
+
+router.get('/diagnostics', async (req, res) => {
+  try {
+    const result = await getPluginDiagnostics(db, req.query || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'diagnostic query failed' });
+  }
 });
 
 router.get('/transaction-start/jobs', async (req, res) => {
@@ -2837,6 +2939,8 @@ module.exports.getShipmentAlerts = getShipmentAlerts;
 module.exports.getPaymentJobs = getPaymentJobs;
 module.exports.summarizePaymentError = summarizePaymentError;
 module.exports.updatePaymentStatus = updatePaymentStatus;
+module.exports.savePluginDiagnostic = savePluginDiagnostic;
+module.exports.getPluginDiagnostics = getPluginDiagnostics;
 module.exports.normalizeReceiptColorConfig = normalizeReceiptColorConfig;
 module.exports.getConfirmReceiptJobs = getConfirmReceiptJobs;
 module.exports.updateConfirmReceiptStatus = updateConfirmReceiptStatus;

@@ -42,6 +42,8 @@ const {
   summarizePaymentError,
   updatePaymentStatus,
   updateConfirmReceiptStatus,
+  savePluginDiagnostic,
+  getPluginDiagnostics,
   randomIntInclusive,
   getPaymentJobLimitRange,
   normalizeManualPinCode,
@@ -1574,6 +1576,8 @@ function testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly() {
   assert.match(script, /SetCursorPos/);
   assert.match(script, /mouse_event/);
   assert.match(script, /keybd_event/);
+  assert.match(script, /matchedTitle=/);
+  assert.match(script, /foregroundHandle=/);
   assert.match(script, /\$pin = '123456'/);
   assert.doesNotMatch(script, /123456;|\$pin = 123456/);
   assert.doesNotMatch(script, /\{ENTER\}|VK_RETURN|0x0D/);
@@ -1585,16 +1589,71 @@ async function testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput() {
     platform: 'win32',
     execFileImpl(file, args, options, callback) {
       calls.push({ file, args, options });
-      callback(null, '', '');
+      callback(null, 'typed=6; clicked=True; activated=True; matchedTitle=Yahoo; foregroundHandle=123', '');
     }
   });
 
   assert.equal(result.success, true);
   assert.equal(result.digits, 6);
+  assert.equal(result.stdout, 'typed=6; clicked=True; activated=True; matchedTitle=Yahoo; foregroundHandle=123');
   assert.equal(calls[0].file, 'powershell.exe');
   assert.equal(calls[0].args.includes('-STA'), true);
   assert.equal(calls[0].args.includes('-Command'), true);
   assert.equal(calls[0].options.windowsHide, true);
+}
+
+async function testPluginDiagnosticsSaveAndQuery() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    },
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [
+        {
+          id: 1,
+          type: 'trusted_input',
+          level: 'error',
+          product_id: 'd1233443897',
+          order_id: 148,
+          action: 'bundle:start',
+          method: 'debuggerMouse',
+          message: 'bundle start next page did not appear',
+          diagnostics: 'method=debuggerMouse,url=https://contact.auctions.yahoo.co.jp/buyer/top?aid=d1233443897',
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=d1233443897',
+          created_at: '2026-06-19 01:02:03'
+        }
+      ];
+    }
+  };
+
+  const saved = await savePluginDiagnostic(fakeDb, {
+    type: 'trusted_input',
+    level: 'error',
+    productId: 'D1233443897',
+    orderId: 148,
+    action: 'bundle:start',
+    method: 'debuggerMouse',
+    message: 'bundle start next page did not appear',
+    diagnostics: 'x'.repeat(4000),
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=d1233443897'
+  });
+  const queried = await getPluginDiagnostics(fakeDb, {
+    productId: 'D1233443897',
+    type: 'trusted_input',
+    limit: 20
+  });
+
+  assert.equal(saved.inserted, 1);
+  assert.match(calls[0].sql, /INSERT INTO plugin_diagnostics/);
+  assert.equal(calls[0].params[2], 'd1233443897');
+  assert.equal(calls[0].params[3], 148);
+  assert.equal(calls[0].params[7].length, 3000);
+  assert.match(calls[1].sql, /WHERE product_id = \? AND type = \?/);
+  assert.deepEqual(calls[1].params, ['d1233443897', 'trusted_input', 20]);
+  assert.equal(queried.total, 1);
 }
 
 async function testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached() {
@@ -2124,7 +2183,8 @@ Promise.all([
   testUpdatePaymentStatusFailureWritesConciseAlert(),
   testUpdatePaymentStatusMarksCancelled(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
-  testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput()
+  testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput(),
+  testPluginDiagnosticsSaveAndQuery()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

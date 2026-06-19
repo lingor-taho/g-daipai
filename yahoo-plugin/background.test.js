@@ -212,6 +212,49 @@ async function testBundleStartWaitsForDecideButtonState() {
   assert.equal(injected, true);
 }
 
+async function testBundleActionTimeoutErrorIncludesActionName() {
+  let nowMs = 0;
+  class FakeDate extends Date {
+    static now() {
+      nowMs += 1000;
+      return nowMs;
+    }
+  }
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    tabs: {
+      async query() {
+        return [{ id: 7, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=d1233443897', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=d1233443897', status: 'complete', windowId: 1 };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 7);
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return { success: true, state: { canDecide: false, complete: false } };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: true, x: 10, y: 10, text: 'まとめて取引をはじめる' } }];
+      }
+    },
+    debuggerApi: {
+      async attach() {},
+      async sendCommand() {},
+      async detach() {}
+    }
+  });
+
+  await assert.rejects(
+    () => api.clickBundleActionAndFollowTab({ id: 7 }, 'start'),
+    /bundle start next page did not appear/
+  );
+}
+
 async function testNormalBundleRequestClicksSecondStartPageBeforeDecide() {
   const clickedActions = [];
   let phase = 'intro';
@@ -414,6 +457,9 @@ async function testTrustedBundleClickDispatchesMouseThroughDebugger() {
   assert.equal(JSON.stringify(commands.map(item => item.params.type)), JSON.stringify(['mouseMoved', 'mousePressed', 'mouseReleased']));
   assert.equal(commands[1].params.x, 120);
   assert.equal(commands[1].params.y, 55);
+  assert.match(result.diagnostics, /method=debuggerMouse/);
+  assert.match(result.diagnostics, /action=bundle:start/);
+  assert.match(result.diagnostics, /tabId=7/);
 }
 
 async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
@@ -454,6 +500,8 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
   assert.equal(attached, true);
   assert.equal(detached, true);
   assert.equal(focusedWindow.props.focused, true);
+  assert.match(result.diagnostics, /method=debuggerKeyboard/);
+  assert.match(result.diagnostics, /action=manualPin/);
   assert.deepEqual(
     commands.filter(item => item.command === 'Input.dispatchKeyEvent').map(item => `${item.params.type}:${item.params.text || item.params.key}`),
     [
@@ -507,6 +555,7 @@ async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
 
   assert.equal(result.success, true);
   assert.equal(result.method, 'systemSendKeys');
+  assert.match(result.diagnostics, /method=systemSendKeys/);
   assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/manual-pin/type') && /123456/.test(call.body)), true);
   assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/manual-pin/type') && /Yahoo PIN Window/.test(call.body)), true);
   assert.equal(debuggerCommands.length, 0);
@@ -4606,6 +4655,7 @@ async function run() {
   testPendingFinalRetryDelayIsShortForDirectBid();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
+  await testBundleActionTimeoutErrorIncludesActionName();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testNormalBundleRequestCanStartFromInputPage();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();

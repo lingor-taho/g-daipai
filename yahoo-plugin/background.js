@@ -713,6 +713,38 @@ async function updatePaymentStatus(payload) {
   });
 }
 
+function extractAuctionIdFromText(value) {
+  const match = String(value || '').match(/[a-zA-Z]\d{8,10}/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+function getDiagnosticValue(diagnostics, key) {
+  const pattern = new RegExp(`(?:^|,)${key}=([^,]*)`);
+  const match = String(diagnostics || '').match(pattern);
+  return match ? match[1] : '';
+}
+
+async function postPluginDiagnostic(payload = {}) {
+  const diagnostics = String(payload.diagnostics || '');
+  const url = String(payload.url || getDiagnosticValue(diagnostics, 'url') || '');
+  const productId = String(payload.productId || payload.product_id || extractAuctionIdFromText(`${url} ${diagnostics}`) || '').toLowerCase();
+  try {
+    await apiFetch('/api/plugin/diagnostics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        productId,
+        url,
+        action: payload.action || getDiagnosticValue(diagnostics, 'action') || '',
+        method: payload.method || getDiagnosticValue(diagnostics, 'method') || ''
+      })
+    });
+  } catch (e) {
+    console.warn('[Yahoo Bid] Failed to post plugin diagnostic:', e?.message || e);
+  }
+}
+
 async function fetchConfirmReceiptJobs() {
   const res = await apiFetch('/api/plugin/confirm-receipt/jobs');
   const data = await res.json();
@@ -767,8 +799,21 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
     });
     const result = await res.json().catch(() => ({ success: res.ok }));
     return result?.success
-      ? { success: true, method: 'systemSendKeys', digits: result.digits || pin.length }
-      : { success: false, error: result?.error || 'system keyboard PIN input failed' };
+      ? {
+          success: true,
+          method: 'systemSendKeys',
+          digits: result.digits || pin.length,
+          diagnostics: [
+            `method=systemSendKeys`,
+            result.windowTitle ? `windowTitle=${String(result.windowTitle).slice(0, 120)}` : '',
+            result.stdout ? `stdout=${String(result.stdout).slice(0, 240)}` : ''
+          ].filter(Boolean).join(',')
+        }
+      : {
+          success: false,
+          error: result?.error || 'system keyboard PIN input failed',
+          diagnostics: result?.stdout ? `method=systemSendKeys,stdout=${String(result.stdout).slice(0, 240)}` : 'method=systemSendKeys'
+        };
   } catch (e) {
     return { success: false, error: e.message || 'system keyboard PIN input failed' };
   }
@@ -780,6 +825,47 @@ function buildPaymentFailurePayload(job, error) {
     productId: job?.productId,
     error: error?.message || String(error || 'payment failed')
   };
+}
+
+function formatTrustedInputDiagnostics(value = {}) {
+  const parts = [];
+  if (value.method) parts.push(`method=${value.method}`);
+  if (value.action) parts.push(`action=${value.action}`);
+  if (value.tabId) parts.push(`tabId=${value.tabId}`);
+  if (value.windowId) parts.push(`windowId=${value.windowId}`);
+  if (value.tabStatus) parts.push(`tabStatus=${value.tabStatus}`);
+  if (value.tabActive !== undefined) parts.push(`tabActive=${value.tabActive}`);
+  if (value.windowFocused !== undefined) parts.push(`windowFocused=${value.windowFocused}`);
+  if (value.windowState) parts.push(`windowState=${value.windowState}`);
+  if (value.title) parts.push(`title=${String(value.title).slice(0, 120)}`);
+  if (value.url) parts.push(`url=${String(value.url).slice(0, 240)}`);
+  if (value.text) parts.push(`text=${String(value.text).slice(0, 120)}`);
+  if (value.point) parts.push(`point=${value.point}`);
+  return parts.join(',');
+}
+
+async function getTrustedInputDiagnostics(tabId, action, method, point = null) {
+  const tab = tabId ? await chrome.tabs.get(tabId).catch(() => null) : null;
+  const windowInfo = tab?.windowId && chrome.windows?.get
+    ? await chrome.windows.get(tab.windowId).catch(() => null)
+    : null;
+  const pointText = point?.rect
+    ? `${Math.round(point.x || 0)}x${Math.round(point.y || 0)}@${Math.round(point.rect.width || 0)}x${Math.round(point.rect.height || 0)}`
+    : (point?.x !== undefined ? `${Math.round(point.x)}x${Math.round(point.y || 0)}` : '');
+  return formatTrustedInputDiagnostics({
+    method,
+    action,
+    tabId: tab?.id || tabId,
+    windowId: tab?.windowId || '',
+    tabStatus: tab?.status || '',
+    tabActive: tab?.active,
+    windowFocused: windowInfo?.focused,
+    windowState: windowInfo?.state || '',
+    title: tab?.title || '',
+    url: tab?.url || '',
+    text: point?.text || '',
+    point: pointText
+  });
 }
 
 function buildConfirmReceiptFailurePayload(job, error) {
@@ -1184,6 +1270,7 @@ function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state,
   ];
   if (waitError?.message) parts.push(`wait=${waitError.message}`);
   if (state?.url) parts.push(`url=${state.url}`);
+  if (trustedClick?.diagnostics) parts.push(`diagnostics=${trustedClick.diagnostics}`);
   if (Array.isArray(state?.controlsSample)) parts.push(`controls=${state.controlsSample.join(' | ').slice(0, 500)}`);
   if (Array.isArray(trustedClick?.candidates)) {
     parts.push(`candidates=${JSON.stringify(trustedClick.candidates).slice(0, 1000)}`);
@@ -1204,7 +1291,8 @@ async function dispatchTrustedPaymentActionClick(tab, action) {
   await sleep(200);
 
   const point = await getPaymentActionClickPoint(tabId, action);
-  if (!point?.success) return point;
+  let diagnostics = await getTrustedInputDiagnostics(tabId, action, 'debuggerMouse', point);
+  if (!point?.success) return { ...point, diagnostics };
 
   const target = { tabId };
   let attached = false;
@@ -1234,9 +1322,27 @@ async function dispatchTrustedPaymentActionClick(tab, action) {
       clickCount: 1
     });
     await sleep(300);
-    return { success: true, method: 'debuggerMouse', text: point.text, candidates: point.candidates };
+    diagnostics = await getTrustedInputDiagnostics(tabId, action, 'debuggerMouse', point);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'info',
+      action,
+      method: 'debuggerMouse',
+      message: 'trusted payment mouse click dispatched',
+      diagnostics
+    });
+    return { success: true, method: 'debuggerMouse', text: point.text, candidates: point.candidates, diagnostics };
   } catch (e) {
-    return { success: false, error: e.message || 'trusted payment mouse click failed' };
+    diagnostics = await getTrustedInputDiagnostics(tabId, action, 'debuggerMouse', point).catch(() => diagnostics);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'error',
+      action,
+      method: 'debuggerMouse',
+      message: e.message || 'trusted payment mouse click failed',
+      diagnostics
+    });
+    return { success: false, error: e.message || 'trusted payment mouse click failed', diagnostics };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
   }
@@ -1495,7 +1601,8 @@ async function dispatchTrustedPaymentShippingChangeClick(tab) {
   await sleep(200);
 
   const point = await getPaymentShippingChangeClickPoint(tabId);
-  if (!point?.success) return point;
+  let diagnostics = await getTrustedInputDiagnostics(tabId, 'paymentShippingChange', 'debuggerMouse', point);
+  if (!point?.success) return { ...point, diagnostics };
 
   const target = { tabId };
   let attached = false;
@@ -1524,9 +1631,27 @@ async function dispatchTrustedPaymentShippingChangeClick(tab) {
       buttons: 0,
       clickCount: 1
     });
-    return { success: true, method: 'debugger', text: point.text };
+    diagnostics = await getTrustedInputDiagnostics(tabId, 'paymentShippingChange', 'debuggerMouse', point);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'info',
+      action: 'paymentShippingChange',
+      method: 'debuggerMouse',
+      message: 'trusted payment shipping change click dispatched',
+      diagnostics
+    });
+    return { success: true, method: 'debuggerMouse', text: point.text, diagnostics };
   } catch (e) {
-    return { success: false, error: e.message || String(e), point };
+    diagnostics = await getTrustedInputDiagnostics(tabId, 'paymentShippingChange', 'debuggerMouse', point).catch(() => diagnostics);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'error',
+      action: 'paymentShippingChange',
+      method: 'debuggerMouse',
+      message: e.message || 'trusted payment shipping change click failed',
+      diagnostics
+    });
+    return { success: false, error: e.message || String(e), point, diagnostics };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
   }
@@ -1681,7 +1806,9 @@ async function ensurePaymentShippingOption(tab, job, state) {
       : '';
     const stateSummary = summarizePaymentShippingState(state);
     const expandSummary = expandResult ? `; expand=${expandResult.method || expandResult.reason || expandResult.error || 'unknown'}:${expandResult.text || ''}:${expandResult.clickedText || ''}` : '';
-    const trustedSummary = trustedExpand ? `; trustedExpand=${trustedExpand.success ? 'success' : 'failed'}:${trustedExpand.method || ''}:${trustedExpand.text || trustedExpand.error || ''}` : '';
+    const trustedSummary = trustedExpand
+      ? `; trustedExpand=${trustedExpand.success ? 'success' : 'failed'}:${trustedExpand.method || ''}:${trustedExpand.text || trustedExpand.error || ''}${trustedExpand.diagnostics ? `; diagnostics=${trustedExpand.diagnostics}` : ''}`
+      : '';
     throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${stateSummary ? `; visibleState: ${stateSummary}` : ''}${expandSummary}${trustedSummary}`);
   }
   if (result.changed) await sleep(800);
@@ -3361,6 +3488,7 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
+  let diagnostics = await getTrustedInputDiagnostics(tabId, 'manualPin', options.preferKeyboard === false ? 'debuggerInsertText' : 'debuggerKeyboard');
 
   const target = { tabId };
   let attached = false;
@@ -3392,7 +3520,8 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
           await sleep(100);
         }
         await sleep(300);
-        return { success: true, method: 'debuggerRealKeyboard', digits: pinDigits.length };
+        diagnostics = await getTrustedInputDiagnostics(tabId, 'manualPin', 'debuggerKeyboard');
+        return { success: true, method: 'debuggerRealKeyboard', digits: pinDigits.length, diagnostics };
       } catch (e) {
         keyboardError = e;
         console.warn('[Yahoo Bid] Manual PIN real keyboard failed, falling back to insertText:', e.message || e);
@@ -3401,14 +3530,17 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
     console.log('[Yahoo Bid] Sending manual PIN via debugger insertText fallback, digits:', pinDigits.length);
     await chrome.debugger.sendCommand(target, 'Input.insertText', { text: pinDigits });
     await sleep(300);
+    diagnostics = await getTrustedInputDiagnostics(tabId, 'manualPin', 'debuggerInsertText');
     return {
       success: true,
       method: 'debuggerInsertText',
       digits: pinDigits.length,
-      keyboardError: keyboardError?.message || ''
+      keyboardError: keyboardError?.message || '',
+      diagnostics
     };
   } catch (e) {
-    return { success: false, error: e.message || 'manual pin keyboard input failed' };
+    diagnostics = await getTrustedInputDiagnostics(tabId, 'manualPin', options.preferKeyboard === false ? 'debuggerInsertText' : 'debuggerKeyboard').catch(() => diagnostics);
+    return { success: false, error: e.message || 'manual pin keyboard input failed', diagnostics };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
   }
@@ -3439,10 +3571,28 @@ async function focusManualPinTabForSystemInput(tabId) {
 async function fillManualPinAnswer(tabId, answer) {
   const pinTab = await focusManualPinTabForSystemInput(tabId);
   const systemResult = await typeManualPinWithSystemKeyboard(answer, { windowTitle: pinTab?.title || '' });
+  console.log('[Yahoo Bid] Manual PIN system keyboard result:', systemResult?.success ? 'success' : 'failed', systemResult?.diagnostics || systemResult?.error || '');
+  await postPluginDiagnostic({
+    type: 'pin',
+    level: systemResult?.success ? 'info' : 'warn',
+    action: 'manualPin',
+    method: 'systemSendKeys',
+    message: systemResult?.success ? 'manual PIN system keyboard input dispatched' : (systemResult?.error || 'manual PIN system keyboard input failed'),
+    diagnostics: systemResult?.diagnostics || systemResult?.error || ''
+  });
   if (systemResult?.success) return systemResult;
   console.warn('[Yahoo Bid] System keyboard PIN input failed, falling back to debugger:', systemResult?.error || systemResult);
 
   const trustedResult = await dispatchTrustedManualPinKeys(tabId, answer);
+  console.log('[Yahoo Bid] Manual PIN debugger keyboard result:', trustedResult?.success ? 'success' : 'failed', trustedResult?.diagnostics || trustedResult?.error || '');
+  await postPluginDiagnostic({
+    type: 'pin',
+    level: trustedResult?.success ? 'info' : 'error',
+    action: 'manualPin',
+    method: trustedResult?.method || 'debuggerKeyboard',
+    message: trustedResult?.success ? 'manual PIN debugger input dispatched' : (trustedResult?.error || 'manual PIN debugger input failed'),
+    diagnostics: trustedResult?.diagnostics || trustedResult?.error || ''
+  });
   if (trustedResult?.success) return trustedResult;
 
   const result = await chrome.scripting.executeScript({
@@ -3778,6 +3928,17 @@ function isLikelyYahooTransactionTab(tab) {
     /:\/\/account\.edit\.yahoo\.co\.jp\//i.test(url);
 }
 
+function buildBundleActionWaitError(action, error, trustedClick = null) {
+  const baseMessage = String(error?.message || error || '').trim();
+  const diagnostics = trustedClick?.diagnostics ? `; trusted=${trustedClick.diagnostics}` : '';
+  if (/^bundle next page did not appear$/i.test(baseMessage)) {
+    return `bundle ${action} next page did not appear${diagnostics}`;
+  }
+  return baseMessage
+    ? `bundle ${action} failed: ${baseMessage}${diagnostics}`
+    : `bundle ${action} failed`;
+}
+
 async function runMainWorldBundleActionClick(tabId, action) {
   const pattern = getBundleActionPatternSource(action);
   if (!pattern) return { success: false, error: 'unknown bundle action' };
@@ -3867,7 +4028,8 @@ async function dispatchTrustedBundleActionClick(tab, action) {
   await sleep(200);
 
   const point = await getBundleActionClickPoint(tabId, action);
-  if (!point?.success) return point;
+  let diagnostics = await getTrustedInputDiagnostics(tabId, `bundle:${action}`, 'debuggerMouse', point);
+  if (!point?.success) return { ...point, diagnostics };
 
   const target = { tabId };
   let attached = false;
@@ -3897,9 +4059,27 @@ async function dispatchTrustedBundleActionClick(tab, action) {
       clickCount: 1
     });
     await sleep(300);
-    return { success: true, method: 'debuggerMouse', text: point.text };
+    diagnostics = await getTrustedInputDiagnostics(tabId, `bundle:${action}`, 'debuggerMouse', point);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'info',
+      action: `bundle:${action}`,
+      method: 'debuggerMouse',
+      message: 'trusted bundle mouse click dispatched',
+      diagnostics
+    });
+    return { success: true, method: 'debuggerMouse', text: point.text, diagnostics };
   } catch (e) {
-    return { success: false, error: e.message || 'trusted mouse click failed' };
+    diagnostics = await getTrustedInputDiagnostics(tabId, `bundle:${action}`, 'debuggerMouse', point).catch(() => diagnostics);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'error',
+      action: `bundle:${action}`,
+      method: 'debuggerMouse',
+      message: e.message || 'trusted bundle mouse click failed',
+      diagnostics
+    });
+    return { success: false, error: e.message || 'trusted mouse click failed', diagnostics };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
   }
@@ -4044,7 +4224,11 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
     if (!trustedClick?.success) {
       return { success: false, error: trustedClick?.error || clickResult?.error || `bundle ${action} failed`, tab };
     }
-    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+    try {
+      nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+    } catch (waitError) {
+      throw new Error(buildBundleActionWaitError(action, waitError, trustedClick));
+    }
   }
 
   console.log(`[Yahoo Bid] Bundle action state reached, nextTab.id=${nextTab.id}`);
