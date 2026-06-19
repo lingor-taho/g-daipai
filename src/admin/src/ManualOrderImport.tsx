@@ -263,7 +263,7 @@ export default function ManualOrderImportPage() {
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       <Card title="导入订单">
         <Form
-          className="admin-mobile-form"
+          className="admin-mobile-form admin-manual-import-form"
           form={form}
           layout="inline"
           initialValues={{ startDate: formatLocalDate(-1), endDate: formatLocalDate(0), maxPages: 10 }}

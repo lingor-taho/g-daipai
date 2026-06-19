@@ -604,17 +604,7 @@ export default function OrdersPage() {
     { title: '落札时间', dataIndex: 'won_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.won_at || row.won_time_text) },
     { title: '运费', dataIndex: 'shipping_fee_text', width: 150, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderShippingText(row) },
     { title: '落札金额', dataIndex: 'final_price', width: 105, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.final_price) },
-    { title: '银行手续费', dataIndex: 'bank_fee_jpy', width: 100, onCell: () => noWrapCell, render: (_: any, row: any) => formatJPY(row.bank_fee_jpy) },
-    { title: '手续费(RMB)', dataIndex: 'handling_fee_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.handling_fee_cny) },
-    {
-      title: '大金额费用',
-      dataIndex: 'large_amount_fee_cny',
-      width: 100,
-      onCell: () => noWrapCell,
-      render: (_: any, row: any) => row.large_amount_fee_applied ? formatCNY(row.large_amount_fee_cny) : '-'
-    },
     { title: '汇率', dataIndex: 'jpy_to_cny_rate', width: 70, onCell: () => noWrapCell },
-    { title: '特殊设置', dataIndex: 'has_user_finance_override', width: 90, onCell: () => noWrapCell, render: (_: any, row: any) => row.settled_at && row.has_user_finance_override ? '已应用' : '' },
     { title: '应付款', dataIndex: 'payable_cny', width: 110, onCell: () => noWrapCell, render: (_: any, row: any) => formatCNY(row.payable_cny) },
     {
       title: '订单状态',
@@ -655,7 +645,7 @@ export default function OrdersPage() {
         <Space wrap className="admin-mobile-action-space admin-orders-action-panel">
           <span className="admin-orders-settle-line">
             <span className="admin-orders-rate-row">
-              <Typography.Text>本次结算汇率</Typography.Text>
+              <Typography.Text>结算汇率</Typography.Text>
               <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
             </span>
             <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>

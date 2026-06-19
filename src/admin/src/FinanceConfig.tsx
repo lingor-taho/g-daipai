@@ -46,13 +46,13 @@ export default function FinanceConfig() {
   return (
     <Card>
       <Form form={form} layout="inline" className="admin-mobile-form" onFinish={handleSaveConfig}>
-        <Form.Item name="bankFeeJpy" label="银行手续费(日元)" rules={[{ required: true, message: '请输入银行手续费' }]}>
+        <Form.Item name="bankFeeJpy" label="银行手续费(日元)" className="admin-finance-fee-item" rules={[{ required: true, message: '请输入银行手续费' }]}>
           <InputNumber min={0} step={1} precision={0} />
         </Form.Item>
-        <Form.Item name="handlingFeeCny" label="手续费(RMB)" rules={[{ required: true, message: '请输入手续费' }]}>
+        <Form.Item name="handlingFeeCny" label="手续费(RMB)" className="admin-finance-fee-item" rules={[{ required: true, message: '请输入手续费' }]}>
           <InputNumber min={0} step={0.01} precision={2} />
         </Form.Item>
-        <Form.Item name="largeAmountFeeCny" label="大金额费用(RMB)" className="admin-finance-large-fee-item" rules={[{ required: true, message: '请输入大金额费用' }]}>
+        <Form.Item name="largeAmountFeeCny" label="大金额费用(RMB)" className="admin-finance-fee-item" rules={[{ required: true, message: '请输入大金额费用' }]}>
           <InputNumber min={0} step={0.01} precision={2} />
         </Form.Item>
         <Form.Item>

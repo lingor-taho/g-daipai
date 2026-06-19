@@ -134,23 +134,36 @@ body,
     width: 100%;
   }
 
-  .admin-mobile-form.ant-form-inline .admin-finance-large-fee-item {
-    display: flex;
-    flex-wrap: nowrap;
+  .admin-mobile-form.ant-form-inline .admin-finance-fee-item,
+  .admin-mobile-form.ant-form-inline.admin-manual-import-form .ant-form-item {
+    display: grid;
     align-items: center;
+    column-gap: 10px;
   }
 
-  .admin-mobile-form .admin-finance-large-fee-item .ant-form-item-label {
-    flex: 0 0 auto;
+  .admin-mobile-form.ant-form-inline .admin-finance-fee-item {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+
+  .admin-mobile-form.ant-form-inline.admin-manual-import-form .ant-form-item {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .admin-mobile-form .admin-finance-fee-item .ant-form-item-label,
+  .admin-mobile-form.admin-manual-import-form .ant-form-item-label {
     white-space: nowrap;
   }
 
-  .admin-mobile-form .admin-finance-large-fee-item .ant-form-item-control {
-    flex: 0 0 170px;
+  .admin-mobile-form .admin-finance-fee-item .ant-form-item-control,
+  .admin-mobile-form.admin-manual-import-form .ant-form-item-control {
+    min-width: 0;
   }
 
-  .admin-mobile-form .admin-finance-large-fee-item .ant-input-number {
-    width: 170px;
+  .admin-mobile-form .admin-finance-fee-item .ant-input-number,
+  .admin-mobile-form.admin-manual-import-form .ant-picker,
+  .admin-mobile-form.admin-manual-import-form .ant-input,
+  .admin-mobile-form.admin-manual-import-form .ant-input-number {
+    width: 100%;
   }
 
   .admin-manual-import-batch-card .ant-card-head {
@@ -224,13 +237,13 @@ body,
   .admin-orders-settle-line {
     display: grid;
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) 72px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
     gap: 8px;
   }
 
   .admin-orders-settle-line .ant-btn {
-    width: 72px;
+    width: 100%;
     min-width: 0;
     padding-inline: 0;
   }
@@ -249,7 +262,7 @@ body,
   .admin-orders-rate-row {
     display: grid;
     width: 100%;
-    grid-template-columns: max-content 118px;
+    grid-template-columns: max-content minmax(0, 1fr);
     align-items: center;
     gap: 8px;
   }
@@ -259,7 +272,7 @@ body,
   }
 
   .admin-orders-rate-row .ant-input-number {
-    width: 118px;
+    width: 100%;
   }
 
   .admin-mobile-flag-space {
