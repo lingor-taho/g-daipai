@@ -278,7 +278,7 @@ export default function ManualOrderImportPage() {
           <Form.Item label="最多翻页" name="maxPages" rules={[{ required: true }]}>
             <InputNumber min={1} max={50} />
           </Form.Item>
-          <Form.Item>
+          <Form.Item className="admin-manual-import-submit-item">
             <Button type="primary" htmlType="submit" loading={requesting}>读取落札商品</Button>
           </Form.Item>
           {batchId ? (

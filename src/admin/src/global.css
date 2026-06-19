@@ -136,27 +136,37 @@ body,
 
   .admin-mobile-form.ant-form-inline .admin-finance-fee-item,
   .admin-mobile-form.ant-form-inline.admin-manual-import-form .ant-form-item {
+    display: block;
+  }
+
+  .admin-mobile-form.ant-form-inline .admin-finance-fee-item .ant-form-item-row {
     display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
     align-items: center;
     column-gap: 10px;
   }
 
-  .admin-mobile-form.ant-form-inline .admin-finance-fee-item {
-    grid-template-columns: 150px minmax(0, 1fr);
+  .admin-mobile-form.ant-form-inline.admin-manual-import-form .ant-form-item .ant-form-item-row {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 10px;
   }
 
-  .admin-mobile-form.ant-form-inline.admin-manual-import-form .ant-form-item {
-    grid-template-columns: 96px minmax(0, 1fr);
+  .admin-mobile-form.ant-form-inline.admin-manual-import-form .admin-manual-import-submit-item .ant-form-item-row {
+    display: block;
   }
 
   .admin-mobile-form .admin-finance-fee-item .ant-form-item-label,
   .admin-mobile-form.admin-manual-import-form .ant-form-item-label {
+    padding: 0;
     white-space: nowrap;
   }
 
   .admin-mobile-form .admin-finance-fee-item .ant-form-item-control,
   .admin-mobile-form.admin-manual-import-form .ant-form-item-control {
     min-width: 0;
+    width: 100%;
   }
 
   .admin-mobile-form .admin-finance-fee-item .ant-input-number,
@@ -235,23 +245,21 @@ body,
   }
 
   .admin-orders-settle-line {
-    display: grid;
+    display: block;
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
   }
 
   .admin-orders-settle-line .ant-btn {
     width: 100%;
     min-width: 0;
     padding-inline: 0;
+    margin-top: 8px;
   }
 
   .admin-orders-secondary-actions {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 8px;
   }
 
@@ -262,7 +270,7 @@ body,
   .admin-orders-rate-row {
     display: grid;
     width: 100%;
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: 116px minmax(0, 1fr);
     align-items: center;
     gap: 8px;
   }
