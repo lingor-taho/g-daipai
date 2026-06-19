@@ -2757,6 +2757,84 @@ function testExtractPendingShipmentScanResultSkipsOwnProductIdNumber() {
   assert.equal(result.trackingFallback, '');
 }
 
+function testExtractPendingShipmentScanResultSearchesOnlyVisibleMessageListForNormalTracking() {
+  const messageText = [
+    '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+    '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8',
+    '\u304a\u5c4a\u3051\u756a\u53f7 390166447193'
+  ].join('\n');
+  const htmlText = [
+    '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09',
+    '<div class="acMdMsgForm">',
+    '<input type="hidden" id="currentMsgId" value="3095037709" data-cl_cl_index="16">',
+    `<div class="untPreMsg" id="messagelist">${messageText}</div>`,
+    '</div>'
+  ].join('\n');
+  const api = loadContentForTest(
+    htmlText,
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') return { textContent: messageText };
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u98db\u811a\u5b85\u914d\u4fbf' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u98db\u811a\u5b85\u914d\u4fbf');
+  assert.equal(result.trackingNumber, '390166447193');
+  assert.equal(result.trackingFallback, '');
+}
+
+function testExtractPendingShipmentScanResultIgnoresScriptNumbersInsideMessageList() {
+  const visibleMessageText = [
+    '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+    '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8',
+    '\u304a\u5c4a\u3051\u756a\u53f7 390166447193'
+  ].join('\n');
+  const messageTextContent = [
+    visibleMessageText,
+    '<script>var conf = { hierarchyId: 2084614008, moduleId: 3095037709 };</script>'
+  ].join('\n');
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09',
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      messageTextContent
+    ].join('\n'),
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') {
+          return {
+            innerText: visibleMessageText,
+            textContent: messageTextContent
+          };
+        }
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u98db\u811a\u5b85\u914d\u4fbf' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u98db\u811a\u5b85\u914d\u4fbf');
+  assert.equal(result.trackingNumber, '390166447193');
+  assert.equal(result.trackingFallback, '');
+}
+
 function testExtractPendingShipmentScanResultExtractsInquiryNumberLabel() {
   const api = loadContentForTest(
     '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
@@ -2976,6 +3054,8 @@ async function run() {
   testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber();
   testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields();
   testExtractPendingShipmentScanResultSkipsOwnProductIdNumber();
+  testExtractPendingShipmentScanResultSearchesOnlyVisibleMessageListForNormalTracking();
+  testExtractPendingShipmentScanResultIgnoresScriptNumbersInsideMessageList();
   testExtractPendingShipmentScanResultExtractsInquiryNumberLabel();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
   testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();

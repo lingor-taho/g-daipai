@@ -134,6 +134,25 @@ body,
     width: 100%;
   }
 
+  .admin-mobile-form.ant-form-inline .admin-finance-large-fee-item {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .admin-mobile-form .admin-finance-large-fee-item .ant-form-item-label {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .admin-mobile-form .admin-finance-large-fee-item .ant-form-item-control {
+    flex: 0 0 170px;
+  }
+
+  .admin-mobile-form .admin-finance-large-fee-item .ant-input-number {
+    width: 170px;
+  }
+
   .admin-manual-import-batch-card .ant-card-head {
     padding-block: 8px;
   }
@@ -198,12 +217,41 @@ body,
     width: 100%;
   }
 
+  .admin-orders-action-panel {
+    gap: 10px !important;
+  }
+
+  .admin-orders-settle-line {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) 72px;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .admin-orders-settle-line .ant-btn {
+    width: 72px;
+    min-width: 0;
+    padding-inline: 0;
+  }
+
+  .admin-orders-secondary-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .admin-orders-secondary-actions .ant-btn {
+    width: 100%;
+  }
+
   .admin-orders-rate-row {
     display: grid;
     width: 100%;
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: max-content 118px;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
 
   .admin-orders-rate-row .ant-typography {
@@ -211,16 +259,21 @@ body,
   }
 
   .admin-orders-rate-row .ant-input-number {
-    width: 100%;
+    width: 118px;
   }
 
   .admin-mobile-flag-space {
     gap: 8px !important;
+    margin-top: 10px;
   }
 
   .admin-mobile-flag-space .ant-space-item {
     display: block;
     width: 100%;
+  }
+
+  .admin-orders-flags-toggle {
+    height: 32px;
   }
 
   .admin-config-form {

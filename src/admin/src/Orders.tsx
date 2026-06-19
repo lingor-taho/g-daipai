@@ -269,6 +269,8 @@ export default function OrdersPage() {
   const [ownerEditorOrder, setOwnerEditorOrder] = useState<any>(null);
   const [ownerEditorUserId, setOwnerEditorUserId] = useState<number | undefined>();
   const [ownerEditorSubmitting, setOwnerEditorSubmitting] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+  const [flagsExpanded, setFlagsExpanded] = useState(false);
   const [storeBundleForm] = Form.useForm();
 
   const bundleRowClassMap = useMemo(() => {
@@ -288,6 +290,17 @@ export default function OrdersPage() {
     fetchAdminJson('/api/admin/users/options')
       .then(data => setUsers(Array.isArray(data.items) ? data.items : []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    function handleChange(event: MediaQueryListEvent | MediaQueryList) {
+      setIsMobile(event.matches);
+      if (!event.matches) setFlagsExpanded(false);
+    }
+    handleChange(media);
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
   }, []);
 
   const userOptions = useMemo(() => users
@@ -639,29 +652,45 @@ export default function OrdersPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card>
-        <Space wrap className="admin-mobile-action-space">
-          <span className="admin-orders-rate-row">
-            <Typography.Text>本次结算汇率</Typography.Text>
-            <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
+        <Space wrap className="admin-mobile-action-space admin-orders-action-panel">
+          <span className="admin-orders-settle-line">
+            <span className="admin-orders-rate-row">
+              <Typography.Text>本次结算汇率</Typography.Text>
+              <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
+            </span>
+            <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
           </span>
-          <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>
-          <Button loading={paymentSubmitting} onClick={handlePaymentRequest}>支付</Button>
-          <Button onClick={handleExportCsv}>导出CSV</Button>
+          <span className="admin-orders-secondary-actions">
+            <Button loading={paymentSubmitting} onClick={handlePaymentRequest}>支付</Button>
+            <Button onClick={handleExportCsv}>导出CSV</Button>
+          </span>
           <Typography.Text type="secondary">
             已选择 {selectedRowKeys.length} 条；首次勾选会自动选中该用户昨天到今天的落札订单。
           </Typography.Text>
         </Space>
       </Card>
 
-      <Card>
-        <Space wrap size={16} className="admin-mobile-flag-space">
-          <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
-          <Typography.Text>扫描计数：{idleFlags?.scanFlag ?? '-'} / {idleFlags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
-          <Typography.Text>导入flag：{renderManualOrderImportFlag(idleFlags)}</Typography.Text>
-          <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
-          <Typography.Text>确认收货flag：{idleFlags?.confirmReceiptFlag ?? '-'}</Typography.Text>
-          <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
-        </Space>
+      <Card className="admin-orders-flags-card">
+        {isMobile ? (
+          <Button
+            block
+            size="small"
+            className="admin-orders-flags-toggle"
+            onClick={() => setFlagsExpanded(expanded => !expanded)}
+          >
+            {flagsExpanded ? '隐藏运行状态' : '展开运行状态'}
+          </Button>
+        ) : null}
+        {(!isMobile || flagsExpanded) ? (
+          <Space wrap size={16} className="admin-mobile-flag-space">
+            <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
+            <Typography.Text>扫描计数：{idleFlags?.scanFlag ?? '-'} / {idleFlags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
+            <Typography.Text>导入flag：{renderManualOrderImportFlag(idleFlags)}</Typography.Text>
+            <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
+            <Typography.Text>确认收货flag：{idleFlags?.confirmReceiptFlag ?? '-'}</Typography.Text>
+            <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
+          </Space>
+        ) : null}
       </Card>
 
       <Modal

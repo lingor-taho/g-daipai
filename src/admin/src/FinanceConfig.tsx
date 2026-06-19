@@ -52,7 +52,7 @@ export default function FinanceConfig() {
         <Form.Item name="handlingFeeCny" label="手续费(RMB)" rules={[{ required: true, message: '请输入手续费' }]}>
           <InputNumber min={0} step={0.01} precision={2} />
         </Form.Item>
-        <Form.Item name="largeAmountFeeCny" label="大金额费用(RMB)" rules={[{ required: true, message: '请输入大金额费用' }]}>
+        <Form.Item name="largeAmountFeeCny" label="大金额费用(RMB)" className="admin-finance-large-fee-item" rules={[{ required: true, message: '请输入大金额费用' }]}>
           <InputNumber min={0} step={0.01} precision={2} />
         </Form.Item>
         <Form.Item>

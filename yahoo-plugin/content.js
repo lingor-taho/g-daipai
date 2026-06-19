@@ -1837,6 +1837,12 @@ function hasUnregisteredTrackingNumber(text = getBodyText()) {
   return /(?:\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7)\s*[:\uff1a]?\s*\u672a\u767b\u9332/.test(String(text || ''));
 }
 
+function getNormalShipmentMessageText(fallbackText = '') {
+  const messageList = document.querySelector('#messagelist');
+  const messageText = String(messageList?.innerText || messageList?.textContent || '').trim();
+  return messageText || String(fallbackText || '');
+}
+
 function getCurrentAuctionId() {
   const href = String(window.location?.href || '');
   const match = href.match(/[?&](?:aid|auctionId)=([a-zA-Z]?\d{8,10})\b/i) ||
@@ -1936,7 +1942,8 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     if (hasUnregisteredTrackingNumber(source)) {
       return { type: 'pending_shipment' };
     }
-    const trackingNumber = extractTrackingNumberFromText(source);
+    const messageText = getNormalShipmentMessageText(source);
+    const trackingNumber = extractTrackingNumberFromText(messageText);
     const sellerInfoName = extractSellerInfoName(source);
     const sellerName = extractSellerName(source);
     return {
