@@ -2775,7 +2775,7 @@ function testExtractPendingShipmentScanResultSearchesOnlyVisibleMessageListForNo
     '/buyer/top',
     {
       querySelector(selector) {
-        if (selector === '#messagelist') return { textContent: messageText };
+        if (selector === '#messagelist') return { innerText: messageText, textContent: htmlText };
         return null;
       },
       querySelectorAll(selector) {
@@ -2835,6 +2835,159 @@ function testExtractPendingShipmentScanResultIgnoresScriptNumbersInsideMessageLi
   assert.equal(result.trackingFallback, '');
 }
 
+function testExtractPendingShipmentScanResultPrefersDeliveryInfoTrackingBeforeMessages() {
+  const messageText = [
+    '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+    '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8',
+    '\u304a\u5c4a\u3051\u756a\u53f7 390166447193'
+  ].join('\n');
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09',
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      '\u304a\u5c4a\u3051\u60c5\u5831',
+      '\u8ffd\u8de1\u756a\u53f7 751242160303',
+      messageText
+    ].join('\n'),
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') return { innerText: messageText, textContent: messageText };
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { innerText: '\u304a\u5c4a\u3051\u60c5\u5831', textContent: '\u304a\u5c4a\u3051\u60c5\u5831' },
+          { innerText: '\u914d\u9001\u65b9\u6cd5 \uff1a \u3086\u3046\u30d1\u30c3\u30af', textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u3086\u3046\u30d1\u30c3\u30af' },
+          { innerText: '\u8ffd\u8de1\u756a\u53f7 \uff1a 751242160303', textContent: '\u8ffd\u8de1\u756a\u53f7 \uff1a 751242160303' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, '751242160303');
+  assert.equal(result.trackingFallback, '');
+}
+
+function testExtractPendingShipmentScanResultFallsBackToSellerWhenVisibleMessageHasNoTracking() {
+  const visibleMessageText = [
+    '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+    '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8',
+    '\u767a\u9001\u3057\u307e\u3057\u305f\u3002'
+  ].join('\n');
+  const messageTextContent = [
+    visibleMessageText,
+    '<script>var ins = { hierarchyId: 2084314008, moduleId: 3095037709 };</script>'
+  ].join('\n');
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09',
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      messageTextContent
+    ].join('\n'),
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') {
+          return {
+            innerText: visibleMessageText,
+            textContent: messageTextContent
+          };
+        }
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u5b9a\u5f62\u5916\u90f5\u4fbf' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u5b9a\u5f62\u5916\u90f5\u4fbf');
+  assert.equal(result.trackingNumber, 'asua');
+  assert.equal(result.trackingFallback, 'seller_name');
+}
+
+function testExtractPendingShipmentScanResultDoesNotFallbackToMessageTextContentWhenInnerTextEmpty() {
+  const messageTextContent = '<script>var conf = { hierarchyId: 2084314008 };</script>';
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09',
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      messageTextContent
+    ].join('\n'),
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') {
+          return {
+            innerText: '',
+            textContent: messageTextContent
+          };
+        }
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u5b9a\u5f62\u5916\u90f5\u4fbf' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, 'asua');
+  assert.equal(result.trackingFallback, 'seller_name');
+}
+
+function testExtractPendingShipmentScanResultUsesOnlyMessageBodyTextInMessageList() {
+  const bodyText = '\u9280\u884c\u632f\u8fbc\u306b\u3066\u652f\u6255\u3044\u304c\u5b8c\u4e86\u3044\u305f\u3057\u307e\u3057\u305f\u3002';
+  const messageListText = [
+    '3095037709',
+    '\u3042\u306a\u305f',
+    '5\u670814\u65e5 21\u664221\u5206',
+    bodyText
+  ].join('\n');
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09',
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      messageListText
+    ].join('\n'),
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') {
+          return {
+            innerText: messageListText,
+            querySelectorAll(innerSelector) {
+              if (innerSelector === 'dd#body') return [{ innerText: bodyText, textContent: bodyText }];
+              return [];
+            }
+          };
+        }
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u5b9a\u5f62\u5916\u90f5\u4fbf' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, 'asua');
+  assert.equal(result.trackingFallback, 'seller_name');
+}
+
 function testExtractPendingShipmentScanResultExtractsInquiryNumberLabel() {
   const api = loadContentForTest(
     '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
@@ -2856,7 +3009,17 @@ function testExtractPendingShipmentScanResultExtractsInquiryNumberLabel() {
 }
 
 function testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages() {
-  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8 1234-5678-9012');
+  const messageText = '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8 1234-5678-9012';
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n' + messageText,
+    '/buyer/top',
+    {
+      querySelector(selector) {
+        if (selector === '#messagelist') return { innerText: messageText, textContent: messageText };
+        return null;
+      }
+    }
+  );
   assert.equal(api.extractPendingShipmentScanResult().trackingNumber, '123456789012');
 }
 
@@ -3056,6 +3219,10 @@ async function run() {
   testExtractPendingShipmentScanResultSkipsOwnProductIdNumber();
   testExtractPendingShipmentScanResultSearchesOnlyVisibleMessageListForNormalTracking();
   testExtractPendingShipmentScanResultIgnoresScriptNumbersInsideMessageList();
+  testExtractPendingShipmentScanResultPrefersDeliveryInfoTrackingBeforeMessages();
+  testExtractPendingShipmentScanResultFallsBackToSellerWhenVisibleMessageHasNoTracking();
+  testExtractPendingShipmentScanResultDoesNotFallbackToMessageTextContentWhenInnerTextEmpty();
+  testExtractPendingShipmentScanResultUsesOnlyMessageBodyTextInMessageList();
   testExtractPendingShipmentScanResultExtractsInquiryNumberLabel();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
   testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();

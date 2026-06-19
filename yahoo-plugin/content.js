@@ -1673,6 +1673,7 @@ const SHIPMENT_LABELS = [
   '\u4f1d\u7968\u756a\u53f7',
   '\u8ffd\u8de1\u756a\u53f7',
   '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7',
+  '\u304a\u5c4a\u3051\u756a\u53f7',
   '\u914d\u9001\u5e0c\u671b\u65e5',
   '\u914d\u9001\u5e0c\u671b\u6642\u9593',
   '\u8cfc\u5165\u65e5\u6642',
@@ -1839,8 +1840,53 @@ function hasUnregisteredTrackingNumber(text = getBodyText()) {
 
 function getNormalShipmentMessageText(fallbackText = '') {
   const messageList = document.querySelector('#messagelist');
-  const messageText = String(messageList?.innerText || messageList?.textContent || '').trim();
-  return messageText || String(fallbackText || '');
+  if (messageList) {
+    const bodies = Array.from(messageList.querySelectorAll?.('dd#body') || []);
+    if (bodies.length) {
+      return bodies
+        .map(body => String(body?.innerText || '').trim())
+        .filter(Boolean)
+        .join('\n');
+    }
+    return String(messageList.innerText || '').trim();
+  }
+  return null;
+}
+
+function getRenderedText(element) {
+  if (!element) return '';
+  if ('innerText' in element) return String(element.innerText || '').trim();
+  return String(element.textContent || '').trim();
+}
+
+function getNormalDeliveryInfoText(text = '') {
+  const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
+  const deliveryRows = [];
+  let inDeliveryInfo = false;
+  for (const element of elements) {
+    const rowText = getRenderedText(element);
+    if (!rowText) continue;
+    if (/\u304a\u5c4a\u3051\u60c5\u5831/.test(rowText)) {
+      inDeliveryInfo = true;
+    }
+    if (inDeliveryInfo || /(?:\u914d\u9001\u65b9\u6cd5|\u914d\u9001\u696d\u8005|\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7)/.test(rowText)) {
+      deliveryRows.push(rowText);
+    }
+    if (inDeliveryInfo && /(?:\u53d6\u5f15\u60c5\u5831|\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8|\u4f55\u304b\u304a\u56f0\u308a)/.test(rowText)) {
+      inDeliveryInfo = false;
+    }
+  }
+  if (deliveryRows.length) return deliveryRows.join('\n');
+
+  const source = String(text || '');
+  const deliveryIndex = source.indexOf('\u304a\u5c4a\u3051\u60c5\u5831');
+  if (deliveryIndex < 0) return '';
+  let section = source.slice(deliveryIndex);
+  const nextSection = section.slice('\u304a\u5c4a\u3051\u60c5\u5831'.length).search(/(?:\u53d6\u5f15\u60c5\u5831|\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8|\u4f55\u304b\u304a\u56f0\u308a)/);
+  if (nextSection >= 0) {
+    section = section.slice(0, '\u304a\u5c4a\u3051\u60c5\u5831'.length + nextSection);
+  }
+  return section;
 }
 
 function getCurrentAuctionId() {
@@ -1872,7 +1918,10 @@ function normalizeTrackingNumberCandidate(candidate, options = {}) {
 function extractTrackingNumberFromText(text = getBodyText(), options = {}) {
   const includeUnlabeled = options.includeUnlabeled !== false;
   const auctionId = options.auctionId || getCurrentAuctionId();
-  const labeledTrackingNumber = extractLabeledValue(['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7'], text);
+  const trackingLabels = ['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7', '\u304a\u5c4a\u3051\u756a\u53f7'];
+  const labeledTrackingNumber = options.textOnly
+    ? valueAfterLabel(text, trackingLabels)
+    : extractLabeledValue(trackingLabels, text);
   if (labeledTrackingNumber) {
     const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){10,12}/g) || [];
     for (const candidate of labeledMatches) {
@@ -1942,8 +1991,18 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     if (hasUnregisteredTrackingNumber(source)) {
       return { type: 'pending_shipment' };
     }
+    const deliveryInfoText = getNormalDeliveryInfoText(source);
+    const deliveryTrackingNumber = deliveryInfoText
+      ? extractTrackingNumberFromText(deliveryInfoText, { textOnly: true, includeUnlabeled: false })
+      : '';
     const messageText = getNormalShipmentMessageText(source);
-    const trackingNumber = extractTrackingNumberFromText(messageText);
+    const messageTrackingNumber = messageText
+      ? extractTrackingNumberFromText(messageText, { textOnly: true })
+      : '';
+    const labeledSourceTrackingNumber = (!deliveryTrackingNumber && !messageTrackingNumber && messageText === null)
+      ? extractTrackingNumberFromText(source, { includeUnlabeled: false })
+      : '';
+    const trackingNumber = deliveryTrackingNumber || messageTrackingNumber || labeledSourceTrackingNumber;
     const sellerInfoName = extractSellerInfoName(source);
     const sellerName = extractSellerName(source);
     return {
