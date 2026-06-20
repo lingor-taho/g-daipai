@@ -46,8 +46,30 @@ function testAllowsTaskSnapshotWrites() {
   );
 }
 
+function testAllowsDebugComparisonTaskAlias() {
+  withTempFile(
+    "const sql = `SELECT t.shipping_fee_text AS task_shipping_fee_text, p.shipping_fee_text AS product_shipping_fee_text FROM tasks t LEFT JOIN products p ON p.product_id = t.product_id`;\n",
+    file => {
+      const violations = collectReadPathViolations([file]);
+      assert.deepEqual(violations, []);
+    }
+  );
+}
+
+function testAllowsBuyoutTaskBidAmountDisplay() {
+  withTempFile(
+    "const sql = `CASE WHEN COALESCE(t.bid_mode, 'bid') = 'buyout' THEN COALESCE(t.user_max_price, t.buyout_price, t.max_price) ELSE t.max_price END AS max_price`;\n",
+    file => {
+      const violations = collectReadPathViolations([file]);
+      assert.deepEqual(violations, []);
+    }
+  );
+}
+
 testDetectsDirectTaskSnapshotRead();
 testAllowsProductsFallbackRead();
 testAllowsTaskSnapshotWrites();
+testAllowsDebugComparisonTaskAlias();
+testAllowsBuyoutTaskBidAmountDisplay();
 
 console.log('product read-path fallback tests passed');

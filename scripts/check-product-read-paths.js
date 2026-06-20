@@ -53,6 +53,16 @@ function isExplicitlyAllowed(line) {
   return /LEFT JOIN products|JOIN products|FROM products|ON p\.product_id|ON products\.product_id/i.test(line);
 }
 
+function isDebugComparisonRead(line, field) {
+  const normalized = line.replace(/\s+/g, ' ');
+  return new RegExp(`\\b(?:t|tasks)\\.${field}\\b\\s+AS\\s+task_${field}\\b`, 'i').test(normalized);
+}
+
+function isTaskBidAmountDisplayRead(line, field) {
+  if (field !== 'buyout_price') return false;
+  return /COALESCE\(t\.user_max_price,\s*t\.buyout_price,\s*t\.max_price\)/i.test(line.replace(/\s+/g, ' '));
+}
+
 function collectReadPathViolations(files) {
   const violations = [];
   for (const file of files) {
@@ -65,6 +75,8 @@ function collectReadPathViolations(files) {
         if (hasProductsFallback(line, field)) continue;
         if (isWritePath(line)) continue;
         if (isExplicitlyAllowed(line)) continue;
+        if (isDebugComparisonRead(line, field)) continue;
+        if (isTaskBidAmountDisplayRead(line, field)) continue;
         violations.push({
           file: path.relative(root, file).replace(/\\/g, '/'),
           line: index + 1,
