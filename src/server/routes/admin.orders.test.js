@@ -440,7 +440,10 @@ function testProductDebugQueriesExposeTaskErrorsAndRelatedLogs() {
   assert.deepEqual(diagnosticsQuery.params, ['u1051658399', 'u1051658399', 'u1051658399']);
 
   assert.match(buildProductDebugSnapshotQuery('u1051658399').sql, /FROM products/);
-  assert.match(buildProductDebugBiddingItemsQuery('u1051658399').sql, /FROM bidding_items/);
+  const biddingItemsQuery = buildProductDebugBiddingItemsQuery('u1051658399');
+  assert.match(biddingItemsQuery.sql, /FROM bidding_items/);
+  assert.doesNotMatch(biddingItemsQuery.sql, /\bid\b/);
+  assert.match(biddingItemsQuery.sql, /product_id DESC/);
   assert.match(buildProductDebugConfigQuery().sql, /yahoo_login_status/);
 }
 

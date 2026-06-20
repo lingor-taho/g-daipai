@@ -500,7 +500,7 @@ function buildProductDebugBiddingItemsQuery(productId) {
     sql: `SELECT *
      FROM bidding_items
      WHERE product_id = ?
-     ORDER BY datetime(synced_at) DESC, id DESC
+     ORDER BY datetime(synced_at) DESC, product_id DESC
      LIMIT 20`,
     params: [productId]
   };
@@ -1067,61 +1067,69 @@ router.get('/orders/status-debug/:productId', async (req, res) => {
 });
 
 router.get('/debug/product/:productId', async (req, res) => {
-  const productId = extractAuctionId(req.params.productId || req.query.productId || '');
-  if (!productId) {
-    return res.status(400).json({ error: 'valid product id is required' });
+  try {
+    const productId = extractAuctionId(req.params.productId || req.query.productId || '');
+    if (!productId) {
+      return res.status(400).json({ error: 'valid product id is required' });
+    }
+
+    const tasksQuery = buildProductDebugTasksQuery(productId);
+    const bidLogsQuery = buildProductDebugBidLogsQuery(productId);
+    const ordersQuery = buildProductDebugOrdersQuery(productId);
+    const orderLogsQuery = buildProductDebugOrderLogsQuery(productId);
+    const diagnosticsQuery = buildProductDebugDiagnosticsQuery(productId);
+    const snapshotQuery = buildProductDebugSnapshotQuery(productId);
+    const biddingItemsQuery = buildProductDebugBiddingItemsQuery(productId);
+    const configQuery = buildProductDebugConfigQuery();
+
+    const [
+      tasks,
+      bidLogs,
+      orders,
+      orderLogs,
+      diagnostics,
+      productSnapshot,
+      biddingItems,
+      configRows
+    ] = await Promise.all([
+      db.getAll(tasksQuery.sql, tasksQuery.params),
+      db.getAll(bidLogsQuery.sql, bidLogsQuery.params),
+      db.getAll(ordersQuery.sql, ordersQuery.params),
+      db.getAll(orderLogsQuery.sql, orderLogsQuery.params),
+      db.getAll(diagnosticsQuery.sql, diagnosticsQuery.params),
+      db.getOne(snapshotQuery.sql, snapshotQuery.params),
+      db.getAll(biddingItemsQuery.sql, biddingItemsQuery.params),
+      db.getAll(configQuery.sql, configQuery.params)
+    ]);
+
+    res.json({
+      productId,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        taskCount: tasks.length,
+        failedTaskCount: tasks.filter(task => task.status === 'failed').length,
+        latestTask: tasks[0] || null,
+        latestError: tasks.find(task => task.error_msg)?.error_msg || bidLogs.find(log => log.error_msg)?.error_msg || null,
+        bidLogCount: bidLogs.length,
+        orderCount: orders.length,
+        diagnosticCount: diagnostics.length
+      },
+      productSnapshot: productSnapshot || null,
+      tasks,
+      bidLogs,
+      orders,
+      orderLogs,
+      diagnostics,
+      biddingItems,
+      config: configRows
+    });
+  } catch (error) {
+    console.error('[Admin Debug API] product report failed:', error);
+    res.status(500).json({
+      error: 'debug product report failed',
+      detail: error.message || String(error)
+    });
   }
-
-  const tasksQuery = buildProductDebugTasksQuery(productId);
-  const bidLogsQuery = buildProductDebugBidLogsQuery(productId);
-  const ordersQuery = buildProductDebugOrdersQuery(productId);
-  const orderLogsQuery = buildProductDebugOrderLogsQuery(productId);
-  const diagnosticsQuery = buildProductDebugDiagnosticsQuery(productId);
-  const snapshotQuery = buildProductDebugSnapshotQuery(productId);
-  const biddingItemsQuery = buildProductDebugBiddingItemsQuery(productId);
-  const configQuery = buildProductDebugConfigQuery();
-
-  const [
-    tasks,
-    bidLogs,
-    orders,
-    orderLogs,
-    diagnostics,
-    productSnapshot,
-    biddingItems,
-    configRows
-  ] = await Promise.all([
-    db.getAll(tasksQuery.sql, tasksQuery.params),
-    db.getAll(bidLogsQuery.sql, bidLogsQuery.params),
-    db.getAll(ordersQuery.sql, ordersQuery.params),
-    db.getAll(orderLogsQuery.sql, orderLogsQuery.params),
-    db.getAll(diagnosticsQuery.sql, diagnosticsQuery.params),
-    db.getOne(snapshotQuery.sql, snapshotQuery.params),
-    db.getAll(biddingItemsQuery.sql, biddingItemsQuery.params),
-    db.getAll(configQuery.sql, configQuery.params)
-  ]);
-
-  res.json({
-    productId,
-    generatedAt: new Date().toISOString(),
-    summary: {
-      taskCount: tasks.length,
-      failedTaskCount: tasks.filter(task => task.status === 'failed').length,
-      latestTask: tasks[0] || null,
-      latestError: tasks.find(task => task.error_msg)?.error_msg || bidLogs.find(log => log.error_msg)?.error_msg || null,
-      bidLogCount: bidLogs.length,
-      orderCount: orders.length,
-      diagnosticCount: diagnostics.length
-    },
-    productSnapshot: productSnapshot || null,
-    tasks,
-    bidLogs,
-    orders,
-    orderLogs,
-    diagnostics,
-    biddingItems,
-    config: configRows
-  });
 });
 
 // 财务统计

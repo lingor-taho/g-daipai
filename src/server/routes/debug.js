@@ -92,20 +92,28 @@ async function buildProductDebugReport(productId, database = db) {
 }
 
 router.get('/product/:productId', async (req, res) => {
-  if (!config.adminDebugToken) {
-    return res.status(404).json({ error: 'debug API disabled' });
-  }
-  if (!isValidDebugToken(readDebugToken(req))) {
-    return res.status(401).json({ error: 'invalid debug token' });
-  }
+  try {
+    if (!config.adminDebugToken) {
+      return res.status(404).json({ error: 'debug API disabled' });
+    }
+    if (!isValidDebugToken(readDebugToken(req))) {
+      return res.status(401).json({ error: 'invalid debug token' });
+    }
 
-  const productId = extractAuctionId(req.params.productId || req.query.productId || '');
-  if (!productId) {
-    return res.status(400).json({ error: 'valid product id is required' });
-  }
+    const productId = extractAuctionId(req.params.productId || req.query.productId || '');
+    if (!productId) {
+      return res.status(400).json({ error: 'valid product id is required' });
+    }
 
-  const report = await buildProductDebugReport(productId);
-  res.json(report);
+    const report = await buildProductDebugReport(productId);
+    res.json(report);
+  } catch (error) {
+    console.error('[Debug API] product report failed:', error);
+    res.status(500).json({
+      error: 'debug product report failed',
+      detail: error.message || String(error)
+    });
+  }
 });
 
 module.exports = router;
