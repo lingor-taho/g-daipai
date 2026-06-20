@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
-import UserNav from '../components/UserNav';
-import UserFooter from '../components/UserFooter';
 import { getWonTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
 import { formatTotalAmount } from '../utils/totalAmount';
-import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle, pageButtonStyle, pageStyle } from '../styles';
+import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle, pageButtonStyle } from '../styles';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -89,8 +87,7 @@ export default function WonItems() {
   }, [fetchWonItems]);
 
   return (
-    <div style={pageStyle}>
-      <UserNav />
+    <>
       <List
         style={listStyle}
         header={
@@ -165,7 +162,6 @@ export default function WonItems() {
           </div>
         )}
       </List>
-      <UserFooter />
-    </div>
+    </>
   );
 }

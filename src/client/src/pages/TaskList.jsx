@@ -1,14 +1,12 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
 import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
-import UserNav from '../components/UserNav';
-import UserFooter from '../components/UserFooter';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
 import { getTaskFailureLabel } from '../utils/taskFailureReason';
 import { getTaskStatCards } from '../utils/taskStats';
-import { cardStyle, colors, itemCardStyle, listStyle, pageButtonStyle, pageStyle } from '../styles';
+import { cardStyle, colors, itemCardStyle, listStyle, pageButtonStyle } from '../styles';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -113,11 +111,6 @@ export default function TaskList({ limit = 10, embedded = false }) {
 
   return (
     <>
-      {!embedded && (
-        <div style={{ ...pageStyle, paddingBottom: 0 }}>
-          <UserNav />
-        </div>
-      )}
       {stats && (
         <div style={{ margin: '12px 0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
           {getTaskStatCards(stats).map(({ label, value }) => (
@@ -182,7 +175,6 @@ export default function TaskList({ limit = 10, embedded = false }) {
           <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page >= Math.ceil(total / limit)} onClick={() => setPage(value => value + 1)}>下一页</Button>
         </div>
       )}
-      {!embedded && <UserFooter />}
     </>
   );
 }

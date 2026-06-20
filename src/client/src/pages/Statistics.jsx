@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Empty, SpinLoading, Toast } from 'antd-mobile';
-import UserNav from '../components/UserNav';
-import UserFooter from '../components/UserFooter';
 import { getWonStats } from '../utils/api';
 import { USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { buildWonStatsCsv, downloadCsv } from '../utils/wonStats';
-import { cardStyle, colors, outlineButtonStyle, pageStyle, sectionTitleStyle } from '../styles';
+import { cardStyle, colors, outlineButtonStyle, sectionTitleStyle } from '../styles';
 
 function formatJPY(value) {
   const amount = Number(value || 0);
@@ -84,9 +82,7 @@ export default function Statistics() {
   }
 
   return (
-    <div style={pageStyle}>
-      <UserNav />
-
+    <>
       <div style={{ ...cardStyle, padding: 14, marginBottom: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
           <div>
@@ -185,7 +181,6 @@ export default function Statistics() {
           </>
         )}
       </div>
-      <UserFooter />
-    </div>
+    </>
   );
 }

@@ -4,11 +4,9 @@ import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
-import UserNav from '../components/UserNav';
-import UserFooter from '../components/UserFooter';
 import TaskList from './TaskList';
 import { runDeduped } from '../utils/requestDedupe';
-import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, pageStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
+import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -478,8 +476,7 @@ export default function Submit() {
   }
 
   return (
-    <div style={pageStyle}>
-      <UserNav />
+    <>
       <div style={{ ...cardStyle, padding: 14 }}>
         <div style={{ ...sectionTitleStyle, marginBottom: 10 }}>商品ID / 商品链接 / 商品名称</div>
         <div style={inputBoxStyle}>
@@ -667,7 +664,6 @@ export default function Submit() {
       )}
 
       <TaskList key={taskListVersion} limit={10} embedded />
-      <UserFooter />
-    </div>
+    </>
   );
 }

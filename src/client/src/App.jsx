@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import Login from './pages/Login';
 import ActiveBidding from './pages/ActiveBidding';
 import Submit from './pages/Submit';
@@ -7,16 +7,21 @@ import WonItems from './pages/WonItems';
 import Statistics from './pages/Statistics';
 import { installUserActivityListeners } from './utils/activity';
 import ManualVerificationAlert from './components/ManualVerificationAlert';
+import UserNav from './components/UserNav';
+import UserFooter from './components/UserFooter';
+import { pageStyle } from './styles';
 
 installUserActivityListeners();
 
-function ProtectedRoute({ children }) {
+function ProtectedLayout() {
   const token = localStorage.getItem('token');
   return token ? (
-    <>
+    <div style={pageStyle}>
       <ManualVerificationAlert />
-      {children}
-    </>
+      <UserNav />
+      <Outlet />
+      <UserFooter />
+    </div>
   ) : <Navigate to="/login" />;
 }
 
@@ -25,11 +30,13 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/submit" element={<ProtectedRoute><Submit /></ProtectedRoute>} />
-        <Route path="/tasks" element={<ProtectedRoute><TaskList /></ProtectedRoute>} />
-        <Route path="/bidding" element={<ProtectedRoute><ActiveBidding /></ProtectedRoute>} />
-        <Route path="/won" element={<ProtectedRoute><WonItems /></ProtectedRoute>} />
-        <Route path="/stats" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
+        <Route element={<ProtectedLayout />}>
+          <Route path="/submit" element={<Submit />} />
+          <Route path="/tasks" element={<TaskList />} />
+          <Route path="/bidding" element={<ActiveBidding />} />
+          <Route path="/won" element={<WonItems />} />
+          <Route path="/stats" element={<Statistics />} />
+        </Route>
         <Route path="*" element={<Navigate to="/submit" />} />
       </Routes>
     </BrowserRouter>
