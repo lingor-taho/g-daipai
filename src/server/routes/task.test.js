@@ -253,6 +253,11 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
   assert.match(query.sql, /bi\.status IN \('highest', 'outbid'\)/);
   assert.match(query.sql, /bi\.status AS bidding_status/);
   assert.match(query.sql, /bi\.remaining_time_text/);
+  assert.match(query.sql, /CASE/);
+  assert.match(query.sql, /remaining_time_text LIKE '%分'/);
+  assert.match(query.sql, /remaining_time_text LIKE '%時間'/);
+  assert.match(query.sql, /remaining_time_text LIKE '%日'/);
+  assert.match(query.sql, /remaining_time_sort_minutes ASC/);
   assert.match(query.sql, /ORDER BY datetime\(t2\.created_at\) DESC, t2\.id DESC/);
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = bi\.product_id/);
   assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);

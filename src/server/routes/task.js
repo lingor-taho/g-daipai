@@ -294,6 +294,12 @@ function buildRecentDateKeys(days, now = new Date()) {
 }
 
 function buildActiveBiddingTaskListQuery(input) {
+  const remainingTimeSortSql = `CASE
+           WHEN bi.remaining_time_text LIKE '%\u5206' THEN CAST(REPLACE(bi.remaining_time_text, '\u5206', '') AS INTEGER)
+           WHEN bi.remaining_time_text LIKE '%\u6642\u9593' THEN CAST(REPLACE(bi.remaining_time_text, '\u6642\u9593', '') AS INTEGER) * 60
+           WHEN bi.remaining_time_text LIKE '%\u65e5' THEN CAST(REPLACE(bi.remaining_time_text, '\u65e5', '') AS INTEGER) * 1440
+           ELSE 999999999
+         END`;
   return {
     sql: `SELECT
          t.id,
@@ -313,6 +319,7 @@ function buildActiveBiddingTaskListQuery(input) {
          'bidding' AS status,
          bi.status AS bidding_status,
          bi.remaining_time_text,
+         ${remainingTimeSortSql} AS remaining_time_sort_minutes,
          COALESCE(p.end_time, t.end_time) AS end_time,
          CASE WHEN bi.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder,
          t.last_bid_at,
@@ -329,7 +336,7 @@ function buildActiveBiddingTaskListQuery(input) {
        LEFT JOIN products p ON p.product_id = bi.product_id
        WHERE t.user_id = ?
          AND bi.status IN ('highest', 'outbid')
-       ORDER BY datetime(bi.synced_at) DESC, bi.product_id DESC
+       ORDER BY remaining_time_sort_minutes ASC, datetime(bi.synced_at) DESC, bi.product_id DESC
        LIMIT ? OFFSET ?`,
     params: [input.userId, input.userId, input.limit, input.offset || 0]
   };
