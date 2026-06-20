@@ -1338,6 +1338,17 @@ function extractBiddingItems() {
     return matches.length ? String(matches[0]) : '';
   }
 
+  function extractRemainingTimeText(item, text) {
+    const candidates = [...item.querySelectorAll('div, span, p, li')];
+    for (const candidate of candidates) {
+      if (!candidate.querySelector?.('svg[aria-label="\u6b8b\u308a\u6642\u9593"]')) continue;
+      const value = normalizeVisibleText(candidate.textContent || '');
+      if (/^\d+\s*(?:\u5206|\u6642\u9593|\u65e5)$/.test(value)) return value.replace(/\s+/g, '');
+    }
+    const match = normalizeVisibleText(text).match(/(?:^|\s)(\d+\s*(?:\u5206|\u6642\u9593|\u65e5))(?:\s|$)/);
+    return match ? match[1].replace(/\s+/g, '') : '';
+  }
+
   const seen = new Set();
   const items = [];
   const links = [...document.querySelectorAll('a[href*="/jp/auction/"]')]
@@ -1381,6 +1392,7 @@ function extractBiddingItems() {
       productId,
       title,
       price: extractBiddingPrice(text),
+      remainingTimeText: extractRemainingTimeText(item, text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       imageUrl: image?.src || '',
       status: hasHighestMark && !hasRebidButton ? 'highest' : 'outbid'

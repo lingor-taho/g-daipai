@@ -172,6 +172,21 @@ function createBiddingContainer(text, linkText, href, imageSrc = '') {
   return { container, link };
 }
 
+function createBiddingTimeElement(label, value) {
+  return {
+    textContent: value,
+    querySelector(selector) {
+      if (selector === 'svg[aria-label="\u6b8b\u308a\u6642\u9593"]') {
+        return { getAttribute: name => name === 'aria-label' ? label : '' };
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+}
+
 function testOutbidTextIsNotHighestBidder() {
   const api = loadContentForTest('最高額入札者ではありません。値段を上げて入札してください。');
 
@@ -2251,6 +2266,32 @@ function testBiddingItemsExtractsOutbidRebidRows() {
   assert.equal(items[0].imageUrl, 'https://example.com/item.jpg');
 }
 
+function testBiddingItemsExtractsRemainingTimeFromListRow() {
+  const timeElement = createBiddingTimeElement('\u6b8b\u308a\u6642\u9593', '5\u5206');
+  const { container, link } = createBiddingContainer(
+    '\u6700\u9ad8\u984d\u3067\u5165\u672d\u4e2d \u73fe\u5728 7,701\u5186',
+    'DSR132 \u30d5\u30a3\u30cd\u30b9\u30ab\u30fc\u30c9',
+    'https://auctions.yahoo.co.jp/jp/auction/b1230074910'
+  );
+  container.querySelectorAll = selector => {
+    if (selector === 'a[href*="/jp/auction/"]') return [link];
+    if (selector === 'div, span, p, li') return [timeElement];
+    return [];
+  };
+  const api = loadContentForTest('', '/my/bidding', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href*="/jp/auction/"]') return [link];
+      return [];
+    }
+  });
+
+  const items = api.extractBiddingItems();
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].remainingTimeText, '5\u5206');
+}
+
 function testBundleTransactionInfoValidatesQuantity() {
   const links = [
     createTestAnchor('商品A', 'https://auctions.yahoo.co.jp/jp/auction/c1133337781'),
@@ -3370,6 +3411,7 @@ async function run() {
   testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
   testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
   testBiddingItemsExtractsOutbidRebidRows();
+  testBiddingItemsExtractsRemainingTimeFromListRow();
   testBundleTransactionInfoValidatesQuantity();
   testBundleTransactionInfoDetectsQuantityMismatch();
   testBundleTransactionInfoDetectsPopupBundleText();

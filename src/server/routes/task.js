@@ -312,6 +312,7 @@ function buildActiveBiddingTaskListQuery(input) {
          t.bid_mode,
          'bidding' AS status,
          bi.status AS bidding_status,
+         bi.remaining_time_text,
          COALESCE(p.end_time, t.end_time) AS end_time,
          CASE WHEN bi.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder,
          t.last_bid_at,

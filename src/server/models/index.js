@@ -117,12 +117,15 @@ db.prepare(`
     product_title VARCHAR(512),
     product_image_url TEXT,
     current_price INTEGER,
+    remaining_time_text VARCHAR(32),
     status VARCHAR(32) NOT NULL,
     synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
+
+ensureColumn('bidding_items', 'remaining_time_text', 'VARCHAR(32)');
 
 const startupBackfillDb = {
   query(text, params) {

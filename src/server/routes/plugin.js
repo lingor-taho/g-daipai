@@ -1098,6 +1098,7 @@ async function syncBiddingItems(items, database = db) {
     const currentPrice = rawPrice && taxType === 'tax_included' && rawPrice >= 10
       ? Math.floor((rawPrice / 1.1) + 1e-6)
       : rawPrice;
+    const remainingTimeText = normalizePlainText(item.remainingTimeText || item.remaining_time_text).slice(0, 32);
 
     await database.query(
       `INSERT INTO bidding_items (
@@ -1106,15 +1107,17 @@ async function syncBiddingItems(items, database = db) {
          product_title,
          product_image_url,
          current_price,
+         remaining_time_text,
          status,
          synced_at,
          updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        ON CONFLICT(product_id) DO UPDATE SET
          product_url = excluded.product_url,
          product_image_url = excluded.product_image_url,
          current_price = excluded.current_price,
+         remaining_time_text = excluded.remaining_time_text,
          status = excluded.status,
          synced_at = CURRENT_TIMESTAMP,
          updated_at = CURRENT_TIMESTAMP`,
@@ -1124,6 +1127,7 @@ async function syncBiddingItems(items, database = db) {
         item.title || null,
         item.imageUrl || null,
         currentPrice,
+        remainingTimeText || null,
         itemStatus
       ]
     );
@@ -2860,7 +2864,7 @@ router.patch('/task/:id/snapshot', async (req, res) => {
   res.json({ success: true });
 });
 
-// GET /api/plugin/config 鈥?鑾峰彇鎻掍欢閰嶇疆
+// GET /api/plugin/config - get plugin config
 router.get('/config', async (req, res) => {
   const intervalMs = await db.getOne("SELECT value FROM config WHERE key = 'worker_interval_ms'");
   const rate = await db.getOne("SELECT rate FROM exchange_config ORDER BY updated_at DESC LIMIT 1");

@@ -350,7 +350,7 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
   assert.match(calls[0].sql, /UPDATE bidding_items/);
   assert.match(calls[1].sql, /INSERT INTO bidding_items/);
   assert.equal(calls[1].params[0], 'a123456789');
-  assert.equal(calls[1].params[5], 'highest');
+  assert.equal(calls[1].params[6], 'highest');
   const productUpserts = calls.filter(call => /INSERT INTO products/.test(call.sql));
   assert.equal(productUpserts.length, 2);
   assert.equal(productUpserts[0].params[0], 'a123456789');
@@ -361,6 +361,37 @@ async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
   assert.equal(highestTaskUpdate.params.at(-1), 'a123456789');
   const outbidTaskUpdate = calls.find(call => /is_highest_bidder = 0/.test(call.sql));
   assert.equal(outbidTaskUpdate.params.at(-1), 'b123456789');
+}
+
+async function testSyncBiddingItemsStoresRemainingTimeText() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    },
+    async getAll() {
+      return [];
+    },
+    async getOne() {
+      return null;
+    }
+  };
+
+  await syncBiddingItems([
+    {
+      productId: 'b1230074910',
+      title: 'B',
+      price: '7,701',
+      url: 'https://auctions.yahoo.co.jp/jp/auction/b1230074910',
+      status: 'highest',
+      remainingTimeText: '5分'
+    }
+  ], fakeDb);
+
+  const insertCall = calls.find(call => /INSERT INTO bidding_items/.test(call.sql));
+  assert.match(insertCall.sql, /remaining_time_text/);
+  assert.equal(insertCall.params.includes('5分'), true);
 }
 
 function testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice() {
@@ -376,7 +407,7 @@ function testResolveOrderFinalPriceReturnsNullWhenYahooPriceMissing() {
 }
 
 async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
-  // /my/bidding 鍒楄〃"鐝惧湪 脳脳鍐?瀵瑰晢鍩庡晢鍝佹槸绋庡悗鍊硷紝鍐欏叆 bidding_items 鏃跺簲鎶樺洖绋庡墠銆?
+  // /my/bidding 的商城含税列表价写入 bidding_items 前应折回税前。
   const calls = [];
   const fakeDb = {
     async query(sql, params) {
@@ -396,7 +427,7 @@ async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
     { productId: 'a123456789', title: 'A', price: '11,103', url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789', status: 'highest' }
   ], fakeDb);
 
-  // INSERT INTO bidding_items 鐨?current_price 鍙傛暟锛堢 5 涓紝0-indexed=4锛夊簲璇ユ槸鎶樺洖绋庡墠鐨?10093
+  // INSERT INTO bidding_items 的 current_price 参数应为折回税前后的 10093。
   const insertCall = calls.find(c => /INSERT INTO bidding_items/.test(c.sql));
   assert.equal(insertCall.params[4], 10093);
   const taxQuery = calls.find(call => call.type === 'getOne');
@@ -415,50 +446,49 @@ function testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay() {
 }
 
 function testShouldSplitDirectBidByYahooLowPriceRule() {
-  // 鏅€氬晢鍝侊紙绋庡墠=绋庡悗锛?
-  // 绋庡墠褰撳墠浠?1000 + 绋庡墠鍑轰环>10000锛岃Е鍙?
+  // 普通商品：税前等于税后，当前价低于 1000 且出价超过 10000 时触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 500, submitMaxPrice: 15000, taxType: 'tax_zero'
   }), true);
-  // 褰撳墠浠?=1000锛屼笉瑙﹀彂
+  // 当前价等于 1000 时不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 1000, submitMaxPrice: 15000, taxType: 'tax_zero'
   }), false);
-  // 绋庡墠鍑轰环涓嶈秴杩?0000锛屼笉瑙﹀彂
+  // 税前出价不超过 10000 时不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 500, submitMaxPrice: 10000, taxType: 'tax_zero'
   }), false);
-  // 闈?direct 绛栫暐涓嶈Е鍙?
+  // 非 direct 策略不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'multi_bid', bidMode: 'bid', currentPrice: 500, submitMaxPrice: 15000, taxType: 'tax_zero'
   }), false);
-  // buyout 妯″紡涓嶈Е鍙?
+  // buyout 模式不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'buyout', currentPrice: 500, submitMaxPrice: 15000, taxType: 'tax_zero'
   }), false);
-  // 褰撳墠浠锋湭鐭ワ紙0/null锛夋寜"浣庝簬 1000"澶勭悊瑙﹀彂锛岄伩鍏嶆紡鍒?
+  // 当前价未知时按低于 1000 处理，避免漏拆。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 0, submitMaxPrice: 15000, taxType: 'tax_zero'
   }), true);
 
-  // 鍟嗗煄鍟嗗搧锛坈urrent_price 鏄◣鍓嶏紱submitMaxPrice 鏄◣鍚庯級
-  // 鐢ㄦ埛杈撳叆绋庡墠 9100 鈫?effectiveMaxPrice 绋庡悗 10010锛屼絾绋庡墠 9100 鈮?10000锛屼笉瑙﹀彂
+  // 商城商品：current_price 是税前，submitMaxPrice 是税后。
+  // 税前 9100 对应税后 10010，但税前未超过 10000，不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 1, submitMaxPrice: 10010, taxType: 'tax_included'
   }), false);
-  // 鐢ㄦ埛杈撳叆绋庡墠 11000 鈫?effectiveMaxPrice 绋庡悗 12100锛岀◣鍓?11000 > 10000锛岃Е鍙?
+  // 税前 11000 对应税后 12100，税前超过 10000，触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 1, submitMaxPrice: 12100, taxType: 'tax_included'
   }), true);
-  // 鍟嗗煄鍟嗗搧 current_price=1000锛堢◣鍓嶏級锛屽埌杈圭晫锛屼笉瑙﹀彂
+  // 商城商品 current_price=1000 税前，到达边界，不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 1000, submitMaxPrice: 15000, taxType: 'tax_included'
   }), false);
-  // 鍟嗗煄鍟嗗搧 current_price=999锛堢◣鍓嶏級锛屼綆浜?1000锛岃Е鍙?
+  // 商城商品 current_price=999 税前，低于 1000，触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 999, submitMaxPrice: 15000, taxType: 'tax_included'
   }), true);
-  // 杈圭晫锛氱◣鍓嶅嚭浠锋濂?10000锛堢◣鍚?11000锛夛紝涓嶈Е鍙?
+  // 边界：税前出价正好 10000（税后 11000），不触发。
   assert.equal(shouldSplitDirectBidByYahooLowPriceRule({
     strategy: 'direct', bidMode: 'bid', currentPrice: 1, submitMaxPrice: 11000, taxType: 'tax_included'
   }), false);
@@ -610,14 +640,14 @@ function testScanCounterClearsAfterThresholdWhenScanDoesNotRun() {
 }
 
 function testIsFollowupTaskReady() {
-  // 褰撳墠浠?=1200 涓斾换鍔℃湭缁撴潫锛屽彲瑙﹀彂
+  // 当前价达到 1200 且任务未结束时可触发。
   assert.equal(isFollowupTaskReady({
     pending_followup_max_price: 20000,
     current_price: 1200,
     status: 'bidding',
     end_time: minutesFromNow(60)
   }, now), true);
-  // 褰撳墠浠蜂粛<1200锛堝嵆浣?1000锛夛紝涓嶈Е鍙戯紝缁曞紑绋庡墠/绋庡悗宸紓
+  // 当前价仍低于 1200 时不触发，避开税前/税后差异。
   assert.equal(isFollowupTaskReady({
     pending_followup_max_price: 20000,
     current_price: 1100,
@@ -630,20 +660,20 @@ function testIsFollowupTaskReady() {
     status: 'bidding',
     end_time: minutesFromNow(60)
   }, now), false);
-  // 鏍囪宸叉竻绌?
+  // 标记已清空。
   assert.equal(isFollowupTaskReady({
     pending_followup_max_price: null,
     current_price: 2000,
     status: 'bidding'
   }, now), false);
-  // 浠诲姟宸茬粨鏉?
+  // 任务已结束。
   assert.equal(isFollowupTaskReady({
     pending_followup_max_price: 20000,
     current_price: 2000,
     status: 'bidding',
     end_time: minutesFromNow(-10)
   }, now), false);
-  // 浠诲姟宸?success / failed锛屼笉鍐嶈拷鍔?
+  // 任务已 success / failed 时不再追加。
   assert.equal(isFollowupTaskReady({
     pending_followup_max_price: 20000,
     current_price: 2000,
@@ -686,13 +716,13 @@ async function testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker()
   assert.match(queries[0].sql, /pending_followup_max_price = NULL/);
   assert.equal(queries[0].params[0], 42);
   assert.match(queries[1].sql, /INSERT INTO tasks/);
-  // 妫€鏌ュ叧閿瓧娈典綅缃細user_id=7, product_id, ...
+  // 检查关键字段位置：user_id=7, product_id, ...
   assert.equal(queries[1].params[0], 7);
   assert.equal(queries[1].params[1], 'a123456789');
-  // tax_zero 鍟嗗搧锛歮ax_price / user_max_price 閮芥槸 20000
+  // tax_zero 商品：max_price / user_max_price 都是 20000。
   assert.equal(queries[1].params[9], 20000);
   assert.equal(queries[1].params[10], 20000);
-  // client_request_id 鐢?followup-{id}
+  // client_request_id 使用 followup-{id}。
   assert.equal(queries[1].params.at(-1), 'followup-42');
 }
 
@@ -725,7 +755,7 @@ async function testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxEx
 
   const created = await processPendingFollowupTasks(fakeDb, now);
   assert.equal(created, 1);
-  // 鍚◣鍟嗗搧鍙ｅ緞锛歶ser_max_price 鏄惈绋庡€?11103锛宮ax_price 鏄櫎绋庡€?10093
+  // 含税商品口径：user_max_price 是含税值 11103，max_price 是除税值 10093。
   assert.equal(insertParams[9], 10093); // max_price
   assert.equal(insertParams[10], 11103); // user_max_price
 }
@@ -745,7 +775,7 @@ async function testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup() {
       }];
     },
     async getOne() {
-      // 宸插瓨鍦ㄥ悓 client_request_id 鐨勪换鍔?
+      // 已存在同 client_request_id 的任务。
       return { id: 99 };
     },
     async query() {
@@ -765,7 +795,7 @@ async function testProcessPendingFollowupTasksSkipsWhenCurrentPriceStillBelowThr
         id: 42,
         user_id: 7,
         product_id: 'a123456789',
-        // 1100 楂樹簬 Yahoo 瑙勫垯 1000锛屼絾浠嶄綆浜?followup 闃堝€?1200锛岀粫寮€绋庡墠/绋庡悗宸紓
+        // 1100 高于 Yahoo 规则 1000，但仍低于 followup 阈值 1200，避开税前/税后差异。
         current_price: 1100,
         pending_followup_max_price: 20000,
         status: 'bidding',
@@ -2138,6 +2168,7 @@ testNormalizeManualPinCodeKeepsDigitsOnly();
 testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly();
 testSummarizePaymentErrorRemovesDebugDetails();
 Promise.all([
+  testSyncBiddingItemsStoresRemainingTimeText(),
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
   testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
   testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxExcluded(),

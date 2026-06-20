@@ -47,7 +47,7 @@ function getSheetConfig() {
 
 function isMojibakeGoogleSheetName(value) {
   const text = String(value || '');
-  return /�|���|锟斤拷|浠ｆ媿|浠ｆ媿琛|钀芥湱|鐢ㄦ埛|鍟嗗搧/.test(text);
+  return /\uFFFD|\uFFFD\uFFFD\uFFFD|\u951f\u65a4\u62f7|\u6d60\uff46\u5abf|\u6d60\uff46\u5abf\u741b|\u9480\u82a5\u6e71|\u9422\u3126\u57db|\u935f\u55d7\u6427/.test(text);
 }
 
 function normalizeGoogleSheetName(value) {

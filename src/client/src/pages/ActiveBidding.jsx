@@ -56,6 +56,14 @@ function formatBeijingTime(value) {
   }).format(date).replace(/\//g, '-');
 }
 
+function TimeIcon({ color = 'currentColor' }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill={color} aria-hidden="true" style={{ flex: '0 0 auto' }}>
+      <path fillRule="evenodd" d="M2 12C2 6.48 6.47 2 11.99 2 17.52 2 22 6.48 22 12s-4.48 10-10.01 10C6.47 22 2 17.52 2 12Zm2 0c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8Zm7-5h1.5v5.25l4.5 2.67-.75 1.23L11 13V7Z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
 export default function ActiveBidding() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
@@ -158,6 +166,15 @@ export default function ActiveBidding() {
                     {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
                     <br />
                     当前合计金额：<span style={{ color: colors.text, fontWeight: 600 }}>{formatTotalAmount(displayPrice, item.shipping_fee_text)}</span>
+                    {item.remaining_time_text ? (
+                      <>
+                        <br />
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: colors.danger, fontWeight: 700 }}>
+                          <TimeIcon color={colors.danger} />
+                          剩余时间：{item.remaining_time_text}
+                        </span>
+                      </>
+                    ) : null}
                     {item.updated_at ? (
                       <>
                         <br />

@@ -8,6 +8,7 @@
     "worker": "node src/worker/index.js",
     "db:init": "psql -f src/db/init.sql",
     "dev": "nodemon src/server/index.js",
+    "encoding:guard": "node scripts/encoding-guard.js",
     "regression": "node scripts/run-regression.js",
     "test:regression": "node scripts/run-regression.js"
   },
