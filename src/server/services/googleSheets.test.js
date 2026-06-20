@@ -7,6 +7,7 @@ const {
   extractSpreadsheetId,
   getGoogleSheetsCredentialPath,
   getSheetConfig,
+  normalizeGoogleSheetName,
   updateRowsByProductId
 } = require('./googleSheets');
 
@@ -79,6 +80,15 @@ async function testApplyConfigFromDbOverridesEnv() {
   applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
 }
 
+async function testMojibakeSheetNameFallsBackToDefault() {
+  assert.equal(normalizeGoogleSheetName('-\u4ee3\u62cd\u8868-'), '-\u4ee3\u62cd\u8868-');
+  assert.equal(normalizeGoogleSheetName('-\ufffd\ufffd\ufffd\ufffd-'), '');
+  assert.equal(normalizeGoogleSheetName('-\u6d60\uff46\u5abf\u741b-'), '');
+  applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '-\ufffd\ufffd\ufffd\ufffd-' });
+  assert.equal(getSheetConfig().sheetName, '-Ygao-');
+  applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
+}
+
 async function testUpdateRowsByProductIdSkipsWhenUnconfigured() {
   applyGoogleSheetsConfig({ googleSheetId: '', googleCredentialPath: '', googleSheetName: '' });
   await withEnv('GOOGLE_APPLICATION_CREDENTIALS', undefined, async () => {
@@ -143,6 +153,7 @@ async function run() {
   testAppendRowFormatSetsBlackText();
   testAppendRowFormatUsesWhiteBackgroundByDefault();
   await testApplyConfigFromDbOverridesEnv();
+  await testMojibakeSheetNameFallsBackToDefault();
   await testUpdateRowsByProductIdSkipsWhenUnconfigured();
 }
 

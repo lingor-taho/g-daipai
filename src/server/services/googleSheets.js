@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_SPREADSHEET_ID = '1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4';
-const DEFAULT_SHEET_NAME = '-代拍表-';
+const DEFAULT_SHEET_NAME = '-Ygao-';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
@@ -39,8 +39,21 @@ function isGoogleSheetsConfigured() {
 function getSheetConfig() {
   return {
     spreadsheetId: runtimeConfig.googleSheetId || process.env.GOOGLE_SHEETS_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID,
-    sheetName: runtimeConfig.googleSheetName || process.env.GOOGLE_SHEETS_SHEET_NAME || DEFAULT_SHEET_NAME
+    sheetName: normalizeGoogleSheetName(runtimeConfig.googleSheetName) ||
+      normalizeGoogleSheetName(process.env.GOOGLE_SHEETS_SHEET_NAME) ||
+      DEFAULT_SHEET_NAME
   };
+}
+
+function isMojibakeGoogleSheetName(value) {
+  const text = String(value || '');
+  return /�|���|锟斤拷|浠ｆ媿|浠ｆ媿琛|钀芥湱|鐢ㄦ埛|鍟嗗搧/.test(text);
+}
+
+function normalizeGoogleSheetName(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return isMojibakeGoogleSheetName(text) ? '' : text;
 }
 
 function getGoogleSheetsCredentialPath() {
@@ -63,7 +76,7 @@ function applyGoogleSheetsConfig(config = {}) {
   runtimeConfig = {
     googleSheetId: nextSheetId,
     googleCredentialPath: nextCredentialPath,
-    googleSheetName: nextSheetName
+    googleSheetName: normalizeGoogleSheetName(nextSheetName)
   };
   if (credentialChanged) cachedToken = null;
   return { ...runtimeConfig };
@@ -475,5 +488,6 @@ module.exports = {
   getSheetConfig,
   googleColorToHex,
   isGoogleSheetsConfigured,
+  normalizeGoogleSheetName,
   updateRowsByProductId
 };

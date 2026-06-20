@@ -30,7 +30,7 @@ const text = {
   updatedRange: '表格范围',
   note: '说明',
   description: (sheetName: string) =>
-    `将订单状态已经是“待收货”且尚未写入 Google 表格的订单批量追加到“${sheetName || '-代拍表-'}”。字段为：落札日期、用户名、商品链接、商品标题、落札价、运费、同捆运费、总价、物流、单号。系统内通过 google_sheet_appended_at 防止重复追加；如果表格外部已有手工行，当前不会读取表格做二次去重。表头为空时会自动写入表头。`
+    `将订单状态已经是“待收货”且尚未写入 Google 表格的订单批量追加到“${sheetName || '-Ygao-'}”。字段为：落札日期、用户名、商品链接、商品标题、落札价、运费、同捆运费、总价、物流、单号。系统内通过 google_sheet_appended_at 防止重复追加；如果表格外部已有手工行，当前不会读取表格做二次去重。表头为空时会自动写入表头。`
 };
 
 async function runReceiptSheetBackfill(limit: number) {
@@ -48,11 +48,11 @@ export default function ReceiptSheetBackfillPage() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<BackfillResult[]>([]);
-  const [sheetName, setSheetName] = useState('-代拍表-');
+  const [sheetName, setSheetName] = useState('-Ygao-');
 
   useEffect(() => {
     fetchAdminJson('/api/admin/multi-bid-config')
-      .then(data => setSheetName(data.googleSheetName || '-代拍表-'))
+      .then(data => setSheetName(data.googleSheetName || '-Ygao-'))
       .catch(() => {});
   }, []);
 

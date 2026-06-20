@@ -94,7 +94,7 @@ export default function MultiBidSettingsPage() {
           paymentJobLimitMax: data.paymentJobLimitMax ?? data.paymentJobLimit ?? 3,
           paymentPageStaySeconds: data.paymentPageStaySeconds ?? 3,
           googleSheetUrl: data.googleSheetUrl || '',
-          googleSheetName: data.googleSheetName || '-代拍表-',
+          googleSheetName: data.googleSheetName || '-Ygao-',
           googleCredentialPath: data.googleCredentialPath || '',
           googleConfigEditable: false
         });
@@ -181,7 +181,7 @@ export default function MultiBidSettingsPage() {
           paymentJobLimitMax: 3,
           paymentPageStaySeconds: 3,
           googleSheetUrl: '',
-          googleSheetName: '-代拍表-',
+          googleSheetName: '-Ygao-',
           googleCredentialPath: '',
           googleConfigEditable: false
         }}
@@ -377,7 +377,7 @@ export default function MultiBidSettingsPage() {
             label="Google工作表名称"
             rules={[{ required: googleConfigEditable, message: '请输入Google工作表名称' }]}
           >
-            <Input disabled={!googleConfigEditable} placeholder="-代拍表-" />
+            <Input disabled={!googleConfigEditable} placeholder="-Ygao-" />
           </Form.Item>
           <Form.Item
             name="googleCredentialPath"
