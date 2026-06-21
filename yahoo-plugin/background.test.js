@@ -137,9 +137,11 @@ function testTaskExecutionTimeoutIsLongerForMultiBid() {
   const api = loadBackgroundForTest();
 
   assert.equal(api.getTaskExecutionTimeoutMs({ strategy: 'direct' }), 30000);
+  assert.equal(api.getTaskExecutionTimeoutMs({ strategy: 'direct', bid_mode: 'buyout' }), 30000);
   assert.equal(api.getTaskExecutionTimeoutMs({ strategy: 'multi_bid' }), 180000);
   assert.equal(api.getTaskProgressExtensionMs({ strategy: 'direct' }), 0);
   assert.equal(api.getTaskProgressExtensionMs({ strategy: 'multi_bid' }), 60000);
+  assert.equal(api.getTaskExecutionMaxTimeoutMs({ strategy: 'direct', bid_mode: 'buyout' }), 30000);
   assert.equal(api.getTaskExecutionMaxTimeoutMs({ strategy: 'multi_bid' }), 600000);
 }
 
@@ -4621,6 +4623,91 @@ async function testFailedBidDoesNotImmediatelySyncWonPage() {
   assert.equal(statusBodies.some(body => body.status === 'failed'), true);
 }
 
+async function testBuyoutPendingFinalStaysBiddingForWonSync() {
+  const statusBodies = [];
+  const removedTabs = [];
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/task/88/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return {
+          ok: true,
+          async json() {
+            return { success: true };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/task/88/snapshot')) {
+        return {
+          ok: true,
+          async json() {
+            return { success: true };
+          }
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return {};
+        }
+      };
+    },
+    tabs: {
+      async create() {
+        return { id: 18, status: 'loading', url: 'https://auctions.yahoo.co.jp/jp/auction/u1234567890' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/u1234567890' };
+      },
+      onUpdatedAddListener(listener) {
+        listener(18, { status: 'complete' });
+      },
+      async sendMessage(id, msg) {
+        assert.equal(id, 18);
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'u1234567890',
+            currentPrice: 3142,
+            buyoutPrice: 3142,
+            endTime: '2026-06-21T23:59:00+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID') {
+          return { success: true, pendingFinal: true, stage: 'buyout-final-waiting' };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removedTabs.push(id);
+      }
+    },
+    scripting: {
+      async executeScript() {}
+    }
+  });
+
+  await api.executeBidTask({
+    id: 88,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/u1234567890',
+    current_price: 3142,
+    max_price: 3142,
+    user_max_price: 3142,
+    strategy: 'direct',
+    bid_mode: 'buyout',
+    tax_type: 'tax_included',
+    end_time: '2026-06-21T23:59:00+09:00'
+  }, { alreadyClaimed: true });
+
+  assert.equal(statusBodies.some(body => body.status === 'failed'), false);
+  assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
+  assert.deepEqual(removedTabs, [18]);
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -4751,6 +4838,7 @@ async function run() {
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
+  await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }
 

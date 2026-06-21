@@ -142,6 +142,24 @@ function getTaskExecutionMaxTimeoutMs(task = {}) {
   return task?.strategy === 'multi_bid' ? MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS : getTaskExecutionTimeoutMs(task);
 }
 
+function buildBuyoutPendingFinalResult(task = {}, result = {}) {
+  return {
+    success: true,
+    bidPrice: Number(task.max_price || task.user_max_price || 0) || undefined,
+    pendingFinal: false,
+    closeTab: true,
+    stage: 'buyout-final-pending-waiting-for-won-sync',
+    previousStage: result?.stage || ''
+  };
+}
+
+function isBuyoutFinalPending(task = {}, result = {}) {
+  return task?.bid_mode === 'buyout' &&
+    result?.success &&
+    result?.pendingFinal &&
+    /buyout-final/i.test(String(result?.stage || ''));
+}
+
 function getPendingFinalRetryDelayMs(task = {}, result = {}) {
   if (task?.bid_mode === 'buyout' || /buyout-final/i.test(String(result?.stage || ''))) {
     return BID_PENDING_FINAL_RETRY_DELAY_MS;
@@ -535,6 +553,9 @@ async function executeTaskInTabV2(tab, task) {
   }
 
   if (result.pendingFinal) {
+    if (isBuyoutFinalPending(task, result)) {
+      return buildBuyoutPendingFinalResult(task, result);
+    }
     let finalResult = result;
     for (let attempt = 0; attempt < 3 && finalResult?.pendingFinal; attempt += 1) {
       await sleep(getPendingFinalRetryDelayMs(task, finalResult));
@@ -556,6 +577,9 @@ async function executeTaskInTabV2(tab, task) {
       if (!finalResult?.success) {
         throw buildBidError(finalResult, 'final bid confirmation failed');
       }
+    }
+    if (isBuyoutFinalPending(task, finalResult)) {
+      return buildBuyoutPendingFinalResult(task, finalResult);
     }
     throw buildBidError(finalResult, 'final bid confirmation pending timeout');
   }
