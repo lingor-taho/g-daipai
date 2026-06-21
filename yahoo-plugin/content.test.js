@@ -51,6 +51,22 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
       body: {
         get textContent() {
           return options.getBodyText ? options.getBodyText() : bodyText;
+        },
+        cloneNode() {
+          const cloneText = options.getBodyTextWithoutDescription
+            ? options.getBodyTextWithoutDescription()
+            : (options.getBodyText ? options.getBodyText() : bodyText);
+          return {
+            querySelectorAll(selector) {
+              if (selector === '#description, [id="description"]') {
+                return [{ remove() {} }];
+              }
+              return [];
+            },
+            get textContent() {
+              return cloneText;
+            }
+          };
         }
       },
       querySelector(selector) {
@@ -230,6 +246,25 @@ function testYahooBidAccessFailureTextIsDetected() {
 
   assert.equal(api.isYahooBidAccessFailureText(), true);
   assert.equal(systemErrorApi.isYahooBidAccessFailureText(), true);
+}
+
+function testProductDescriptionRetryTextIsNotYahooSystemError() {
+  const api = loadContentForTest(
+    '\u3053\u306e\u30a2\u30a4\u30c6\u30e0\u3092\u624b\u306b\u3059\u308c\u3070\u3001\u61d0\u304b\u3057\u306e\u5192\u967a\u304c\u518d\u3073\u8607\u308a\u307e\u3059\u3002' +
+    '\u305c\u3072\u3001\u3042\u306e\u9803\u306e\u611f\u52d5\u3092\u3082\u3046\u4e00\u5ea6\u4f53\u9a13\u3057\u3066\u307f\u307e\u305b\u3093\u304b\uff1f ' +
+    '\u8d77\u52d5\u3067\u304d\u306a\u3044\u5834\u5408\u306f\u3001\u30ea\u30bb\u30c3\u30c8\u30dc\u30bf\u30f3\u3092\u6570\u56de\u62bc\u4e0b\u3059\u308b\u306a\u3069\u3092\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002'
+  );
+
+  assert.equal(api.isYahooBidAccessFailureText(), false);
+}
+
+function testProductDescriptionIsExcludedFromBidPageText() {
+  const api = loadContentForTest('', '/jp/auction/d1233022997', {
+    getBodyText: () => '\u5546\u54c1\u8aac\u660e \u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc \u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f \u73fe\u5728 480\u5186 \u4eca\u3059\u3050\u843d\u672d',
+    getBodyTextWithoutDescription: () => '\u73fe\u5728 480\u5186 \u4eca\u3059\u3050\u843d\u672d'
+  });
+
+  assert.equal(api.isYahooBidAccessFailureText(), false);
 }
 
 async function testYahooBidAccessFailureClosesTask() {
@@ -3329,6 +3364,8 @@ async function run() {
   testRebidRequiredWinsOverBidCompletedText();
   await testRebidRequiredFailsAfterOutcomeWait();
   testYahooBidAccessFailureTextIsDetected();
+  testProductDescriptionRetryTextIsNotYahooSystemError();
+  testProductDescriptionIsExcludedFromBidPageText();
   await testYahooBidAccessFailureClosesTask();
   await testYahooSystemErrorPageReturnsStableBidError();
   testAcceptedBidTextIsHighestBidder();

@@ -489,7 +489,26 @@ function shouldKeepTaskTabOpen(task, result) {
 function buildBidError(result, fallbackMessage) {
   const error = new Error(result?.error || fallbackMessage);
   error.closeTab = shouldCloseTaskTab(result);
+  error.bidResult = result || null;
+  error.diagnostics = result?.diagnostics || '';
+  error.url = result?.url || '';
   return error;
+}
+
+async function postBidFailureDiagnostic(task, error) {
+  const bidResult = error?.bidResult || {};
+  const diagnostics = bidResult.diagnostics || error?.diagnostics || '';
+  if (!diagnostics && !bidResult.url && !error?.url) return;
+  await postPluginDiagnostic({
+    type: 'bid_failure',
+    level: 'error',
+    productId: normalizeAuctionId(task?.product_url || task?.product_id || ''),
+    action: 'bid',
+    method: 'content-script',
+    message: error?.message || bidResult.error || 'bid failed',
+    diagnostics,
+    url: bidResult.url || error?.url || task?.product_url || ''
+  });
 }
 
 async function executeTaskInTabV2(tab, task) {
@@ -535,10 +554,10 @@ async function executeTaskInTabV2(tab, task) {
       }
       if (finalResult?.success && !finalResult.pendingFinal) return finalResult;
       if (!finalResult?.success) {
-        throw new Error(finalResult?.error || 'final bid confirmation failed');
+        throw buildBidError(finalResult, 'final bid confirmation failed');
       }
     }
-    throw new Error(finalResult?.error || 'final bid confirmation pending timeout');
+    throw buildBidError(finalResult, 'final bid confirmation pending timeout');
   }
 
   return result;
@@ -5165,6 +5184,7 @@ async function executeBidTask(task, options = {}) {
     if (taskTab?.id && e.closeTab) {
       await closeTaskTab(taskTab.id);
     }
+    await postBidFailureDiagnostic(task, e);
     await markTaskStatus(task.id, 'failed', e.message);
   } finally {
     activeBidRuns.delete(task.id);

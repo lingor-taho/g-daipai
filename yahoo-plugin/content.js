@@ -31,6 +31,15 @@ function normalizeVisibleText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function getBodyTextWithoutProductDescription() {
+  const body = document.body;
+  if (!body) return '';
+  if (!body.cloneNode) return body.textContent || '';
+  const clone = body.cloneNode(true);
+  clone.querySelectorAll?.('#description, [id="description"]').forEach(el => el.remove());
+  return clone.textContent || '';
+}
+
 function cleanupProductTitle(title, auctionId = '') {
   const cleaned = String(title || '')
     .replace(/^Yahoo![^-\n]*\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\s*-\s*/i, '')
@@ -105,7 +114,7 @@ function extractProductData() {
       return match ? parseInt(match[0].replace(/,/g, '')) : 0;
     }
     // Fallback: search whole page
-    const bodyText = document.body.textContent;
+    const bodyText = getBodyTextWithoutProductDescription();
     const m = bodyText.match(/(?:\u73fe\u5728|current)[^\d]{0,20}([\d,]+)/i);
     if (m) return parseInt(m[1].replace(/,/g, ''));
     return 0;
@@ -118,7 +127,7 @@ function extractProductData() {
       return getTaxType() === 'tax_included' && value >= 10 ? Math.round(value * 1.1) : value;
     }
 
-    const bodyText = document.body.textContent || '';
+    const bodyText = getBodyTextWithoutProductDescription();
     const match = bodyText.match(/\u5373\u6c7a(?:\u4fa1\u683c)?[^\d]{0,20}([\d,]+)\s*(?:\u5186|JPY)?/i);
     if (match?.[1]) return parseInt(match[1].replace(/,/g, ''), 10) || 0;
     if (/\u8cfc\u5165\u624b\u7d9a\u304d\u3078/.test(bodyText)) return getPrice();
@@ -126,7 +135,7 @@ function extractProductData() {
   }
 
   function getTaxType() {
-    const text = document.body.textContent || '';
+    const text = getBodyTextWithoutProductDescription();
     if (/\uff08\s*\u7a0e\s*0\s*\u5186\s*\uff09|\(\s*\u7a0e\s*0\s*\u5186\s*\)/.test(text)) return 'tax_zero';
     if (/\uff08\s*\u7a0e\u8fbc\s*\uff09|\(\s*\u7a0e\u8fbc\s*\)/.test(text)) return 'tax_included';
     return 'tax_zero';
@@ -135,18 +144,14 @@ function extractProductData() {
   function getShippingFeeText() {
     const nextDataItem = getNextDataItem();
     const postageText = document.querySelector('#itemPostage')?.textContent || '';
-    const nextDataShippingText = [
-      nextDataItem?.descriptionHtml,
-      ...(Array.isArray(nextDataItem?.description) ? nextDataItem.description : [])
-    ].filter(Boolean).join(' ');
     const shippingInput = String(nextDataItem?.shippingInput || '');
     const shippingCharge = String(nextDataItem?.chargeForShipping || '');
-    const bodyText = document.body?.textContent || '';
+    const bodyText = getBodyTextWithoutProductDescription();
     const postageIndex = bodyText.search(/\u9001\u6599|\u9001\u6599\u8ca0\u62c5|\u914d\u9001\u65b9\u6cd5/);
     const fallbackText = !shippingInput && !shippingCharge && postageIndex >= 0
       ? bodyText.slice(postageIndex, postageIndex + 300)
       : '';
-    const sourceText = `${postageText} ${nextDataShippingText} ${fallbackText}`;
+    const sourceText = `${postageText} ${fallbackText}`;
     const priceMatch = sourceText.match(/\u9001\u6599[^\d]{0,40}([\d,]+)\s*\u5186/);
     if (priceMatch?.[1]) return priceMatch[1].replace(/,/g, '') + '\u5186';
     const labelText = `${postageText} ${fallbackText} ${shippingInput} ${shippingCharge}`;
@@ -303,7 +308,7 @@ function extractCurrentAuctionPrice() {
 }
 
 function getBodyText() {
-  return document.body.textContent || '';
+  return getBodyTextWithoutProductDescription();
 }
 
 function isTaxIncludedPriceText(text) {
@@ -390,12 +395,36 @@ function isRebidRequiredText(text = getBodyText()) {
 
 function isYahooSystemBidFailureText(text = getBodyText()) {
   return /\u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc|\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f|\u6b63\u5e38\u306b\u51e6\u7406\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f/.test(text) ||
-    /\u3057\u3070\u3089\u304f\u6642\u9593\u3092\u304a\u3044\u3066|\u6642\u9593\u3092\u304a\u3044\u3066\u304b\u3089|\u6df7\u307f\u5408\u3063\u3066|\u3082\u3046\u4e00\u5ea6.*\u304a\u8a66\u3057|\u30da\u30fc\u30b8\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093/.test(text);
+    /\u3057\u3070\u3089\u304f\u6642\u9593\u3092\u304a\u3044\u3066|\u6642\u9593\u3092\u304a\u3044\u3066\u304b\u3089|\u6df7\u307f\u5408\u3063\u3066|\u3082\u3046\u4e00\u5ea6[^\u3002\uff01\uff1f!?]{0,30}\u304a\u8a66\u3057|\u30da\u30fc\u30b8\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093/.test(text);
 }
 
 function isYahooBidAccessFailureText(text = getBodyText()) {
   return /\u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f|\u30aa\u30fc\u30af\u30b7\u30e7\u30f3\u306b\u30a2\u30af\u30bb\u30b9\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f/.test(text) ||
     isYahooSystemBidFailureText(text);
+}
+
+function buildBidPageDiagnostics(stage) {
+  const body = getBodyText().replace(/\s+/g, ' ').trim().slice(0, 1200);
+  const href = window.location.href || '';
+  const title = document.title || '';
+  return {
+    url: href,
+    diagnostics: [
+      `stage=${stage || ''}`,
+      `url=${href}`,
+      `title=${title}`,
+      `body=${body}`
+    ].join(',')
+  };
+}
+
+function buildYahooSystemBidFailure(stage) {
+  return {
+    success: false,
+    error: 'Yahoo bid failed: Yahoo system error page',
+    closeTab: true,
+    ...buildBidPageDiagnostics(stage)
+  };
 }
 
 function hasBidSuccessText(text = getBodyText()) {
@@ -434,7 +463,7 @@ function extractAutoBidLimit(text = getBodyText()) {
 }
 
 function hasRaiseBidPrompt() {
-  const text = document.body.textContent || '';
+  const text = getBodyText();
   return /\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d/.test(text);
 }
 
@@ -620,7 +649,7 @@ async function waitForBidOutcome(timeoutMs = 10000) {
       return { success: true };
     }
     if (isYahooSystemBidFailureText()) {
-      return { success: false, error: 'Yahoo bid failed: Yahoo system error page', closeTab: true };
+      return buildYahooSystemBidFailure('wait-outcome-system-error');
     }
     if (isYahooBidAccessFailureText()) {
       return { success: false, error: 'Yahoo bid access failed', closeTab: true };
@@ -658,10 +687,10 @@ async function executeBidV3(maxPrice, options = {}) {
   const bidMode = options.bidMode === 'buyout' ? 'buyout' : 'bid';
   const strategy = options.strategy || 'direct';
   const taskId = options.taskId || null;
-  const bodyText = document.body.textContent || '';
+  const bodyText = getBodyText();
 
   if (isYahooSystemBidFailureText(bodyText)) {
-    return { success: false, error: 'Yahoo bid failed: Yahoo system error page', closeTab: true };
+    return buildYahooSystemBidFailure('execute-start-system-error');
   }
 
   if (isYahooLoginPageUrl()) {

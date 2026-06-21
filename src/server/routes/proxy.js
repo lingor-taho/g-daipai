@@ -44,6 +44,31 @@ function normalizeText(html) {
     .trim();
 }
 
+function stripElementById(html, id) {
+  let output = String(html || '');
+  for (let i = 0; i < 20; i += 1) {
+    const block = extractElementHtmlById(output, id);
+    if (!block) break;
+    output = output.replace(block, ' ');
+  }
+  return output;
+}
+
+function stripScriptAndStyleHtml(html) {
+  return String(html || '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<template\b[\s\S]*?<\/template>/gi, ' ');
+}
+
+function stripProductDescriptionHtml(html) {
+  return stripElementById(html, 'description');
+}
+
+function normalizePageTextWithoutProductDescription(html) {
+  return normalizeText(stripScriptAndStyleHtml(stripProductDescriptionHtml(html)));
+}
+
 function extractElementHtmlById(html, id) {
   const source = String(html || '');
   const openPattern = new RegExp(`<([a-z0-9]+)\\b[^>]*id=["']${id}["'][^>]*>`, 'i');
@@ -211,7 +236,7 @@ function extractBuyoutOnly(html) {
   const buyoutPrice = extractBuyoutPrice(html);
   if (buyoutPrice <= 0) return false;
   const buttonGroupText = normalizeText(extractElementHtmlById(html, 'bidButtonGroup'));
-  const pageText = normalizeText(html);
+  const pageText = normalizePageTextWithoutProductDescription(html);
   const actionText = buttonGroupText || pageText;
   const hasInstantBuyButton = /今すぐ落札/.test(buttonGroupText);
   const hasStorePurchaseButton = /購入手続きへ/.test(actionText);
@@ -221,14 +246,14 @@ function extractBuyoutOnly(html) {
 }
 
 function extractStorePurchaseTaxIncludedPrice(html) {
-  const text = normalizeText(html);
+  const text = normalizePageTextWithoutProductDescription(html);
   if (!/購入手続きへ/.test(text)) return 0;
   const match = text.match(/価格[^\d]{0,40}([\d,]+)\s*円\s*[\(（]?\s*税込/i);
   return match?.[1] ? parsePriceText(match[1]) : 0;
 }
 
 function extractTaxType(html) {
-  const text = normalizeText(html || '');
+  const text = normalizePageTextWithoutProductDescription(html || '');
   if (/（\s*税\s*0\s*円\s*）|\(\s*税\s*0\s*円\s*\)/.test(text)) return 'tax_zero';
   if (/（\s*税込\s*）|\(\s*税込\s*\)/.test(text)) return 'tax_included';
   return 'tax_zero';
@@ -248,14 +273,10 @@ function extractLowestStructuredShippingFee(item) {
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
   const nextDataItem = extractNextDataItem(html);
-  const nextDataShippingText = [
-    nextDataItem?.descriptionHtml,
-    ...(Array.isArray(nextDataItem?.description) ? nextDataItem.description : [])
-  ].filter(Boolean).join(' ');
-  const pageText = normalizeText(html);
+  const pageText = normalizePageTextWithoutProductDescription(html);
   const postageIndex = pageText.search(/送料|送料負担|配送方法/);
   const fallbackText = postageIndex >= 0 ? pageText.slice(postageIndex, postageIndex + 240) : '';
-  const text = normalizeText([postageHtml, nextDataShippingText, fallbackText].filter(Boolean).join(' '));
+  const text = normalizeText([postageHtml, fallbackText].filter(Boolean).join(' '));
   const shippingCharge = String(nextDataItem?.chargeForShipping || '');
   const shippingInput = String(nextDataItem?.shippingInput || '');
   const labelText = normalizeText([postageHtml, fallbackText, shippingInput, shippingCharge].filter(Boolean).join(' '));

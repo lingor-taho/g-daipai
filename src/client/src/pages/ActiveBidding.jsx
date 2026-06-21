@@ -16,6 +16,12 @@ const STRATEGY_LABELS = {
   '10min': '结束前 10 分钟'
 };
 
+const titleLinkStyle = {
+  color: colors.text,
+  textDecoration: 'none',
+  wordBreak: 'break-word'
+};
+
 function formatJPY(value) {
   const amount = Number(value || 0);
   return amount > 0 ? `${amount.toLocaleString('ja-JP')}円` : '-';
@@ -154,9 +160,14 @@ export default function ActiveBidding() {
                     )}
                     <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                   </div>
-                  <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6, color: colors.text }}>
+                  <a
+                    href={getProductUrl(item)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ ...titleLinkStyle, display: 'block', fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}
+                  >
                     {title}
-                  </div>
+                  </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
                     当前价格：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>

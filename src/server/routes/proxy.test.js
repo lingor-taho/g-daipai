@@ -376,16 +376,26 @@ async function testParseShippingFeeFromItemPostage() {
       </script>
     </body></html>
   `, 'x1231101693', 'https://auctions.yahoo.co.jp/jp/auction/x1231101693');
+  const productDescriptionShipping = parseProductHtml(`
+    <html><head><title>Shipping Test - Yahoo!</title></head>
+    <body>
+      <div id="description">商品説明 送料999円 無料 着払い</div>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"chargeForShipping":"winner"}}}}}}}
+      </script>
+    </body></html>
+  `, 'x1231101694', 'https://auctions.yahoo.co.jp/jp/auction/x1231101694');
 
   assert.equal(bidderPays.shippingFeeText, '落札者負担');
   assert.equal(cashOnDelivery.shippingFeeText, '着払い');
   assert.equal(free.shippingFeeText, '無料');
   assert.equal(fixed.shippingFeeText, '290円');
   assert.equal(fallbackWithoutItemPostage.shippingFeeText, '落札者負担');
-  assert.equal(nextDataDescription.shippingFeeText, '1380円');
+  assert.equal(nextDataDescription.shippingFeeText, '落札者負担');
   assert.equal(cashOnDeliveryFromNextData.shippingFeeText, '着払い');
   assert.equal(freeShippingFromNextData.shippingFeeText, '無料');
   assert.equal(cashOnDeliveryUnavailableDescription.shippingFeeText, '落札者負担');
+  assert.equal(productDescriptionShipping.shippingFeeText, '落札者負担');
 }
 
 async function testParseShippingFeeUsesLowestStructuredShippingMethod() {

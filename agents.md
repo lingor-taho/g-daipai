@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-20
+**最后更新**: 2026-06-21
 
 ---
 
@@ -323,6 +323,9 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-21 | 用户端“入札中”和“落札商品”两个页面的商品标题需要可点击，并以新窗口打开 Yahoo 商品页，方便查看商品详情 | `ActiveBidding.jsx` 和 `WonItems.jsx` 的商品标题改为 `<a target="_blank" rel="noopener noreferrer">`，链接优先使用接口返回的 `product_url`，缺失时按 `product_id` 拼 Yahoo 商品 URL；保留原标题视觉样式。验证：`npm run build --prefix src/client`。补充：`node --check` 不支持 `.jsx` 扩展，本次以 Vite build 作为语法/打包验证 |
+| 2026-06-21 | Yahoo 商品展示页的“商品说明”区域可能包含误导性文案，例如运费、税、错误提示、按钮关键词或卖家营销话术；普通商品和商城商品的说明 HTML 结构都在 `#description` 下，抓取商品信息和插件出价判断不应读取这部分文字 | 插件商品页全局文本读取新增排除 `#description` 的 helper，商品价格/即决价/税类型/运费兜底、出价错误识别和出价状态判断都不再读取商品说明；插件运费解析不再使用 `descriptionHtml/description`。服务端 `/api/proxy/fetch` 新增剥离 `#description`、`script/style/template` 后的页面文本兜底，运费解析不再从 `descriptionHtml/description` 读取。回归测试覆盖商品说明中出现系统错误/运费文案不影响出价和运费解析。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node src/server/routes/proxy.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/content.test.js`、`node --check src/server/routes/proxy.js`、`node --check src/server/routes/proxy.test.js` |
+| 2026-06-21 | 商品 `d1233022997` 在服务器插件自动即决时，商品页刚打开就关闭，任务失败为“Yahoo页面错误”；人工点击 `今すぐ落札` 可正常进入确认弹窗。根因是插件系统错误识别正则 `もう一度.*お試し` 过宽，跨过卖家商品说明中的“もう一度体験してみませんか？”和后文“お試しください”，把正常商品说明误判为 Yahoo 系统错误 | 收窄 Yahoo 系统错误正则：`もう一度` 到 `お試し` 之间限制 30 字且不能跨句号/问号/感叹号，避免跨段商品说明误判；同时出价失败时会把失败阶段、URL、标题和正文片段写入 `plugin_diagnostics`，后续远程 debug API 可直接看到失败页上下文。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node --check yahoo-plugin/content.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/content.test.js` |
 | 2026-06-20 | 用户端切换“提交任务 / 入札中 / 落札商品 / 统计页面”时，顶部公告、登录用户、当前账号和风格选择会随页面组件卸载重挂，出现刷新感 | 用户端路由改为共享 `ProtectedLayout`：`ManualVerificationAlert`、`UserNav`、`UserFooter` 只挂在受保护路由父级，四个业务页面通过 `Outlet` 切换；各页面移除重复 `UserNav/UserFooter/pageStyle` 包裹，切换 tab 时只刷新内容区。验证：`npm run build --prefix src/client` |
 | 2026-06-20 | 生产 `/api/debug/product/:productId` 查询有效商品时返回 `Empty reply from server` 并触发 API watcher 重启；日志显示 `SqliteError: no such column: id`，根因是 debug 查询 `bidding_items` 时按不存在的 `id` 列排序 | `buildProductDebugBiddingItemsQuery()` 改为按 `datetime(synced_at) DESC, product_id DESC` 排序，不再引用不存在的 `id`；独立 debug 路由和后台 debug 路由都增加 `try/catch`，后续 SQL 错误会返回 JSON `debug product report failed`，不会再让 API 进程直接退出。验证：`node src/server/routes/admin.orders.test.js`、`node src/server/routes/debug.test.js`、`node --check src/server/routes/admin.js`、`node --check src/server/routes/debug.js` |
 | 2026-06-20 | 用户端“入札中”页面需要按 Yahoo 剩余时间排序，最短要结束的商品排最前面 | `/api/task/bidding` 查询新增 `remaining_time_sort_minutes` 排序字段，把 `remaining_time_text` 中的 `分/時間/日` 转换为分钟数，按升序排列；无法解析剩余时间的商品排在最后，再按同步时间倒序兜底。验证：`node src/server/routes/task.test.js`、`node --check src/server/routes/task.js` |

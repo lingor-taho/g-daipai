@@ -16,6 +16,12 @@ const STRATEGY_LABELS = {
   '10min': '结束前 10 分钟'
 };
 
+const titleLinkStyle = {
+  color: colors.text,
+  textDecoration: 'none',
+  wordBreak: 'break-word'
+};
+
 function formatJPY(value) {
   const amount = Number(value || 0);
   return amount > 0 ? `${amount.toLocaleString('ja-JP')}円` : '-';
@@ -27,6 +33,10 @@ function getFinalPrice(item) {
 
 function getWonTimeDisplay(item) {
   return item.won_time_text || (item.won_at ? formatBeijingDateTime(item.won_at) : '');
+}
+
+function getProductUrl(item) {
+  return item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${item.product_id}`;
 }
 
 function renderOrderStatusTag(status) {
@@ -131,9 +141,14 @@ export default function WonItems() {
                     {!isCancelled && renderOrderStatusTag(item.order_status)}
                     <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                   </div>
-                  <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6, color: colors.text }}>
+                  <a
+                    href={getProductUrl(item)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ ...titleLinkStyle, display: 'block', fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}
+                  >
                     {title}
-                  </div>
+                  </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
                     落札价：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(finalPrice)}</span>
