@@ -9,10 +9,12 @@ src/admin/src/.umi-production/
 .env
 *.log
 logs/*.jsonl
+logs/*.patch
 
 .claude/
 
 data/*.db
+data/*.db.*
 data/*.sqlite
 data/*.sqlite3
 
