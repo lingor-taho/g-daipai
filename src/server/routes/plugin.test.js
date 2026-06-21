@@ -184,7 +184,8 @@ async function testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed()
 
   assert.equal(count, 2);
   assert.match(calls[0].sql, /status = 'pending'/);
-  assert.match(calls[0].sql, /datetime\(end_time\) <= datetime\(\?\)/);
+  assert.match(calls[0].sql, /datetime\(p\.end_time\) <= datetime\(\?\)/);
+  assert.doesNotMatch(calls[0].sql, /tasks\.end_time|[^.]end_time IS NOT NULL/);
   assert.equal(calls[0].params[0], 'Auction ended before plugin execution');
   assert.equal(calls[0].params[1], new Date(now).toISOString());
 }
@@ -203,7 +204,8 @@ async function testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed() {
   assert.equal(count, 1);
   assert.match(calls[0].sql, /status = 'pending'/);
   assert.match(calls[0].sql, /status = 'bidding' AND strategy = 'multi_bid'/);
-  assert.match(calls[0].sql, /current_price > max_price/);
+  assert.match(calls[0].sql, /p\.current_price > tasks\.max_price/);
+  assert.doesNotMatch(calls[0].sql, /tasks\.current_price/);
   assert.match(calls[0].sql, /COALESCE\(bid_mode,\s*'bid'\)\s*<>\s*'buyout'/);
   assert.equal(calls[0].params[0], 'Current price is above max price before execution');
 }
@@ -431,8 +433,9 @@ async function testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded() {
   const insertCall = calls.find(c => /INSERT INTO bidding_items/.test(c.sql));
   assert.equal(insertCall.params[4], 10093);
   const taxQuery = calls.find(call => call.type === 'getOne');
-  assert.match(taxQuery.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(taxQuery.sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+  assert.match(taxQuery.sql, /FROM products/);
+  assert.match(taxQuery.sql, /WHERE product_id = \?/);
+  assert.doesNotMatch(taxQuery.sql, /tasks|t\.tax_type/);
 }
 
 function testNormalizeYahooWonTimeTextInfersCurrentYear() {
@@ -720,8 +723,8 @@ async function testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker()
   assert.equal(queries[1].params[0], 7);
   assert.equal(queries[1].params[1], 'a123456789');
   // tax_zero 商品：max_price / user_max_price 都是 20000。
-  assert.equal(queries[1].params[9], 20000);
-  assert.equal(queries[1].params[10], 20000);
+  assert.equal(queries[1].params[2], 20000);
+  assert.equal(queries[1].params[3], 20000);
   // client_request_id 使用 followup-{id}。
   assert.equal(queries[1].params.at(-1), 'followup-42');
 }
@@ -756,8 +759,8 @@ async function testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxEx
   const created = await processPendingFollowupTasks(fakeDb, now);
   assert.equal(created, 1);
   // 含税商品口径：user_max_price 是含税值 11103，max_price 是除税值 10093。
-  assert.equal(insertParams[9], 10093); // max_price
-  assert.equal(insertParams[10], 11103); // user_max_price
+  assert.equal(insertParams[2], 10093); // max_price
+  assert.equal(insertParams[3], 11103); // user_max_price
 }
 
 async function testProcessPendingFollowupTasksSkipsWhenAlreadyHasFollowup() {
@@ -844,10 +847,11 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.equal(result.jobs[1].productId, 'n2');
   assert.equal(result.jobs[2].productId, 'n3');
   assert.match(queries[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(queries[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-  assert.match(queries[0].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
-  assert.match(queries[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
-  assert.match(queries[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(queries[0].sql, /p\.product_url AS product_url/);
+  assert.match(queries[0].sql, /p\.product_title AS product_title/);
+  assert.match(queries[0].sql, /p\.product_type AS product_type/);
+  assert.match(queries[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.doesNotMatch(queries[0].sql, /t\.(product_url|product_title|product_type|shipping_fee_text)/);
   assert.doesNotMatch(queries[0].sql, /t\.status = 'success'/);
   assert.doesNotMatch(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
   assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
@@ -971,7 +975,7 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) return tasks.get(params[0]) || null;
       if (/FROM orders WHERE task_id/.test(sql)) return existingOrders.get(params[0]) || null;
-      if (/SELECT \* FROM tasks WHERE id/.test(sql)) return taskRows.get(params[0]) || null;
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) return taskRows.get(params[0]) || null;
       return null;
     },
     async query(sql, params) {
@@ -1006,7 +1010,7 @@ async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) return { id: 77, force_orders_resync: 1 };
       if (/FROM orders WHERE task_id/.test(sql)) return { id: 177 };
-      if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) {
         return {
           id: 77,
           product_id: 'k1230268385',
@@ -1139,10 +1143,11 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
   assert.equal(calls[0].params[3], ORDER_STATUS_PENDING_BUNDLE);
   assert.equal(calls[0].params[4], ORDER_STATUS_PENDING_RECEIPT);
   assert.match(calls[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(calls[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-  assert.match(calls[0].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
-  assert.match(calls[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
-  assert.match(calls[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(calls[0].sql, /p\.product_url AS product_url/);
+  assert.match(calls[0].sql, /p\.product_title AS product_title/);
+  assert.match(calls[0].sql, /p\.product_type AS product_type/);
+  assert.match(calls[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.doesNotMatch(calls[0].sql, /t\.(product_url|product_title|product_type|shipping_fee_text)/);
   assert.equal(result.total, 1);
   assert.equal(result.jobs.length, 1);
   assert.equal(result.jobs[0].orderId, 11);
@@ -1290,10 +1295,11 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
       calls.push({ sql, params });
       assert.match(sql, /o\.bundle_group_id = \?/);
       assert.match(sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-      assert.match(sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-      assert.match(sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
-      assert.match(sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
-      assert.match(sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+      assert.match(sql, /p\.product_url AS product_url/);
+      assert.match(sql, /p\.product_title AS product_title/);
+      assert.match(sql, /p\.shipping_fee_text AS shipping_fee_text/);
+      assert.match(sql, /p\.tax_type AS tax_type/);
+      assert.doesNotMatch(sql, /t\.(product_url|product_title|shipping_fee_text|tax_type)/);
       assert.deepEqual(params, ['bundle-a', ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
       return [
         { id: 13, product_id: 'c1135451955', bundle_shipping_fee_text: '0円' },
@@ -1330,10 +1336,11 @@ async function testGetOrderForSheetUpdateUsesProductSnapshotFields() {
 
   assert.equal(order.id, 15);
   assert.match(calls[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(calls[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-  assert.match(calls[0].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
-  assert.match(calls[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
-  assert.match(calls[0].sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+  assert.match(calls[0].sql, /p\.product_url AS product_url/);
+  assert.match(calls[0].sql, /p\.product_title AS product_title/);
+  assert.match(calls[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.match(calls[0].sql, /p\.tax_type AS tax_type/);
+  assert.doesNotMatch(calls[0].sql, /t\.(product_url|product_title|shipping_fee_text|tax_type)/);
   assert.deepEqual(calls[0].params, [15, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
 }
 
@@ -1394,24 +1401,20 @@ async function testUpdateScanStatusWritesShippingAndPendingPayment() {
   assert.equal(result.shippingFeeText, '1060\u5186');
   assert.match(queries[0].sql, /FROM tasks t/);
   assert.match(queries[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(queries[0].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-  assert.match(queries[0].sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
-  assert.match(queries[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(queries[0].sql, /p\.product_url AS product_url/);
+  assert.match(queries[0].sql, /p\.tax_type AS tax_type/);
+  assert.match(queries[0].sql, /p\.product_type AS product_type/);
+  assert.doesNotMatch(queries[0].sql, /t\.(product_url|tax_type|product_type)/);
   assert.equal(queries[0].params[0], 11);
   assert.equal(queries[0].params[1], ORDER_STATUS_WAITING_SHIPPING);
-  assert.match(queries[1].sql, /UPDATE tasks/);
-  assert.match(queries[1].sql, /WHERE id = \(/);
-  assert.doesNotMatch(queries[1].sql, /product_id = \(/);
-  assert.match(queries[1].sql, /SELECT task_id/);
-  assert.equal(queries[1].params[0], '1060\u5186');
-  assert.equal(queries[1].params[1], 11);
-  assert.match(queries[2].sql, /INSERT INTO products/);
-  assert.equal(queries[2].params[0], 'm1233193360');
-  assert.equal(queries[2].params[9], '1060\u5186');
-  assert.match(queries[3].sql, /UPDATE orders/);
-  assert.equal(queries[3].params[0], ORDER_STATUS_PENDING_PAYMENT);
-  assert.equal(queries[3].params[1], 11);
-  assert.equal(queries[3].params[2], ORDER_STATUS_WAITING_SHIPPING);
+  assert.doesNotMatch(queries.map(q => q.sql).join('\n'), /UPDATE tasks[\s\S]*shipping_fee_text/);
+  assert.match(queries[1].sql, /INSERT INTO products/);
+  assert.equal(queries[1].params[0], 'm1233193360');
+  assert.equal(queries[1].params[9], '1060\u5186');
+  assert.match(queries[2].sql, /UPDATE orders/);
+  assert.equal(queries[2].params[0], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(queries[2].params[1], 11);
+  assert.equal(queries[2].params[2], ORDER_STATUS_WAITING_SHIPPING);
 }
 
 async function testUpdateScanStatusKeepsWaitingShippingWhenShippingPending() {
@@ -1511,10 +1514,11 @@ async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
       assert.match(sql, /o\.order_status = \?/);
       assert.match(sql, /o\.total_amount_cny IS NOT NULL/);
       assert.match(sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-      assert.match(sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-      assert.match(sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
-      assert.match(sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
-      assert.match(sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+      assert.match(sql, /p\.product_url AS product_url/);
+      assert.match(sql, /p\.product_title AS product_title/);
+      assert.match(sql, /p\.product_type AS product_type/);
+      assert.match(sql, /p\.shipping_fee_text AS shipping_fee_text/);
+      assert.doesNotMatch(sql, /t\.(product_url|product_title|product_type|shipping_fee_text)/);
       assert.match(sql, /ORDER BY datetime\(COALESCE\(o\.won_at, o\.created_at\)\) ASC, o\.id ASC/);
       assert.deepEqual(params.slice(0, 3), [
         ORDER_STATUS_PENDING_SETTLEMENT,
@@ -1937,9 +1941,10 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
     ORDER_STATUS_PENDING_SETTLEMENT
   ]);
   assert.match(calls[1].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(calls[1].sql, /COALESCE\(p\.product_url, t\.product_url\) AS product_url/);
-  assert.match(calls[1].sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
-  assert.match(calls[1].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
+  assert.match(calls[1].sql, /p\.product_url AS product_url/);
+  assert.match(calls[1].sql, /p\.product_title AS product_title/);
+  assert.match(calls[1].sql, /p\.product_type AS product_type/);
+  assert.doesNotMatch(calls[1].sql, /t\.(product_url|product_title|product_type)/);
   assert.equal(result.jobs.length, 3);
   assert.equal(result.jobs[0].jobType, 'confirm_receipt');
   assert.equal(result.jobs[1].jobType, 'cancel_check');

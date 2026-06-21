@@ -140,17 +140,36 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
 
 function buildAdminTasksListQuery({ pageSize, offset }) {
   return {
-    sql: `SELECT t.*,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.product_image_url, t.product_image_url) AS product_image_url,
-            COALESCE(p.current_price, t.current_price) AS current_price,
-            COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
-            COALESCE(p.bid_count, t.bid_count) AS bid_count,
-            COALESCE(p.tax_type, t.tax_type) AS tax_type,
-            COALESCE(p.product_type, t.product_type) AS product_type,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
-            COALESCE(p.end_time, t.end_time) AS end_time,
+    sql: `SELECT t.id,
+            t.user_id,
+            t.product_id,
+            t.max_price,
+            t.user_max_price,
+            t.multi_bid_increment,
+            t.strategy,
+            t.bid_mode,
+            t.start_minutes_before,
+            t.start_seconds_before,
+            t.status,
+            t.is_highest_bidder,
+            t.last_bid_at,
+            t.error_msg,
+            t.created_at,
+            t.updated_at,
+            t.client_request_id,
+            t.pending_followup_max_price,
+            t.force_orders_resync,
+            t.buyout_auto_paid,
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.product_image_url AS product_image_url,
+            p.current_price AS current_price,
+            p.buyout_price AS buyout_price,
+            p.bid_count AS bid_count,
+            p.tax_type AS tax_type,
+            p.product_type AS product_type,
+            p.shipping_fee_text AS shipping_fee_text,
+            p.end_time AS end_time,
             u.username
      FROM tasks t
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -164,9 +183,9 @@ function buildAdminPendingTasksQuery() {
   return {
     sql: `SELECT t.id,
             t.product_id,
-            COALESCE(p.product_title, t.product_title) AS product_title,
+            p.product_title AS product_title,
             CASE WHEN COALESCE(t.bid_mode, 'bid') = 'buyout'
-              THEN COALESCE(t.user_max_price, t.buyout_price, t.max_price)
+              THEN COALESCE(t.user_max_price, t.max_price)
               ELSE t.max_price
             END AS max_price,
             t.strategy,
@@ -174,7 +193,7 @@ function buildAdminPendingTasksQuery() {
             t.start_seconds_before,
             t.status,
             t.last_bid_at,
-            COALESCE(p.end_time, t.end_time) AS end_time,
+            p.end_time AS end_time,
             t.created_at
      FROM tasks t
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -188,10 +207,10 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
   return {
     sql: `SELECT o.*,
             COALESCE(o.product_id, t.product_id) AS product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
-            COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
-            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            p.product_url AS product_url,
+            p.shipping_fee_text AS shipping_fee_text,
+            COALESCE(p.tax_type, 'tax_zero') AS tax_type,
+            COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
             u.id AS user_id,
             u.username,
             ufo.rate_adjustment,
@@ -249,7 +268,7 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
     sql: `SELECT o.id,
             o.task_id,
             o.product_title,
-            COALESCE(p.product_url, o.product_url, t.product_url) AS product_url,
+            COALESCE(p.product_url, o.product_url) AS product_url,
             o.final_price,
             o.won_at,
             o.won_time_text,
@@ -270,9 +289,9 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
             o.has_user_finance_override,
             o.total_amount_cny,
             t.product_id,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
-            COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
-            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            p.shipping_fee_text AS shipping_fee_text,
+            COALESCE(p.tax_type, 'tax_zero') AS tax_type,
+            COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
             u.id AS user_id,
             u.username,
             ufo.rate_adjustment,
@@ -300,8 +319,8 @@ function buildOrderStatusDebugOrdersQuery(productId) {
             o.created_at, o.updated_at, o.transaction_started_at, o.transaction_start_error,
             o.bundle_group_id, o.bundle_shipping_fee_text,
             t.product_id,
-            COALESCE(p.product_type, t.product_type) AS product_type,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
+            p.product_type AS product_type,
+            p.shipping_fee_text AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -317,8 +336,8 @@ function buildOrderStatusDebugTasksQuery(productId) {
             t.product_id,
             t.status,
             t.strategy,
-            COALESCE(p.product_type, t.product_type) AS product_type,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
+            p.product_type AS product_type,
+            p.shipping_fee_text AS shipping_fee_text,
             t.created_at,
             t.updated_at,
             t.last_bid_at
@@ -336,33 +355,25 @@ function buildProductDebugTasksQuery(productId) {
             t.user_id,
             u.username,
             t.product_id,
-            t.product_url AS task_product_url,
             p.product_url AS product_product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
+            p.product_title AS product_title,
             t.status,
             t.strategy,
             t.bid_mode,
-            t.current_price AS task_current_price,
             p.current_price AS product_current_price,
-            COALESCE(p.current_price, t.current_price) AS display_current_price,
+            p.current_price AS display_current_price,
             t.max_price,
             t.user_max_price,
-            t.buyout_price AS task_buyout_price,
             p.buyout_price AS product_buyout_price,
-            t.bid_count AS task_bid_count,
             p.bid_count AS product_bid_count,
-            t.tax_type AS task_tax_type,
             p.tax_type AS product_tax_type,
-            COALESCE(p.tax_type, t.tax_type) AS effective_tax_type,
-            t.product_type AS task_product_type,
+            p.tax_type AS effective_tax_type,
             p.product_type AS product_product_type,
-            COALESCE(p.product_type, t.product_type) AS effective_product_type,
-            t.shipping_fee_text AS task_shipping_fee_text,
+            p.product_type AS effective_product_type,
             p.shipping_fee_text AS product_shipping_fee_text,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS effective_shipping_fee_text,
-            t.end_time AS task_end_time,
+            p.shipping_fee_text AS effective_shipping_fee_text,
             p.end_time AS product_end_time,
-            COALESCE(p.end_time, t.end_time) AS effective_end_time,
+            p.end_time AS effective_end_time,
             t.is_highest_bidder,
             t.last_bid_at,
             t.error_msg,
@@ -533,9 +544,9 @@ function buildOrderSettlementSelectQuery(orderId) {
   return {
     sql: `SELECT o.*,
               COALESCE(o.product_id, t.product_id) AS product_id,
-              COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
-              COALESCE(p.tax_type, t.tax_type, 'tax_zero') AS tax_type,
-              COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+              p.shipping_fee_text AS shipping_fee_text,
+              COALESCE(p.tax_type, 'tax_zero') AS tax_type,
+              COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
               u.id AS user_id,
               ufo.rate_adjustment,
               ufo.bank_fee_jpy AS user_bank_fee_jpy,
@@ -553,7 +564,7 @@ function buildOrderSettlementSelectQuery(orderId) {
 
 function buildAdminLogsQuery({ pageSize, offset }) {
   return {
-    sql: `SELECT bl.*, COALESCE(p.product_title, t.product_title) AS product_title, ya.account_name
+    sql: `SELECT bl.*, p.product_title AS product_title, ya.account_name
      FROM bid_logs bl
      LEFT JOIN tasks t ON bl.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -1300,7 +1311,7 @@ async function backfillStoreBundle(database, payload = {}, options = {}) {
     `SELECT o.id AS order_id,
             o.order_status,
             t.product_id,
-            COALESCE(p.product_type, t.product_type, CASE WHEN COALESCE(p.tax_type, t.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type
+            COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -2100,22 +2111,14 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     }, { source: 'fetch' });
     await database.query(
       `INSERT INTO tasks
-        (user_id, product_id, product_url, product_title, product_image_url,
-         current_price, max_price, user_max_price, tax_type, product_type,
-         strategy, bid_mode, status, shipping_fee_text, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_import', 'manual_import', 'success', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        (user_id, product_id, max_price, user_max_price,
+         strategy, bid_mode, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'manual_import', 'manual_import', 'success', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         item.assigned_user_id,
         productId,
-        importProductUrl,
-        item.product_title || productId,
-        item.product_image_url || '',
         importFinalPrice,
-        importFinalPrice,
-        importFinalPrice,
-        item.tax_type || 'tax_zero',
-        item.product_type || 'normal',
-        item.shipping_fee_text || ''
+        importFinalPrice
       ]
     );
     const taskRow = await database.getOne('SELECT last_insert_rowid() AS id');
@@ -2492,13 +2495,6 @@ async function refreshProductShippingFee(database, service, productId) {
   if (!shippingFeeText) {
     return { productId: normalizedProductId, success: false, error: '未解析到运费，未更新' };
   }
-  const updateResult = await database.query(
-    `UPDATE tasks
-     SET shipping_fee_text = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE product_id = ?`,
-    [shippingFeeText, normalizedProductId]
-  );
   await upsertProductSnapshot(database, {
     ...buildFetchedProductSnapshot(normalizedProductId, productData),
     shipping_fee_text: shippingFeeText
@@ -2507,7 +2503,7 @@ async function refreshProductShippingFee(database, service, productId) {
     productId: normalizedProductId,
     success: true,
     shippingFeeText,
-    updatedCount: updateResult.rowCount || 0
+    updatedCount: Number(taskCount?.count || 0)
   };
 }
 
@@ -2527,13 +2523,6 @@ async function refreshProductType(database, service, productId) {
   if (!productType) {
     return { productId: normalizedProductId, success: false, error: '未解析到商品类型，未更新' };
   }
-  const updateResult = await database.query(
-    `UPDATE tasks
-     SET product_type = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE product_id = ?`,
-    [productType, normalizedProductId]
-  );
   await upsertProductSnapshot(database, {
     ...buildFetchedProductSnapshot(normalizedProductId, productData),
     product_type: productType
@@ -2543,7 +2532,7 @@ async function refreshProductType(database, service, productId) {
     success: true,
     productType,
     productTypeText: productType === 'store' ? '商城商品' : '普通商品',
-    updatedCount: updateResult.rowCount || 0
+    updatedCount: Number(taskCount?.count || 0)
   };
 }
 

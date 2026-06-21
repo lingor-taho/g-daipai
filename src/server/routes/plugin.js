@@ -264,9 +264,14 @@ async function expireOverduePendingTasks(database = db, nowMs = Date.now()) {
          is_highest_bidder = 0,
          error_msg = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE status = 'pending'
-       AND end_time IS NOT NULL
-       AND datetime(end_time) <= datetime(?)`,
+      WHERE status = 'pending'
+        AND EXISTS (
+          SELECT 1
+          FROM products p
+          WHERE p.product_id = tasks.product_id
+            AND p.end_time IS NOT NULL
+            AND datetime(p.end_time) <= datetime(?)
+        )`,
     ['Auction ended before plugin execution', nowIso]
   );
   return result.rowCount || 0;
@@ -281,16 +286,21 @@ async function failPricedOutPendingTasks(database = db) {
          is_highest_bidder = 0,
          error_msg = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE (
-         status = 'pending'
-         OR (status = 'bidding' AND strategy = 'multi_bid')
-       )
-       AND current_price IS NOT NULL
-       AND max_price IS NOT NULL
-       AND current_price > 0
-       AND max_price > 0
-       AND COALESCE(bid_mode, 'bid') <> 'buyout'
-       AND current_price > max_price`,
+      WHERE (
+          status = 'pending'
+          OR (status = 'bidding' AND strategy = 'multi_bid')
+        )
+        AND max_price IS NOT NULL
+        AND max_price > 0
+        AND COALESCE(bid_mode, 'bid') <> 'buyout'
+        AND EXISTS (
+          SELECT 1
+          FROM products p
+          WHERE p.product_id = tasks.product_id
+            AND p.current_price IS NOT NULL
+            AND p.current_price > 0
+            AND p.current_price > tasks.max_price
+        )`,
     ['Current price is above max price before execution']
   );
   return result.rowCount || 0;
@@ -328,7 +338,42 @@ async function claimTaskForProcessing(taskId, database = db) {
 
 async function getPluginTaskCandidates(database = db) {
   return database.getAll(
-    "SELECT * FROM tasks WHERE status = 'pending' OR (status = 'bidding' AND strategy = 'multi_bid') ORDER BY created_at ASC LIMIT 100"
+    `SELECT t.id,
+            t.user_id,
+            t.product_id,
+            t.max_price,
+            t.user_max_price,
+            t.multi_bid_increment,
+            t.strategy,
+            t.bid_mode,
+            t.start_minutes_before,
+            t.start_seconds_before,
+            t.status,
+            t.is_highest_bidder,
+            t.last_bid_at,
+            t.error_msg,
+            t.created_at,
+            t.updated_at,
+            t.client_request_id,
+            t.pending_followup_max_price,
+            t.force_orders_resync,
+            t.buyout_auto_paid,
+            p.product_url,
+            p.product_title,
+            p.product_image_url,
+            p.current_price,
+            p.buyout_price,
+            p.bid_count,
+            p.tax_type,
+            p.product_type,
+            p.shipping_fee_text,
+            p.end_time
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE t.status = 'pending'
+        OR (t.status = 'bidding' AND t.strategy = 'multi_bid')
+     ORDER BY t.created_at ASC
+     LIMIT 100`
   );
 }
 
@@ -862,13 +907,12 @@ router.patch('/task/:id/status', async (req, res) => {
       `UPDATE tasks
        SET status = ?,
            error_msg = ?,
-           bid_count = CASE WHEN ? THEN COALESCE(bid_count, 0) ELSE COALESCE(bid_count, 0) + 1 END,
            last_bid_at = CURRENT_TIMESTAMP,
            is_highest_bidder = CASE WHEN ? THEN 0 ELSE 1 END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
          AND status != 'cancelled'`,
-      [status, error_msg || null, no_bid ? 1 : 0, not_highest ? 1 : 0, req.params.id]
+      [status, error_msg || null, not_highest ? 1 : 0, req.params.id]
     );
     if (result.rowCount > 0 && bid_price) {
       await db.query(
@@ -944,43 +988,41 @@ function normalizeYahooWonTimeText(value, nowMs = Date.now()) {
 }
 
 async function upsertOrderFromTask(taskId, options = {}, database = db) {
-  const task = await database.getOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  const task = await database.getOne(
+    `SELECT t.id,
+            t.product_id,
+            p.product_url,
+            p.product_title,
+            p.current_price
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE t.id = ?`,
+    [taskId]
+  );
   if (!task) return;
-  await upsertProductSnapshot(database, {
-    product_id: task.product_id,
-    product_url: task.product_url,
-    product_title: task.product_title || task.product_id,
-    product_image_url: task.product_image_url,
-    current_price: task.current_price,
-    buyout_price: task.buyout_price,
-    bid_count: task.bid_count,
-    tax_type: task.tax_type || 'tax_zero',
-    product_type: task.product_type || (task.tax_type === 'tax_included' ? 'store' : 'normal'),
-    shipping_fee_text: task.shipping_fee_text,
-    end_time: task.end_time
-  }, { source: 'fetch' });
   const existing = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
   const transactionUrl = String(options.transactionUrl || '').trim() || null;
+  const productTitle = task.product_title || task.product_id;
   if (existing) {
     await database.query(
       `UPDATE orders
        SET product_id = COALESCE(product_id, ?),
-           product_title = ?, product_url = ?, final_price = COALESCE(?, final_price),
+            product_title = ?, product_url = ?, final_price = COALESCE(?, final_price),
            won_at = COALESCE(?, won_at),
            won_time_text = COALESCE(?, won_time_text),
            transaction_url = COALESCE(?, transaction_url),
            updated_at = CURRENT_TIMESTAMP
        WHERE task_id = ?`,
-      [task.product_id, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
+      [task.product_id, productTitle, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
     );
   } else {
     await database.query(
       `INSERT INTO orders (task_id, product_id, product_title, product_url, final_price, won_at, won_time_text, transaction_url)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [taskId, task.product_id, task.product_title || task.product_id, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
+      [taskId, task.product_id, productTitle, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
     );
   }
 }
@@ -1003,12 +1045,23 @@ function isFollowupTaskReady(task, nowMs = Date.now()) {
 
 async function processPendingFollowupTasks(database = db, nowMs = Date.now()) {
   const candidates = await database.getAll(
-    `SELECT id, user_id, product_id, product_url, product_title, product_image_url,
-            current_price, buyout_price, tax_type, shipping_fee_text,
-            pending_followup_max_price, status, end_time
-     FROM tasks
-     WHERE pending_followup_max_price IS NOT NULL
-       AND status IN ('pending', 'processing', 'bidding')`
+    `SELECT t.id,
+            t.user_id,
+            t.product_id,
+            p.product_url,
+            p.product_title,
+            p.product_image_url,
+            p.current_price,
+            p.buyout_price,
+            p.tax_type,
+            p.shipping_fee_text,
+            t.pending_followup_max_price,
+            t.status,
+            p.end_time
+     FROM tasks t
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE t.pending_followup_max_price IS NOT NULL
+       AND t.status IN ('pending', 'processing', 'bidding')`
   );
   let created = 0;
   for (const task of candidates) {
@@ -1038,25 +1091,15 @@ async function processPendingFollowupTasks(database = db, nowMs = Date.now()) {
     if (existing) continue;
     await database.query(
       `INSERT INTO tasks (
-         user_id, product_id, product_url, product_title, product_image_url,
-         current_price, buyout_price, tax_type, shipping_fee_text,
-         max_price, user_max_price, strategy, bid_mode,
-         status, end_time, client_request_id
+         user_id, product_id, max_price, user_max_price, strategy, bid_mode,
+         status, client_request_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct', 'bid', 'pending', ?, ?)`,
+       VALUES (?, ?, ?, ?, 'direct', 'bid', 'pending', ?)`,
       [
         task.user_id,
         task.product_id,
-        task.product_url,
-        task.product_title,
-        task.product_image_url,
-        task.current_price,
-        task.buyout_price,
-        task.tax_type || 'tax_zero',
-        task.shipping_fee_text,
         followupBidMaxPrice,
         followupUserMaxPrice,
-        task.end_time,
         clientRequestId
       ]
     );
@@ -1086,11 +1129,9 @@ async function syncBiddingItems(items, database = db) {
     // /my/bidding 列表页"現在 ××円"对商城商品是税后值，对普通商品是税前。
     // 数据库 current_price 统一存税前口径，写入前按商品快照的 tax_type 折回税前。
     const taskTaxRow = await database.getOne(
-      `SELECT COALESCE(p.tax_type, t.tax_type) AS tax_type
-       FROM tasks t
-       LEFT JOIN products p ON p.product_id = t.product_id
-       WHERE t.product_id = ?
-       ORDER BY t.id DESC
+      `SELECT tax_type
+       FROM products
+       WHERE product_id = ?
        LIMIT 1`,
       [productId]
     );
@@ -1145,28 +1186,21 @@ async function syncBiddingItems(items, database = db) {
         `UPDATE tasks
          SET status = 'bidding',
              is_highest_bidder = 1,
-             product_image_url = COALESCE(?, product_image_url),
-             current_price = COALESCE(?, current_price),
              error_msg = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE product_id = ?
-           AND status IN ('bidding', 'success')`,
-        [
-          item.imageUrl || null,
-          currentPrice,
-          productId
-        ]
+          WHERE product_id = ?
+            AND status IN ('bidding', 'success')`,
+        [productId]
       );
       highest += 1;
     } else {
       await database.query(
         `UPDATE tasks
          SET is_highest_bidder = 0,
-             current_price = COALESCE(?, current_price),
              updated_at = CURRENT_TIMESTAMP
-         WHERE product_id = ?
-           AND status = 'bidding'`,
-        [currentPrice, productId]
+          WHERE product_id = ?
+            AND status = 'bidding'`,
+        [productId]
       );
       outbid += 1;
     }
@@ -1182,10 +1216,10 @@ async function getTransactionStartJobs(database = db, options = {}) {
     `SELECT o.id AS order_id,
             o.transaction_url,
             t.product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.product_type, t.product_type) AS product_type,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.product_type AS product_type,
+            p.shipping_fee_text AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -1509,10 +1543,10 @@ async function getOrdersForSheetAppend(orderId, database = db) {
             o.bundle_shipping_fee_text,
             o.google_sheet_appended_at,
             t.product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
-            COALESCE(p.tax_type, t.tax_type) AS tax_type,
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.shipping_fee_text AS shipping_fee_text,
+            p.tax_type AS tax_type,
             o.shipping_company,
             o.tracking_number,
             u.username,
@@ -1569,10 +1603,10 @@ async function getOrderForSheetUpdate(orderId, database = db) {
             o.bundle_group_id,
             o.bundle_shipping_fee_text,
             t.product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text,
-            COALESCE(p.tax_type, t.tax_type) AS tax_type,
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.shipping_fee_text AS shipping_fee_text,
+            p.tax_type AS tax_type,
             o.shipping_company,
             o.tracking_number,
             u.username,
@@ -1929,10 +1963,10 @@ async function getScanJobs(database = db) {
                 AND l.new_status = ?
             ), o.updated_at, o.created_at) AS pending_shipment_since,
             t.product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.product_type, t.product_type) AS product_type,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.product_type AS product_type,
+            p.shipping_fee_text AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -2153,15 +2187,15 @@ async function updateScanStatus(payload = {}, database = db) {
   const taskSnapshot = typeof database.getOne === 'function'
     ? await database.getOne(
       `SELECT t.product_id,
-              COALESCE(p.product_url, t.product_url) AS product_url,
-              COALESCE(p.product_title, t.product_title) AS product_title,
-              COALESCE(p.product_image_url, t.product_image_url) AS product_image_url,
-              COALESCE(p.current_price, t.current_price) AS current_price,
-              COALESCE(p.buyout_price, t.buyout_price) AS buyout_price,
-              COALESCE(p.bid_count, t.bid_count) AS bid_count,
-              COALESCE(p.tax_type, t.tax_type) AS tax_type,
-              COALESCE(p.product_type, t.product_type) AS product_type,
-              COALESCE(p.end_time, t.end_time) AS end_time
+              p.product_url AS product_url,
+              p.product_title AS product_title,
+              p.product_image_url AS product_image_url,
+              p.current_price AS current_price,
+              p.buyout_price AS buyout_price,
+              p.bid_count AS bid_count,
+              p.tax_type AS tax_type,
+              p.product_type AS product_type,
+              p.end_time AS end_time
        FROM tasks t
        INNER JOIN orders o ON o.task_id = t.id
        LEFT JOIN products p ON p.product_id = t.product_id
@@ -2172,18 +2206,6 @@ async function updateScanStatus(payload = {}, database = db) {
     )
     : null;
 
-  await database.query(
-    `UPDATE tasks
-     SET shipping_fee_text = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id = (
-       SELECT task_id
-       FROM orders
-       WHERE id = ?
-         AND order_status = ?
-     )`,
-    [shippingFeeText, orderId, ORDER_STATUS_WAITING_SHIPPING]
-  );
   if (taskSnapshot?.product_id) {
     await upsertProductSnapshot(database, {
       ...taskSnapshot,
@@ -2264,9 +2286,9 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
             o.transaction_url,
             o.bundle_group_id,
             t.product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.product_type, t.product_type) AS product_type
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.product_type AS product_type
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -2433,10 +2455,10 @@ async function getPaymentJobs(database = db, options = {}) {
             o.bundle_shipping_fee_text,
             o.bundle_group_id,
             t.product_id,
-            COALESCE(p.product_url, t.product_url) AS product_url,
-            COALESCE(p.product_title, t.product_title) AS product_title,
-            COALESCE(p.product_type, t.product_type) AS product_type,
-            COALESCE(p.shipping_fee_text, t.shipping_fee_text) AS shipping_fee_text
+            p.product_url AS product_url,
+            p.product_title AS product_title,
+            p.product_type AS product_type,
+            p.shipping_fee_text AS shipping_fee_text
      FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -2821,44 +2843,49 @@ router.post('/yahoo-login/status', async (req, res) => {
 
 router.patch('/task/:id/snapshot', async (req, res) => {
   const {
+    product_url,
+    product_title,
     product_image_url,
     current_price,
     buyout_price,
+    bid_count,
     tax_type,
+    product_type,
+    shipping_fee_text,
     end_time,
     status
   } = req.body || {};
   await db.query(
     `UPDATE tasks
-     SET product_image_url = COALESCE(?, product_image_url),
-         current_price = COALESCE(?, current_price),
-         buyout_price = COALESCE(?, buyout_price),
-         tax_type = COALESCE(?, tax_type),
-         end_time = COALESCE(?, end_time),
-         status = COALESCE(?, status),
+     SET status = COALESCE(?, status),
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
        AND status != 'cancelled'`,
     [
-      product_image_url || null,
-      current_price || null,
-      buyout_price || null,
-      tax_type || null,
-      end_time || null,
       status || null,
       req.params.id
     ]
   );
   const task = await db.getOne(
-    `SELECT id, product_id, product_url, product_title, product_image_url,
-            current_price, buyout_price, bid_count, tax_type, product_type,
-            shipping_fee_text, end_time
+    `SELECT id, product_id
      FROM tasks
      WHERE id = ?`,
     [req.params.id]
   );
   if (task) {
-    await upsertProductSnapshot(db, task, { source: 'fetch' });
+    await upsertProductSnapshot(db, {
+      product_id: task.product_id,
+      product_url,
+      product_title,
+      product_image_url,
+      current_price,
+      buyout_price,
+      bid_count,
+      tax_type,
+      product_type,
+      shipping_fee_text,
+      end_time
+    }, { source: 'fetch' });
   }
   await processPendingFollowupTasks();
   res.json({ success: true });

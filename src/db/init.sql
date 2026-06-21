@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER REFERENCES users(id),
   product_id VARCHAR(32) NOT NULL,
-  product_url TEXT NOT NULL,
+  product_url TEXT,
   product_title VARCHAR(512),
   product_image_url TEXT,
   current_price INTEGER,

@@ -19,9 +19,10 @@ async function testGetOrderStatusAuditRowsDedupesIds() {
   assert.deepEqual(calls[0].params, [3, 4]);
   assert.match(calls[0].sql, /INNER JOIN tasks/);
   assert.match(calls[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(calls[0].sql, /COALESCE\(p\.product_type, t\.product_type\) AS product_type/);
-  assert.match(calls[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
-  assert.match(calls[0].sql, /COALESCE\(p\.tax_type, t\.tax_type\) AS tax_type/);
+  assert.match(calls[0].sql, /p\.product_type AS product_type/);
+  assert.match(calls[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.match(calls[0].sql, /p\.tax_type AS tax_type/);
+  assert.doesNotMatch(calls[0].sql, /t\.(product_type|shipping_fee_text|tax_type)/);
 }
 
 async function testWriteOrderStatusAuditLogsRecordsOnlyChangesWithSnapshot() {
@@ -120,7 +121,8 @@ async function testBackfillMissingOrderStatusAuditLogsRecordsDetectedStatus() {
   assert.equal(result.inserted, 1);
   assert.match(calls[0].sql, /NOT EXISTS/);
   assert.match(calls[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(calls[0].sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(calls[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.doesNotMatch(calls[0].sql, /t\.shipping_fee_text/);
   assert.equal(calls[0].params[0], 10);
   assert.equal(calls[1].params[3], 'pending_payment');
   assert.equal(calls[1].params[4], 'unlogged_existing_status');

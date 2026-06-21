@@ -5,12 +5,14 @@ const {
   backfillProductsFromExistingData,
   backfillOrderProductIds
 } = require('../services/productRepository');
+const { relaxTasksProductUrlNotNull } = require('./schemaMaintenance');
 
 const dbPath = config.databaseUrl.replace('sqlite:', '').replace('//', '');
 const db = new Database(path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd(), dbPath));
 
 // 启用外键约束
 db.pragma('foreign_keys = ON');
+relaxTasksProductUrlNotNull(db);
 
 function ensureColumn(table, column, definition) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all();

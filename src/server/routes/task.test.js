@@ -260,9 +260,11 @@ function testActiveBiddingQueryIncludesHighestAndOutbidStatuses() {
   assert.match(query.sql, /remaining_time_sort_minutes ASC/);
   assert.match(query.sql, /ORDER BY datetime\(t2\.created_at\) DESC, t2\.id DESC/);
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = bi\.product_id/);
-  assert.match(query.sql, /COALESCE\(p\.product_title, t\.product_title\) AS product_title/);
+  assert.match(query.sql, /p\.product_title AS product_title/);
+  assert.doesNotMatch(query.sql, /t\.product_title/);
   assert.doesNotMatch(query.sql, /bi\.product_title/);
-  assert.match(query.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(query.sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.doesNotMatch(query.sql, /t\.shipping_fee_text/);
   assert.match(query.sql, /AS product_type/);
   assert.match(query.sql, /CASE WHEN bi\.status = 'highest' THEN 1 ELSE 0 END AS is_highest_bidder/);
   assert.match(query.sql, /LIMIT \? OFFSET \?/);
@@ -297,9 +299,11 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
 
   assert.match(exportQuery.sql, /t\.product_id/);
   assert.match(exportQuery.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(exportQuery.sql, /COALESCE\(o\.product_title, p\.product_title, t\.product_title, ''\) AS product_title/);
+  assert.match(exportQuery.sql, /COALESCE\(o\.product_title, p\.product_title, ''\) AS product_title/);
+  assert.doesNotMatch(exportQuery.sql, /t\.product_title/);
   assert.match(exportQuery.sql, /o\.final_price/);
-  assert.match(exportQuery.sql, /COALESCE\(p\.shipping_fee_text, t\.shipping_fee_text\) AS shipping_fee_text/);
+  assert.match(exportQuery.sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.doesNotMatch(exportQuery.sql, /t\.shipping_fee_text/);
   assert.match(exportQuery.sql, /o\.won_at/);
   assert.deepEqual(exportQuery.params, [9, 30]);
 }
