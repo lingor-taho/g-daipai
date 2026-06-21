@@ -247,6 +247,10 @@ function isContentScriptTargetGoneError(error) {
   return isNoTabWithIdError(error) || /Frame with ID \d+ was removed|The tab was closed/i.test(text);
 }
 
+function isTabsTemporarilyUneditableError(error) {
+  return /Tabs cannot be edited right now|user may be dragging a tab/i.test(error?.message || String(error || ''));
+}
+
 function isTransientFetchError(error) {
   const text = error?.message || String(error || '');
   return /Failed to fetch|NetworkError|Load failed|ERR_CONNECTION|ECONNREFUSED|ECONNRESET/i.test(text);
@@ -381,7 +385,6 @@ async function injectContentScript(tabId, options = {}) {
 
 async function closeTaskTab(tabId) {
   if (!managedTaskTabs.has(tabId)) {
-    console.warn('[Yahoo Bid] Skip closing unmanaged tab:', tabId);
     return;
   }
   try {
@@ -5097,6 +5100,13 @@ async function syncMonitorYahooPages() {
   try {
     await openBiddingPageForSync({ closeAfter: true });
     await openWonPageForSync({ closeAfter: true });
+  } catch (error) {
+    if (isTabsTemporarilyUneditableError(error)) {
+      lastMonitorSyncAt = 0;
+      console.warn('[Yahoo Bid] Monitor sync postponed because tabs are temporarily unavailable:', error.message || error);
+      return;
+    }
+    throw error;
   } finally {
     monitorRunning = false;
   }
@@ -5311,6 +5321,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildConfirmReceiptPageStateFromSnapshot,
   buildPaymentFailurePayload,
   isManualCaptchaTab,
+  isTabsTemporarilyUneditableError,
   isLikelyManualPinTab,
   pauseIdleWorkForOpenManualPin,
   handleManualVerificationIfPresent,
@@ -5342,14 +5353,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.log('[Yahoo Bid] Waiting for final confirmation page:', taskId, result.stage);
       return;
     }
-    if (!result?.success && shouldCloseTaskTab(result) && sender.tab?.id) {
-      closeTaskTab(sender.tab.id);
-    }
     chrome.storage.session.remove(['currentTask']);
     if (result.success) {
-      if (sender.tab?.id) {
-        closeTaskTab(sender.tab.id);
-      }
       if (result.noStatus) {
         // 已是最高价且新出价≤自动入札上限，跳过出价。直接标 bidding，避免任务一直停留 processing/pending。
         markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: true });
@@ -5396,4 +5401,3 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
-

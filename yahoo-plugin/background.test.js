@@ -1727,6 +1727,43 @@ async function testMonitorSyncSkipsClosedMessageReceiver() {
   assert.equal(warnings.some(entry => /message receiver is gone/.test(String(entry[0]))), true);
 }
 
+async function testMonitorSyncPostponesTabsTemporarilyUneditable() {
+  const errors = [];
+  const warnings = [];
+  let createCalls = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    console: {
+      ...console,
+      error(...args) { errors.push(args); },
+      warn(...args) { warnings.push(args); }
+    },
+    fetch: async url => {
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    },
+    tabs: {
+      async create(details) {
+        createCalls += 1;
+        if (createCalls === 1) {
+          throw new Error('Tabs cannot be edited right now (user may be dragging a tab).');
+        }
+        return { id: details.url.includes('/my/bidding') ? 57600239 : 57600240, url: details.url };
+      },
+      async remove() {}
+    }
+  });
+
+  await api.syncMonitorYahooPages();
+  await api.syncMonitorYahooPages();
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.some(entry => /temporarily unavailable/.test(String(entry[0]))), true);
+  assert.ok(createCalls > 1);
+}
+
 async function testRunPaymentJobsCompletesNormalItemPayment() {
   const calls = [];
   let removedTabId = null;
@@ -4788,6 +4825,7 @@ async function run() {
   await testMonitorSyncSkipsTabThatDisappearsBeforeInjection();
   await testMonitorSyncSkipsFrameRemovedBeforeInjection();
   await testMonitorSyncSkipsClosedMessageReceiver();
+  await testMonitorSyncPostponesTabsTemporarilyUneditable();
   await testRunPaymentJobsCompletesNormalItemPayment();
   await testRunPaymentJobsMarksBuyerDeletedPageCancelled();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
