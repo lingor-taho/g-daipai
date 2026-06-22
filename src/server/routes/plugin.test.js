@@ -1253,6 +1253,7 @@ function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
   const row = buildDaipaiSheetRow({
     won_at: '2026-06-06 12:34:56',
     username: 'user-a',
+    product_id: 's1113817953',
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/s1113817953',
     product_title: 'bundle item',
     final_price: 1000,
@@ -1280,6 +1281,29 @@ function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
     '日本郵便',
     '628620458093'
   ]);
+}
+
+function testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching() {
+  const row = buildDaipaiSheetRow({
+    won_at: '2026-06-22 11:12:13',
+    username: 'user-b',
+    product_id: 'E1233463523',
+    product_url: '',
+    product_title: '',
+    final_price: 21000,
+    shipping_fee_text: '880\u5186',
+    shipping_company: 'Japan Post',
+    tracking_number: '639290914765',
+    tax_type: 'tax_zero'
+  }, {
+    rate: 0.044,
+    bankFeeJpy: 0,
+    handlingFeeCny: 0,
+    largeAmountFeeCny: 0
+  });
+
+  assert.equal(row[2], 'https://auctions.yahoo.co.jp/jp/auction/e1233463523');
+  assert.equal(row[3], 'e1233463523');
 }
 
 async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
@@ -2194,6 +2218,7 @@ Promise.all([
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
   testUpdateScanStatusRefreshesTrackingForRescanOrder(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),
+  Promise.resolve().then(testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching),
   testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
   testGetOrderForSheetUpdateUsesProductSnapshotFields(),
   testUpdateScanStatusMarksPendingShipmentAsCancelled(),

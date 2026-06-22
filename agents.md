@@ -4,6 +4,26 @@
 
 ---
 
+# 2026-06-22 Google Sheet product id fallback for shipped orders
+
+Issue:
+- Remote shipped-order Google Sheet writes became fragile after product-field fallback removal.
+- `updateRowsByProductId()` locates existing Google Sheet rows by scanning columns A:J for the product id.
+- The sheet layout has no dedicated product_id column; matching depends on the product URL/title cells containing the id.
+- `buildDaipaiSheetRow()` previously wrote `order.product_url || ''` and `order.product_title || ''`, so if `products.product_url/product_title` were missing, newly appended rows could contain no product id and later update/color-match flows could not find them.
+- This does not reintroduce reads from deleted/legacy `tasks` product snapshot fields; it only uses the canonical `product_id` already joined for the order.
+
+Fix:
+- Google Sheet row generation now falls back to `https://auctions.yahoo.co.jp/jp/auction/{product_id}` for the product URL column.
+- If title is missing, the title column falls back to the normalized product id.
+- This keeps every new sheet row matchable by `updateRowsByProductId()` and confirm-receipt color matching even when optional product display fields are blank.
+
+Validation:
+- `node src/server/routes/plugin.test.js`
+- `node src/server/services/googleSheets.test.js`
+- `node scripts/check-product-read-paths.js`
+- `node scripts/encoding-guard.js`
+
 # 2026-06-22 payment amount before shipping selection
 
 Issue:

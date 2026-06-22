@@ -1497,13 +1497,21 @@ function formatSheetDate(value) {
   return text ? text.slice(0, 10) : '';
 }
 
+function buildYahooAuctionUrl(productId) {
+  const id = String(productId || '').trim().toLowerCase();
+  return id ? `https://auctions.yahoo.co.jp/jp/auction/${id}` : '';
+}
+
 function buildDaipaiSheetRow(order = {}, baseConfig = {}) {
   const payable = calculateSheetPayable(order, baseConfig);
+  const productId = String(order.product_id || '').trim().toLowerCase();
+  const productUrl = String(order.product_url || '').trim() || buildYahooAuctionUrl(productId);
+  const productTitle = String(order.product_title || '').trim() || productId;
   return [
     formatSheetDate(order.won_at || order.created_at),
     order.username || '',
-    order.product_url || '',
-    order.product_title || '',
+    productUrl,
+    productTitle,
     Number(order.final_price || 0),
     order.shipping_fee_text || '',
     order.bundle_shipping_fee_text || '',
