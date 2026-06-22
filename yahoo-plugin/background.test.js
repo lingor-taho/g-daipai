@@ -1052,29 +1052,10 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
     controls: ['\u5909\u66f4\u3059\u308b']
   });
 
-  assert.equal(state.hasStoreConfirmationSection, false);
+  assert.equal(state.hasStoreConfirmationSection, true);
   assert.equal(state.hasStoreConfirmationEditPage, false);
-  assert.equal(editState.hasStoreConfirmationSection, false);
-  assert.equal(editState.hasStoreConfirmationEditPage, false);
-}
-
-function testBuildStoreOptionsUrlUsesProductId() {
-  const api = loadBackgroundForTest();
-
-  assert.equal(
-    api.buildStoreOptionsUrl(
-      { url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=ignored' },
-      { productId: 'j1232680017' }
-    ),
-    'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'
-  );
-  assert.equal(
-    api.buildStoreOptionsUrl(
-      { url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017' },
-      {}
-    ),
-    'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'
-  );
+  assert.equal(editState.hasStoreConfirmationSection, true);
+  assert.equal(editState.hasStoreConfirmationEditPage, true);
 }
 
 async function testStoreConfirmationChangeUsesCartoptSelector() {
@@ -3225,7 +3206,7 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
   assert.equal(storeApplyChecks, 0);
   assert.equal(storeApplySubmits, 1);
   assert.equal(trustedMouseCommands, 6);
-  assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), true);
+  assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), false);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 19);
   assert.equal(calls[0].status, 'success');
@@ -3331,7 +3312,7 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
 
   assert.equal(storeApplySubmits, 1);
   assert.equal(trustedMouseCommands, 6);
-  assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), true);
+  assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), false);
   assert.equal(calls[0].orderId, 20);
   assert.equal(calls[0].status, 'success');
 }
@@ -5623,7 +5604,6 @@ async function run() {
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsBuyerDeletedCancellation();
   testPaymentPageStateDetectsStoreConfirmationSection();
-  testBuildStoreOptionsUrlUsesProductId();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
   await testStoreConfirmationApplyChecksHiddenInputs();

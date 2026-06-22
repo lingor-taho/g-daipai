@@ -12,7 +12,7 @@ const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
-const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = false;
+const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = true;
 
 let fetchFailureCount = 0;
 let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
@@ -2503,36 +2503,13 @@ async function dispatchTrustedStoreConfirmationClick(tab, action) {
   }
 }
 
-function buildStoreOptionsUrl(tab, job = {}) {
-  const productId = normalizeAuctionId(job.productId || job.productUrl || job.transactionUrl || '');
-  if (productId) return `https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=${productId}`;
-  try {
-    const url = new URL(tab?.url || '');
-    const auctionId = normalizeAuctionId(url.searchParams.get('auctionId') || '');
-    if (auctionId) return `https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=${auctionId}`;
-  } catch (e) {
-    // Fall through to empty result.
-  }
-  return '';
-}
-
-async function openStoreOptionsPage(tab, job = {}) {
-  const tabId = tab?.id || tab;
-  if (!tabId) return { success: false, error: 'tabId is required for store options navigation' };
-  const url = buildStoreOptionsUrl(tab, job);
-  if (!url) return { success: false, error: 'store options auctionId unavailable' };
-  const updated = await chrome.tabs.update(tabId, { url, active: true }).catch(e => ({ _error: e }));
-  if (updated?._error) return { success: false, error: updated._error.message || 'store options navigation failed' };
-  return { success: true, tab: updated || { ...tab, id: tabId, url }, url, method: 'directUrl' };
-}
-
 async function completeStoreConfirmationItems(tab, state, job = {}) {
   if (!tab?.id || !state?.hasStoreConfirmationSection) return { success: true, tab, state };
 
   const previousTabIds = await getTabIds();
-  let changeResult = await openStoreOptionsPage(tab, job);
-  if (!changeResult?.success) changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
+  let changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
   if (!changeResult?.success) changeResult = await clickStoreConfirmationChange(tab.id);
+  if (!changeResult?.success) changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
   if (!changeResult?.success) return { success: false, error: changeResult?.error || 'store confirmation change click failed', tab };
   let editTab = null;
   try {
@@ -5499,8 +5476,6 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   clickStoreConfirmationApplyButton,
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
-  buildStoreOptionsUrl,
-  openStoreOptionsPage,
   completeStoreConfirmationItems,
   getRandomIntInclusive,
   assertPaymentAmountMatches,

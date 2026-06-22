@@ -4,6 +4,27 @@
 
 ---
 
+# 2026-06-22 store payment confirmation options
+
+Issue:
+- Remote payment for `t1234151860` failed with `确认付款后页面未跳转`.
+- Yahoo store payment pages can show `ストアからの確認事項` before the payment review button.
+- The store confirmation flow existed in code but was disabled, so the plugin clicked `確認する` without first opening the store options page and checking required options.
+- The previous direct URL approach (`/order/change/store-options?auctionId=...`) is intentionally not used because it can bypass the current Yahoo page state and disturb unrelated payment logic.
+
+Fix:
+- Re-enabled the store confirmation flow only when the payment page state contains `ストアからの確認事項`.
+- The flow now stays on the current Yahoo page and clicks the visible `#cartopt` / heading-adjacent `変更` control.
+- On the edit page, the plugin checks all non-disabled checkboxes, clicks `変更する`, waits to return to the review page, then continues the normal `確認する` / final payment flow.
+- Pages without `ストアからの確認事項` continue through the original payment path.
+
+Validation:
+- `node yahoo-plugin/background.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+
+---
+
 # 2026-06-22 Google Sheet product id fallback for shipped orders
 
 Issue:
