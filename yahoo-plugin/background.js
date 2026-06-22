@@ -1572,6 +1572,9 @@ function assertPaymentAmountMatches(job, state) {
     const shippingText = String(job?.effectiveShippingFeeText || job?.shippingFeeText || '').trim();
     throw new Error(`payment expected amount unavailable${shippingText ? `: shipping=${shippingText}` : ''}${actual > 0 ? `; found ${actual}\u5186` : ''}`);
   }
+  if (actual <= 0) {
+    throw new Error(`payment amount not detected: expected ${expected}\u5186`);
+  }
   if (actual > 0 && actual !== expected) {
     const shippingSummary = summarizePaymentShippingState(state);
     const paymentFee = Number(state?.paymentMethodFeeJpy || 0);
@@ -1936,7 +1939,21 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
   return injectionResult?.[0]?.result || { success: false, error: 'shipping option selection returned no result' };
 }
 
-async function ensurePaymentShippingOption(tab, job, state) {
+async function refreshPaymentPageState(tab, waitMs = 1500) {
+  if (!tab?.id) return null;
+  if (chrome.tabs.reload) {
+    await chrome.tabs.reload(tab.id).catch(() => {});
+  } else {
+    const current = await chrome.tabs.get(tab.id).catch(() => tab);
+    if (current?.url) await chrome.tabs.update(tab.id, { url: current.url, active: true }).catch(() => {});
+  }
+  await waitForTabComplete(tab.id, 10000).catch(() => {});
+  await sleep(waitMs);
+  await injectContentScript(tab.id).catch(() => {});
+  return await getPaymentPageState(tab.id).catch(() => null);
+}
+
+async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
   const expectedAmount = getExpectedPaymentAmountJpy(job);
   const currentAmount = Number(state?.paymentAmountJpy || 0);
@@ -1967,6 +1984,15 @@ async function ensurePaymentShippingOption(tab, job, state) {
   if (!result?.success) {
     const latestState = await getPaymentPageState(tab.id).catch(() => null);
     if (expectedAmount !== null && Number(latestState?.paymentAmountJpy || 0) === expectedAmount) return latestState;
+    const noVisibleShippingControls = !Array.isArray(result?.options) || result.options.length === 0;
+    const expansionUnavailable = expandResult?.changed === false || trustedExpand?.success === false;
+    if (!options.refreshed && noVisibleShippingControls && expansionUnavailable) {
+      const refreshedState = await refreshPaymentPageState(tab);
+      if (expectedAmount !== null && Number(refreshedState?.paymentAmountJpy || 0) === expectedAmount) return refreshedState;
+      if (refreshedState?.hasReviewButton) {
+        return await ensurePaymentShippingOption(tab, job, refreshedState, { ...options, refreshed: true });
+      }
+    }
     const optionSummary = Array.isArray(result?.options)
       ? result.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')
       : '';
@@ -5006,7 +5032,10 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (!state?.hasReviewButton) {
       throw new Error(storeConfirmationHandled ? 'payment review button not found after store confirmation' : 'payment review button not found');
     }
-    state = await ensurePaymentShippingOption(tab, job, state);
+    state = await waitForExpectedPaymentAmount(tab, job, state);
+    if (getExpectedPaymentAmountJpy(job) !== null && Number(state?.paymentAmountJpy || 0) !== getExpectedPaymentAmountJpy(job)) {
+      state = await ensurePaymentShippingOption(tab, job, state);
+    }
     if (state?.hasAppraisalSection && !state?.hasNoAppraisalSelected) {
       const appraisalResult = await selectPaymentNoAppraisalOption(tab.id);
       if (!appraisalResult?.success) throw new Error(appraisalResult?.error || 'payment no-appraisal selection failed');

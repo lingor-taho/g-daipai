@@ -4,6 +4,26 @@
 
 ---
 
+# 2026-06-22 payment amount before shipping selection
+
+Issue:
+- Remote payment job `n1209281116` failed once with `payment shipping option ... not selectable`, then succeeded after clearing/retrying without data changes.
+- Remote debug showed the first failure was already on Yahoo purchase review/input page, but the page total/shipping area was not stable yet. This was not a products/tasks/orders schema issue and not missing shipping data.
+
+Fix:
+- Payment flow now waits for the page total to match `finalPrice/paymentFinalPrice + effectiveShippingFeeText` before trying to change shipping.
+- If the total already matches, it proceeds to `確認する` without requiring a visible shipping option.
+- Shipping selection is attempted only when the total still does not match.
+- If shipping selection cannot find controls/options, the plugin reloads the current payment page once and rereads state; if the total matches after reload, it continues.
+- `assertPaymentAmountMatches()` now rejects `paymentAmountJpy <= 0` with `payment amount not detected` instead of allowing payment to continue with an unread total.
+
+Validation:
+- `node yahoo-plugin/background.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+- `node scripts/check-product-read-paths.js`
+
 # 2026-06-22 manual PIN response latency fix
 
 Issue:
