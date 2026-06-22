@@ -49,33 +49,6 @@ function collectProductParity(db) {
          AND t.product_id IS NOT NULL
          AND TRIM(t.product_id) <> ''
          AND o.product_id <> t.product_id`
-    ),
-    productsLatestTaskSnapshotMismatch: getCount(
-      db,
-      `WITH latest_tasks AS (
-         SELECT t.*
-         FROM tasks t
-         JOIN (
-           SELECT product_id, MAX(id) AS id
-           FROM tasks
-           WHERE product_id IS NOT NULL
-             AND TRIM(product_id) <> ''
-           GROUP BY product_id
-         ) latest ON latest.id = t.id
-       )
-       SELECT COUNT(*) AS count
-       FROM products p
-       JOIN latest_tasks t ON t.product_id = p.product_id
-       WHERE (
-           p.shipping_fee_text IS NOT NULL
-           AND t.shipping_fee_text IS NOT NULL
-           AND TRIM(p.shipping_fee_text) <> TRIM(t.shipping_fee_text)
-         )
-          OR (
-           p.product_type IS NOT NULL
-           AND t.product_type IS NOT NULL
-           AND p.product_type <> t.product_type
-         )`
     )
   };
 }

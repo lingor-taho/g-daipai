@@ -4,6 +4,41 @@
 
 ---
 
+# 2026-06-22 tasks product snapshot drop readiness
+
+Issue:
+- Final three-table structure will remove product snapshot fields from `tasks`.
+- Runtime read paths had mostly moved to `products`, but schema and diagnostics still depended on the old `tasks` fields.
+- If the columns were dropped directly, `src/db/init.sql`, startup `ensureColumn('tasks', ...)`, and product health/parity scripts would either recreate columns or fail with SQL errors.
+
+Fix:
+- `src/db/init.sql` no longer creates these `tasks` columns: `product_url`, `product_title`, `product_image_url`, `current_price`, `buyout_price`, `bid_count`, `tax_type`, `product_type`, `shipping_fee_text`, `end_time`.
+- Removed `idx_tasks_end_time` from new schema.
+- `src/server/models/index.js` no longer auto-adds deleted product snapshot columns back onto `tasks`.
+- `scripts/check-product-parity.js` now checks only three-table relationship integrity and no longer compares `products` to old latest task snapshot fields.
+- `scripts/check-product-health.js` no longer reads old `tasks` product fields; it now reports missing core `products` display fields for active tasks, success tasks, and orders.
+- `secrets/` is ignored by Git so server Google credential JSON files can stay local.
+
+Current boundary:
+- This does not drop columns from the existing production database yet.
+- Before dropping production columns, run the health/read-path checks and back up the database.
+
+Validation:
+- `node scripts/check-product-parity.test.js`
+- `node scripts/check-product-health.test.js`
+- `node scripts/check-product-read-paths.test.js`
+- `node scripts/check-product-read-paths.js`
+- `node scripts/check-product-parity.js`
+- `node scripts/check-product-health.js`
+- New in-memory schema check confirmed `tasks` has none of the 10 deleted fields and no `idx_tasks_end_time`.
+- `node --check scripts/check-product-health.js`
+- `node --check scripts/check-product-parity.js`
+- `node --check src/server/models/index.js`
+- `node scripts/encoding-guard.js`
+- `npm run regression`
+
+---
+
 # 2026-06-22 extension reload startup idempotency
 
 Issue:

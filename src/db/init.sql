@@ -27,14 +27,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER REFERENCES users(id),
   product_id VARCHAR(32) NOT NULL,
-  product_url TEXT,
-  product_title VARCHAR(512),
-  product_image_url TEXT,
-  current_price INTEGER,
-  buyout_price INTEGER,
-  tax_type VARCHAR(32) DEFAULT 'tax_zero',
-  product_type VARCHAR(32) DEFAULT 'normal',
-  end_time DATETIME,
   max_price INTEGER NOT NULL,
   user_max_price INTEGER,
   multi_bid_increment INTEGER,
@@ -44,7 +36,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   start_seconds_before INTEGER,
   status VARCHAR(32) DEFAULT 'pending',
   is_highest_bidder INTEGER DEFAULT 0,
-  bid_count INTEGER DEFAULT 0,
   last_bid_at DATETIME,
   pending_followup_max_price INTEGER,
   force_orders_resync INTEGER DEFAULT 0,
@@ -211,7 +202,6 @@ CREATE TABLE IF NOT EXISTS config (
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_end_time ON tasks(end_time);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);

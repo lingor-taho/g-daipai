@@ -7,14 +7,13 @@ function createDb() {
   db.exec(`
     CREATE TABLE products (
       product_id VARCHAR(32) PRIMARY KEY,
-      shipping_fee_text VARCHAR(64),
-      product_type VARCHAR(32)
+      product_url TEXT,
+      product_title VARCHAR(512),
+      product_image_url TEXT
     );
     CREATE TABLE tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id VARCHAR(32),
-      shipping_fee_text VARCHAR(64),
-      product_type VARCHAR(32)
+      product_id VARCHAR(32)
     );
     CREATE TABLE orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,32 +24,31 @@ function createDb() {
   return db;
 }
 
-function testCollectProductParityCountsOnlyReadinessGaps() {
+function testCollectProductParityCountsOnlyRelationshipGaps() {
   const db = createDb();
   try {
-    db.prepare("INSERT INTO products (product_id, shipping_fee_text, product_type) VALUES (?, ?, ?)").run('p1', '500円', 'normal');
-    db.prepare("INSERT INTO products (product_id, shipping_fee_text, product_type) VALUES (?, ?, ?)").run('p3', '無料', 'store');
-    db.prepare("INSERT INTO products (product_id, shipping_fee_text, product_type) VALUES (?, ?, ?)").run('p4', '着払い', 'normal');
+    db.prepare("INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)").run('p1', 'url1', 'title1', 'image1');
+    db.prepare("INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)").run('p3', 'url3', 'title3', 'image3');
+    db.prepare("INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)").run('p4', 'url4', 'title4', 'image4');
 
-    db.prepare("INSERT INTO tasks (id, product_id, shipping_fee_text, product_type) VALUES (?, ?, ?, ?)").run(1, 'p1', '500円', 'normal');
-    db.prepare("INSERT INTO tasks (id, product_id, shipping_fee_text, product_type) VALUES (?, ?, ?, ?)").run(2, 'p2', '700円', 'normal');
-    db.prepare("INSERT INTO tasks (id, product_id, shipping_fee_text, product_type) VALUES (?, ?, ?, ?)").run(3, 'p3', '無料', 'normal');
-    db.prepare("INSERT INTO tasks (id, product_id, shipping_fee_text, product_type) VALUES (?, ?, ?, ?)").run(4, 'p4', '着払い', 'normal');
+    db.prepare('INSERT INTO tasks (id, product_id) VALUES (?, ?)').run(1, 'p1');
+    db.prepare('INSERT INTO tasks (id, product_id) VALUES (?, ?)').run(2, 'p2');
+    db.prepare('INSERT INTO tasks (id, product_id) VALUES (?, ?)').run(3, 'p3');
+    db.prepare('INSERT INTO tasks (id, product_id) VALUES (?, ?)').run(4, 'p4');
 
-    db.prepare("INSERT INTO orders (id, task_id, product_id) VALUES (?, ?, ?)").run(10, 1, 'p1');
-    db.prepare("INSERT INTO orders (id, task_id, product_id) VALUES (?, ?, ?)").run(11, 1, null);
-    db.prepare("INSERT INTO orders (id, task_id, product_id) VALUES (?, ?, ?)").run(12, 1, 'different');
+    db.prepare('INSERT INTO orders (id, task_id, product_id) VALUES (?, ?, ?)').run(10, 1, 'p1');
+    db.prepare('INSERT INTO orders (id, task_id, product_id) VALUES (?, ?, ?)').run(11, 1, null);
+    db.prepare('INSERT INTO orders (id, task_id, product_id) VALUES (?, ?, ?)').run(12, 1, 'different');
 
     assert.deepEqual(collectProductParity(db), {
       tasksWithoutProductRow: 1,
       ordersWithoutProductId: 1,
-      ordersProductIdMismatch: 1,
-      productsLatestTaskSnapshotMismatch: 1
+      ordersProductIdMismatch: 1
     });
   } finally {
     db.close();
   }
 }
 
-testCollectProductParityCountsOnlyReadinessGaps();
+testCollectProductParityCountsOnlyRelationshipGaps();
 console.log('product parity check tests passed');

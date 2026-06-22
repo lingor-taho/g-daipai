@@ -7,6 +7,7 @@ src/admin/src/.umi/
 src/admin/src/.umi-production/
 
 .env
+secrets/
 *.log
 logs/*.jsonl
 logs/*.patch

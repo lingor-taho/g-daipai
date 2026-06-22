@@ -9,17 +9,10 @@ const { collectReadPathViolations } = require('./check-product-read-paths');
 
 const root = path.resolve(__dirname, '..');
 const DEFAULT_HISTORY_PATH = path.join(root, 'logs', 'product-health-history.jsonl');
-const productSnapshotFields = [
+const productCoreFields = [
   'product_url',
   'product_title',
-  'product_image_url',
-  'current_price',
-  'buyout_price',
-  'bid_count',
-  'tax_type',
-  'product_type',
-  'shipping_fee_text',
-  'end_time'
+  'product_image_url'
 ];
 
 function getCount(db, sql, params = []) {
@@ -27,22 +20,39 @@ function getCount(db, sql, params = []) {
   return Number(row?.count || 0);
 }
 
-function collectFallbackUsage(db) {
-  const result = {};
-  for (const field of productSnapshotFields) {
-    result[field] = getCount(
+function buildMissingCorePredicate(alias = 'p') {
+  return productCoreFields
+    .map(field => `(${alias}.${field} IS NULL OR TRIM(CAST(${alias}.${field} AS TEXT)) = '')`)
+    .join(' OR ');
+}
+
+function collectProductCoreGaps(db) {
+  const missingCore = buildMissingCorePredicate('p');
+  return {
+    activeProductsMissingCore: getCount(
       db,
       `SELECT COUNT(*) AS count
        FROM tasks t
-       LEFT JOIN products p ON p.product_id = t.product_id
-       WHERE t.product_id IS NOT NULL
-         AND TRIM(t.product_id) <> ''
-         AND p.${field} IS NULL
-         AND t.${field} IS NOT NULL
-         AND TRIM(CAST(t.${field} AS TEXT)) <> ''`
-    );
-  }
-  return result;
+       JOIN products p ON p.product_id = t.product_id
+       WHERE t.status IN ('pending', 'processing', 'bidding')
+         AND (${missingCore})`
+    ),
+    successProductsMissingCore: getCount(
+      db,
+      `SELECT COUNT(*) AS count
+       FROM tasks t
+       JOIN products p ON p.product_id = t.product_id
+       WHERE t.status = 'success'
+         AND (${missingCore})`
+    ),
+    orderProductsMissingCore: getCount(
+      db,
+      `SELECT COUNT(*) AS count
+       FROM orders o
+       JOIN products p ON p.product_id = o.product_id
+       WHERE ${missingCore}`
+    )
+  };
 }
 
 function listJsFiles(dir) {
@@ -67,30 +77,30 @@ function collectServerReadPathViolations() {
   return collectReadPathViolations(files);
 }
 
-function buildHealthStatus({ parity, readPathViolationCount, fallbackUsage }) {
+function buildHealthStatus({ parity, readPathViolationCount, productCoreGaps }) {
   const parityProblemCount = Object.values(parity).reduce((sum, value) => sum + Number(value || 0), 0);
-  const fallbackCount = Object.values(fallbackUsage).reduce((sum, value) => sum + Number(value || 0), 0);
+  const productCoreGapCount = Object.values(productCoreGaps).reduce((sum, value) => sum + Number(value || 0), 0);
   if (parityProblemCount > 0 || readPathViolationCount > 0) {
     return {
       status: 'FAIL',
       parityProblemCount,
-      fallbackCount,
-      message: '三表关系或读路径存在问题，需要先处理。'
+      productCoreGapCount,
+      message: 'three-table relationship or product read path has violations'
     };
   }
-  if (fallbackCount > 0) {
+  if (productCoreGapCount > 0) {
     return {
       status: 'WARN',
       parityProblemCount,
-      fallbackCount,
-      message: '程序读路径正常，但当前数据仍存在需要 fallback 的字段。'
+      productCoreGapCount,
+      message: 'product read paths are closed, but products has missing core display fields'
     };
   }
   return {
     status: 'OK',
     parityProblemCount,
-    fallbackCount,
-    message: '三表关系正常，当前数据未发现 fallback 使用。'
+    productCoreGapCount,
+    message: 'three-table relationship is normal; products core display fields are present'
   };
 }
 
@@ -121,22 +131,24 @@ function buildReport(db, options = {}) {
   const checkedAt = options.checkedAt || new Date().toISOString();
   const parity = collectProductParity(db);
   const readPathViolations = collectServerReadPathViolations();
-  const fallbackUsage = collectFallbackUsage(db);
+  const productCoreGaps = collectProductCoreGaps(db);
   const status = buildHealthStatus({
     parity,
     readPathViolationCount: readPathViolations.length,
-    fallbackUsage
+    productCoreGaps
   });
   return {
     checkedAt,
     status: status.status,
     message: status.message,
     parityProblemCount: status.parityProblemCount,
-    fallbackCount: status.fallbackCount,
+    productCoreGapCount: status.productCoreGapCount,
+    fallbackCount: status.productCoreGapCount,
     parity,
     readPathViolationCount: readPathViolations.length,
     readPathViolations,
-    fallbackUsage
+    productCoreGaps,
+    fallbackUsage: productCoreGaps
   };
 }
 
@@ -157,8 +169,8 @@ function printReport(report, historyPath) {
     }
   }
   console.log('');
-  console.log('Fallback usage by field:');
-  for (const [key, value] of Object.entries(report.fallbackUsage)) {
+  console.log('Products core gaps:');
+  for (const [key, value] of Object.entries(report.productCoreGaps)) {
     console.log(`  ${key}: ${value}`);
   }
   console.log('');
@@ -171,7 +183,8 @@ function printRecentHistory(historyPath) {
   console.log('');
   console.log('Recent history:');
   for (const item of recent) {
-    console.log(`  ${item.checkedAt}  ${item.status}  fallback=${item.fallbackCount} parity=${item.parityProblemCount}`);
+    const productCoreGapCount = item.productCoreGapCount ?? item.fallbackCount ?? 0;
+    console.log(`  ${item.checkedAt}  ${item.status}  productCoreGaps=${productCoreGapCount} parity=${item.parityProblemCount}`);
   }
 }
 
@@ -200,7 +213,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  collectFallbackUsage,
+  collectFallbackUsage: collectProductCoreGaps,
+  collectProductCoreGaps,
   buildHealthStatus,
   appendHealthHistory,
   readRecentHistory,

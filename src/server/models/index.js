@@ -19,15 +19,10 @@ function ensureColumn(table, column, definition) {
   }
 }
 
-ensureColumn('tasks', 'buyout_price', 'INTEGER');
 ensureColumn('tasks', 'bid_mode', "VARCHAR(32) DEFAULT 'bid'");
-ensureColumn('tasks', 'tax_type', "VARCHAR(32) DEFAULT 'tax_zero'");
-ensureColumn('tasks', 'product_type', "VARCHAR(32) DEFAULT 'normal'");
-ensureColumn('tasks', 'bid_count', 'INTEGER DEFAULT 0');
 ensureColumn('tasks', 'user_max_price', 'INTEGER');
 ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
 ensureColumn('tasks', 'client_request_id', 'VARCHAR(128)');
-ensureColumn('tasks', 'shipping_fee_text', 'VARCHAR(64)');
 ensureColumn('tasks', 'pending_followup_max_price', 'INTEGER');
 ensureColumn('tasks', 'force_orders_resync', 'INTEGER DEFAULT 0');
 ensureColumn('orders', 'product_id', 'VARCHAR(32)');

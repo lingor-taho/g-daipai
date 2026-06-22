@@ -5,7 +5,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const {
-  collectFallbackUsage,
+  collectProductCoreGaps,
   buildHealthStatus,
   appendHealthHistory
 } = require('./check-product-health');
@@ -17,46 +17,39 @@ function createDb() {
       product_id VARCHAR(32) PRIMARY KEY,
       product_url TEXT,
       product_title VARCHAR(512),
-      product_image_url TEXT,
-      current_price INTEGER,
-      buyout_price INTEGER,
-      bid_count INTEGER,
-      tax_type VARCHAR(32),
-      product_type VARCHAR(32),
-      shipping_fee_text VARCHAR(64),
-      end_time DATETIME
+      product_image_url TEXT
     );
     CREATE TABLE tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id VARCHAR(32),
-      product_url TEXT,
-      product_title VARCHAR(512),
-      product_image_url TEXT,
-      current_price INTEGER,
-      buyout_price INTEGER,
-      bid_count INTEGER,
-      tax_type VARCHAR(32),
-      product_type VARCHAR(32),
-      shipping_fee_text VARCHAR(64),
-      end_time DATETIME
+      status VARCHAR(32)
+    );
+    CREATE TABLE orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id VARCHAR(32)
     );
   `);
   return db;
 }
 
-function testCollectFallbackUsageCountsOnlyProductsMissingTasksPresent() {
+function testCollectProductCoreGapsDoesNotRequireTaskSnapshotColumns() {
   const db = createDb();
   try {
-    db.prepare("INSERT INTO products (product_id, product_title, shipping_fee_text) VALUES (?, ?, ?)").run('p1', 'title', null);
-    db.prepare("INSERT INTO tasks (product_id, product_title, shipping_fee_text) VALUES (?, ?, ?)").run('p1', 'title', '500');
-    db.prepare("INSERT INTO products (product_id, product_title, shipping_fee_text) VALUES (?, ?, ?)").run('p2', null, '700');
-    db.prepare("INSERT INTO tasks (product_id, product_title, shipping_fee_text) VALUES (?, ?, ?)").run('p2', 'fallback-title', '700');
+    db.prepare('INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)').run('active-missing', 'url', null, 'image');
+    db.prepare('INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)').run('success-missing', 'url', 'title', null);
+    db.prepare('INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)').run('order-missing', null, 'title', 'image');
+    db.prepare('INSERT INTO products (product_id, product_url, product_title, product_image_url) VALUES (?, ?, ?, ?)').run('complete', 'url', 'title', 'image');
 
-    const usage = collectFallbackUsage(db);
+    db.prepare('INSERT INTO tasks (product_id, status) VALUES (?, ?)').run('active-missing', 'bidding');
+    db.prepare('INSERT INTO tasks (product_id, status) VALUES (?, ?)').run('success-missing', 'success');
+    db.prepare('INSERT INTO tasks (product_id, status) VALUES (?, ?)').run('complete', 'pending');
+    db.prepare('INSERT INTO orders (product_id) VALUES (?)').run('order-missing');
 
-    assert.equal(usage.product_title, 1);
-    assert.equal(usage.shipping_fee_text, 1);
-    assert.equal(usage.product_url, 0);
+    assert.deepEqual(collectProductCoreGaps(db), {
+      activeProductsMissingCore: 1,
+      successProductsMissingCore: 1,
+      orderProductsMissingCore: 1
+    });
   } finally {
     db.close();
   }
@@ -67,11 +60,10 @@ function testBuildHealthStatusSeparatesFailAndWarn() {
     parity: {
       tasksWithoutProductRow: 0,
       ordersWithoutProductId: 0,
-      ordersProductIdMismatch: 0,
-      productsLatestTaskSnapshotMismatch: 0
+      ordersProductIdMismatch: 0
     },
     readPathViolationCount: 0,
-    fallbackUsage: { product_title: 0 }
+    productCoreGaps: { activeProductsMissingCore: 0 }
   });
   assert.equal(ok.status, 'OK');
 
@@ -79,11 +71,10 @@ function testBuildHealthStatusSeparatesFailAndWarn() {
     parity: {
       tasksWithoutProductRow: 0,
       ordersWithoutProductId: 0,
-      ordersProductIdMismatch: 0,
-      productsLatestTaskSnapshotMismatch: 0
+      ordersProductIdMismatch: 0
     },
     readPathViolationCount: 0,
-    fallbackUsage: { product_title: 2 }
+    productCoreGaps: { activeProductsMissingCore: 2 }
   });
   assert.equal(warn.status, 'WARN');
 
@@ -91,11 +82,10 @@ function testBuildHealthStatusSeparatesFailAndWarn() {
     parity: {
       tasksWithoutProductRow: 1,
       ordersWithoutProductId: 0,
-      ordersProductIdMismatch: 0,
-      productsLatestTaskSnapshotMismatch: 0
+      ordersProductIdMismatch: 0
     },
     readPathViolationCount: 0,
-    fallbackUsage: { product_title: 0 }
+    productCoreGaps: { activeProductsMissingCore: 0 }
   });
   assert.equal(fail.status, 'FAIL');
 }
@@ -115,7 +105,7 @@ function testAppendHealthHistoryKeepsJsonLines() {
   }
 }
 
-testCollectFallbackUsageCountsOnlyProductsMissingTasksPresent();
+testCollectProductCoreGapsDoesNotRequireTaskSnapshotColumns();
 testBuildHealthStatusSeparatesFailAndWarn();
 testAppendHealthHistoryKeepsJsonLines();
 
