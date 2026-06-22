@@ -4,6 +4,24 @@
 
 ---
 
+# 2026-06-22 transaction new-tab ownership hardening
+
+Review follow-up after the bid tab cleanup fix:
+- `switchToNewestNewTab` previously selected the highest new tab id that was not in the local created-tab list.
+- Under concurrent bid/payment/transaction activity, an unrelated auction product tab could be the newest tab and could be attached to the transaction document chain.
+- `openTransactionPage` now receives the full pre-flow tab id snapshot from the caller and passes that into `switchToNewestNewTab`, so only tabs created after the transaction flow started are candidates.
+- `switchToNewestNewTab` now also filters candidates with `isLikelyYahooTransactionCleanupTab`, so normal auction product pages are not selected as transaction continuation tabs.
+- Added regression coverage where a higher-id auction product tab and a lower-id contact transaction tab exist at the same time; the transaction helper must choose the contact tab and must not record the auction tab.
+
+Verification:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+- `node scripts/check-product-read-paths.js`
+
+---
+
 # 2026-06-22 bid retry active-run follow-up
 
 Review follow-up after `3935a59`:

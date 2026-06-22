@@ -4016,7 +4016,7 @@ async function handleManualCaptchaIfPresent(tab, context = {}) {
   return handleManualVerificationIfPresent(tab, context);
 }
 
-async function openTransactionPage(job) {
+async function openTransactionPage(job, beforeTabIds = new Set()) {
   const createdTabIds = [];
   if (job.transactionUrl) {
     const tab = await chrome.tabs.create({ url: job.transactionUrl, active: false });
@@ -4045,7 +4045,8 @@ async function openTransactionPage(job) {
     await chrome.tabs.update(tab.id, { url: clickResult.href, active: false });
   } else {
     await sleep(1500);
-    const nextTab = await switchToNewestNewTab(new Set(createdTabIds), tab);
+    const knownTabIds = new Set([...(beforeTabIds || []), ...createdTabIds]);
+    const nextTab = await switchToNewestNewTab(knownTabIds, tab);
     for (const id of nextTab._gdaipaiCreatedTabIds || []) createdTabIds.push(id);
     nextTab._gdaipaiCreatedTabIds = [...new Set(createdTabIds)];
     const captchaResult = await handleManualCaptchaIfPresent(nextTab, { productId: job.productId, source: 'transaction_contact_new_tab' });
@@ -4066,10 +4067,13 @@ async function getTabIds() {
   return new Set(tabs.map(tab => tab.id).filter(Boolean));
 }
 
-async function switchToNewestNewTab(previousIds, fallbackTab) {
+async function switchToNewestNewTab(previousIds, fallbackTab, options = {}) {
+  const isCandidate = typeof options.isCandidate === 'function'
+    ? options.isCandidate
+    : isLikelyYahooTransactionCleanupTab;
   const tabs = await chrome.tabs.query({});
   const newTabs = tabs
-    .filter(tab => tab.id && !previousIds.has(tab.id))
+    .filter(tab => tab.id && !previousIds.has(tab.id) && isCandidate(tab))
     .sort((a, b) => (b.id || 0) - (a.id || 0));
   if (!newTabs.length) return fallbackTab;
   const nextTab = newTabs[0];
@@ -4539,7 +4543,7 @@ async function executeTransactionStartJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
   try {
-    tab = await openTransactionPage(job);
+    tab = await openTransactionPage(job, beforeTabIds);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(error => {
       console.error('[Yahoo Bid] Failed to extract transaction start info:', error);
       return null;
@@ -4732,7 +4736,7 @@ async function executePendingShipmentScanJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
   try {
-    tab = await openTransactionPage(job);
+    tab = await openTransactionPage(job, beforeTabIds);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_PENDING_SHIPMENT_SCAN' }).catch(error => {
       console.error('[Yahoo Bid] Failed to extract pending shipment scan:', error);
       return null;
@@ -4754,7 +4758,7 @@ async function executePendingShipmentScanJob(job) {
 async function executeWaitingShippingScanJob(job) {
   let tab = null;
   try {
-    tab = await openTransactionPage(job);
+    tab = await openTransactionPage(job, beforeTabIds);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_WAITING_SHIPPING_SCAN' }).catch(error => {
       console.error('[Yahoo Bid] Failed to extract waiting shipping scan:', error);
       return null;
@@ -4801,7 +4805,7 @@ async function executePendingBundleScanJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
   try {
-    tab = await openTransactionPage(job);
+    tab = await openTransactionPage(job, beforeTabIds);
     let extracted = await extractBundleScanResult(tab);
     if (extracted.stop) return { stop: true };
     let result = extracted.result;
@@ -4892,7 +4896,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
   let storeConfirmationStarted = false;
   let storeConfirmationCompleted = false;
   try {
-    tab = await openTransactionPage(job);
+    tab = await openTransactionPage(job, beforeTabIds);
     let state = await getPaymentPageState(tab.id);
     let storeConfirmationHandled = false;
     if (state?.cancelled) return { cancelled: true };
@@ -5084,7 +5088,7 @@ async function executeConfirmReceiptJob(job) {
     let tab = null;
     const beforeTabIds = await getTabIds();
     try {
-      tab = await openTransactionPage(job);
+      tab = await openTransactionPage(job, beforeTabIds);
       const state = await getConfirmReceiptPageState(tab.id);
       if (state?.cancelled) {
         await updateConfirmReceiptStatus({
@@ -5112,7 +5116,7 @@ async function executeConfirmReceiptJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
   try {
-    tab = await openTransactionPage(job);
+    tab = await openTransactionPage(job, beforeTabIds);
     let state = await getConfirmReceiptPageState(tab.id);
     if (state?.cancelled) {
       await updateConfirmReceiptStatus({
@@ -5437,6 +5441,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   registerBidProgressExtender,
   handleBidProgressMessage,
   waitForCurrentTabNavigation,
+  switchToNewestNewTab,
   clickBundleActionAndFollowTab,
   completeNormalBundleRequest,
   completeBidderPaysShippingTransaction,

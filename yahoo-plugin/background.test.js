@@ -403,6 +403,45 @@ async function testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab() {
   assert.equal(JSON.stringify(result._gdaipaiCreatedTabIds.sort()), JSON.stringify([1, 2]));
 }
 
+async function testSwitchToNewestNewTabIgnoresConcurrentAuctionProductTab() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async query() {
+        return [
+          { id: 10, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=x123', status: 'complete' },
+          { id: 99, url: 'https://auctions.yahoo.co.jp/jp/auction/x1233517511', status: 'complete' }
+        ];
+      },
+      async get(id) {
+        return {
+          id,
+          url: id === 10
+            ? 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=x123'
+            : 'https://auctions.yahoo.co.jp/jp/auction/x1233517511',
+          status: 'complete'
+        };
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    },
+    scripting: {
+      async executeScript() {}
+    }
+  });
+
+  const result = await api.switchToNewestNewTab(
+    new Set([1]),
+    { id: 1, url: 'https://auctions.yahoo.co.jp/my/won', _gdaipaiCreatedTabIds: [1] }
+  );
+
+  assert.equal(result.id, 10);
+  assert.equal(result._gdaipaiCreatedTabIds.includes(99), false);
+  assert.deepEqual(removed, [1]);
+}
+
 async function testTrustedBundleClickDispatchesMouseThroughDebugger() {
   const commands = [];
   let attached = false;
@@ -5374,6 +5413,7 @@ async function run() {
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testNormalBundleRequestCanStartFromInputPage();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
+  await testSwitchToNewestNewTabIgnoresConcurrentAuctionProductTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
   await testManualPinUsesSystemKeyboardEndpointBeforeDebugger();
