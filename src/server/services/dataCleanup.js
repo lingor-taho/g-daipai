@@ -92,10 +92,11 @@ async function deleteStaleTaskData(database, options = {}) {
   const localDate = getLocalDateKey(nowMs);
 
   const staleTasks = await database.getAll(
-    `SELECT id, product_id
+    `SELECT tasks.id, tasks.product_id
      FROM tasks
-     WHERE status IN (${buildCleanupStatusSqlList()})
-       AND datetime(COALESCE(end_time, updated_at, created_at)) < datetime(?)`,
+     LEFT JOIN products p ON p.product_id = tasks.product_id
+     WHERE tasks.status IN (${buildCleanupStatusSqlList()})
+       AND datetime(COALESCE(p.end_time, tasks.updated_at, tasks.created_at)) < datetime(?)`,
     [cutoffIso]
   );
 

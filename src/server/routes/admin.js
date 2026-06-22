@@ -268,7 +268,7 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
     sql: `SELECT o.id,
             o.task_id,
             o.product_title,
-            COALESCE(p.product_url, o.product_url) AS product_url,
+            p.product_url AS product_url,
             o.final_price,
             o.won_at,
             o.won_time_text,
@@ -2101,7 +2101,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     await upsertProductSnapshot(database, {
       product_id: productId,
       product_url: importProductUrl,
-      product_title: item.product_title || productId,
+      product_title: item.product_title || null,
       product_image_url: item.product_image_url || '',
       current_price: importFinalPrice,
       tax_type: item.tax_type || 'tax_zero',
@@ -2130,7 +2130,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
       [
         taskRow.id,
         productId,
-        item.product_title || productId,
+        item.product_title || null,
         importProductUrl,
         importFinalPrice,
         item.won_at || null,

@@ -299,7 +299,8 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
 
   assert.match(exportQuery.sql, /t\.product_id/);
   assert.match(exportQuery.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(exportQuery.sql, /COALESCE\(o\.product_title, p\.product_title, ''\) AS product_title/);
+  assert.match(exportQuery.sql, /p\.product_title AS product_title/);
+  assert.doesNotMatch(exportQuery.sql, /o\.product_title/);
   assert.doesNotMatch(exportQuery.sql, /t\.product_title/);
   assert.match(exportQuery.sql, /o\.final_price/);
   assert.match(exportQuery.sql, /p\.shipping_fee_text AS shipping_fee_text/);

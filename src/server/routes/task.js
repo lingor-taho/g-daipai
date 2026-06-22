@@ -258,7 +258,7 @@ function buildWonStatsExportQuery(input) {
   return {
     sql: `SELECT
          t.product_id,
-         COALESCE(o.product_title, p.product_title, '') AS product_title,
+         p.product_title AS product_title,
          o.final_price,
          p.shipping_fee_text AS shipping_fee_text,
          o.won_at,
@@ -304,10 +304,10 @@ function buildActiveBiddingTaskListQuery(input) {
     sql: `SELECT
          t.id,
          bi.product_id,
-         COALESCE(p.product_url, bi.product_url) AS product_url,
+         p.product_url AS product_url,
          p.product_title AS product_title,
-         COALESCE(p.product_image_url, bi.product_image_url) AS product_image_url,
-         COALESCE(p.current_price, bi.current_price) AS current_price,
+         p.product_image_url AS product_image_url,
+         p.current_price AS current_price,
          p.buyout_price AS buyout_price,
          COALESCE(p.tax_type, 'tax_zero') AS tax_type,
          COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
@@ -628,8 +628,8 @@ router.get('/won', async (req, res) => {
          t.id,
          won_task.product_id,
          p.product_url AS product_url,
-         COALESCE(p.product_title, won_task.product_title) AS product_title,
-         COALESCE(p.product_image_url, won_task.product_image_url) AS product_image_url,
+         p.product_title AS product_title,
+         p.product_image_url AS product_image_url,
          p.current_price AS current_price,
          p.buyout_price AS buyout_price,
          COALESCE(p.tax_type, 'tax_zero') AS tax_type,
@@ -699,7 +699,42 @@ router.get('/bidding', async (req, res) => {
 // GET /api/task/:id - 任务详情
 router.get('/:id', async (req, res) => {
   try {
-    const task = await db.getOne('SELECT * FROM tasks WHERE id = ? AND user_id = ?', [req.params.id, req.actingUser.id]);
+    const task = await db.getOne(
+      `SELECT t.id,
+              t.user_id,
+              t.product_id,
+              p.product_url AS product_url,
+              p.product_title AS product_title,
+              p.product_image_url AS product_image_url,
+              p.current_price AS current_price,
+              p.buyout_price AS buyout_price,
+              p.bid_count AS bid_count,
+              COALESCE(p.tax_type, 'tax_zero') AS tax_type,
+              COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+              p.shipping_fee_text AS shipping_fee_text,
+              p.end_time AS end_time,
+              t.max_price,
+              t.user_max_price,
+              t.multi_bid_increment,
+              t.strategy,
+              t.bid_mode,
+              t.start_minutes_before,
+              t.start_seconds_before,
+              t.status,
+              t.is_highest_bidder,
+              t.last_bid_at,
+              t.error_msg,
+              t.created_at,
+              t.updated_at,
+              t.client_request_id,
+              t.pending_followup_max_price,
+              t.force_orders_resync,
+              t.buyout_auto_paid
+       FROM tasks t
+       LEFT JOIN products p ON p.product_id = t.product_id
+       WHERE t.id = ? AND t.user_id = ?`,
+      [req.params.id, req.actingUser.id]
+    );
     if (!task) return res.status(404).json({ error: 'task not found' });
     res.json({ success: true, data: task });
   } catch (err) {

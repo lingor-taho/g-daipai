@@ -382,7 +382,8 @@ function testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly() {
 
   assert.match(query.sql, /u\.id = \?/);
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(query.sql, /COALESCE\(p\.product_url, o\.product_url\) AS product_url/);
+  assert.match(query.sql, /p\.product_url AS product_url/);
+  assert.doesNotMatch(query.sql, /o\.product_url/);
   assert.match(query.sql, /p\.shipping_fee_text AS shipping_fee_text/);
   assert.match(query.sql, /COALESCE\(p\.tax_type, 'tax_zero'\) AS tax_type/);
   assert.match(query.sql, /COALESCE\(p\.product_type, CASE WHEN COALESCE\(p\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);

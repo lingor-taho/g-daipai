@@ -1005,7 +1005,7 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
   const transactionUrl = String(options.transactionUrl || '').trim() || null;
-  const productTitle = task.product_title || task.product_id;
+  const productTitle = task.product_title || null;
   if (existing) {
     await database.query(
       `UPDATE orders
@@ -1851,7 +1851,7 @@ async function updateManualOrderImportStatus(payload = {}, database = db) {
         batchId,
         productId,
         item.productUrl || item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
-        item.productTitle || item.title || item.product_title || productId,
+        item.productTitle || item.title || item.product_title || null,
         item.productImageUrl || item.imageUrl || item.product_image_url || '',
         normalizeManualImportYenAmount(item.finalPrice || item.price || item.final_price),
         normalizeManualImportDateTime(item.wonAt || item.won_at),

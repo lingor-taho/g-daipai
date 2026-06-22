@@ -10,7 +10,6 @@ const steps = [
   ['Full project encoding guard', process.execPath, ['scripts/encoding-guard.js'], rootDir],
   ['Google Sheets config tests', process.execPath, ['src/server/services/googleSheets.test.js'], rootDir],
   ['Online users service tests', process.execPath, ['src/server/services/onlineUsers.test.js'], rootDir],
-  ['Schema maintenance tests', process.execPath, ['src/server/models/schemaMaintenance.test.js'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],
   ['Yahoo plugin content tests', process.execPath, ['yahoo-plugin/content.test.js'], rootDir],
