@@ -4749,6 +4749,28 @@ async function testTransactionCleanupClosesNewYahooLoginTabs() {
   assert.deepEqual(removed, [2]);
 }
 
+async function testTransactionCleanupDoesNotCloseNewAuctionProductTabs() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [
+          { id: 1, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' },
+          { id: 2, url: 'https://auctions.yahoo.co.jp/jp/auction/x1233517511' },
+          { id: 3, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=s1' }
+        ];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+
+  await api.closeTabsForTransactionFlow(null, new Set([1]));
+
+  assert.deepEqual(removed, [3]);
+}
+
 async function testTransactionCleanupKeepsManualVerificationTabsOpen() {
   const removed = [];
   const api = loadBackgroundForTest({
@@ -5317,6 +5339,7 @@ async function run() {
   await testCaptchaAnswerClosesCaptchaAndShowsPinWhenPinTabAppears();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
+  await testTransactionCleanupDoesNotCloseNewAuctionProductTabs();
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();

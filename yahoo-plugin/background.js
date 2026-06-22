@@ -4108,6 +4108,16 @@ function isLikelyYahooTransactionTab(tab) {
     /:\/\/account\.edit\.yahoo\.co\.jp\//i.test(url);
 }
 
+function isLikelyYahooTransactionCleanupTab(tab) {
+  const url = String(tab?.url || '');
+  return !url ||
+    /^about:blank/i.test(url) ||
+    /:\/\/buy\.auctions\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/contact\.auctions\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/login\.yahoo\.co\.jp\//i.test(url) ||
+    /:\/\/account\.edit\.yahoo\.co\.jp\//i.test(url);
+}
+
 function buildBundleActionWaitError(action, error, trustedClick = null) {
   const baseMessage = String(error?.message || error || '').trim();
   const diagnostics = trustedClick?.diagnostics ? `; trusted=${trustedClick.diagnostics}` : '';
@@ -4628,7 +4638,7 @@ async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
   for (const candidate of tabs) {
     if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
     if (isManualVerificationTab(candidate)) continue;
-    if (isLikelyYahooTransactionTab(candidate)) ids.add(candidate.id);
+    if (isLikelyYahooTransactionCleanupTab(candidate)) ids.add(candidate.id);
   }
   for (const id of ids) {
     const current = await chrome.tabs.get(id).catch(() => null);
@@ -4644,7 +4654,7 @@ async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
   for (const candidate of tabs) {
     if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
     if (isManualVerificationTab(candidate)) continue;
-    if (isLikelyYahooTransactionTab(candidate)) ids.add(candidate.id);
+    if (isLikelyYahooTransactionCleanupTab(candidate)) ids.add(candidate.id);
   }
   for (const id of ids) {
     const current = await chrome.tabs.get(id).catch(() => null);
