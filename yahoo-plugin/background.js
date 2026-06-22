@@ -1001,18 +1001,38 @@ function getPaymentActionPatternSource(action) {
   return patterns[action] || '';
 }
 
+function parsePaymentAmountJpyFromText(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  const toAmount = value => Number(String(value || '').replace(/,/g, '')) || 0;
+  const exactTotalPatterns = [
+    /\u304a\u652f\u6255\u3044\u91d1\u984d\s*[（(]\s*\u5408\u8a08\s*[）)][^\d]{0,20}([\d,]+)\s*\u5186/g,
+    /\u652f\u6255\u3044\u91d1\u984d\s*[（(]\s*\u5408\u8a08\s*[）)][^\d]{0,20}([\d,]+)\s*\u5186/g,
+    /\u304a\u652f\u6255\u3044\u91d1\u984d\s*\u5408\u8a08[^\d]{0,20}([\d,]+)\s*\u5186/g,
+    /\u652f\u6255\u3044\u91d1\u984d\s*\u5408\u8a08[^\d]{0,20}([\d,]+)\s*\u5186/g
+  ];
+  for (const pattern of exactTotalPatterns) {
+    const matches = [...normalized.matchAll(pattern)].map(match => toAmount(match[1])).filter(amount => amount > 0);
+    if (matches.length) return matches[matches.length - 1];
+  }
+
+  const paymentAmountMatches = [...normalized.matchAll(/\u304a\u652f\u6255\u3044\u91d1\u984d[^\d]{0,30}([\d,]+)\s*\u5186/g)]
+    .filter(match => !/\u5168\u984d\u8fd4\u91d1/.test(normalized.slice(Math.max(0, match.index || 0), (match.index || 0) + 80)))
+    .map(match => toAmount(match[1]))
+    .filter(amount => amount > 0);
+  if (paymentAmountMatches.length) return paymentAmountMatches[paymentAmountMatches.length - 1];
+
+  const yenMatches = [...normalized.matchAll(/([\d,]+)\s*\u5186/g)]
+    .map(match => toAmount(match[1]))
+    .filter(amount => amount > 0);
+  return yenMatches.length ? Math.max(...yenMatches) : 0;
+}
+
 function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
   const bodyText = normalize(snapshot.bodyText || '');
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(normalize).filter(Boolean) : [];
   const hasControl = pattern => controls.some(text => pattern.test(text));
-  const yenMatches = [...bodyText.matchAll(/([\d,]+)\s*\u5186/g)]
-    .map(match => Number(match[1].replace(/,/g, '')) || 0)
-    .filter(amount => amount > 0);
-  const paymentAmountMatch = bodyText.match(/\u304a\u652f\u6255\u3044\u91d1\u984d[^\d]{0,40}([\d,]+)\s*\u5186/);
-  const paymentAmountJpy = paymentAmountMatch
-    ? Number(paymentAmountMatch[1].replace(/,/g, '')) || 0
-    : (yenMatches.length ? Math.max(...yenMatches) : 0);
+  const paymentAmountJpy = parsePaymentAmountJpyFromText(bodyText);
   const paymentMethodFeeMatch = bodyText.match(/\u624b\u6570\u6599[^\d]{0,20}([\d,]+)\s*\u5186/);
   const paymentMethodFeeJpy = paymentMethodFeeMatch ? Number(paymentMethodFeeMatch[1].replace(/,/g, '')) || 0 : 0;
   const shippingOptions = Array.isArray(snapshot.shippingOptions)
@@ -1085,7 +1105,7 @@ async function getPaymentPageState(tabId) {
         el.title,
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' '));
-      const bodyText = normalize(document.body?.textContent || '');
+      const bodyText = normalize(document.body?.innerText || document.body?.textContent || '');
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
         .map(el => getText(el))
         .filter(Boolean);
@@ -5385,6 +5405,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildScanStatusPayload,
   shouldAttemptBundleInputAction,
   buildPaymentPageStateFromSnapshot,
+  parsePaymentAmountJpyFromText,
   clickStoreConfirmationChange,
   checkAllStoreConfirmationItemsAndApply,
   getStoreConfirmationFormReadiness,

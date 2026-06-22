@@ -889,6 +889,20 @@ function testPaymentPageStateDetectsAppraisalSection() {
   assert.equal(state.hasNoAppraisalSelected, false);
 }
 
+function testPaymentPageStateIgnoresAppraisalFeeForPaymentAmount() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=g1233517461',
+    bodyText: '\u9451\u5b9a \u5546\u54c1\u306f\u9451\u5b9a\u6240\u3067\u9451\u5b9a\u3055\u308c\u3001\u9451\u5b9a\u57fa\u6e96\u3092\u6e80\u305f\u3055\u306a\u3044\u5834\u5408\u3001\u53d6\u5f15\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3068\u306a\u308a\u304a\u652f\u6255\u3044\u91d1\u984d\u304c\u5168\u984d\u8fd4\u91d1\u3055\u308c\u307e\u3059\u3002 \u9451\u5b9a\u3059\u308b\uff082,500\u5186\uff09 \u9451\u5b9a\u3057\u306a\u3044 \u3054\u8cfc\u5165\u5185\u5bb9\u8a73\u7d30 \u843d\u672d\u5408\u8a08\u91d1\u984d 22,888\u5186 \u9001\u6599 0\u5186 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u5408\u8a08\uff09 22,888\u5186',
+    controls: ['\u78ba\u8a8d\u3059\u308b'],
+    hasAppraisalSection: true,
+    hasNoAppraisalSelected: true
+  });
+
+  assert.equal(state.hasAppraisalSection, true);
+  assert.equal(state.paymentAmountJpy, 22888);
+}
+
 async function testPaymentNoAppraisalSelectionClicksUnsetRadio() {
   let clicked = false;
   let changed = false;
@@ -4962,6 +4976,7 @@ async function run() {
   testPaymentPageStateKeepsSelectedShippingOption();
   testPaymentPageStateDetectsPaymentMethodFee();
   testPaymentPageStateDetectsAppraisalSection();
+  testPaymentPageStateIgnoresAppraisalFeeForPaymentAmount();
   await testPaymentNoAppraisalSelectionClicksUnsetRadio();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsBuyerDeletedCancellation();
