@@ -275,6 +275,58 @@ function buildWonStatsExportQuery(input) {
   };
 }
 
+function buildWonStatsPerformanceQuery(input) {
+  return {
+    sql: `WITH submitted AS (
+             SELECT COUNT(DISTINCT t.product_id) AS bid_product_count,
+                    COUNT(*) AS task_count
+             FROM tasks t
+             WHERE t.user_id = ?
+               AND date(t.created_at, 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+           ),
+           won AS (
+             SELECT COUNT(DISTINCT t.product_id) AS won_product_count
+             FROM tasks t
+             INNER JOIN orders o ON o.task_id = t.id
+             WHERE t.user_id = ?
+               AND t.status = 'success'
+               AND date(COALESCE(o.won_at, t.updated_at), 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+           ),
+           top_won AS (
+             SELECT t.product_id,
+                    o.final_price,
+                    COALESCE(o.won_at, t.updated_at) AS won_at
+             FROM tasks t
+             INNER JOIN orders o ON o.task_id = t.id
+             WHERE t.user_id = ?
+               AND t.status = 'success'
+               AND date(COALESCE(o.won_at, t.updated_at), 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+             ORDER BY COALESCE(o.final_price, 0) DESC, datetime(COALESCE(o.won_at, t.updated_at)) DESC, t.id DESC
+             LIMIT 1
+           )
+           SELECT submitted.bid_product_count,
+                  submitted.task_count,
+                  won.won_product_count,
+                  top_won.product_id AS top_product_id,
+                  p.product_title AS top_product_title,
+                  p.product_url AS top_product_url,
+                  top_won.final_price AS top_final_price,
+                  top_won.won_at AS top_won_at,
+                  (
+                    SELECT COUNT(*) AS submitted_task_count
+                    FROM tasks same_product
+                    WHERE same_product.user_id = ?
+                      AND same_product.product_id = top_won.product_id
+                      AND date(same_product.created_at, 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+                  ) AS top_product_task_count
+           FROM submitted
+           CROSS JOIN won
+           LEFT JOIN top_won ON 1 = 1
+           LEFT JOIN products p ON p.product_id = top_won.product_id`,
+    params: [input.userId, input.days, input.userId, input.days, input.userId, input.days, input.userId, input.days]
+  };
+}
+
 function formatLocalDate(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -590,9 +642,11 @@ router.get('/won-stats', async (req, res) => {
     input.userId = req.actingUser.id;
     const summaryQuery = buildWonStatsSummaryQuery(input);
     const exportQuery = buildWonStatsExportQuery(input);
-    const [summaryRows, exportRows] = await Promise.all([
+    const performanceQuery = buildWonStatsPerformanceQuery(input);
+    const [summaryRows, exportRows, performanceRow] = await Promise.all([
       db.getAll(summaryQuery.sql, summaryQuery.params),
-      db.getAll(exportQuery.sql, exportQuery.params)
+      db.getAll(exportQuery.sql, exportQuery.params),
+      db.getOne(performanceQuery.sql, performanceQuery.params)
     ]);
 
     const summaryByDate = new Map(summaryRows.map(row => [row.won_date, row]));
@@ -605,7 +659,32 @@ router.get('/won-stats', async (req, res) => {
       };
     });
 
-    res.json({ success: true, data: { days: input.days, daily, items: exportRows } });
+    const bidProductCount = Number(performanceRow?.bid_product_count || 0);
+    const wonProductCount = Number(performanceRow?.won_product_count || 0);
+    const taskCount = Number(performanceRow?.task_count || 0);
+    res.json({
+      success: true,
+      data: {
+        days: input.days,
+        daily,
+        items: exportRows,
+        performance: {
+          bidProductCount,
+          wonProductCount,
+          taskCount,
+          winRate: bidProductCount > 0 ? wonProductCount / bidProductCount : 0,
+          effectiveBidRate: taskCount > 0 ? wonProductCount / taskCount : 0,
+          topProduct: performanceRow?.top_product_id ? {
+            productId: performanceRow.top_product_id,
+            title: performanceRow.top_product_title || performanceRow.top_product_id,
+            url: performanceRow.top_product_url || `https://auctions.yahoo.co.jp/jp/auction/${performanceRow.top_product_id}`,
+            finalPrice: Number(performanceRow.top_final_price || 0),
+            wonAt: performanceRow.top_won_at || null,
+            taskCount: Number(performanceRow.top_product_task_count || 0)
+          } : null
+        }
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -796,6 +875,7 @@ module.exports.buildWonTaskListInput = buildWonTaskListInput;
 module.exports.buildWonStatsInput = buildWonStatsInput;
 module.exports.buildWonStatsSummaryQuery = buildWonStatsSummaryQuery;
 module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;
+module.exports.buildWonStatsPerformanceQuery = buildWonStatsPerformanceQuery;
 module.exports.buildRecentDateKeys = buildRecentDateKeys;
 module.exports.normalizePagination = normalizePagination;
 module.exports.calculateBidMaxPrice = calculateBidMaxPrice;

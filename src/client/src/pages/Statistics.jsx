@@ -11,6 +11,11 @@ function formatJPY(value) {
   return `${amount.toLocaleString('ja-JP')}円`;
 }
 
+function formatPercent(value) {
+  const rate = Number(value || 0) * 100;
+  return `${rate.toFixed(1).replace(/\.0$/, '')}%`;
+}
+
 function formatShortDate(value) {
   const [, month, day] = String(value || '').split('-');
   return month && day ? `${Number(month)}/${Number(day)}` : value;
@@ -24,9 +29,20 @@ function buildCsvFilename() {
   return `won-items-${year}${month}${day}.csv`;
 }
 
+const insightStyle = {
+  background: colors.cardSoft,
+  border: `1px solid ${colors.border}`,
+  borderRadius: 8,
+  padding: '10px 12px',
+  fontSize: 13,
+  lineHeight: 1.55,
+  color: colors.text
+};
+
 export default function Statistics() {
   const [daily, setDaily] = useState([]);
   const [items, setItems] = useState([]);
+  const [performance, setPerformance] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeDate, setActiveDate] = useState('');
   const chartScrollRef = useRef(null);
@@ -39,12 +55,14 @@ export default function Statistics() {
         const nextDaily = data.daily || [];
         setDaily(nextDaily);
         setItems(data.items || []);
+        setPerformance(data.performance || null);
         setActiveDate(nextDaily[nextDaily.length - 1]?.date || '');
       })
       .catch(e => {
         Toast.show({ content: e.response?.data?.error || '统计数据加载失败' });
         setDaily([]);
         setItems([]);
+        setPerformance(null);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -76,6 +94,7 @@ export default function Statistics() {
   const activeItem = daily.find(item => item.date === activeDate) || daily[daily.length - 1] || null;
   const totalAmount = daily.reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
   const totalCount = daily.reduce((sum, item) => sum + Number(item.item_count || 0), 0);
+  const topProduct = performance?.topProduct || null;
 
   function handleExport() {
     downloadCsv(buildCsvFilename(), buildWonStatsCsv(items));
@@ -178,6 +197,30 @@ export default function Statistics() {
                 })}
               </div>
             </div>
+
+            {performance && (
+              <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+                <div style={insightStyle}>
+                  您近30天总共出价 <strong>{performance.bidProductCount || 0}</strong> 个商品，拍到 <strong>{performance.wonProductCount || 0}</strong> 个商品，中标率为 <strong>{formatPercent(performance.winRate)}</strong>。
+                </div>
+                <div style={insightStyle}>
+                  总共提交 <strong>{performance.taskCount || 0}</strong> 次任务，有效出价比为 <strong>{formatPercent(performance.effectiveBidRate)}</strong>。
+                </div>
+                <div style={insightStyle}>
+                  {topProduct ? (
+                    <>
+                      拍到的最高价商品为{' '}
+                      <a href={topProduct.url || `https://auctions.yahoo.co.jp/jp/auction/${topProduct.productId}`} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
+                        {topProduct.title || topProduct.productId}
+                      </a>
+                      （{formatJPY(topProduct.finalPrice)}），总共提交任务 <strong>{topProduct.taskCount || 0}</strong> 次，恭喜您。
+                    </>
+                  ) : (
+                    <>近30天暂无拍到商品，继续关注合适商品。</>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

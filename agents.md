@@ -86,6 +86,8 @@ Follow-up fix:
 - Recent trusted-input usage can be counted from the diagnostics API, for example:
   `Invoke-RestMethod http://localhost:3034/api/plugin/diagnostics?type=trusted_input` and group by `action` / `method`.
 - Admin now has a `Reports` page at `#/reports`. It shows `chrome.debugger` trusted-input totals, success/error counts, grouped action/method usage, grouped method/level usage, and paginated diagnostic details. Backend endpoint: `GET /api/admin/reports/trusted-input`.
+- The admin `Reports` menu item is rendered at the bottom of the menu.
+- The user statistics page now shows a 30-day performance summary below the chart: distinct bid product count, won product count, win rate, submitted task count, effective bid rate, and the highest-price won product with its task submission count. Backend data is returned from `GET /api/task/won-stats` under `data.performance`.
 
 ---
 

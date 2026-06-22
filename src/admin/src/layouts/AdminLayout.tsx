@@ -21,6 +21,11 @@ const menuItemsConfig = [
 
 menuItemsConfig.push({ key: '/online-users', fullLabel: '在线用户', shortLabel: '在', mobileLabel: '在线' });
 
+const orderedMenuItemsConfig = [
+  ...menuItemsConfig.filter(item => item.key !== '/reports'),
+  ...menuItemsConfig.filter(item => item.key === '/reports')
+];
+
 function renderPaymentAlertMessage(messageText: string) {
   const text = String(messageText || '');
   const pattern = /([a-zA-Z]?\d{8,10})/g;
@@ -54,7 +59,7 @@ function renderPaymentAlertMessage(messageText: string) {
 export default function AdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const selectedKey = menuItemsConfig.find(item => location.pathname.startsWith(item.key))?.key || '/tasks';
+  const selectedKey = orderedMenuItemsConfig.find(item => location.pathname.startsWith(item.key))?.key || '/tasks';
   const username = localStorage.getItem('username') || 'admin';
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
   const [paymentAlert, setPaymentAlert] = useState('');
@@ -95,7 +100,7 @@ export default function AdminLayout() {
   }
 
   // 根据折叠状态生成菜单项
-  const menuItems = menuItemsConfig.map(item => ({
+  const menuItems = orderedMenuItemsConfig.map(item => ({
     key: item.key,
     label: <Link to={item.key}>{collapsed ? item.shortLabel : item.fullLabel}</Link>
   }));
@@ -418,7 +423,7 @@ export default function AdminLayout() {
       </Layout>
       {isMobile ? (
         <nav className="admin-bottom-nav">
-          {menuItemsConfig.map(item => {
+          {orderedMenuItemsConfig.map(item => {
             const active = item.key === selectedKey;
             return (
               <Link

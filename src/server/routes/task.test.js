@@ -9,6 +9,7 @@ const {
   buildWonStatsInput,
   buildWonStatsSummaryQuery,
   buildWonStatsExportQuery,
+  buildWonStatsPerformanceQuery,
   calculateBidMaxPrice,
   normalizeProductType,
   getTaxIncludedPrice,
@@ -309,6 +310,18 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
   assert.deepEqual(exportQuery.params, [9, 30]);
 }
 
+function testWonStatsPerformanceQueryUsesThirtyDayTaskAndWonCounts() {
+  const query = buildWonStatsPerformanceQuery({ userId: 9, days: 30 });
+
+  assert.match(query.sql, /COUNT\(DISTINCT t\.product_id\) AS bid_product_count/);
+  assert.match(query.sql, /COUNT\(\*\) AS task_count/);
+  assert.match(query.sql, /COUNT\(DISTINCT t\.product_id\) AS won_product_count/);
+  assert.match(query.sql, /ORDER BY COALESCE\(o\.final_price, 0\) DESC/);
+  assert.match(query.sql, /COUNT\(\*\) AS submitted_task_count/);
+  assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = top_won\.product_id/);
+  assert.deepEqual(query.params, [9, 30, 9, 30, 9, 30, 9, 30]);
+}
+
 function testStoreUserMaxPriceConvertsToTaxExcludedBidMax() {
   assert.equal(calculateBidMaxPrice(1000, 'tax_included'), 909);
   assert.equal(calculateBidMaxPrice(1100, 'tax_included'), 1000);
@@ -598,6 +611,7 @@ testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testProductTypeFallsBackToTaxLabel();
 testWonStatsInputDefaultsToThirtyDays();
 testWonStatsQueriesUseWonDateAndExportFields();
+testWonStatsPerformanceQueryUsesThirtyDayTaskAndWonCounts();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();
 testStoreBuyoutPriceIsAlreadyTaxIncluded();
