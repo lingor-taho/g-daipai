@@ -4980,6 +4980,135 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
   assert.deepEqual(removedTabs, [18]);
 }
 
+async function testExecuteBidTaskRetriesTransientServerTabErrorOnce() {
+  const statusBodies = [];
+  const removedTabs = [];
+  let createCount = 0;
+  let sendMessageCalls = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    sleep: async () => {},
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/task/901/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/901/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        createCount += 1;
+        return { id: 900 + createCount, status: 'loading', url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054' };
+      },
+      onUpdatedAddListener(listener) {
+        listener(900 + createCount, { status: 'complete' });
+      },
+      async sendMessage(_id, msg) {
+        sendMessageCalls += 1;
+        if (sendMessageCalls === 1) throw new Error('No tab with id: 901');
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'c1234343054',
+            currentPrice: 1000,
+            endTime: '2026-06-28T22:01:24+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID_V2') {
+          return { success: true, bidPrice: 20000 };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removedTabs.push(id);
+      }
+    },
+    scripting: {
+      async executeScript() {}
+    }
+  });
+
+  await api.executeBidTask({
+    id: 901,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054',
+    current_price: 1000,
+    max_price: 20000,
+    user_max_price: 22000,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_included',
+    end_time: '2026-06-28T22:01:24+09:00'
+  }, { alreadyClaimed: true });
+
+  assert.equal(createCount, 2);
+  assert.equal(statusBodies.some(body => body.status === 'failed'), false);
+  assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
+  assert.deepEqual(removedTabs, [901, 902]);
+}
+
+async function testExecuteBidTaskMarksServerTabErrorAfterRetryFails() {
+  const statusBodies = [];
+  let createCount = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    sleep: async () => {},
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/task/902/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return { success: true }; } };
+    },
+    tabs: {
+      async create() {
+        createCount += 1;
+        return { id: 910 + createCount, status: 'loading', url: 'https://auctions.yahoo.co.jp/jp/auction/r1234339848' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/r1234339848' };
+      },
+      onUpdatedAddListener(listener) {
+        listener(910 + createCount, { status: 'complete' });
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript() {
+        throw new Error('Tabs cannot be edited right now (user may be dragging a tab).');
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 902,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/r1234339848',
+    current_price: 20500,
+    max_price: 22000,
+    user_max_price: 22000,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_included',
+    end_time: '2026-06-28T22:30:57+09:00'
+  }, { alreadyClaimed: true });
+
+  assert.equal(createCount, 2);
+  const failed = statusBodies.find(body => body.status === 'failed');
+  assert.ok(failed);
+  assert.match(failed.error_msg, /Server tab error/);
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -5116,6 +5245,8 @@ async function run() {
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
+  await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
+  await testExecuteBidTaskMarksServerTabErrorAfterRetryFails();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }

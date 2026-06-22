@@ -251,6 +251,15 @@ function isTabsTemporarilyUneditableError(error) {
   return /Tabs cannot be edited right now|user may be dragging a tab/i.test(error?.message || String(error || ''));
 }
 
+function isTransientServerTabError(error) {
+  return isContentScriptTargetGoneError(error) || isTabsTemporarilyUneditableError(error);
+}
+
+function buildServerTabError(error) {
+  const message = error?.message || String(error || 'unknown tab error');
+  return new Error(`Server tab error: ${message}`);
+}
+
 function isTransientFetchError(error) {
   const text = error?.message || String(error || '');
   return /Failed to fetch|NetworkError|Load failed|ERR_CONNECTION|ECONNREFUSED|ECONNRESET/i.test(text);
@@ -5331,13 +5340,25 @@ async function executeBidTask(task, options = {}) {
     });
   } catch (e) {
     await chrome.storage.session.remove(['currentTask']);
+    if (isTransientServerTabError(e) && !options.tabRetryAttempted && !taskTimedOut) {
+      console.warn('[Yahoo Bid] Retrying task after transient server tab error:', task.id, e.message || e);
+      if (taskTab?.id) await closeTaskTab(taskTab.id).catch(() => {});
+      await sleep(1000);
+      return executeBidTask(task, {
+        ...options,
+        alreadyClaimed: true,
+        tabRetryAttempted: true,
+        preserveActiveRun: true
+      });
+    }
     if (taskTab?.id && e.closeTab) {
       await closeTaskTab(taskTab.id);
     }
-    await postBidFailureDiagnostic(task, e);
-    await markTaskStatus(task.id, 'failed', e.message);
+    const finalError = isTransientServerTabError(e) ? buildServerTabError(e) : e;
+    await postBidFailureDiagnostic(task, finalError);
+    await markTaskStatus(task.id, 'failed', finalError.message);
   } finally {
-    activeBidRuns.delete(task.id);
+    if (!options.preserveActiveRun) activeBidRuns.delete(task.id);
   }
 }
 

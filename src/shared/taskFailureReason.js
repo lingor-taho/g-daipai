@@ -35,5 +35,9 @@ export function getTaskFailureLabel(errorMsg) {
     return '失败：yahoo登录失败';
   }
 
+  if (/Server tab error|No tab with id|Tabs cannot be edited right now|user may be dragging a tab/i.test(text)) {
+    return '失败：服务器tab异常';
+  }
+
   return '失败：系统原因';
 }

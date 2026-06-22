@@ -38,6 +38,14 @@ assert.equal(
   '失败：yahoo登录失败'
 );
 assert.equal(
+  getTaskFailureLabel('Server tab error: No tab with id: 57727524'),
+  '失败：服务器tab异常'
+);
+assert.equal(
+  getTaskFailureLabel('Tabs cannot be edited right now (user may be dragging a tab).'),
+  '失败：服务器tab异常'
+);
+assert.equal(
   getTaskFailureLabel('confirm button not found'),
   '失败：系统原因'
 );
