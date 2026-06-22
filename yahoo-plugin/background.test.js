@@ -3197,6 +3197,9 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
           else storeApplyChecks += 1;
           return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b', applyReady: !payload.args?.[0] } }];
         }
+        if (funcText.includes('findStoreConfirmationChange')) {
+          return [{ result: { success: true, text: '\u5909\u66f4' } }];
+        }
         if (payload.args && payload.args.length >= 2) {
           actions.push(payload.args[1]);
           return [{ result: { success: true, text: 'clicked' } }];
@@ -3225,9 +3228,9 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
 
   await api.runPaymentJobs();
 
-  assert.equal(storeApplyChecks, 0);
+  assert.equal(storeApplyChecks, 1);
   assert.equal(storeApplySubmits, 1);
-  assert.equal(trustedMouseCommands, 6);
+  assert.equal(trustedMouseCommands, 0);
   assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), false);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 19);
@@ -3305,6 +3308,9 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
           if (payload.args?.[0]) storeApplySubmits += 1;
           return [{ result: { success: true, checkedCount: 2, text: '\u5909\u66f4\u3059\u308b', applyReady: !payload.args?.[0] } }];
         }
+        if (funcText.includes('findStoreConfirmationChange')) {
+          return [{ result: { success: true, text: '\u5909\u66f4' } }];
+        }
         if (payload.args && payload.args.length >= 2) {
           return [{ result: { success: true, text: 'clicked' } }];
         }
@@ -3333,10 +3339,89 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
   await api.runPaymentJobs();
 
   assert.equal(storeApplySubmits, 1);
-  assert.equal(trustedMouseCommands, 6);
+  assert.equal(trustedMouseCommands, 0);
   assert.equal(tabUpdates.some(call => call.updateInfo?.url === 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=j1232680017'), false);
   assert.equal(calls[0].orderId, 20);
   assert.equal(calls[0].status, 'success');
+}
+
+async function testCompleteStoreConfirmationItemsUsesJsBeforeTrustedMouse() {
+  let trustedAttachCount = 0;
+  let jsChangeClicks = 0;
+  let jsCheckboxChecks = 0;
+  let jsApplyClicks = 0;
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/store-confirmation?auctionId=j1232680017',
+        hasStoreConfirmationSection: true,
+        hasStoreConfirmationEditPage: true
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
+        hasReviewButton: true,
+        hasStoreConfirmationSection: true
+      }
+    }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' }; },
+      async update(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' }; },
+      async query() { return [{ id: 31, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (funcText.includes('click point not found')) {
+          return [{ result: { success: true, x: 700, y: 280, text: payload.args?.[0] === 'apply' ? '\u5909\u66f4\u3059\u308b' : '\u5909\u66f4' } }];
+        }
+        if (funcText.includes('store confirmation checkbox click points not found')) {
+          return [{ result: { success: true, points: [{ index: 0, checked: false, x: 118, y: 386, text: '\u4e86\u627f\u3057\u307e\u3057\u305f\u3002' }] } }];
+        }
+        if (funcText.includes('hasSkeleton')) {
+          return [{ result: { success: true, readyState: 'complete', checkboxCount: 1, checkedCount: 0, hasApplyButton: true, buttonText: '\u5909\u66f4\u3059\u308b', hasStoreOptionText: true, hasSkeleton: false, textLength: 180 } }];
+        }
+        if (funcText.includes('store confirmation apply button not found') && funcText.includes('checkedCount')) {
+          jsCheckboxChecks += 1;
+          return [{ result: { success: true, checkedCount: 1, text: '\u5909\u66f4\u3059\u308b', applyReady: true } }];
+        }
+        if (funcText.includes('store confirmation apply button not found')) {
+          jsApplyClicks += 1;
+          return [{ result: { success: true, text: '\u5909\u66f4\u3059\u308b' } }];
+        }
+        if (funcText.includes('findStoreConfirmationChange')) {
+          jsChangeClicks += 1;
+          return [{ result: { success: true, text: '\u5909\u66f4' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    debuggerApi: {
+      async attach() { trustedAttachCount += 1; },
+      async sendCommand() {},
+      async detach() {}
+    },
+    fetch: async () => ({ async json() { return { success: true }; } })
+  });
+
+  const result = await api.completeStoreConfirmationItems(
+    { id: 31, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', status: 'complete' },
+    { hasStoreConfirmationSection: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(jsChangeClicks, 1);
+  assert.equal(jsCheckboxChecks, 1);
+  assert.equal(jsApplyClicks, 1);
+  assert.equal(trustedAttachCount, 0);
 }
 
 async function testPaymentTrustedClickPointFindsRoleButton() {
@@ -5657,6 +5742,7 @@ async function run() {
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
   await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
+  await testCompleteStoreConfirmationItemsUsesJsBeforeTrustedMouse();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMissing();
   await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();

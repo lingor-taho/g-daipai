@@ -14,6 +14,7 @@ export default {
       routes: [
         { path: '/', redirect: '/tasks' },
         { path: '/tasks', component: '@/Tasks' },
+        { path: '/reports', component: '@/Reports' },
         { path: '/accounts', component: '@/AccountManagement' },
         { path: '/users', redirect: '/accounts' },
         { path: '/server-accounts', redirect: '/accounts' },

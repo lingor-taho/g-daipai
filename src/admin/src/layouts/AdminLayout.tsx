@@ -8,6 +8,7 @@ import { getManualVerificationDisplayState } from '../manualVerificationState';
 const { Header, Content, Sider } = Layout;
 
 const menuItemsConfig = [
+  { key: '/reports', fullLabel: '报表', shortLabel: '报', mobileLabel: '报表' },
   { key: '/tasks', fullLabel: '任务报表', shortLabel: '任', mobileLabel: '任务' },
   { key: '/orders', fullLabel: '订单管理', shortLabel: '订', mobileLabel: '订单' },
   { key: '/multi-bid-settings', fullLabel: '系统配置', shortLabel: '系', mobileLabel: '配置' },

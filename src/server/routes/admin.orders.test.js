@@ -18,6 +18,7 @@ const {
   buildProductDebugSnapshotQuery,
   buildProductDebugBiddingItemsQuery,
   buildProductDebugConfigQuery,
+  buildTrustedInputReportQueries,
   buildOrderSettlementSelectQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
@@ -61,6 +62,21 @@ function testBuildGoogleSheetUrl() {
     'https://docs.google.com/spreadsheets/d/1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4/edit?gid=0#gid=0'
   );
   assert.equal(buildGoogleSheetUrl(''), '');
+}
+
+function testBuildTrustedInputReportQueries() {
+  const queries = buildTrustedInputReportQueries({ current: '2', pageSize: '25', level: 'error' });
+  assert.match(queries.summary.sql, /FROM plugin_diagnostics/);
+  assert.match(queries.summary.sql, /type = 'trusted_input'/);
+  assert.match(queries.summary.sql, /level = \?/);
+  assert.deepEqual(queries.summary.params, ['error']);
+  assert.match(queries.byAction.sql, /GROUP BY action, method/);
+  assert.match(queries.byMethod.sql, /GROUP BY method, level/);
+  assert.match(queries.rows.sql, /ORDER BY datetime\(created_at\) DESC, id DESC/);
+  assert.deepEqual(queries.rows.params, ['error', 25, 25]);
+  assert.deepEqual(queries.count.params, ['error']);
+  assert.equal(queries.pagination.current, 2);
+  assert.equal(queries.pagination.pageSize, 25);
 }
 
 function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {
@@ -1065,6 +1081,7 @@ testNormalizeOrderStatusRefreshTargetSupportsAllowedTargets();
 testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
 testBuildGoogleSheetUrl();
+testBuildTrustedInputReportQueries();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 testManualOrderImportSummarySeparatesEmptyReadyBatches();
 

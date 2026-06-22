@@ -22,6 +22,7 @@ Fix:
 Current boundary:
 - This does not drop columns from the existing production database yet.
 - Before dropping production columns, run the health/read-path checks and back up the database.
+- Before or together with the actual column drop, harden the plugin task payload boundary: API should expose product-derived values as explicit `product_current_price`, `product_tax_type`, `product_end_time`, etc.; `yahoo-plugin/background.js` should stop relying on ambiguous `task.current_price`, `task.tax_type`, and `task.end_time` names except for a short compatibility bridge. This avoids future confusion between `tasks` columns and `products` join fields.
 
 Validation:
 - `node scripts/check-product-parity.test.js`
@@ -77,6 +78,14 @@ Validation:
 - `node yahoo-plugin/background.test.js`
 - `node --check yahoo-plugin/background.js`
 - `node --check yahoo-plugin/background.test.js`
+
+Follow-up fix:
+- Store confirmation handling now waits for the edit form readiness and uses JavaScript actions first: JS click `change`, JS check all required checkboxes, JS click apply.
+- `chrome.debugger` real mouse clicks for store confirmation are kept only as fallback when JS click/checking does not reach the expected page state.
+- Store confirmation trusted-input fallbacks now post `type=trusted_input` diagnostics, consistent with payment and bundle trusted clicks.
+- Recent trusted-input usage can be counted from the diagnostics API, for example:
+  `Invoke-RestMethod http://localhost:3034/api/plugin/diagnostics?type=trusted_input` and group by `action` / `method`.
+- Admin now has a `Reports` page at `#/reports`. It shows `chrome.debugger` trusted-input totals, success/error counts, grouped action/method usage, grouped method/level usage, and paginated diagnostic details. Backend endpoint: `GET /api/admin/reports/trusted-input`.
 
 ---
 

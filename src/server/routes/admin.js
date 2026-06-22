@@ -575,6 +575,82 @@ function buildAdminLogsQuery({ pageSize, offset }) {
   };
 }
 
+function normalizeReportPage(value, fallback = 1) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
+}
+
+function buildTrustedInputReportQueries(filters = {}) {
+  const current = normalizeReportPage(filters.current, 1);
+  const pageSize = Math.min(200, normalizeReportPage(filters.pageSize, 20));
+  const offset = (current - 1) * pageSize;
+  const where = ["type = 'trusted_input'"];
+  const params = [];
+  const addFilter = (column, value) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    where.push(`${column} = ?`);
+    params.push(text);
+  };
+  addFilter('level', filters.level);
+  addFilter('action', filters.action);
+  addFilter('method', filters.method);
+  addFilter('product_id', String(filters.productId || filters.product_id || '').toLowerCase());
+  const whereSql = `WHERE ${where.join(' AND ')}`;
+  return {
+    pagination: { current, pageSize, offset },
+    summary: {
+      sql: `SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN level = 'info' THEN 1 ELSE 0 END) AS info_count,
+                   SUM(CASE WHEN level = 'warn' THEN 1 ELSE 0 END) AS warn_count,
+                   SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count,
+                   MAX(created_at) AS last_used_at
+            FROM plugin_diagnostics
+            ${whereSql}`,
+      params: [...params]
+    },
+    byAction: {
+      sql: `SELECT COALESCE(action, '') AS action,
+                   COALESCE(method, '') AS method,
+                   COUNT(*) AS count,
+                   SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count,
+                   MAX(created_at) AS last_used_at
+            FROM plugin_diagnostics
+            ${whereSql}
+            GROUP BY action, method
+            ORDER BY count DESC, datetime(last_used_at) DESC
+            LIMIT 100`,
+      params: [...params]
+    },
+    byMethod: {
+      sql: `SELECT COALESCE(method, '') AS method,
+                   COALESCE(level, '') AS level,
+                   COUNT(*) AS count,
+                   MAX(created_at) AS last_used_at
+            FROM plugin_diagnostics
+            ${whereSql}
+            GROUP BY method, level
+            ORDER BY count DESC, datetime(last_used_at) DESC
+            LIMIT 100`,
+      params: [...params]
+    },
+    rows: {
+      sql: `SELECT id, level, product_id, order_id, action, method, message, diagnostics, url, created_at
+            FROM plugin_diagnostics
+            ${whereSql}
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT ? OFFSET ?`,
+      params: [...params, pageSize, offset]
+    },
+    count: {
+      sql: `SELECT COUNT(*) AS total
+            FROM plugin_diagnostics
+            ${whereSql}`,
+      params: [...params]
+    }
+  };
+}
+
 function mapAdminOrderListItem(item) {
   const settled = Boolean(item.settled_at);
   const effectiveShippingFeeText = getEffectiveShippingFeeText(item);
@@ -1155,6 +1231,33 @@ router.get('/orders/stats', async (req, res) => {
     WHERE t.status = 'success'
   `);
   res.json(stats);
+});
+
+router.get('/reports/trusted-input', async (req, res) => {
+  const queries = buildTrustedInputReportQueries(req.query || {});
+  const [summaryRow, byAction, byMethod, rows, countRow] = await Promise.all([
+    db.getOne(queries.summary.sql, queries.summary.params),
+    db.getAll(queries.byAction.sql, queries.byAction.params),
+    db.getAll(queries.byMethod.sql, queries.byMethod.params),
+    db.getAll(queries.rows.sql, queries.rows.params),
+    db.getOne(queries.count.sql, queries.count.params)
+  ]);
+  res.json({
+    success: true,
+    summary: {
+      total: Number(summaryRow?.total || 0),
+      info: Number(summaryRow?.info_count || 0),
+      warn: Number(summaryRow?.warn_count || 0),
+      error: Number(summaryRow?.error_count || 0),
+      lastUsedAt: summaryRow?.last_used_at || null
+    },
+    byAction,
+    byMethod,
+    items: rows,
+    total: Number(countRow?.total || 0),
+    current: queries.pagination.current,
+    pageSize: queries.pagination.pageSize
+  });
 });
 
 async function getFinanceConfig() {
@@ -2973,6 +3076,7 @@ module.exports.buildProductDebugBiddingItemsQuery = buildProductDebugBiddingItem
 module.exports.buildProductDebugConfigQuery = buildProductDebugConfigQuery;
 module.exports.buildOrderSettlementSelectQuery = buildOrderSettlementSelectQuery;
 module.exports.buildAdminLogsQuery = buildAdminLogsQuery;
+module.exports.buildTrustedInputReportQueries = buildTrustedInputReportQueries;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.calculateOrderPayable = calculateOrderPayable;

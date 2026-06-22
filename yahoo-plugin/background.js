@@ -2351,8 +2351,26 @@ async function dispatchTrustedStoreConfirmationCheckboxes(tab) {
       await clickAt(point);
       await sleep(500);
     }
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'info',
+      action: 'storeConfirmationCheckboxes',
+      method: 'debuggerMouseCheckbox',
+      message: 'trusted store confirmation checkbox clicks dispatched',
+      url: currentTab?.url || '',
+      diagnostics: `method=debuggerMouseCheckbox,action=storeConfirmationCheckboxes,tabId=${tabId},clickedCount=${pointResult.points.length}`
+    });
     return { success: true, method: 'debuggerMouseCheckbox', clickedCount: pointResult.points.length };
   } catch (e) {
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'error',
+      action: 'storeConfirmationCheckboxes',
+      method: 'debuggerMouseCheckbox',
+      message: e.message || 'store confirmation checkbox trusted click failed',
+      url: currentTab?.url || '',
+      diagnostics: `method=debuggerMouseCheckbox,action=storeConfirmationCheckboxes,tabId=${tabId},error=${e.message || e}`
+    });
     return { success: false, error: e.message || 'store confirmation checkbox trusted click failed' };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
@@ -2496,8 +2514,26 @@ async function dispatchTrustedStoreConfirmationClick(tab, action) {
       clickCount: 1
     });
     await sleep(500);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'info',
+      action: `storeConfirmation:${action}`,
+      method: 'debuggerMouse',
+      message: 'trusted store confirmation mouse click dispatched',
+      url: currentTab?.url || '',
+      diagnostics: `method=debuggerMouse,action=storeConfirmation:${action},tabId=${tabId},text=${point.text || ''}`
+    });
     return { success: true, method: 'debuggerMouse', text: point.text };
   } catch (e) {
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'error',
+      action: `storeConfirmation:${action}`,
+      method: 'debuggerMouse',
+      message: e.message || `store confirmation ${action} trusted click failed`,
+      url: currentTab?.url || '',
+      diagnostics: `method=debuggerMouse,action=storeConfirmation:${action},tabId=${tabId},error=${e.message || e}`
+    });
     return { success: false, error: e.message || `store confirmation ${action} trusted click failed` };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
@@ -2508,8 +2544,7 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
   if (!tab?.id || !state?.hasStoreConfirmationSection) return { success: true, tab, state };
 
   const previousTabIds = await getTabIds();
-  let changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
-  if (!changeResult?.success) changeResult = await clickStoreConfirmationChange(tab.id);
+  let changeResult = await clickStoreConfirmationChange(tab.id);
   if (!changeResult?.success) changeResult = await dispatchTrustedStoreConfirmationClick(tab, 'change');
   if (!changeResult?.success) return { success: false, error: changeResult?.error || 'store confirmation change click failed', tab };
   let editTab = null;
@@ -2520,9 +2555,9 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
       15000
     );
   } catch (e) {
-    const jsChange = await clickStoreConfirmationChange(tab.id);
-    if (!jsChange?.success) {
-      return { success: false, error: `store confirmation edit page did not appear after ${changeResult.method || changeResult.text || 'click'}; jsChange=${jsChange?.error || 'failed'}: ${e.message || e}`, tab };
+    const trustedChange = await dispatchTrustedStoreConfirmationClick(tab, 'change');
+    if (!trustedChange?.success) {
+      return { success: false, error: `store confirmation edit page did not appear after js click; trusted=${trustedChange?.error || 'failed'}: ${e.message || e}`, tab };
     }
     try {
       editTab = await waitForPaymentStateAcrossTabs(tab, nextState =>
@@ -2531,15 +2566,15 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
         15000
       );
     } catch (afterJsError) {
-      return { success: false, error: `store confirmation edit page did not appear after trusted+js click: ${afterJsError.message || afterJsError}`, tab };
+      return { success: false, error: `store confirmation edit page did not appear after js+trusted click: ${afterJsError.message || afterJsError}`, tab };
     }
   }
 
   const readyResult = await waitForStoreConfirmationFormReady(editTab.id);
   if (!readyResult?.success) return { success: false, error: readyResult?.error || 'store confirmation form not ready', tab: editTab };
-  let applyResult = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
+  let applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
   if (!applyResult?.success) {
-    applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
+    applyResult = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
   }
   if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
   await sleep(1200);
@@ -2777,8 +2812,26 @@ async function dispatchTrustedConfirmReceiptCheckboxClick(tab) {
       clickCount: 1
     });
     await sleep(300);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'info',
+      action: 'confirmReceiptCheckbox',
+      method: 'debuggerMouse',
+      message: 'trusted confirm receipt checkbox click dispatched',
+      url: currentTab?.url || '',
+      diagnostics: `method=debuggerMouse,action=confirmReceiptCheckbox,tabId=${tabId},text=${point.text || ''}`
+    });
     return { success: true, method: 'debuggerMouse', text: point.text };
   } catch (e) {
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      level: 'error',
+      action: 'confirmReceiptCheckbox',
+      method: 'debuggerMouse',
+      message: e.message || 'trusted receipt checkbox mouse click failed',
+      url: currentTab?.url || '',
+      diagnostics: `method=debuggerMouse,action=confirmReceiptCheckbox,tabId=${tabId},error=${e.message || e}`
+    });
     return { success: false, error: e.message || 'trusted receipt checkbox mouse click failed' };
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => {});
