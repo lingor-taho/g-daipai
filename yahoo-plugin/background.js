@@ -1035,6 +1035,8 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   );
   const hasStoreConfirmationEditPage = Boolean(snapshot.hasStoreConfirmationEditPage) ||
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
+  const hasAppraisalSection = Boolean(snapshot.hasAppraisalSection) ||
+    (/\u9451\u5b9a/.test(bodyText) && (/\u9451\u5b9a\u3057\u306a\u3044/.test(bodyText) || controls.some(text => /\u9451\u5b9a\u3057\u306a\u3044/.test(text))));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
   const cancelled = /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081/.test(bodyText) ||
@@ -1049,6 +1051,8 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     paymentMethodFeeJpy,
     hasStoreConfirmationSection,
     hasStoreConfirmationEditPage,
+    hasAppraisalSection,
+    hasNoAppraisalSelected: Boolean(snapshot.hasNoAppraisalSelected),
     shippingOptions,
     selectedShippingAmountJpy: selectedShippingOption ? selectedShippingOption.amountJpy : null,
     alreadyPaid,
@@ -1145,6 +1149,16 @@ async function getPaymentPageState(tabId) {
         })
         .filter(option => option.isShipping && option.visible && option.amountJpy > 0)
         .map(({ amountJpy, checked, disabled, text, visible }) => ({ amountJpy, checked, disabled, visible, text: text.slice(0, 200) }));
+      const appraisalSections = [
+        document.querySelector('#appraisal'),
+        ...document.querySelectorAll('section')
+      ].filter(Boolean);
+      const appraisalSection = appraisalSections.find(section => {
+        if (section.id === 'appraisal') return true;
+        const heading = section.querySelector?.('h1,h2,h3,header');
+        return /^\s*\u9451\u5b9a\s*$/.test(getText(heading || section));
+      }) || null;
+      const appraisalRadios = appraisalSection ? [...appraisalSection.querySelectorAll('input[type="radio"]')] : [];
       return {
         success: true,
         snapshot: {
@@ -1154,6 +1168,8 @@ async function getPaymentPageState(tabId) {
           controls,
           hasStoreConfirmationSection: false,
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
+          hasAppraisalSection: Boolean(appraisalSection),
+          hasNoAppraisalSelected: appraisalRadios.some(radio => radio.checked && (radio.value === 'unset' || /\u9451\u5b9a\u3057\u306a\u3044/.test(optionTextFromRadio(radio)))),
           shippingOptions
         }
       };
@@ -1163,6 +1179,78 @@ async function getPaymentPageState(tabId) {
   if (!result?.success) return null;
   if (result.state) return result.state;
   return buildPaymentPageStateFromSnapshot(result.snapshot || {});
+}
+
+async function selectPaymentNoAppraisalOption(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: marker => {
+      void marker;
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const appraisalSections = [
+        document.querySelector('#appraisal'),
+        ...document.querySelectorAll('section')
+      ].filter(Boolean);
+      const section = appraisalSections.find(item => {
+        if (item.id === 'appraisal') return true;
+        const heading = item.querySelector?.('h1,h2,h3,header');
+        return /^\s*\u9451\u5b9a\s*$/.test(getText(heading || item));
+      }) || null;
+      if (!section) return { success: true, skipped: true };
+
+      const getRadioText = radio => {
+        const parts = [];
+        const labelByParent = radio.closest?.('label');
+        if (labelByParent) parts.push(getText(labelByParent));
+        if (radio.id) {
+          const escapedId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(radio.id) : String(radio.id).replace(/"/g, '\\"');
+          const labelByFor = document.querySelector(`label[for="${escapedId}"]`);
+          if (labelByFor) parts.push(getText(labelByFor));
+        }
+        const container = radio.closest?.('li,dd,tr,div');
+        if (container) parts.push(getText(container));
+        return normalize(parts.join(' '));
+      };
+      const radios = [...section.querySelectorAll('input[type="radio"]')];
+      const noAppraisalRadio = radios.find(radio => radio.value === 'unset') ||
+        radios.find(radio => /\u9451\u5b9a\u3057\u306a\u3044/.test(getRadioText(radio)));
+      if (!noAppraisalRadio) return { success: false, error: 'payment no-appraisal radio not found' };
+      if (noAppraisalRadio.disabled) return { success: false, error: 'payment no-appraisal radio disabled' };
+
+      const label = noAppraisalRadio.closest?.('label') || null;
+      const clickTarget = label || noAppraisalRadio;
+      clickTarget.scrollIntoView?.({ block: 'center', inline: 'center' });
+      clickTarget.focus?.();
+      if (!noAppraisalRadio.checked) {
+        const eventOptions = { bubbles: true, cancelable: true, view: window };
+        if (typeof PointerEvent !== 'undefined') clickTarget.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+        clickTarget.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+        if (typeof PointerEvent !== 'undefined') clickTarget.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+        clickTarget.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+        clickTarget.click?.();
+      }
+      if (!noAppraisalRadio.checked) {
+        noAppraisalRadio.checked = true;
+        noAppraisalRadio.dispatchEvent(new Event('input', { bubbles: true }));
+        noAppraisalRadio.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return {
+        success: Boolean(noAppraisalRadio.checked),
+        selected: Boolean(noAppraisalRadio.checked),
+        text: getRadioText(noAppraisalRadio).slice(0, 120)
+      };
+    },
+    args: ['__gdaipai_select_no_appraisal__']
+  });
+  const result = injectionResult?.[0]?.result;
+  return result?.success ? result : { success: false, error: result?.error || 'payment no-appraisal selection failed' };
 }
 
 async function runMainWorldPaymentActionClick(tabId, action) {
@@ -4857,6 +4945,11 @@ async function executePaymentJob(job, paymentBatch = {}) {
       throw new Error(storeConfirmationHandled ? 'payment review button not found after store confirmation' : 'payment review button not found');
     }
     state = await ensurePaymentShippingOption(tab, job, state);
+    if (state?.hasAppraisalSection && !state?.hasNoAppraisalSelected) {
+      const appraisalResult = await selectPaymentNoAppraisalOption(tab.id);
+      if (!appraisalResult?.success) throw new Error(appraisalResult?.error || 'payment no-appraisal selection failed');
+      state = await getPaymentPageState(tab.id) || state;
+    }
     state = await waitForExpectedPaymentAmount(tab, job, state);
     assertPaymentAmountMatches(job, state);
 
@@ -5280,6 +5373,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   waitForBundleActionStateAcrossTabs,
   dispatchTrustedBundleActionClick,
   dispatchTrustedPaymentActionClick,
+  selectPaymentNoAppraisalOption,
   dispatchTrustedManualPinKeys,
   dispatchTrustedManualPinInput,
   fillManualPinAnswer,

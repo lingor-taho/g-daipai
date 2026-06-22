@@ -875,6 +875,92 @@ function testPaymentPageStateDetectsPaymentMethodFee() {
   assert.equal(state.paymentMethodFeeJpy, 330);
 }
 
+function testPaymentPageStateDetectsAppraisalSection() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298',
+    bodyText: '\u9451\u5b9a \u9451\u5b9a\u3059\u308b\uff082,500\u5186\uff09 \u9451\u5b9a\u3057\u306a\u3044 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u5408\u8a08\uff09 22,888\u5186',
+    controls: ['\u78ba\u8a8d\u3059\u308b'],
+    hasAppraisalSection: true,
+    hasNoAppraisalSelected: false
+  });
+
+  assert.equal(state.hasAppraisalSection, true);
+  assert.equal(state.hasNoAppraisalSelected, false);
+}
+
+async function testPaymentNoAppraisalSelectionClicksUnsetRadio() {
+  let clicked = false;
+  let changed = false;
+  const label = {
+    textContent: '\u9451\u5b9a\u3057\u306a\u3044',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    scrollIntoView() {},
+    focus() {},
+    dispatchEvent() {},
+    click() {
+      clicked = true;
+      radio.checked = true;
+    }
+  };
+  const radio = {
+    value: 'unset',
+    checked: false,
+    disabled: false,
+    id: '',
+    textContent: '',
+    title: '',
+    getAttribute() { return ''; },
+    closest(selector) {
+      if (String(selector).includes('label')) return label;
+      return { textContent: '\u9451\u5b9a\u3057\u306a\u3044', value: '', title: '', getAttribute() { return ''; } };
+    },
+    dispatchEvent(event) {
+      if (event?.type === 'change') changed = true;
+    }
+  };
+  const section = {
+    id: 'appraisal',
+    querySelectorAll(selector) {
+      return String(selector).includes('input') ? [radio] : [];
+    },
+    querySelector() {
+      return null;
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            querySelector(selector) {
+              return selector === '#appraisal' ? section : null;
+            },
+            querySelectorAll(selector) {
+              return selector === 'section' ? [section] : [];
+            }
+          },
+          window: {},
+          MouseEvent: function MouseEvent(type) { this.type = type; },
+          PointerEvent: undefined,
+          Event: function Event(type) { this.type = type; }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.selectPaymentNoAppraisalOption(99);
+
+  assert.equal(result.success, true);
+  assert.equal(result.selected, true);
+  assert.equal(clicked, true);
+  assert.equal(changed, false);
+}
+
 function testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
@@ -2630,6 +2716,80 @@ async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
   assert.deepEqual(selectedShippingAmounts, [185]);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 18);
+  assert.equal(calls[0].status, 'success');
+}
+
+async function testRunPaymentJobsSelectsNoAppraisalBeforeReview() {
+  const calls = [];
+  const actions = [];
+  let appraisalSelections = 0;
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase',
+        hasReviewButton: true,
+        hasAppraisalSection: true,
+        hasNoAppraisalSelected: false,
+        paymentAmountJpy: 22888,
+        selectedShippingAmountJpy: 0,
+        shippingOptions: []
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase',
+        hasReviewButton: true,
+        hasAppraisalSection: true,
+        hasNoAppraisalSelected: true,
+        paymentAmountJpy: 22888,
+        selectedShippingAmountJpy: 0,
+        shippingOptions: []
+      }
+    },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 22888 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 21, url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', status: 'complete' }; },
+      async query() { return [{ id: 21, url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args?.[0] === '__gdaipai_select_no_appraisal__') {
+          appraisalSelections += 1;
+          return [{ result: { success: true, selected: true, text: '\u9451\u5b9a\u3057\u306a\u3044' } }];
+        }
+        if (payload.args && payload.args.length >= 2) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 21, productId: 'a21', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 22888, effectiveShippingFeeText: '0\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(appraisalSelections, 1);
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].orderId, 21);
   assert.equal(calls[0].status, 'success');
 }
 
@@ -4801,6 +4961,8 @@ async function run() {
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
   testPaymentPageStateKeepsSelectedShippingOption();
   testPaymentPageStateDetectsPaymentMethodFee();
+  testPaymentPageStateDetectsAppraisalSection();
+  await testPaymentNoAppraisalSelectionClicksUnsetRadio();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsBuyerDeletedCancellation();
   testPaymentPageStateDetectsStoreConfirmationSection();
@@ -4842,6 +5004,7 @@ async function run() {
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
+  await testRunPaymentJobsSelectsNoAppraisalBeforeReview();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();

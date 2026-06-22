@@ -1,6 +1,6 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-21
+**最后更新**: 2026-06-22
 
 ---
 
@@ -323,6 +323,7 @@ background.js 每 10 秒轮询 /api/plugin/task
 
 | 日期 | 问题 | 修复 |
 |------|------|------|
+| 2026-06-22 | Yahoo 付款页在部分商品会出现 `鑑定` 栏，若不选择下面的 `鑑定しない` 单选项，直接点击 `確認する` 可能无法进入后续确认流程 | 插件付款流程新增 `#appraisal` / `鑑定` 区块识别；在选择运费后、金额校验和点击 `確認する` 前，自动选择 `value="unset"` 或文案为 `鑑定しない` 的单选项。没有鑑定栏时保持原流程。验证：`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/background.test.js`、`node scripts/encoding-guard.js`、`git diff --check`。补充：完整 `node yahoo-plugin/background.test.js` 仍失败在既有 `testBuyoutPendingFinalStaysBiddingForWonSync`（`true !== false`），新增鑑定付款测试位于该失败前并已执行通过 |
 | 2026-06-22 | 三表单写/单读继续收口：之前扫描只覆盖 `t.xxx/tasks.xxx`，漏掉 `won_task.product_title` 等任意 `tasks` 别名、`SELECT * FROM tasks`、以及 `products` 与 `orders/bidding_items` 的商品字段互相兜底 | `scripts/check-product-read-paths.js` 升级为硬性扫描：禁止任意 `tasks` 别名读取 10 个待删除商品字段、禁止 `SELECT * FROM tasks`、禁止 `tasks` 写/更新/删除条件使用旧字段、禁止 `COALESCE(p.xxx, bi/o/tasks.xxx)` 或反向跨表商品字段兜底。已清理用户落札列表、入札中列表、统计导出、后台订单日期查询、订单同步和手动导入中的商品字段兜底；商品展示字段只读 `products`，`orders` 只保留订单自身快照字段，不作为商品展示兜底。数据清理不再读 `tasks.end_time`，改为 `products.end_time`，缺失时只用任务生命周期时间 `tasks.updated_at/created_at` 判断清理窗口。验证：`node scripts/check-product-read-paths.test.js`、`node scripts/check-product-read-paths.js`、`node src/server/routes/task.test.js`、`node src/server/routes/plugin.test.js`、`node src/server/routes/admin.orders.test.js`、`node src/server/services/productRepository.test.js`、`node src/server/services/orderStatusAudit.test.js`、`node scripts/encoding-guard.js`、`npm run build --prefix src/client`、`npm run build --prefix src/admin` |
 | 2026-06-21 | 三表第一步单写后，用户提交任务报 `NOT NULL constraint failed: tasks.product_url`。根因是保留旧字段期间虽然代码已停止写 `tasks.product_url`，但旧数据库和 `src/db/init.sql` 仍定义 `product_url TEXT NOT NULL`，新增任务插入会被 SQLite 约束拦截 | 按当前部署策略，不在 API 启动时自动重建 `tasks` 表；只保留 `src/db/init.sql` 的新库定义为 `product_url TEXT`。生产旧库需要在部署前/部署时手工把 `tasks.product_url` 改为可空，再启动 API。验证仍需确认 `PRAGMA table_info(tasks)` 中 `product_url.notnull = 0`，并运行 `node scripts/check-product-read-paths.js`、`node scripts/check-product-health.js` |
 | 2026-06-21 | 三表第一步重新推进：在不删除 `tasks` 旧商品快照字段的前提下，先把运行时代码改为单写 `products`、读取只读 `products`，彻底收口，避免再次出现删字段后才暴露调用路径未改完的问题 | 已完成服务端收口：用户提交、插件任务领取/快照、入札中同步、落札同步、后台任务/订单/调试/批量刷新、订单审计、商品 backfill 都不再写入或读取 `tasks.product_url/product_title/product_image_url/current_price/buyout_price/bid_count/tax_type/product_type/shipping_fee_text/end_time`。`scripts/check-product-read-paths.js` 升级为硬性检查：运行时代码中出现 `t.xxx/tasks.xxx` 或对 `tasks` 写这些旧字段即失败；当前只保留 DB 字段，不删列。验证：`node scripts/check-product-read-paths.test.js`、`node scripts/check-product-read-paths.js`、`node scripts/check-product-health.js`、`node src/server/services/productRepository.test.js`、`node src/server/routes/admin.orders.test.js`、`node src/server/routes/plugin.test.js`、`node src/server/routes/task.test.js`、`node src/server/services/orderStatusAudit.test.js`、`node yahoo-plugin/background.test.js`、`node scripts/encoding-guard.js`、`npm run build --prefix src/client`、`npm run build --prefix src/admin` |
