@@ -5375,6 +5375,100 @@ async function testBidRetryKeepsActiveRunSlotUntilRetryFinishes() {
   assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
 }
 
+async function testRunWorkflowActionHandlesAnsweredPinBeforeThrottle() {
+  const fetchCalls = [];
+  let phase = 'idle';
+  let pinTyped = false;
+  const FixedDate = class extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [1000000]));
+    }
+    static now() {
+      return 1000000;
+    }
+  };
+  const api = loadBackgroundForTest({
+    Date: FixedDate,
+    setTimeout(fn, ms) {
+      if (ms >= 1000) return setTimeout(fn, 0);
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      fetchCalls.push({ url: value, options });
+      if (value.includes('/api/plugin/config')) {
+        return { ok: true, async json() { return { idleSyncIntervalMinutes: 2 }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/next')) {
+        return { ok: true, async json() { return { action: 'none' }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/complete')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/current')) {
+        return {
+          ok: true,
+          async json() {
+            return phase === 'pin' && !pinTyped
+              ? { success: true, found: true, id: 'pin-test', type: 'pin', answered: true, answer: '123456', pageUrl: 'https://login.yahoo.co.jp/config/login?auth_lv=1' }
+              : { success: true, found: false, answered: false };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/manual-pin/type')) {
+        pinTyped = true;
+        return { ok: true, async json() { return { success: true, digits: 6, stdout: 'typed=6' }; } };
+      }
+      if (value.includes('/api/plugin/manual-captcha/close')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/diagnostics')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return { success: true }; } };
+    },
+    tabs: {
+      async query() {
+        return phase === 'pin' && !pinTyped
+          ? [{ id: 7, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1', status: 'complete', active: true, title: 'Yahoo PIN' }]
+          : [];
+      },
+      async get(id) {
+        return pinTyped
+          ? { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=test', status: 'complete', active: true, title: 'Yahoo transaction' }
+          : { id, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1', status: 'complete', active: true, title: 'Yahoo PIN' };
+      },
+      async update(id) {
+        return pinTyped
+          ? { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=test', status: 'complete', active: true }
+          : { id, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1', status: 'complete', active: true };
+      },
+      async reload() {},
+      onUpdatedAddListener(listener) {
+        listener(7, { status: 'complete' });
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: true }];
+      }
+    }
+  });
+
+  await api.runWorkflowAction();
+  assert.equal(fetchCalls.some(call => call.url.includes('/api/plugin/idle-action/next')), true);
+  phase = 'pin';
+  const idleFetchesBefore = fetchCalls.filter(call => call.url.includes('/api/plugin/idle-action/next')).length;
+
+  await api.runWorkflowAction();
+
+  assert.equal(pinTyped, true);
+  assert.equal(
+    fetchCalls.filter(call => call.url.includes('/api/plugin/idle-action/next')).length,
+    idleFetchesBefore
+  );
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -5518,6 +5612,7 @@ async function run() {
   await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
   await testExecuteBidTaskMarksServerTabErrorAfterRetryFails();
   await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
+  await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }

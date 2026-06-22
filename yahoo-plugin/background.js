@@ -5270,14 +5270,14 @@ async function syncMonitorYahooPages() {
 async function runWorkflowAction() {
   if (workflowRunning) return;
   await refreshPluginConfig();
+  if (await pauseIdleWorkForOpenManualPin()) {
+    return;
+  }
   const now = Date.now();
   if (now - lastWorkflowSyncAt < idleSyncIntervalMs) return;
   workflowRunning = true;
   lastWorkflowSyncAt = now;
   try {
-    if (await pauseIdleWorkForOpenManualPin()) {
-      return;
-    }
     await executeNextWorkflowAction();
   } finally {
     workflowRunning = false;

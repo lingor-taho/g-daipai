@@ -4,6 +4,57 @@
 
 ---
 
+# 2026-06-22 manual PIN response latency fix
+
+Issue:
+- Backend PIN submission worked and `/api/plugin/manual-captcha/current` showed `answered=true`, but the server Chrome PIN dialog could sit unchanged for up to the workflow idle interval.
+- Direct remote call to `/api/plugin/manual-pin/type` returned `typed=6; clicked=True; activated=True`, proving Windows/system keyboard input itself was available.
+- Root cause: `runWorkflowAction()` checked `lastWorkflowSyncAt` / `idleSyncIntervalMs` before calling `pauseIdleWorkForOpenManualPin()`. With `idleSyncIntervalMinutes=2`, answered PIN handling could wait up to 2 minutes.
+
+Fix:
+- `runWorkflowAction()` now checks `pauseIdleWorkForOpenManualPin()` immediately after refreshing plugin config and before workflow throttling.
+- Manual PIN/captcha handling now runs on the worker tick cadence instead of waiting for the workflow idle interval.
+- Added regression coverage that an answered PIN is consumed even when the workflow action is still inside the throttle window, and no extra idle-action fetch is made in that case.
+
+Verification:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+- `node scripts/check-product-read-paths.js`
+
+---
+
+# 2026-06-22 future plan: transaction tab run ownership
+
+Priority: high follow-up, not implemented yet.
+
+Current state:
+- Recent fixes reduced accidental bid-tab cleanup by excluding normal auction product pages from transaction cleanup and by constraining `switchToNewestNewTab` candidates to transaction-like URLs created after the flow started.
+- This is still a heuristic model: tab ownership is inferred from tab-id set differences plus URL matching.
+- In extreme concurrency, another transaction/login/captcha tab could be created inside the same timing window and still look like a valid transaction candidate.
+
+Planned hardening:
+- Introduce a transaction/workflow `runId` for each `executePaymentJob`, `executeTransactionStartJob`, pending bundle/input flow, scan flow, and confirm-receipt flow.
+- Do not rely on custom properties attached to Chrome tab objects, because `chrome.tabs.get/query` returns fresh objects. Maintain an internal owner map instead:
+  - `transactionTabOwners: Map<tabId, { runId, jobType, productId, orderId, windowId, createdAt }>`
+- Register every tab actually created, updated, clicked through, or accepted by the flow with its runId.
+- `switchToNewestNewTab` and `waitFor...AcrossTabs` should accept a candidate only when it is:
+  - already registered to the same runId, or
+  - opened from a tab registered to the same runId via `openerTabId`, or
+  - same window plus transaction-like URL and explicitly associated with the current click window.
+- `closeTabsForTransactionFlow` should close only:
+  - tabs registered to the same runId,
+  - the current explicit flow tab,
+  - and only when the current URL is still transaction/login/captcha-like.
+- Unknown suspected transaction tabs should be logged, not closed.
+- Add diagnostics for each run: `runId`, `productId/orderId`, `beforeTabIds`, candidate ids, accepted ids, skipped by URL, skipped by ownership, closed ids, and current URLs.
+
+Goal:
+- Move transaction tab handling from heuristic URL/tabId guessing to explicit flow ownership, preventing remaining edge-case tab contention in high-concurrency production runs.
+
+---
+
 # 2026-06-22 transaction new-tab ownership hardening
 
 Review follow-up after the bid tab cleanup fix:
