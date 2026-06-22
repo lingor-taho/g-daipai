@@ -578,6 +578,19 @@ async function testManualPinDispatchesDigitsThroughDebuggerKeyboard() {
   );
 }
 
+function testExtractAuctionIdFromTextAcceptsNumericAuctionIds() {
+  const api = loadBackgroundForTest({ sleep: async () => {} });
+
+  assert.equal(
+    api.extractAuctionIdFromText('https://contact.auctions.yahoo.co.jp/buyer/top?aid=1225922765'),
+    '1225922765'
+  );
+  assert.equal(
+    api.extractAuctionIdFromText('url=https://buy.auctions.yahoo.co.jp/order/review?auctionId=T1234151860'),
+    't1234151860'
+  );
+}
+
 async function testManualPinUsesSystemKeyboardEndpointBeforeDebugger() {
   const fetchCalls = [];
   const debuggerCommands = [];
@@ -5690,6 +5703,7 @@ async function run() {
   await testSwitchToNewestNewTabIgnoresConcurrentAuctionProductTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
   await testManualPinDispatchesDigitsThroughDebuggerKeyboard();
+  testExtractAuctionIdFromTextAcceptsNumericAuctionIds();
   await testManualPinUsesSystemKeyboardEndpointBeforeDebugger();
   await testManualPinFallsBackToDebuggerWhenSystemKeyboardFails();
   await testManualPinUsesRealKeyboardBeforeInsertTextFallback();

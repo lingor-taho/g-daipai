@@ -770,7 +770,7 @@ async function updatePaymentStatus(payload) {
 }
 
 function extractAuctionIdFromText(value) {
-  const match = String(value || '').match(/[a-zA-Z]\d{8,10}/);
+  const match = String(value || '').match(/[a-zA-Z]?\d{8,10}/);
   return match ? match[0].toLowerCase() : '';
 }
 
@@ -5547,6 +5547,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   runTransactionStartJobs,
   runPaymentJobs,
   runConfirmReceiptJobs,
+  extractAuctionIdFromText,
   normalizeWorkerIntervalMs,
   applyPluginConfig,
   getPollIntervalMs: () => pollIntervalMs,

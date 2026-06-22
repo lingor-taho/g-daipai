@@ -1969,7 +1969,7 @@ function getCurrentAuctionId() {
   const href = String(window.location?.href || '');
   const match = href.match(/[?&](?:aid|auctionId)=([a-zA-Z]?\d{8,10})\b/i) ||
     href.match(/\/jp\/auction\/([a-zA-Z]?\d{8,10})\b/i) ||
-    href.match(/\b([a-zA-Z]\d{8,10})\b/i);
+    href.match(/\b([a-zA-Z]?\d{8,10})\b/i);
   return match ? String(match[1] || '').toLowerCase() : '';
 }
 
@@ -2273,6 +2273,7 @@ window.__G_DAIPAI_TEST__ = {
   extractPendingShipmentScanResult,
   extractSellerInfoName,
   extractTrackingNumberFromText,
+  getCurrentAuctionId,
   extractShippingCompany,
   extractSellerName,
   detectYahooLoginStatus,

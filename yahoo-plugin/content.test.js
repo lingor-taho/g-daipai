@@ -3028,6 +3028,34 @@ function testExtractPendingShipmentScanResultSkipsOwnProductIdNumber() {
   assert.equal(result.trackingFallback, '');
 }
 
+function testExtractPendingShipmentScanResultSkipsNumericOwnProductIdNumber() {
+  const api = loadContentForTest(
+    [
+      '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
+      '\u30aa\u30fc\u30af\u30b7\u30e7\u30f3ID\uff1a 1225922765',
+      '\u914d\u9001\u65b9\u6cd5 \uff1a \u98db\u811a\u5b85\u914d\u4fbf',
+      '\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u304a\u5c4a\u3051\u756a\u53f7 390166447193'
+    ].join('\n'),
+    '/buyer/top',
+    {
+      href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1225922765&seller_auc_user_id=abc',
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u98db\u811a\u5b85\u914d\u4fbf' }
+        ];
+      }
+    }
+  );
+  assert.equal(api.getCurrentAuctionId(), '1225922765');
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u98db\u811a\u5b85\u914d\u4fbf');
+  assert.equal(result.trackingNumber, '390166447193');
+  assert.equal(result.trackingFallback, '');
+}
+
 function testExtractPendingShipmentScanResultSearchesOnlyVisibleMessageListForNormalTracking() {
   const messageText = [
     '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002',
@@ -3495,6 +3523,7 @@ async function run() {
   testExtractPendingShipmentScanResultAcceptsTenDigitTrackingNumber();
   testExtractPendingShipmentScanResultExtractsNormalShipmentTableFields();
   testExtractPendingShipmentScanResultSkipsOwnProductIdNumber();
+  testExtractPendingShipmentScanResultSkipsNumericOwnProductIdNumber();
   testExtractPendingShipmentScanResultSearchesOnlyVisibleMessageListForNormalTracking();
   testExtractPendingShipmentScanResultIgnoresScriptNumbersInsideMessageList();
   testExtractPendingShipmentScanResultPrefersDeliveryInfoTrackingBeforeMessages();
