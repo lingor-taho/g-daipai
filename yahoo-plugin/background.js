@@ -1935,6 +1935,7 @@ async function ensurePaymentShippingOption(tab, job, state) {
   const hasShippingChoices = (Array.isArray(state?.shippingOptions) && state.shippingOptions.length) ||
     /\u914d\u9001\u65b9\u6cd5/.test(String(state?.textSample || ''));
   if (!tab?.id || !state?.hasReviewButton || expectedShipping === null || expectedShipping <= 0 || (!hasShippingChoices && !needsAmountCorrection)) return state;
+  if (expectedAmount !== null && currentAmount === expectedAmount) return state;
   const visibleOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
   const hasExpectedOption = visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
   let expandResult = null;
@@ -1955,6 +1956,8 @@ async function ensurePaymentShippingOption(tab, job, state) {
   }
   const result = await selectPaymentShippingOption(tab.id, expectedShipping);
   if (!result?.success) {
+    const latestState = await getPaymentPageState(tab.id).catch(() => null);
+    if (expectedAmount !== null && Number(latestState?.paymentAmountJpy || 0) === expectedAmount) return latestState;
     const optionSummary = Array.isArray(result?.options)
       ? result.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')
       : '';

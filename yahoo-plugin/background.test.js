@@ -2807,6 +2807,67 @@ async function testRunPaymentJobsSelectsNoAppraisalBeforeReview() {
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMatches() {
+  const calls = [];
+  const actions = [];
+  let shippingSelectionAttempts = 0;
+  const states = [
+    {
+      success: true,
+      state: {
+        url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181',
+        hasReviewButton: true,
+        paymentAmountJpy: 670,
+        textSample: '\u914d\u9001\u65b9\u6cd5 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u5408\u8a08\uff09 670\u5186',
+        selectedShippingAmountJpy: 0,
+        shippingOptions: []
+      }
+    },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm?aid=1218905181', hasFinalizeButton: true, paymentAmountJpy: 670 } },
+    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete?aid=1218905181', complete: true } }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 23, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', status: 'complete' }; },
+      async query() { return [{ id: 23, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
+          shippingSelectionAttempts += 1;
+          return [{ result: { success: false, error: 'matching payment shipping option not found' } }];
+        }
+        if (payload.args && payload.args.length >= 2) {
+          actions.push(payload.args[1]);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        return [{ result: states.shift() || { success: true, state: { complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 23, productId: '1218905181', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(shippingSelectionAttempts, 0);
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].orderId, 23);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
   const calls = [];
   const actions = [];
@@ -5020,6 +5081,7 @@ async function run() {
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsSelectsNoAppraisalBeforeReview();
+  await testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMatches();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
