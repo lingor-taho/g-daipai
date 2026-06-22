@@ -4771,6 +4771,32 @@ async function testTransactionCleanupDoesNotCloseNewAuctionProductTabs() {
   assert.deepEqual(removed, [3]);
 }
 
+async function testTransactionCleanupDoesNotCloseCreatedAuctionProductTabs() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        if (id === 2) return { id, url: 'https://auctions.yahoo.co.jp/jp/auction/x1233517511' };
+        if (id === 3) return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=s1' };
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' };
+      },
+      async query() {
+        return [];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+
+  await api.closeTabsForTransactionFlow(
+    { id: 1, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', _gdaipaiCreatedTabIds: [2, 3] },
+    new Set()
+  );
+
+  assert.deepEqual(removed, [3, 1]);
+}
+
 async function testTransactionCleanupKeepsManualVerificationTabsOpen() {
   const removed = [];
   const api = loadBackgroundForTest({
@@ -5042,10 +5068,10 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
             auctionId: 'u1234567890',
             currentPrice: 3142,
             buyoutPrice: 3142,
-            endTime: '2026-06-21T23:59:00+09:00'
+            endTime: '2026-06-28T23:59:00+09:00'
           };
         }
-        if (msg.type === 'EXECUTE_BID') {
+        if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
           return { success: true, pendingFinal: true, stage: 'buyout-final-waiting' };
         }
         return { success: true };
@@ -5068,7 +5094,7 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
     strategy: 'direct',
     bid_mode: 'buyout',
     tax_type: 'tax_included',
-    end_time: '2026-06-21T23:59:00+09:00'
+    end_time: '2026-06-28T23:59:00+09:00'
   }, { alreadyClaimed: true });
 
   assert.equal(statusBodies.some(body => body.status === 'failed'), false);
@@ -5340,6 +5366,7 @@ async function run() {
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
   await testTransactionCleanupDoesNotCloseNewAuctionProductTabs();
+  await testTransactionCleanupDoesNotCloseCreatedAuctionProductTabs();
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();

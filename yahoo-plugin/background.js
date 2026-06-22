@@ -1525,7 +1525,7 @@ async function waitForPaymentStateAcrossTabs(tab, predicate, previousIds, timeou
 
     const tabs = await chrome.tabs.query({}).catch(() => []);
     for (const candidate of tabs) {
-      if (!candidate?.id || !isLikelyYahooTransactionTab(candidate)) continue;
+      if (!candidate?.id || !isLikelyYahooTransactionCleanupTab(candidate)) continue;
       if (candidate.id === originalTabId || created.has(candidate.id) || !previous.has(candidate.id)) {
         candidates.set(candidate.id, candidate);
         if (!previous.has(candidate.id)) created.add(candidate.id);
@@ -4334,7 +4334,7 @@ async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, t
 
     const tabs = await chrome.tabs.query({}).catch(() => []);
     for (const candidate of tabs) {
-      if (!candidate?.id || !isLikelyYahooTransactionTab(candidate)) continue;
+      if (!candidate?.id || !isLikelyYahooTransactionCleanupTab(candidate)) continue;
       if (candidate.id === originalTabId || created.has(candidate.id) || !previous.has(candidate.id)) {
         candidates.set(candidate.id, candidate);
         if (!previous.has(candidate.id)) created.add(candidate.id);
@@ -4643,6 +4643,7 @@ async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
   for (const id of ids) {
     const current = await chrome.tabs.get(id).catch(() => null);
     if (current && isManualVerificationTab(current)) continue;
+    if (current && !isLikelyYahooTransactionCleanupTab(current)) continue;
     await closeTabIfExists(id);
   }
 }
@@ -4659,6 +4660,7 @@ async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
   for (const id of ids) {
     const current = await chrome.tabs.get(id).catch(() => null);
     if (current && isManualVerificationTab(current)) continue;
+    if (current && !isLikelyYahooTransactionCleanupTab(current)) continue;
     await closeTabIfExists(id);
   }
 }

@@ -2749,3 +2749,25 @@ node src\server\routes\task.test.js
 ```
 
 验证结果：以上命令均通过。
+# 2026-06-22 bid tab cleanup current status
+
+Remote failures around 2026-06-22 11:00 were rechecked because the volume of "system reason" / tab failures increased suddenly. The earlier conclusion that this was only a display classification problem was incomplete.
+
+Root cause evidence:
+- Remote debug showed bid tasks failing with `No tab with id ...` and `Tabs cannot be edited right now ...` before the later `Server tab error` classification commit.
+- Transaction/payment wait loops used the broad Yahoo transaction tab matcher and could register a newly opened auction product page as a transaction-created tab.
+- Later transaction/payment cleanup used `_gdaipaiCreatedTabIds`; if that list was polluted with a bid product tab, cleanup could close the bid page before the bid click.
+
+Fix:
+- `waitForPaymentStateAcrossTabs` and `waitForBundleActionStateAcrossTabs` now only track transaction cleanup tabs (`buy.auctions`, `contact.auctions`, Yahoo login/account, `about:blank`) and no longer treat normal `auctions.yahoo.co.jp/jp/auction/...` product pages as transaction tabs.
+- `closeTabsForTransactionFlow` and `closeTabsForScanFlow` re-check the current tab URL before closing, so even a polluted created-tab list will not close a normal auction product page.
+- Added regression coverage for transaction cleanup not closing created auction product tabs.
+
+Verification:
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+- `node scripts/check-product-read-paths.js`
+
+Production note: after deploying this plugin change, reload the Chrome extension. Existing failed tasks may need manual retry or status cleanup, but this fix is intended to prevent new bid product tabs from being closed by transaction/payment cleanup.
+
+---
