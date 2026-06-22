@@ -14,7 +14,7 @@ export function getTaskFailureLabel(errorMsg) {
   }
 
   if (
-    /Auction ended before plugin execution|商品.*结束|商品.*已经结束|商品.*已结束|ended before/i.test(text) ||
+    /Auction ended before plugin execution|Auction ended according to product page snapshot|商品.*结束|商品.*已经结束|商品.*已结束|ended before/i.test(text) ||
     /\u935f\u55d7\u6427.*\u7f01\u64b4\u6f6b|\u935f\u55d7\u6427.*\u5bb8\u832c\u7ca1\u7f01\u64b4\u6f6b|\u935f\u55d7\u6427.*\u5bb8\u832c\u7ca8\u93c9/i.test(text)
   ) {
     return '失败：商品已结束';

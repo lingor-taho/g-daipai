@@ -14,6 +14,10 @@ assert.equal(
   '失败：商品已结束'
 );
 assert.equal(
+  getTaskFailureLabel('Auction ended according to product page snapshot'),
+  '失败：商品已结束'
+);
+assert.equal(
   getTaskFailureLabel('outbid after bid'),
   '失败：出价后被超过'
 );
