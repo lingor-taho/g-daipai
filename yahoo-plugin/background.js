@@ -17,6 +17,7 @@ const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = true;
 let fetchFailureCount = 0;
 let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
 let pollIntervalTimerId = null;
+let pollingStarted = false;
 let idleSyncIntervalMs = 5 * 60 * 1000;
 let bidConcurrencyLimit = 2;
 let lastIdleSyncAt = 0;
@@ -5423,6 +5424,8 @@ async function pollAndExecute() {
 }
 
 async function startPolling() {
+  if (pollingStarted) return;
+  pollingStarted = true;
   chrome.alarms.create(POLL_ALARM_NAME, { periodInMinutes: 1 });
   schedulePollingInterval();
   refreshPluginConfig().catch(() => {});
@@ -5485,6 +5488,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   runWorkflowAction,
   executeBidTask,
   pollBidPool,
+  startPolling,
   getActiveBidRunCount: () => activeBidRuns.size,
   pollAndExecute,
   runTransactionStartJobs,

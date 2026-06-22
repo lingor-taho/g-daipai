@@ -12,6 +12,7 @@ function loadBackgroundForTest(overrides = {}) {
   const scripting = overrides.scripting || {};
   const debuggerApi = overrides.debuggerApi || {};
   const windows = overrides.windows || {};
+  const alarms = overrides.alarms || {};
   const sandbox = {
     console: overrides.console || console,
     globalThis: {
@@ -28,7 +29,7 @@ function loadBackgroundForTest(overrides = {}) {
     fetch: overrides.fetch || (async () => ({ async json() { return { task: null }; } })),
     chrome: {
       alarms: {
-        create() {},
+        create(...args) { return alarms.create ? alarms.create(...args) : undefined; },
         onAlarm: { addListener() {} }
       },
       runtime: {
@@ -74,6 +75,27 @@ function loadBackgroundForTest(overrides = {}) {
   };
   vm.runInNewContext(code, sandbox);
   return sandbox.globalThis.__G_DAIPAI_BACKGROUND_TEST__;
+}
+
+async function testStartPollingIsIdempotentWithinWorker() {
+  let alarmCreates = 0;
+  let intervals = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    alarms: {
+      create() { alarmCreates += 1; }
+    },
+    setInterval() {
+      intervals += 1;
+      return intervals;
+    }
+  });
+
+  await api.startPolling();
+  await api.startPolling();
+
+  assert.equal(alarmCreates, 1);
+  assert.equal(intervals, 1);
 }
 
 async function testInjectContentScriptMissingTabDoesNotLogExtensionError() {
@@ -5567,6 +5589,7 @@ function testWorkerIntervalConfigReschedulesPollingTimer() {
 }
 
 async function run() {
+  await testStartPollingIsIdempotentWithinWorker();
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
   testAlreadyHighestMultiBidClosesTab();

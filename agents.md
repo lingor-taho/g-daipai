@@ -4,6 +4,26 @@
 
 ---
 
+# 2026-06-22 extension reload startup idempotency
+
+Issue:
+- Reloading the Chrome extension could show `Service worker went to a bad state unexpectedly`.
+- The background console also showed duplicate startup lines on reload: `Extension started...` twice.
+- Root cause found in startup flow: the service worker runs top-level `startPolling()`, and extension reload/install events can also call `startPolling()` in the same worker lifetime.
+
+Fix:
+- `startPolling()` is now idempotent within one service worker lifecycle.
+- It creates the polling alarm and interval only once, preventing duplicate reload initialization.
+- Payment, bid, transaction, Google Sheet, and product-table logic are unchanged.
+
+Validation:
+- `node yahoo-plugin/background.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-22 store payment confirmation options
 
 Issue:
