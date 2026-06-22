@@ -5231,6 +5231,111 @@ async function testExecuteBidTaskMarksServerTabErrorAfterRetryFails() {
   assert.match(failed.error_msg, /Server tab error/);
 }
 
+async function testBidRetryKeepsActiveRunSlotUntilRetryFinishes() {
+  let taskFetchCount = 0;
+  let createCount = 0;
+  let snapshotCalls = 0;
+  let resolveSecondSnapshotStarted;
+  let releaseSecondSnapshot;
+  const secondSnapshotStarted = new Promise(resolve => {
+    resolveSecondSnapshotStarted = resolve;
+  });
+  const secondSnapshotGate = new Promise(resolve => {
+    releaseSecondSnapshot = resolve;
+  });
+  const statusBodies = [];
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    sleep: async () => {},
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/config')) {
+        return { ok: true, async json() { return { bidConcurrencyLimit: 1 }; } };
+      }
+      if (value.includes('/api/plugin/tasks')) {
+        taskFetchCount += 1;
+        return {
+          ok: true,
+          async json() {
+            return {
+              success: true,
+              bidConcurrencyLimit: 1,
+              tasks: [{
+                id: 903,
+                product_url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054',
+                current_price: 1000,
+                max_price: 20000,
+                user_max_price: 22000,
+                strategy: 'direct',
+                bid_mode: 'bid',
+                tax_type: 'tax_included',
+                end_time: '2026-06-28T22:01:24+09:00'
+              }]
+            };
+          }
+        };
+      }
+      if (value.includes('/api/plugin/task/903/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/903/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        createCount += 1;
+        return { id: 930 + createCount, status: 'loading', url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054' };
+      },
+      onUpdatedAddListener(listener) {
+        listener(930 + createCount, { status: 'complete' });
+      },
+      async sendMessage(_id, msg) {
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          snapshotCalls += 1;
+          if (snapshotCalls === 1) throw new Error('No tab with id: 931');
+          resolveSecondSnapshotStarted();
+          await secondSnapshotGate;
+          return {
+            auctionId: 'c1234343054',
+            currentPrice: 1000,
+            endTime: '2026-06-28T22:01:24+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID_V2') {
+          return { success: true, bidPrice: 20000 };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript() {}
+    }
+  });
+
+  await api.pollBidPool();
+  await secondSnapshotStarted;
+  assert.equal(api.getActiveBidRunCount(), 1);
+  await api.pollBidPool();
+  assert.equal(taskFetchCount, 1);
+
+  releaseSecondSnapshot();
+  for (let i = 0; i < 20 && api.getActiveBidRunCount() !== 0; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.equal(api.getActiveBidRunCount(), 0);
+  assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -5372,6 +5477,7 @@ async function run() {
   await testFailedBidDoesNotImmediatelySyncWonPage();
   await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
   await testExecuteBidTaskMarksServerTabErrorAfterRetryFails();
+  await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }

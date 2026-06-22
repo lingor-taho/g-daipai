@@ -5370,7 +5370,7 @@ async function executeBidTask(task, options = {}) {
       console.warn('[Yahoo Bid] Retrying task after transient server tab error:', task.id, e.message || e);
       if (taskTab?.id) await closeTaskTab(taskTab.id).catch(() => {});
       await sleep(1000);
-      return executeBidTask(task, {
+      return await executeBidTask(task, {
         ...options,
         alreadyClaimed: true,
         tabRetryAttempted: true,
@@ -5476,6 +5476,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   runWorkflowAction,
   executeBidTask,
   pollBidPool,
+  getActiveBidRunCount: () => activeBidRuns.size,
   pollAndExecute,
   runTransactionStartJobs,
   runPaymentJobs,

@@ -4,6 +4,24 @@
 
 ---
 
+# 2026-06-22 bid retry active-run follow-up
+
+Review follow-up after `3935a59`:
+- The transient server-tab retry path used recursive `executeBidTask(...)` with `preserveActiveRun: true`.
+- JavaScript runs the outer `finally` immediately after returning the inner promise unless the inner call is awaited, so the active bid slot could be released while the retry was still running.
+- Fixed by using `return await executeBidTask(...)`; the outer `finally` now deletes `activeBidRuns` only after the retry completes.
+- Added regression coverage that a retrying bid keeps the active slot occupied and a second poll does not fetch another task while the retry is still in progress.
+- The transaction cleanup exclusion for normal auction product pages is intentionally kept. Re-adding `auctions.yahoo.co.jp/jp/auction/...` to transaction cleanup would reintroduce the bid-tab close bug. If leftover tabs become a problem, handle that with explicit task-tab lifecycle cleanup, not broad transaction cleanup.
+
+Verification:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+- `node scripts/check-product-read-paths.js`
+
+---
+
 ## 项目进度与接手信息维护约定
 
 本文件用于记录继续本项目所需的进度、业务规则、架构状态、真实页面结论、部署注意事项和验证结果。后续每次出现重要改动、阶段规划或关键业务确认时，必须同步更新本文件，方便后续接手时直接了解当前状态。
