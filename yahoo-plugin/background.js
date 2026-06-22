@@ -2851,7 +2851,8 @@ async function waitForConfirmReceiptState(tab, predicate, timeoutMs = 15000) {
   return null;
 }
 
-async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
+async function clickPaymentActionAndFollowTab(tab, action, waitFor, options = {}) {
+  const allowMissingTrustedPointRetry = options.allowMissingTrustedPointRetry !== false;
   const previousTabIds = await getTabIds();
   const clickResult = await runMainWorldPaymentActionClick(tab.id, action);
   if (!clickResult?.success) {
@@ -2866,6 +2867,19 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor) {
     const trustedClick = await dispatchTrustedPaymentActionClick(tab, action);
     console.log('[Yahoo Bid] Trusted payment mouse click result:', trustedClick);
     if (!trustedClick?.success) {
+      if (allowMissingTrustedPointRetry && action === 'review' && /payment button not found for trusted click/.test(String(trustedClick?.error || ''))) {
+        try {
+          const delayedNextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 3000);
+          await injectContentScript(delayedNextTab.id).catch(() => {});
+          return { success: true, tab: delayedNextTab, state: delayedNextTab._gdaipaiPaymentState };
+        } catch (_) {
+          const currentState = tab?.id ? await getPaymentPageState(tab.id).catch(() => null) : null;
+          if (currentState?.hasReviewButton) {
+            await sleep(1000);
+            return clickPaymentActionAndFollowTab(tab, action, waitFor, { allowMissingTrustedPointRetry: false });
+          }
+        }
+      }
       return { success: false, error: trustedClick?.error || clickResult?.error || `payment ${action} click failed`, tab };
     }
     try {

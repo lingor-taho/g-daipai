@@ -2314,6 +2314,80 @@ async function testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProce
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMissing() {
+  const calls = [];
+  const actions = [];
+  let nowMs = 0;
+  let reviewTrustedPointAttempts = 0;
+  const FakeDate = class extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [nowMs]));
+    }
+    static now() {
+      return nowMs;
+    }
+  };
+  Object.setPrototypeOf(FakeDate, Date);
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    setTimeout(fn, ms) {
+      nowMs += ms;
+      fn();
+      return 1;
+    },
+    tabs: {
+      async create() { return { id: 216, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async update(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 216, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        if (payload.files) return undefined;
+        const source = String(payload.func || '');
+        if (payload.args && payload.args.length) {
+          const action = payload.args[1];
+          if (source.includes('candidates') && action === 'review') {
+            reviewTrustedPointAttempts += 1;
+            return [{ result: { success: false, error: 'payment button not found for trusted click' } }];
+          }
+          actions.push(action);
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        const reviewClicks = actions.filter(action => action === 'review').length;
+        if (!actions.includes('easyPayment')) {
+          return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top', hasEasyPaymentButton: true, paymentAmountJpy: 1730 } } }];
+        }
+        if (reviewClicks < 2) {
+          return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', hasReviewButton: true, paymentAmountJpy: 1730 } } }];
+        }
+        if (!actions.includes('finalize')) {
+          return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 1730 } } }];
+        }
+        return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 216, productId: 's1233522728', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 1500, effectiveShippingFeeText: '230\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.deepEqual(actions, ['easyPayment', 'review', 'review', 'finalize']);
+  assert.equal(reviewTrustedPointAttempts, 1);
+  assert.equal(calls[0].orderId, 216);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage() {
   const calls = [];
   const actions = [];
@@ -5202,6 +5276,7 @@ async function run() {
   await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
+  await testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMissing();
   await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();
   await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
