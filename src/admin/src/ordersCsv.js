@@ -43,16 +43,25 @@ function csvEscape(value) {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+function parsePayableCny(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function buildOrdersCsv(rows = [], shippingOverrides = {}) {
-  const headers = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '总价'];
+  const headers = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '总价', '应付款(RMB)'];
   const totals = [];
+  const payableTotals = [];
   const lines = rows.map(row => {
     const finalPrice = Number(row.final_price || 0);
     const shippingFee = needsCsvShippingInput(row)
       ? Number(shippingOverrides[String(row.id)] || 0)
       : parseCsvShippingFee(row.shipping_fee_text);
     const total = finalPrice + shippingFee;
+    const payableCny = parsePayableCny(row.payable_cny);
     totals.push(total);
+    if (payableCny !== null) payableTotals.push(payableCny);
     const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
     const productUrl = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
     return [
@@ -62,11 +71,13 @@ function buildOrdersCsv(rows = [], shippingOverrides = {}) {
       row.product_title || '',
       finalPrice,
       shippingFee,
-      total
+      total,
+      payableCny ?? ''
     ].map(csvEscape).join(',');
   });
   const totalAmount = totals.reduce((sum, value) => sum + value, 0);
-  lines.push(['金额汇总', '', '', '', '', '', totalAmount].map(csvEscape).join(','));
+  const payableTotalAmount = payableTotals.reduce((sum, value) => sum + value, 0);
+  lines.push(['金额汇总', '', '', '', '', '', totalAmount, payableTotals.length ? payableTotalAmount : ''].map(csvEscape).join(','));
   return `${headers.join(',')}\r\n${lines.join('\r\n')}`;
 }
 
@@ -75,5 +86,6 @@ module.exports = {
   csvEscape,
   formatDateOnly,
   needsCsvShippingInput,
+  parsePayableCny,
   parseCsvShippingFee
 };

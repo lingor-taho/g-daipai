@@ -4,16 +4,18 @@
 
 ---
 
-# 2026-06-23 admin orders CSV total row
+# 2026-06-23 admin orders CSV total row and payable total
 
 Issue:
 - Admin order export CSV listed every selected order but did not include a bottom total.
 - The user needs an Excel-friendly summary row like `金额汇总` with the sum of the `总价` column.
+- Follow-up requirement: export should also include `应付款(RMB)` as the last column and summarize that column too.
 
 Fix:
 - Added `src/admin/src/ordersCsv.js` to centralize order CSV generation.
-- CSV export now appends one final row: label `金额汇总` in the first column and summed `总价` in the seventh column.
+- CSV export now appends one final row: label `金额汇总` in the first column, summed `总价` in the seventh column, and summed `应付款(RMB)` in the eighth column.
 - The summary uses the same per-row calculation as the exported rows: `落札价 + 运费`, including manually entered shipping overrides for `落札者負担` / `着払い`.
+- Per-row `应付款(RMB)` uses `payable_cny`; empty/null values are exported as blank and are not counted in the payable summary.
 
 Validation:
 - `node src/admin/src/ordersCsv.test.js`
