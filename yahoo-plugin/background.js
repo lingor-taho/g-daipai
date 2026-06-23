@@ -15,6 +15,7 @@ const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGg
 const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = true;
 
 let fetchFailureCount = 0;
+let pluginConfigFetchFailureCount = 0;
 let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
 let pollIntervalTimerId = null;
 let pollingStarted = false;
@@ -269,6 +270,19 @@ function isTransientFetchError(error) {
 function logBackgroundIssue(label, error) {
   const logger = isTransientFetchError(error) ? console.warn : console.error;
   logger(label, error);
+}
+
+function isNoServiceWorkerLifecycleError(error) {
+  const text = error?.message || String(error || '');
+  return /^\s*No SW\s*$/i.test(text);
+}
+
+if (typeof globalThis.addEventListener === 'function') {
+  globalThis.addEventListener('unhandledrejection', event => {
+    if (!isNoServiceWorkerLifecycleError(event?.reason)) return;
+    event.preventDefault?.();
+    console.debug('[Yahoo Bid] Ignored Chrome service worker lifecycle rejection:', event.reason?.message || event.reason);
+  });
 }
 
 async function openTaskPage(task) {
@@ -1009,6 +1023,14 @@ function getPaymentJobFinalPriceJpy(job = {}) {
 function canTreatUnknownPaymentShippingAsZero(job = {}) {
   const shippingText = String(job.effectiveShippingFeeText || job.shippingFeeText || '');
   return String(job.productType || job.product_type || '') === 'store' && /\u843d\u672d\u8005\u8ca0\u62c5/.test(shippingText);
+}
+
+function isStorePaymentJob(job = {}) {
+  return String(job.productType || job.product_type || '') === 'store';
+}
+
+function isStorePaymentReviewPage(state = {}) {
+  return /:\/\/buy\.auctions\.yahoo\.co\.jp\/order\/review\b/.test(String(state?.url || ''));
 }
 
 function getExpectedPaymentShippingFeeJpy(job = {}) {
@@ -2055,6 +2077,39 @@ async function waitForExpectedPaymentAmount(tab, job, state) {
   return latest;
 }
 
+async function waitForStoreConfirmationSectionBeforeReview(tab, job, state, timeoutMs = 8000) {
+  if (
+    !PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED ||
+    !tab?.id ||
+    !isStorePaymentJob(job) ||
+    state?.hasStoreConfirmationSection ||
+    !isStorePaymentReviewPage(state) ||
+    !state?.hasReviewButton
+  ) {
+    return state;
+  }
+
+  let latest = state;
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 500));
+  for (let i = 0; i < attempts; i += 1) {
+    await sleep(500);
+    const next = await getPaymentPageState(tab.id).catch(() => null);
+    if (!next) continue;
+    latest = next;
+    if (
+      latest.hasStoreConfirmationSection ||
+      latest.cancelled ||
+      latest.alreadyPaid ||
+      latest.complete ||
+      !isStorePaymentReviewPage(latest) ||
+      !latest.hasReviewButton
+    ) {
+      return latest;
+    }
+  }
+  return latest;
+}
+
 async function clickStoreConfirmationChange(tabId) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
@@ -3059,9 +3114,15 @@ async function refreshPluginConfig() {
   try {
     const res = await apiFetch('/api/plugin/config');
     const config = await res.json();
+    pluginConfigFetchFailureCount = 0;
     applyPluginConfig(config);
   } catch (e) {
-    console.warn('[Yahoo Bid] Failed to refresh plugin config:', e.message || e);
+    pluginConfigFetchFailureCount += 1;
+    if (pluginConfigFetchFailureCount === 1 || pluginConfigFetchFailureCount % 6 === 0) {
+      logBackgroundIssue('[Yahoo Bid] Failed to refresh plugin config:', e);
+    } else {
+      console.debug('[Yahoo Bid] Failed to refresh plugin config:', e.message || e);
+    }
   }
 }
 
@@ -5075,6 +5136,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
       }
     }
     if (state?.cancelled) return { cancelled: true };
+    state = await waitForStoreConfirmationSectionBeforeReview(tab, job, state);
     if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
@@ -5100,6 +5162,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         state = reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
       }
     }
+    state = await waitForStoreConfirmationSectionBeforeReview(tab, job, state);
     if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
       storeConfirmationStarted = true;
       const storeResult = await completeStoreConfirmationItems(tab, state, job);
@@ -5125,6 +5188,19 @@ async function executePaymentJob(job, paymentBatch = {}) {
       state = await getPaymentPageState(tab.id) || state;
     }
     state = await waitForExpectedPaymentAmount(tab, job, state);
+    state = await waitForStoreConfirmationSectionBeforeReview(tab, job, state);
+    if (PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && state?.hasStoreConfirmationSection && !storeConfirmationHandled) {
+      storeConfirmationStarted = true;
+      const storeResult = await completeStoreConfirmationItems(tab, state, job);
+      if (!storeResult?.success) throw new Error(storeResult?.error || 'store confirmation flow failed');
+      tab = storeResult.tab;
+      state = storeResult.state;
+      storeConfirmationHandled = true;
+      storeConfirmationCompleted = true;
+    }
+    if (state?.cancelled) return { cancelled: true };
+    if (state?.alreadyPaid) return { alreadyPaid: true };
+    if (state?.complete) return { success: true };
     assertPaymentAmountMatches(job, state);
 
     let result = await clickPaymentActionAndFollowTab(tab, 'review', nextState =>
@@ -5586,6 +5662,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   getStoreConfirmationClickPoint,
   dispatchTrustedStoreConfirmationClick,
   completeStoreConfirmationItems,
+  waitForStoreConfirmationSectionBeforeReview,
   getRandomIntInclusive,
   assertPaymentAmountMatches,
   syncIdleYahooPages,
@@ -5608,6 +5685,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildPaymentFailurePayload,
   isManualCaptchaTab,
   isTabsTemporarilyUneditableError,
+  isNoServiceWorkerLifecycleError,
   isLikelyManualPinTab,
   pauseIdleWorkForOpenManualPin,
   handleManualVerificationIfPresent,

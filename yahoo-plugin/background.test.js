@@ -180,6 +180,15 @@ function testPendingFinalRetryDelayIsShortForDirectBid() {
   ), 10000);
 }
 
+function testNoServiceWorkerLifecycleErrorDetection() {
+  const api = loadBackgroundForTest();
+
+  assert.equal(api.isNoServiceWorkerLifecycleError(new Error('No SW')), true);
+  assert.equal(api.isNoServiceWorkerLifecycleError('No SW'), true);
+  assert.equal(api.isNoServiceWorkerLifecycleError(new Error('Failed to fetch')), false);
+  assert.equal(api.isNoServiceWorkerLifecycleError(new Error('payment failed')), false);
+}
+
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
   const api = loadBackgroundForTest();
   const calls = [];
@@ -3200,6 +3209,15 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
       state: {
         url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
         hasReviewButton: true,
+        hasStoreConfirmationSection: false,
+        paymentAmountJpy: 43320
+      }
+    },
+    {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
+        hasReviewButton: true,
         hasStoreConfirmationSection: true,
         paymentAmountJpy: 43320
       }
@@ -3281,7 +3299,7 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 19, productId: 'j1232680017', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 19, productId: 'j1232680017', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5776,6 +5794,7 @@ async function run() {
   await testWithTimeoutMarksCloseTab();
   testTaskExecutionTimeoutIsLongerForMultiBid();
   testPendingFinalRetryDelayIsShortForDirectBid();
+  testNoServiceWorkerLifecycleErrorDetection();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleActionTimeoutErrorIncludesActionName();

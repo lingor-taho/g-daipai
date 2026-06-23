@@ -4,6 +4,48 @@
 
 ---
 
+# 2026-06-23 delayed store confirmation before review
+
+Issue:
+- Remote payment for product `1234243432` still failed with `确认付款后页面未跳转`.
+- Debugger fallback was clicking the normal payment `確認する` button, not the store `#cartopt` `変更` button.
+- Root cause: the payment review page could expose the `確認する` button before Yahoo finished rendering the `#cartopt` store confirmation block. The plugin read state too early, decided there was no store confirmation, then submitted payment directly.
+
+Fix:
+- Added a store-only wait before payment review clicks: on `https://buy.auctions.yahoo.co.jp/order/review...`, `productType=store` jobs now poll the same tab for a visible actionable `#cartopt` store confirmation block before clicking `確認する`.
+- The wait is scoped to the store review URL so normal store confirm pages are not delayed or mis-consumed.
+- If `#cartopt` appears, the existing store confirmation flow runs first: JS click `変更`, fill/check required options, apply, then return to review and continue payment.
+- Added regression coverage where the first review-page read has `確認する` but no store confirmation, and a later read shows store confirmation before review click.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
+# 2026-06-23 plugin No SW and config fetch noise
+
+Issue:
+- Chrome extension error page could repeatedly show `Uncaught (in promise) Error: No SW` at `background.js:0`.
+- DevTools also showed `[Yahoo Bid] Failed to refresh plugin config: Failed to fetch`.
+- `Failed to fetch` means the plugin could not reach the API at `http://127.0.0.1:3034` / `http://localhost:3034`; check that the API watcher/server is running on the same Windows server as Chrome.
+- `No SW` is a Chrome MV3 service worker lifecycle rejection and not a Yahoo payment/order workflow error.
+
+Fix:
+- `refreshPluginConfig()` now uses the same transient fetch error handling as the rest of the plugin and throttles repeated config fetch warnings.
+- Added a global `unhandledrejection` handler that suppresses only exact `No SW` service-worker lifecycle rejections, while leaving real business errors visible.
+- Added regression coverage for `No SW` detection so `Failed to fetch` and payment errors are not swallowed.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-23 store confirmation cartopt detection
 
 Issue:
