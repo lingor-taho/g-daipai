@@ -4,6 +4,32 @@
 
 ---
 
+# 2026-06-23 manual import strategy display label
+
+Issue:
+- User-facing pages could expose the internal task strategy value `manual_import`.
+- The user requested imported tasks to show the Chinese label `导入` instead of hiding the strategy or showing the raw internal value.
+
+Fix:
+- Added `manual_import: '导入'` to user-side strategy labels on:
+  - `src/client/src/pages/WonItems.jsx`
+  - `src/client/src/pages/TaskList.jsx`
+  - `src/client/src/pages/ActiveBidding.jsx`
+- Added the same `manual_import: '导入'` strategy label to the admin task list:
+  - `src/admin/src/Tasks.tsx`
+- Added display regression checks for all three user pages.
+
+Validation:
+- `node src/client/src/pages/WonItems.display.test.mjs`
+- `node src/client/src/pages/TaskList.display.test.mjs`
+- `node src/client/src/pages/ActiveBidding.display.test.mjs`
+- `node src/admin/src/Tasks.display.test.js`
+- `npm run build --prefix src/client`
+- `npm run build --prefix src/admin`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-23 store confirmation apply button single JS click
 
 Issue:

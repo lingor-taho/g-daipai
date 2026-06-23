@@ -20,6 +20,7 @@ const STATUS_MAP = {
 const STRATEGY_LABELS = {
   direct: '即时拍',
   multi_bid: '多次出价',
+  manual_import: '导入',
   '1min': '结束前 1 分钟',
   '2min': '结束前 2 分钟',
   '5min': '结束前 5 分钟',
