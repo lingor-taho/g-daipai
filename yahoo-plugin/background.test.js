@@ -1106,6 +1106,19 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
   assert.equal(editState.hasStoreConfirmationEditPage, true);
 }
 
+function testPaymentPageStateRespectsExplicitNoStoreConfirmationSection() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=t1234025360',
+    bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u304a\u652f\u6255\u3044\u65b9\u6cd5\u306e\u5909\u66f4\u306f\u3053\u3061\u3089 \u304a\u652f\u6255\u3044\u91d1\u984d 1000\u5186',
+    controls: ['\u5909\u66f4', '\u78ba\u8a8d\u3059\u308b'],
+    hasStoreConfirmationSection: false
+  });
+
+  assert.equal(state.hasStoreConfirmationSection, false);
+  assert.equal(state.hasReviewButton, true);
+}
+
 async function testStoreConfirmationChangeUsesCartoptSelector() {
   let clicked = false;
   const changeLink = {
@@ -5770,6 +5783,7 @@ async function run() {
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsBuyerDeletedCancellation();
   testPaymentPageStateDetectsStoreConfirmationSection();
+  testPaymentPageStateRespectsExplicitNoStoreConfirmationSection();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
   await testStoreConfirmationApplyChecksHiddenInputs();

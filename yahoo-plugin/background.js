@@ -1079,9 +1079,10 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const waitingShipmentText = /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(bodyText);
   const hasPlacementDefaultModal = /\u7f6e\u304d\u914d\u5834\u6240[\s\S]{0,40}\u521d\u671f\u8a2d\u5b9a\u3055\u308c\u307e\u3057\u305f/.test(bodyText);
   const hasStoreBundlePurchaseNotice = /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d\u3067\u304d\u308b\u5546\u54c1/.test(bodyText);
+  const hasExplicitStoreConfirmationSection = Object.prototype.hasOwnProperty.call(snapshot, 'hasStoreConfirmationSection');
   const hasStoreConfirmationSection = PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && (
     Boolean(snapshot.hasStoreConfirmationSection) ||
-    /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText)
+    (!hasExplicitStoreConfirmationSection && /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText))
   );
   const hasStoreConfirmationEditPage = Boolean(snapshot.hasStoreConfirmationEditPage) ||
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
@@ -1209,6 +1210,12 @@ async function getPaymentPageState(tabId) {
         return /^\s*\u9451\u5b9a\s*$/.test(getText(heading || section));
       }) || null;
       const appraisalRadios = appraisalSection ? [...appraisalSection.querySelectorAll('input[type="radio"]')] : [];
+      const storeConfirmationTitle = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')]
+        .find(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)) && isVisibleElement(el));
+      const hasStoreConfirmationSection = Boolean(
+        document.querySelector('#cartopt a[data-cl-params*="_cl_link:cartopt"], #cartopt a') ||
+        storeConfirmationTitle
+      );
       return {
         success: true,
         snapshot: {
@@ -1216,7 +1223,7 @@ async function getPaymentPageState(tabId) {
           title: document.title || '',
           bodyText,
           controls,
-          hasStoreConfirmationSection: false,
+          hasStoreConfirmationSection,
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
           hasAppraisalSection: Boolean(appraisalSection),
           hasNoAppraisalSelected: appraisalRadios.some(radio => radio.checked && (radio.value === 'unset' || /\u9451\u5b9a\u3057\u306a\u3044/.test(optionTextFromRadio(radio)))),
