@@ -2649,11 +2649,7 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
 
   const readyResult = await waitForStoreConfirmationFormReady(editTab.id);
   if (!readyResult?.success) return { success: false, error: readyResult?.error || 'store confirmation form not ready', tab: editTab };
-  let checkboxResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
-  if (!checkboxResult?.success) {
-    console.warn('[Yahoo Bid] JS store confirmation checkbox click failed, falling back to trusted input:', checkboxResult?.error || checkboxResult);
-    checkboxResult = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
-  }
+  const checkboxResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
   if (!checkboxResult?.success) return { success: false, error: checkboxResult?.error || 'store confirmation checkbox click failed', tab: editTab };
   await sleep(800);
 
@@ -2670,21 +2666,7 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
     await injectContentScript(reviewTab.id).catch(() => {});
     return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
   } catch (jsError) {
-    const trustedCheckboxes = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
-    if (!trustedCheckboxes?.success) {
-      console.warn('[Yahoo Bid] Trusted store confirmation checkbox click failed before apply retry:', trustedCheckboxes?.error || trustedCheckboxes);
-    }
-    const trustedApply = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
-    if (!trustedApply?.success) {
-      return { success: false, error: `store confirmation review page did not return after JS click; trusted=${trustedApply?.error || 'failed'}: ${jsError.message || jsError}`, tab: editTab };
-    }
-    try {
-      const reviewTab = await waitForReviewAfterApply(15000);
-      await injectContentScript(reviewTab.id).catch(() => {});
-      return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
-    } catch (trustedError) {
-      return { success: false, error: `store confirmation review page did not return after js+trusted click: ${trustedError.message || trustedError}`, tab: editTab };
-    }
+    return { success: false, error: `store confirmation review page did not return after JS click: ${jsError.message || jsError}`, tab: editTab };
   }
 }
 

@@ -4,6 +4,27 @@
 
 ---
 
+# 2026-06-23 store confirmation JS click-only without debugger fallback
+
+Issue:
+- For product `1234243432`, remote diagnostics showed the store confirmation edit page was reached, but checkbox handling previously fell back to `chrome.debugger`.
+- The user requested the store confirmation edit page to keep only JS click behavior and remove debugger fallback.
+- Directly mutating `checkbox.checked = true` is still unsafe because Yahoo validation may not observe it.
+
+Fix:
+- Store confirmation checkboxes now use JS click-only: click label/container/input and never force `.checked = true`.
+- If JS click-only does not leave all required checkboxes checked, the store confirmation flow fails instead of falling back to debugger.
+- `変更する` now uses JS click-only and waits for the review page; if it does not return, the flow fails instead of retrying with trusted input.
+- The earlier `#cartopt` `変更` entry behavior is unchanged.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-23 delayed store confirmation before review
 
 Issue:

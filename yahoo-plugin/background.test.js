@@ -3429,7 +3429,7 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
   assert.equal(calls[0].status, 'success');
 }
 
-async function testCompleteStoreConfirmationItemsUsesJsClickBeforeTrustedFallback() {
+async function testCompleteStoreConfirmationItemsUsesJsClickOnlyOnEditPage() {
   let trustedAttachCount = 0;
   let jsChangeClicks = 0;
   let jsCheckboxChecks = 0;
@@ -5862,7 +5862,7 @@ async function run() {
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
   await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
-  await testCompleteStoreConfirmationItemsUsesJsClickBeforeTrustedFallback();
+  await testCompleteStoreConfirmationItemsUsesJsClickOnlyOnEditPage();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMissing();
   await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();
