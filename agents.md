@@ -4,6 +4,64 @@
 
 ---
 
+# 2026-06-23 bid task opened complete tab but did not execute
+
+Issue:
+- Remote task `w1233744381` task `900` failed with `Task execution timeout after 30s; task tab closed`.
+- Yahoo had no bid record after 22:00, and plugin console showed `Executing task` without a later `Task completed`, meaning the task opened/started but never reached actual bid click.
+- Root cause in the extension: `openTaskPage()` always called `waitForTabComplete()` after `chrome.tabs.create()`.
+- `waitForTabComplete()` only listened for future `chrome.tabs.onUpdated` `status=complete` events. If `chrome.tabs.create()` already returned a tab with `status: 'complete'`, no later update event was guaranteed, so the worker waited until the 30s outer task timeout and closed the tab without injecting/clicking.
+
+Fix:
+- `openTaskPage()` now skips the update-event wait when the created tab is already `complete`.
+- `waitForTabComplete()` also checks the current tab status with `chrome.tabs.get()` after registering the listener, covering the race where the tab becomes complete before a future update event is observed.
+- Added a regression test where `tabs.create()` returns `status: 'complete'` and no `onUpdated` event is fired; the task must still send `GET_PRODUCT_SNAPSHOT` and `EXECUTE_BID` and mark bidding instead of failed.
+
+Validation:
+- `node yahoo-plugin/background.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+
+Follow-up audit:
+- Rechecked server/API claim logic and plugin concurrency:
+  - `/api/plugin/tasks` uses `claimReadyPluginTasks()` and atomically updates selected tasks to `processing`, so the same pending task should not be claimed twice by concurrent polls.
+  - The extension uses `activeBidRuns` and `bidConcurrencyLimit` to limit local concurrent bid tasks.
+  - Concurrent bid tabs do not depend on shared `currentTask.executeBid`; actual execution uses explicit `EXECUTE_BID` messages carrying task data, so shared storage is not the direct cause of this failure.
+- Remaining weak point was observability: timeout/background failures could close the task tab before recording the current page/stage, leaving only `Task execution timeout after 30s; task tab closed`.
+
+Additional fix:
+- Bid task execution now tracks stages such as `open-task-page`, `inject-content`, `read-product-snapshot`, `execute-bid`, and `mark-bidding`.
+- On bid failure, the extension now captures the task tab before closing it and posts `type=bid_failure` diagnostics with stage, task id, strategy, bid mode, max/current price, end time, tab id/window id, tab status/active state, URL, title, body sample, and page capture errors.
+- Timeout diagnostics use `action=bid_timeout` and `method=background`, so future "响应超时" cases can be queried through `/api/plugin/diagnostics?productId=...`.
+- Failure tab closure is now centralized in the outer bid failure handler so content-script `closeTab` failures also record page diagnostics before closing.
+
+Additional validation:
+- `node yahoo-plugin/background.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node src/server/routes/plugin.test.js`
+- `node scripts/encoding-guard.js`
+
+Follow-up reporting:
+- Admin Reports now has a second tab for bid failure diagnostics.
+- Added backend endpoint `GET /api/admin/reports/bid-failures`.
+- The bid failure report reads `plugin_diagnostics` rows with `type='bid_failure'`, including response timeouts (`action=bid_timeout`), Yahoo/system errors, and plugin execution errors.
+- The page shows total failures, timeout count, system error count, latest failure time, grouped counts by action/error message, grouped counts by execution stage parsed from `diagnostics stage=...`, and paginated details with product id, source method, URL, message, and diagnostics.
+- This is separate from the existing `chrome.debugger` trusted-input report tab.
+- The same Reports `出价失败` tab now also shows a 10-day per-user task failure table for user-facing `失败：响应超时` and `失败：系统原因` counts.
+- Backend endpoint: `GET /api/admin/reports/task-failure-users?days=10`.
+- The per-user task failure report classifies timeout messages separately, excludes known business/page/login/Yahoo error causes, and counts the remaining failed task errors as system reason.
+
+Reporting validation:
+- `node src/server/routes/admin.orders.test.js`
+- `node --check src/server/routes/admin.js`
+- `npm run build --prefix src/admin`
+- `node yahoo-plugin/background.test.js`
+- `node src/server/routes/plugin.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-23 manual import strategy display label
 
 Issue:

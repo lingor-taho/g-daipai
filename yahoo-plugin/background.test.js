@@ -5599,6 +5599,247 @@ async function testExecuteBidTaskRetriesTransientServerTabErrorOnce() {
   assert.deepEqual(removedTabs, [901, 902]);
 }
 
+async function testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComplete() {
+  const statusBodies = [];
+  const messageTypes = [];
+  let onUpdatedListenerRegistered = false;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return setTimeout(fn, 0);
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/task/904/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/904/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        return { id: 940, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381' };
+      },
+      onUpdatedAddListener() {
+        onUpdatedListenerRegistered = true;
+      },
+      async sendMessage(_id, msg) {
+        messageTypes.push(msg.type);
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'w1233744381',
+            currentPrice: 19313,
+            endTime: '2026-06-28T23:05:11+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID') {
+          return { success: true, bidPrice: 20001 };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript() {}
+    }
+  });
+
+  await api.executeBidTask({
+    id: 904,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+    current_price: 19313,
+    max_price: 20001,
+    user_max_price: 20001,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_zero',
+    end_time: '2026-06-28T23:05:11+09:00'
+  }, { alreadyClaimed: true });
+
+  assert.equal(onUpdatedListenerRegistered, false);
+  assert.deepEqual(messageTypes, ['GET_PRODUCT_SNAPSHOT', 'EXECUTE_BID']);
+  assert.equal(statusBodies.some(body => body.status === 'failed'), false);
+  assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
+}
+
+async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoadingTab() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return setTimeout(fn, 0);
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/diagnostics')) {
+        calls.push({ type: 'diagnostic', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/905/status')) {
+        calls.push({ type: 'status', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        return { id: 950, status: 'loading', url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381' };
+      },
+      async get(id) {
+        return {
+          id,
+          status: 'loading',
+          active: true,
+          windowId: 3,
+          title: 'Yahoo Auction loading',
+          url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381'
+        };
+      },
+      onUpdatedAddListener() {},
+      async remove(id) {
+        calls.push({ type: 'remove', id });
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{
+          result: {
+            title: 'Yahoo Auction page',
+            url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+            bodyText: '入札する 現在 19,313円'
+          }
+        }];
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 905,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+    current_price: 19313,
+    max_price: 20001,
+    user_max_price: 20001,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_zero',
+    end_time: '2026-06-28T23:05:11+09:00'
+  }, { alreadyClaimed: true });
+
+  const diagnosticIndex = calls.findIndex(call => call.type === 'diagnostic');
+  const removeIndex = calls.findIndex(call => call.type === 'remove');
+  const statusIndex = calls.findIndex(call => call.type === 'status');
+  assert.ok(diagnosticIndex >= 0);
+  assert.ok(removeIndex >= 0);
+  assert.ok(statusIndex >= 0);
+  assert.ok(diagnosticIndex < removeIndex);
+  assert.ok(diagnosticIndex < statusIndex);
+  const diagnostic = calls[diagnosticIndex].body;
+  assert.equal(diagnostic.type, 'bid_failure');
+  assert.equal(diagnostic.productId, 'w1233744381');
+  assert.equal(diagnostic.action, 'bid_timeout');
+  assert.match(diagnostic.message, /Task execution timeout|Product page load timeout/);
+  assert.match(diagnostic.diagnostics, /stage=open-task-page/);
+  assert.match(diagnostic.diagnostics, /tabStatus=loading/);
+  assert.match(diagnostic.diagnostics, /body=入札する 現在 19,313円/);
+}
+
+async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTabFailure() {
+  const calls = [];
+  let removed = false;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/diagnostics')) {
+        calls.push({ type: 'diagnostic', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/906/status')) {
+        calls.push({ type: 'status', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/906/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        return { id: 960, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381' };
+      },
+      async get(id) {
+        if (removed) throw new Error(`No tab with id: ${id}`);
+        return {
+          id,
+          status: 'complete',
+          active: true,
+          windowId: 3,
+          title: 'Yahoo Auction',
+          url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381'
+        };
+      },
+      async sendMessage(_id, msg) {
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'w1233744381',
+            currentPrice: 19313,
+            endTime: '2026-06-28T23:05:11+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID') {
+          return { success: false, error: 'bid result confirmation timeout', closeTab: true };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removed = true;
+        calls.push({ type: 'remove', id });
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{
+          result: {
+            title: 'Yahoo Auction page',
+            url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+            bodyText: '確認する 入札内容'
+          }
+        }];
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 906,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+    current_price: 19313,
+    max_price: 20001,
+    user_max_price: 20001,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_zero',
+    end_time: '2026-06-28T23:05:11+09:00'
+  }, { alreadyClaimed: true });
+
+  const diagnosticIndex = calls.findIndex(call => call.type === 'diagnostic');
+  const removeIndex = calls.findIndex(call => call.type === 'remove');
+  assert.ok(diagnosticIndex >= 0);
+  assert.ok(removeIndex >= 0);
+  assert.ok(diagnosticIndex < removeIndex);
+  const diagnostic = calls[diagnosticIndex].body;
+  assert.match(diagnostic.diagnostics, /stage=execute-bid/);
+  assert.match(diagnostic.diagnostics, /body=確認する 入札内容/);
+}
+
 async function testExecuteBidTaskMarksServerTabErrorAfterRetryFails() {
   const statusBodies = [];
   let createCount = 0;
@@ -6034,6 +6275,9 @@ async function run() {
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
   await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
+  await testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComplete();
+  await testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoadingTab();
+  await testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTabFailure();
   await testExecuteBidTaskMarksServerTabErrorAfterRetryFails();
   await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
   await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();

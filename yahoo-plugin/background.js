@@ -106,19 +106,30 @@ async function heartbeatProcessingTask(taskId) {
 
 function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
-    const tid = setTimeout(() => {
+    let settled = false;
+    function finish(fn, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(tid);
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new Error('Product page load timeout'));
+      fn(value);
+    }
+
+    const tid = setTimeout(() => {
+      finish(reject, new Error('Product page load timeout'));
     }, timeoutMs);
 
     function onUpdated(updatedTabId, info) {
       if (updatedTabId !== tabId || info.status !== 'complete') return;
-      clearTimeout(tid);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      resolve();
+      finish(resolve);
     }
 
     chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.get(tabId)
+      .then(tab => {
+        if (tab?.status === 'complete') finish(resolve);
+      })
+      .catch(error => finish(reject, error));
   });
 }
 
@@ -285,7 +296,7 @@ if (typeof globalThis.addEventListener === 'function') {
   });
 }
 
-async function openTaskPage(task) {
+async function openTaskPage(task, options = {}) {
   const auctionId = normalizeAuctionId(task.product_url);
   if (!auctionId) throw new Error('Invalid product ID');
 
@@ -322,11 +333,15 @@ async function openTaskPage(task) {
   const tab = await chrome.tabs.create({ url: targetUrl, active: true });
   managedTaskTabs.add(tab.id);
   managedTaskTabsByTaskId.set(task.id, tab.id);
+  if (typeof options.onTabCreated === 'function') {
+    options.onTabCreated(tab);
+  }
 
   try {
-    await waitForTabComplete(tab.id);
+    if (tab.status !== 'complete') {
+      await waitForTabComplete(tab.id);
+    }
   } catch (e) {
-    await closeTaskTab(tab.id);
     e.closeTab = true;
     throw e;
   }
@@ -351,10 +366,6 @@ async function executeTaskInTab(tab, task) {
       bidMode: task.bid_mode || 'bid',
     strategy: task.strategy || 'direct'
   });
-
-  if (!result?.success && shouldCloseTaskTab(result)) {
-    await closeTaskTab(tab.id);
-  }
 
   if (!result?.success) {
     throw buildBidError(result, 'bid execution failed');
@@ -420,6 +431,52 @@ async function closeTaskTab(tabId) {
   } catch (e) {
     console.warn('[Yahoo Bid] Failed to close task tab:', e);
   }
+}
+
+async function getTabPageDiagnosticSnapshot(tabId) {
+  if (!tabId) return {};
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (e) {
+    return { tabId, error: e?.message || String(e || '') };
+  }
+
+  let page = {};
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        url: window.location.href || '',
+        title: document.title || '',
+        bodyText: (document.body?.innerText || document.body?.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 1200)
+      })
+    });
+    page = result?.[0]?.result || {};
+  } catch (e) {
+    page = { pageError: e?.message || String(e || '') };
+  }
+
+  return {
+    tabId,
+    windowId: tab?.windowId || '',
+    tabStatus: tab?.status || '',
+    tabActive: tab?.active === true,
+    url: page.url || tab?.url || '',
+    title: page.title || tab?.title || '',
+    bodyText: page.bodyText || '',
+    pageError: page.pageError || ''
+  };
+}
+
+function formatDiagnosticParts(parts = {}) {
+  return Object.entries(parts)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, ' ').trim().slice(0, 1200)}`)
+    .join(',');
 }
 
 async function closeTabIfExists(tabId) {
@@ -540,19 +597,22 @@ function buildBidError(result, fallbackMessage) {
   return error;
 }
 
-async function postBidFailureDiagnostic(task, error) {
+async function postBidFailureDiagnostic(task, error, context = {}) {
   const bidResult = error?.bidResult || {};
-  const diagnostics = bidResult.diagnostics || error?.diagnostics || '';
-  if (!diagnostics && !bidResult.url && !error?.url) return;
+  const contextDiagnostics = context.diagnostics || '';
+  const diagnostics = bidResult.diagnostics || error?.diagnostics || contextDiagnostics || '';
+  if (!diagnostics && !bidResult.url && !error?.url && !context.url) return;
+  const isBackgroundDiagnostic = Boolean(contextDiagnostics) && !bidResult.diagnostics && !error?.diagnostics;
+  const isTimeoutDiagnostic = /timeout/i.test(error?.message || '') || context.timedOut;
   await postPluginDiagnostic({
     type: 'bid_failure',
     level: 'error',
     productId: normalizeAuctionId(task?.product_url || task?.product_id || ''),
-    action: 'bid',
-    method: 'content-script',
+    action: isTimeoutDiagnostic ? 'bid_timeout' : 'bid',
+    method: isBackgroundDiagnostic ? 'background' : 'content-script',
     message: error?.message || bidResult.error || 'bid failed',
     diagnostics,
-    url: bidResult.url || error?.url || task?.product_url || ''
+    url: bidResult.url || error?.url || context.url || task?.product_url || ''
   });
 }
 
@@ -569,10 +629,6 @@ async function executeTaskInTabV2(tab, task) {
     await sleep(3000);
     await injectContentScript(tab.id);
     result = await sendBidMessageV2(tab.id, task);
-  }
-
-  if (!result?.success && shouldCloseTaskTab(result)) {
-    await closeTaskTab(tab.id);
   }
 
   if (!result?.success) {
@@ -596,9 +652,6 @@ async function executeTaskInTabV2(tab, task) {
         await sleep(3000);
         await injectContentScript(tab.id);
         finalResult = await sendBidMessageV2(tab.id, task);
-      }
-      if ((!finalResult?.success || finalResult.pendingFinal) && shouldCloseTaskTab(finalResult)) {
-        await closeTaskTab(tab.id);
       }
       if (finalResult?.success && !finalResult.pendingFinal) return finalResult;
       if (!finalResult?.success) {
@@ -5469,12 +5522,14 @@ async function executeBidTask(task, options = {}) {
   console.log('[Yahoo Bid] Executing task:', task.product_url);
   let taskTab = null;
   let taskTimedOut = false;
+  let bidStage = 'start';
   const taskExecutionTimeoutMs = getTaskExecutionTimeoutMs(task);
   const taskProgressExtensionMs = getTaskProgressExtensionMs(task);
   const taskExecutionMaxTimeoutMs = getTaskExecutionMaxTimeoutMs(task);
   try {
     await withProgressTimeout((async () => {
           if (!options.alreadyClaimed) {
+          bidStage = 'claim-processing';
           const markedProcessing = await markTaskStatus(task.id, 'processing');
           if (taskTimedOut) return;
           if (!markedProcessing?.success) {
@@ -5482,23 +5537,32 @@ async function executeBidTask(task, options = {}) {
             return;
           }
           }
-          taskTab = await openTaskPage(task);
+          bidStage = 'open-task-page';
+          taskTab = await openTaskPage(task, {
+            onTabCreated(tab) {
+              taskTab = tab;
+            }
+          });
           if (taskTimedOut) {
             await closeTaskTab(taskTab.id);
             return;
           }
           const tab = taskTab;
+          bidStage = 'inject-content';
           await injectContentScript(tab.id);
           if (taskTimedOut) return;
+          bidStage = 'read-product-snapshot';
           const ready = await ensureTaskReadyByCurrentEndTime(tab, task);
           if (taskTimedOut) return;
           if (!ready) {
             await chrome.storage.session.remove(['currentTask']);
             return;
           }
+          bidStage = 'execute-bid';
           const result = await executeTaskInTabV2(tab, task);
           if (taskTimedOut) return;
           await chrome.storage.session.remove(['currentTask']);
+          bidStage = 'mark-bidding';
           if (result?.noStatus) {
             // direct 任务命中"已是最高价 + 计划出价≤自动入札上限"时，本次跳过出价。
             // 之前直接 touchTaskSchedule 会把 status 写回 task.status（pending），
@@ -5512,6 +5576,7 @@ async function executeBidTask(task, options = {}) {
             await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
           }
           if (!shouldKeepTaskTabOpen(task, result)) {
+            bidStage = 'close-success-tab';
             await closeTaskTab(tab.id);
           }
           console.log('[Yahoo Bid] Task completed:', task.id, result);
@@ -5543,11 +5608,37 @@ async function executeBidTask(task, options = {}) {
         preserveActiveRun: true
       });
     }
+    const finalError = isTransientServerTabError(e) ? buildServerTabError(e) : e;
+    const tabSnapshot = taskTab?.id ? await getTabPageDiagnosticSnapshot(taskTab.id).catch(error => ({
+      tabId: taskTab.id,
+      pageError: error?.message || String(error || '')
+    })) : {};
+    const diagnostics = formatDiagnosticParts({
+      stage: bidStage,
+      timedOut: taskTimedOut ? 'true' : '',
+      taskId: task.id,
+      strategy: task.strategy || '',
+      bidMode: task.bid_mode || '',
+      maxPrice: task.max_price || '',
+      currentPrice: task.current_price || '',
+      endTime: task.end_time || '',
+      tabId: tabSnapshot.tabId || '',
+      windowId: tabSnapshot.windowId || '',
+      tabStatus: tabSnapshot.tabStatus || '',
+      tabActive: tabSnapshot.tabActive === true ? 'true' : '',
+      url: tabSnapshot.url || '',
+      title: tabSnapshot.title || '',
+      body: tabSnapshot.bodyText || '',
+      pageError: tabSnapshot.pageError || tabSnapshot.error || ''
+    });
+    await postBidFailureDiagnostic(task, finalError, {
+      diagnostics,
+      url: tabSnapshot.url || '',
+      timedOut: taskTimedOut
+    });
     if (taskTab?.id && e.closeTab) {
       await closeTaskTab(taskTab.id);
     }
-    const finalError = isTransientServerTabError(e) ? buildServerTabError(e) : e;
-    await postBidFailureDiagnostic(task, finalError);
     await markTaskStatus(task.id, 'failed', finalError.message);
   } finally {
     if (!options.preserveActiveRun) activeBidRuns.delete(task.id);

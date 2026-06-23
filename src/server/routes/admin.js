@@ -580,6 +580,12 @@ function normalizeReportPage(value, fallback = 1) {
   return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
 }
 
+function normalizeReportDays(value, fallback = 10) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.min(90, Math.floor(numeric));
+}
+
 function buildTrustedInputReportQueries(filters = {}) {
   const current = normalizeReportPage(filters.current, 1);
   const pageSize = Math.min(200, normalizeReportPage(filters.pageSize, 20));
@@ -648,6 +654,158 @@ function buildTrustedInputReportQueries(filters = {}) {
             ${whereSql}`,
       params: [...params]
     }
+  };
+}
+
+function buildBidFailureReportQueries(filters = {}) {
+  const current = normalizeReportPage(filters.current, 1);
+  const pageSize = Math.min(200, normalizeReportPage(filters.pageSize, 20));
+  const offset = (current - 1) * pageSize;
+  const where = ["type = 'bid_failure'"];
+  const params = [];
+  const addFilter = (column, value) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    where.push(`${column} = ?`);
+    params.push(text);
+  };
+  addFilter('level', filters.level);
+  addFilter('action', filters.action);
+  addFilter('method', filters.method);
+  addFilter('product_id', String(filters.productId || filters.product_id || '').toLowerCase());
+  const messageText = String(filters.message || '').trim();
+  if (messageText) {
+    where.push('message LIKE ?');
+    params.push(`%${messageText}%`);
+  }
+  const whereSql = `WHERE ${where.join(' AND ')}`;
+  const stageExpr = `
+    CASE
+      WHEN diagnostics LIKE '%stage=%' THEN
+        substr(
+          substr(diagnostics, instr(diagnostics, 'stage=') + 6),
+          1,
+          CASE
+            WHEN instr(substr(diagnostics, instr(diagnostics, 'stage=') + 6), ',') > 0
+            THEN instr(substr(diagnostics, instr(diagnostics, 'stage=') + 6), ',') - 1
+            ELSE length(substr(diagnostics, instr(diagnostics, 'stage=') + 6))
+          END
+        )
+      ELSE ''
+    END`;
+  return {
+    pagination: { current, pageSize, offset },
+    summary: {
+      sql: `SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN action = 'bid_timeout' THEN 1 ELSE 0 END) AS timeout_count,
+                   SUM(CASE WHEN message LIKE '%system%' OR message LIKE '%系统%' OR message LIKE '%Yahoo system%' THEN 1 ELSE 0 END) AS system_error_count,
+                   SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count,
+                   MAX(created_at) AS last_failed_at
+            FROM plugin_diagnostics
+            ${whereSql}`,
+      params: [...params]
+    },
+    byAction: {
+      sql: `SELECT COALESCE(action, '') AS action,
+                   COALESCE(message, '') AS message,
+                   COUNT(*) AS count,
+                   MAX(created_at) AS last_failed_at
+            FROM plugin_diagnostics
+            ${whereSql}
+            GROUP BY action, message
+            ORDER BY count DESC, datetime(last_failed_at) DESC
+            LIMIT 100`,
+      params: [...params]
+    },
+    byStage: {
+      sql: `SELECT COALESCE(${stageExpr}, '') AS stage,
+                   COUNT(*) AS count,
+                   SUM(CASE WHEN action = 'bid_timeout' THEN 1 ELSE 0 END) AS timeout_count,
+                   MAX(created_at) AS last_failed_at
+            FROM plugin_diagnostics
+            ${whereSql}
+            GROUP BY stage
+            ORDER BY count DESC, datetime(last_failed_at) DESC
+            LIMIT 100`,
+      params: [...params]
+    },
+    rows: {
+      sql: `SELECT id, level, product_id, order_id, action, method, message, diagnostics, url, created_at
+            FROM plugin_diagnostics
+            ${whereSql}
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT ? OFFSET ?`,
+      params: [...params, pageSize, offset]
+    },
+    count: {
+      sql: `SELECT COUNT(*) AS total
+            FROM plugin_diagnostics
+            ${whereSql}`,
+      params: [...params]
+    }
+  };
+}
+
+const taskFailureTimeoutSql = `(
+  COALESCE(t.error_msg, '') LIKE '%Task execution timeout after%'
+  OR COALESCE(t.error_msg, '') LIKE '%timeout%'
+  OR COALESCE(t.error_msg, '') LIKE '%timed out%'
+  OR COALESCE(t.error_msg, '') LIKE '%networkidle%'
+  OR COALESCE(t.error_msg, '') LIKE '%30%tab%'
+  OR COALESCE(t.error_msg, '') LIKE '%响应超时%'
+  OR COALESCE(t.error_msg, '') LIKE '%加载超时%'
+  OR COALESCE(t.error_msg, '') LIKE '%超时%'
+)`;
+
+const taskFailureKnownNonSystemSql = `(
+  ${taskFailureTimeoutSql}
+  OR COALESCE(t.error_msg, '') LIKE '%Current price is above max price before execution%'
+  OR COALESCE(t.error_msg, '') LIKE '%above max price%'
+  OR COALESCE(t.error_msg, '') LIKE '%当前价格%'
+  OR COALESCE(t.error_msg, '') LIKE '%税费合计金额%'
+  OR COALESCE(t.error_msg, '') LIKE '%出价金额%'
+  OR COALESCE(t.error_msg, '') LIKE '%高于最高价%'
+  OR COALESCE(t.error_msg, '') LIKE '%Auction ended before plugin execution%'
+  OR COALESCE(t.error_msg, '') LIKE '%Auction ended according to product page snapshot%'
+  OR COALESCE(t.error_msg, '') LIKE '%ended before%'
+  OR COALESCE(t.error_msg, '') LIKE '%商品%结束%'
+  OR COALESCE(t.error_msg, '') LIKE '%outbid after bid%'
+  OR COALESCE(t.error_msg, '') LIKE '%Rebid required%'
+  OR COALESCE(t.error_msg, '') LIKE '%current bid is not high enough%'
+  OR COALESCE(t.error_msg, '') LIKE '%Yahoo login%'
+  OR COALESCE(t.error_msg, '') LIKE '%login%Yahoo%'
+  OR COALESCE(t.error_msg, '') LIKE '%Yahoo%login%'
+  OR COALESCE(t.error_msg, '') LIKE '%需要登录%Yahoo%'
+  OR COALESCE(t.error_msg, '') LIKE '%Server tab error%'
+  OR COALESCE(t.error_msg, '') LIKE '%No tab with id%'
+  OR COALESCE(t.error_msg, '') LIKE '%Tabs cannot be edited right now%'
+  OR COALESCE(t.error_msg, '') LIKE '%user may be dragging a tab%'
+  OR COALESCE(t.error_msg, '') LIKE '%Yahoo bid failed%'
+  OR COALESCE(t.error_msg, '') LIKE '%Yahoo system error page%'
+  OR COALESCE(t.error_msg, '') LIKE '%Yahoo error page%'
+  OR COALESCE(t.error_msg, '') LIKE '%Yahoo%access failure%'
+)`;
+
+function buildRecentTaskFailureUserReportQuery(filters = {}) {
+  const days = normalizeReportDays(filters.days, 10);
+  const systemSql = `(NOT ${taskFailureKnownNonSystemSql})`;
+  return {
+    days,
+    sql: `SELECT t.user_id,
+                 COALESCE(u.username, '-') AS username,
+                 SUM(CASE WHEN ${taskFailureTimeoutSql} THEN 1 ELSE 0 END) AS timeout_count,
+                 SUM(CASE WHEN ${systemSql} THEN 1 ELSE 0 END) AS system_count,
+                 SUM(CASE WHEN ${taskFailureTimeoutSql} OR ${systemSql} THEN 1 ELSE 0 END) AS total_count,
+                 MAX(t.updated_at) AS last_failed_at
+          FROM tasks t
+          LEFT JOIN users u ON u.id = t.user_id
+          WHERE t.status = 'failed'
+            AND datetime(t.updated_at) >= datetime('now', ? || ' days')
+            AND (${taskFailureTimeoutSql} OR ${systemSql})
+          GROUP BY t.user_id, u.username
+          HAVING timeout_count > 0 OR system_count > 0
+          ORDER BY total_count DESC, datetime(last_failed_at) DESC`,
+    params: [-days]
   };
 }
 
@@ -1257,6 +1415,50 @@ router.get('/reports/trusted-input', async (req, res) => {
     total: Number(countRow?.total || 0),
     current: queries.pagination.current,
     pageSize: queries.pagination.pageSize
+  });
+});
+
+router.get('/reports/bid-failures', async (req, res) => {
+  const queries = buildBidFailureReportQueries(req.query || {});
+  const [summaryRow, byAction, byStage, rows, countRow] = await Promise.all([
+    db.getOne(queries.summary.sql, queries.summary.params),
+    db.getAll(queries.byAction.sql, queries.byAction.params),
+    db.getAll(queries.byStage.sql, queries.byStage.params),
+    db.getAll(queries.rows.sql, queries.rows.params),
+    db.getOne(queries.count.sql, queries.count.params)
+  ]);
+  res.json({
+    success: true,
+    summary: {
+      total: Number(summaryRow?.total || 0),
+      timeout: Number(summaryRow?.timeout_count || 0),
+      systemError: Number(summaryRow?.system_error_count || 0),
+      error: Number(summaryRow?.error_count || 0),
+      lastFailedAt: summaryRow?.last_failed_at || null
+    },
+    byAction,
+    byStage,
+    items: rows,
+    total: Number(countRow?.total || 0),
+    current: queries.pagination.current,
+    pageSize: queries.pagination.pageSize
+  });
+});
+
+router.get('/reports/task-failure-users', async (req, res) => {
+  const query = buildRecentTaskFailureUserReportQuery(req.query || {});
+  const rows = await db.getAll(query.sql, query.params);
+  res.json({
+    success: true,
+    days: query.days,
+    items: rows.map(row => ({
+      user_id: row.user_id,
+      username: row.username || '-',
+      timeout_count: Number(row.timeout_count || 0),
+      system_count: Number(row.system_count || 0),
+      total_count: Number(row.total_count || 0),
+      last_failed_at: row.last_failed_at || null
+    }))
   });
 });
 
@@ -3077,6 +3279,8 @@ module.exports.buildProductDebugConfigQuery = buildProductDebugConfigQuery;
 module.exports.buildOrderSettlementSelectQuery = buildOrderSettlementSelectQuery;
 module.exports.buildAdminLogsQuery = buildAdminLogsQuery;
 module.exports.buildTrustedInputReportQueries = buildTrustedInputReportQueries;
+module.exports.buildBidFailureReportQueries = buildBidFailureReportQueries;
+module.exports.buildRecentTaskFailureUserReportQuery = buildRecentTaskFailureUserReportQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.calculateOrderPayable = calculateOrderPayable;

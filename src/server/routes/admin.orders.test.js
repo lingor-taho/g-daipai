@@ -19,6 +19,8 @@ const {
   buildProductDebugBiddingItemsQuery,
   buildProductDebugConfigQuery,
   buildTrustedInputReportQueries,
+  buildBidFailureReportQueries,
+  buildRecentTaskFailureUserReportQuery,
   buildOrderSettlementSelectQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
@@ -77,6 +79,43 @@ function testBuildTrustedInputReportQueries() {
   assert.deepEqual(queries.count.params, ['error']);
   assert.equal(queries.pagination.current, 2);
   assert.equal(queries.pagination.pageSize, 25);
+}
+
+function testBuildBidFailureReportQueries() {
+  const queries = buildBidFailureReportQueries({
+    current: '3',
+    pageSize: '10',
+    action: 'bid_timeout',
+    method: 'background',
+    productId: 'W1233744381',
+    message: 'timeout'
+  });
+  assert.match(queries.summary.sql, /FROM plugin_diagnostics/);
+  assert.match(queries.summary.sql, /type = 'bid_failure'/);
+  assert.match(queries.summary.sql, /action = \?/);
+  assert.match(queries.summary.sql, /method = \?/);
+  assert.match(queries.summary.sql, /product_id = \?/);
+  assert.match(queries.summary.sql, /message LIKE \?/);
+  assert.deepEqual(queries.summary.params, ['bid_timeout', 'background', 'w1233744381', '%timeout%']);
+  assert.match(queries.byAction.sql, /GROUP BY action, message/);
+  assert.match(queries.byStage.sql, /stage/);
+  assert.match(queries.rows.sql, /ORDER BY datetime\(created_at\) DESC, id DESC/);
+  assert.deepEqual(queries.rows.params, ['bid_timeout', 'background', 'w1233744381', '%timeout%', 10, 20]);
+  assert.deepEqual(queries.count.params, ['bid_timeout', 'background', 'w1233744381', '%timeout%']);
+  assert.equal(queries.pagination.current, 3);
+  assert.equal(queries.pagination.pageSize, 10);
+}
+
+function testBuildRecentTaskFailureUserReportQuery() {
+  const query = buildRecentTaskFailureUserReportQuery({ days: '10' });
+  assert.match(query.sql, /FROM tasks t/);
+  assert.match(query.sql, /LEFT JOIN users u ON u\.id = t\.user_id/);
+  assert.match(query.sql, /t\.status = 'failed'/);
+  assert.match(query.sql, /datetime\('now', \? \|\| ' days'\)/);
+  assert.match(query.sql, /timeout_count/);
+  assert.match(query.sql, /system_count/);
+  assert.match(query.sql, /GROUP BY t\.user_id, u\.username/);
+  assert.deepEqual(query.params, [-10]);
 }
 
 function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {
@@ -1082,6 +1121,8 @@ testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
 testBuildGoogleSheetUrl();
 testBuildTrustedInputReportQueries();
+testBuildBidFailureReportQueries();
+testBuildRecentTaskFailureUserReportQuery();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 testManualOrderImportSummarySeparatesEmptyReadyBatches();
 
