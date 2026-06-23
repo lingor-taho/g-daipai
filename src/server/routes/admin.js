@@ -580,7 +580,7 @@ function normalizeReportPage(value, fallback = 1) {
   return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
 }
 
-function normalizeReportDays(value, fallback = 10) {
+function normalizeReportDays(value, fallback = 5) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
   return Math.min(90, Math.floor(numeric));
@@ -787,7 +787,7 @@ const taskFailureKnownNonSystemSql = `(
 )`;
 
 function buildRecentTaskFailureUserReportQuery(filters = {}) {
-  const days = normalizeReportDays(filters.days, 10);
+  const days = normalizeReportDays(filters.days, 5);
   const systemSql = `(NOT ${taskFailureKnownNonSystemSql})`;
   return {
     days,

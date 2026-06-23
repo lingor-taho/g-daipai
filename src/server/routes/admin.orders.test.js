@@ -107,7 +107,7 @@ function testBuildBidFailureReportQueries() {
 }
 
 function testBuildRecentTaskFailureUserReportQuery() {
-  const query = buildRecentTaskFailureUserReportQuery({ days: '10' });
+  const query = buildRecentTaskFailureUserReportQuery({});
   assert.match(query.sql, /FROM tasks t/);
   assert.match(query.sql, /LEFT JOIN users u ON u\.id = t\.user_id/);
   assert.match(query.sql, /t\.status = 'failed'/);
@@ -115,7 +115,7 @@ function testBuildRecentTaskFailureUserReportQuery() {
   assert.match(query.sql, /timeout_count/);
   assert.match(query.sql, /system_count/);
   assert.match(query.sql, /GROUP BY t\.user_id, u\.username/);
-  assert.deepEqual(query.params, [-10]);
+  assert.deepEqual(query.params, [-5]);
 }
 
 function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {

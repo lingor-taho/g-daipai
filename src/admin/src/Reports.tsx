@@ -91,7 +91,7 @@ export default function ReportsPage() {
       });
       const [data, userStats] = await Promise.all([
         fetchAdminJson(`/api/admin/reports/bid-failures?${params.toString()}`),
-        fetchAdminJson('/api/admin/reports/task-failure-users?days=10')
+        fetchAdminJson('/api/admin/reports/task-failure-users?days=5')
       ]);
       setBidFailureReport(data);
       setFailureUserStats(userStats.items || []);
@@ -241,7 +241,7 @@ export default function ReportsPage() {
         <Col xs={12} md={6}><Card><Statistic title="最近失败" value={formatDateTime(bidFailureSummary.lastFailedAt)} /></Card></Col>
       </Row>
 
-      <Card title="近10天按用户统计" extra={<Typography.Text type="secondary">失败：响应超时 / 失败：系统原因</Typography.Text>}>
+      <Card title="近5天按用户统计" extra={<Typography.Text type="secondary">失败：响应超时 / 失败：系统原因</Typography.Text>}>
         <Table
           size="small"
           rowKey={row => `${row.user_id || 'unknown'}-${row.username || ''}`}
@@ -254,7 +254,13 @@ export default function ReportsPage() {
             { title: '响应超时', dataIndex: 'timeout_count', width: 110, sorter: (a: any, b: any) => Number(a.timeout_count || 0) - Number(b.timeout_count || 0) },
             { title: '系统原因', dataIndex: 'system_count', width: 110, sorter: (a: any, b: any) => Number(a.system_count || 0) - Number(b.system_count || 0) },
             { title: '合计', dataIndex: 'total_count', width: 90, sorter: (a: any, b: any) => Number(a.total_count || 0) - Number(b.total_count || 0) },
-            { title: '最近失败', dataIndex: 'last_failed_at', width: 170, render: value => formatDateTime(value) }
+            {
+              title: '最近失败',
+              dataIndex: 'last_failed_at',
+              width: 170,
+              sorter: (a: any, b: any) => new Date(a.last_failed_at || 0).getTime() - new Date(b.last_failed_at || 0).getTime(),
+              render: value => formatDateTime(value)
+            }
           ]}
         />
       </Card>

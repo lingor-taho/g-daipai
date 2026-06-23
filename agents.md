@@ -48,8 +48,9 @@ Follow-up reporting:
 - The bid failure report reads `plugin_diagnostics` rows with `type='bid_failure'`, including response timeouts (`action=bid_timeout`), Yahoo/system errors, and plugin execution errors.
 - The page shows total failures, timeout count, system error count, latest failure time, grouped counts by action/error message, grouped counts by execution stage parsed from `diagnostics stage=...`, and paginated details with product id, source method, URL, message, and diagnostics.
 - This is separate from the existing `chrome.debugger` trusted-input report tab.
-- The same Reports `出价失败` tab now also shows a 10-day per-user task failure table for user-facing `失败：响应超时` and `失败：系统原因` counts.
-- Backend endpoint: `GET /api/admin/reports/task-failure-users?days=10`.
+- The same Reports `出价失败` tab now also shows a 5-day per-user task failure table for user-facing `失败：响应超时` and `失败：系统原因` counts.
+- Backend endpoint: `GET /api/admin/reports/task-failure-users?days=5`.
+- The per-user table supports sorting by latest failure time.
 - The per-user task failure report classifies timeout messages separately, excludes known business/page/login/Yahoo error causes, and counts the remaining failed task errors as system reason.
 
 Reporting validation:
