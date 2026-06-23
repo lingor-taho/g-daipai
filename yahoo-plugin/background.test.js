@@ -1092,12 +1092,14 @@ function testPaymentPageStateDetectsStoreConfirmationSection() {
   const state = api.buildPaymentPageStateFromSnapshot({
     url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017',
     bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u5e74\u9f62\u78ba\u8a8d \u79c1\u306f33\u6b73\u3067\u3059 \u5fc5\u9808 \u9818\u53ce\u66f8 \u4e0d\u8981 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u7a0e\u8fbc\uff09 43,320\u5186',
-    controls: ['\u5909\u66f4', '\u78ba\u8a8d\u3059\u308b']
+    controls: ['\u5909\u66f4', '\u78ba\u8a8d\u3059\u308b'],
+    hasStoreConfirmationSection: true
   });
   const editState = api.buildPaymentPageStateFromSnapshot({
     url: 'https://buy.auctions.yahoo.co.jp/order/store-confirmation?auctionId=j1232680017',
     bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002 \u5e74\u9f62\u78ba\u8a8d \u5fc5\u9808',
-    controls: ['\u5909\u66f4\u3059\u308b']
+    controls: ['\u5909\u66f4\u3059\u308b'],
+    hasStoreConfirmationSection: true
   });
 
   assert.equal(state.hasStoreConfirmationSection, true);
@@ -1113,6 +1115,18 @@ function testPaymentPageStateRespectsExplicitNoStoreConfirmationSection() {
     bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u304a\u652f\u6255\u3044\u65b9\u6cd5\u306e\u5909\u66f4\u306f\u3053\u3061\u3089 \u304a\u652f\u6255\u3044\u91d1\u984d 1000\u5186',
     controls: ['\u5909\u66f4', '\u78ba\u8a8d\u3059\u308b'],
     hasStoreConfirmationSection: false
+  });
+
+  assert.equal(state.hasStoreConfirmationSection, false);
+  assert.equal(state.hasReviewButton, true);
+}
+
+function testPaymentPageStateIgnoresStoreConfirmationTitleWithoutChangeControl() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=t1234025360',
+    bodyText: '\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805 \u304a\u652f\u6255\u3044\u91d1\u984d 1000\u5186',
+    controls: ['\u78ba\u8a8d\u3059\u308b']
   });
 
   assert.equal(state.hasStoreConfirmationSection, false);
@@ -5784,6 +5798,7 @@ async function run() {
   testPaymentPageStateDetectsBuyerDeletedCancellation();
   testPaymentPageStateDetectsStoreConfirmationSection();
   testPaymentPageStateRespectsExplicitNoStoreConfirmationSection();
+  testPaymentPageStateIgnoresStoreConfirmationTitleWithoutChangeControl();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
   await testStoreConfirmationApplyChecksHiddenInputs();

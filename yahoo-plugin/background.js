@@ -1082,7 +1082,9 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const hasExplicitStoreConfirmationSection = Object.prototype.hasOwnProperty.call(snapshot, 'hasStoreConfirmationSection');
   const hasStoreConfirmationSection = PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED && (
     Boolean(snapshot.hasStoreConfirmationSection) ||
-    (!hasExplicitStoreConfirmationSection && /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText))
+    (!hasExplicitStoreConfirmationSection &&
+      /\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805/.test(bodyText) &&
+      hasControl(/^\s*\u5909\u66f4\s*$/))
   );
   const hasStoreConfirmationEditPage = Boolean(snapshot.hasStoreConfirmationEditPage) ||
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
@@ -1212,9 +1214,11 @@ async function getPaymentPageState(tabId) {
       const appraisalRadios = appraisalSection ? [...appraisalSection.querySelectorAll('input[type="radio"]')] : [];
       const storeConfirmationTitle = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')]
         .find(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(getText(el)) && isVisibleElement(el));
+      const directStoreConfirmationChange = document.querySelector('#cartopt a[data-cl-params*="_cl_link:cartopt"], #cartopt a');
+      const storeConfirmationChangeControl = controls.some(text => /^\s*\u5909\u66f4\s*$/.test(text));
       const hasStoreConfirmationSection = Boolean(
-        document.querySelector('#cartopt a[data-cl-params*="_cl_link:cartopt"], #cartopt a') ||
-        storeConfirmationTitle
+        (directStoreConfirmationChange && isVisibleElement(directStoreConfirmationChange)) ||
+        (storeConfirmationTitle && storeConfirmationChangeControl)
       );
       return {
         success: true,
