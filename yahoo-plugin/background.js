@@ -2212,7 +2212,6 @@ async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) 
         if (typeof PointerEvent !== 'undefined') el.dispatchEvent(new PointerEvent('pointerup', eventOptions));
         el.dispatchEvent(new MouseEvent('mouseup', eventOptions));
         el.click?.();
-        el.dispatchEvent(new MouseEvent('click', eventOptions));
       };
       for (const checkbox of checkboxes) {
         const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : null;
@@ -2480,7 +2479,6 @@ async function clickStoreConfirmationApplyButton(tabId) {
         if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
         node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
         node.click?.();
-        node.dispatchEvent(new MouseEvent('click', eventOptions));
         if (typeof KeyboardEvent !== 'undefined') {
           node.dispatchEvent(new KeyboardEvent('keydown', { ...eventOptions, key: 'Enter', code: 'Enter' }));
           node.dispatchEvent(new KeyboardEvent('keyup', { ...eventOptions, key: 'Enter', code: 'Enter' }));

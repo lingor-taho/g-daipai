@@ -4,6 +4,27 @@
 
 ---
 
+# 2026-06-23 store confirmation apply button single JS click
+
+Issue:
+- Store confirmation edit-page checkbox handling had already moved to JS click-only, with no `checked=true` and no debugger checkbox fallback.
+- Follow-up review found the edit-page apply button (`change/apply` button after checkboxes) still emitted two JS click events: `node.click()` plus `dispatchEvent(new MouseEvent('click'))`.
+- Buttons do not toggle like checkboxes, but duplicate submit clicks can still create unstable Yahoo page state.
+
+Fix:
+- Removed the extra synthetic `MouseEvent('click')` from `clickStoreConfirmationApplyButton()`.
+- The apply button now sends pointer/mouse down/up plus one `node.click()` only.
+- Kept the earlier review-page `#cartopt` entry `change` debugger fallback unchanged, per user request.
+- Added a regression test that fails when the store confirmation apply button receives two click events.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-23 store confirmation JS click-only without debugger fallback
 
 Issue:

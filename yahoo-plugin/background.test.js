@@ -1281,6 +1281,126 @@ async function testStoreConfirmationApplyUsesConfirmUpdateSelector() {
   assert.equal(applyClicked, true);
 }
 
+async function testStoreConfirmationApplyButtonClicksOnce() {
+  let applyClickCount = 0;
+  const applyLink = {
+    tagName: 'A',
+    textContent: '\u5909\u66f4\u3059\u308b',
+    value: '',
+    title: '',
+    getAttribute(name) {
+      return name === 'aria-label' ? '' : null;
+    },
+    closest(selector) {
+      return String(selector).includes('a') ? this : null;
+    },
+    scrollIntoView() {},
+    focus() {},
+    dispatchEvent(event) {
+      if (event?.type === 'click') applyClickCount += 1;
+    },
+    click() { applyClickCount += 1; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          document: {
+            querySelector(selector) {
+              if (selector.includes('#confirm')) return applyLink;
+              return null;
+            },
+            querySelectorAll() {
+              return [applyLink];
+            }
+          },
+          window: {},
+          MouseEvent: function MouseEvent(type) { this.type = type; },
+          PointerEvent: function PointerEvent(type) { this.type = type; },
+          KeyboardEvent: function KeyboardEvent(type) { this.type = type; }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.clickStoreConfirmationApplyButton(19);
+
+  assert.equal(result.success, true);
+  assert.equal(applyClickCount, 1);
+}
+
+async function testStoreConfirmationCheckboxLabelClickOnlyTogglesOnce() {
+  let labelClicks = 0;
+  const checkbox = {
+    id: 'agree-label',
+    checked: false,
+    disabled: false,
+    getBoundingClientRect() { return { width: 10, height: 10 }; },
+    closest() { return this; },
+    scrollIntoView() {},
+    click() { this.checked = !this.checked; },
+    dispatchEvent() {}
+  };
+  const label = {
+    scrollIntoView() {},
+    focus() {},
+    click() {
+      labelClicks += 1;
+      checkbox.checked = !checkbox.checked;
+    },
+    dispatchEvent() {}
+  };
+  const applyLink = {
+    textContent: '\u5909\u66f4\u3059\u308b',
+    value: '',
+    title: '',
+    getAttribute() { return ''; },
+    closest() { return this; },
+    scrollIntoView() {},
+    focus() {},
+    dispatchEvent() {},
+    click() {}
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            body: {},
+            querySelector(selector) {
+              if (String(selector).startsWith('label')) return label;
+              if (selector.includes('#confirm')) return applyLink;
+              return null;
+            },
+            querySelectorAll(selector) {
+              if (selector === 'input[type="checkbox"]') return [checkbox];
+              return [applyLink];
+            }
+          },
+          window: {
+            getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+            HTMLInputElement: { prototype: {} }
+          },
+          CSS: { escape: value => value },
+          Event: function Event() {},
+          MouseEvent: function MouseEvent() {},
+          PointerEvent: function PointerEvent() {}
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.checkAllStoreConfirmationItemsAndApply(19, false);
+
+  assert.equal(result.success, true);
+  assert.equal(result.checkedCount, 1);
+  assert.equal(checkbox.checked, true);
+  assert.equal(labelClicks, 1);
+}
+
 async function testStoreConfirmationApplyDoesNotForceHiddenInputsChecked() {
   const checkbox = {
     id: 'agree-hidden',
@@ -5834,6 +5954,8 @@ async function run() {
   testPaymentPageStateRequiresCartoptForStoreConfirmation();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
+  await testStoreConfirmationApplyButtonClicksOnce();
+  await testStoreConfirmationCheckboxLabelClickOnlyTogglesOnce();
   await testStoreConfirmationApplyDoesNotForceHiddenInputsChecked();
   await testStoreConfirmationTrustedClickPointsUseRealSelectors();
   testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
