@@ -4,6 +4,25 @@
 
 ---
 
+# 2026-06-23 store confirmation cartopt detection
+
+Issue:
+- Remote payment for product `1234243432` failed with `确认付款后页面未跳转`.
+- The product had a real Yahoo store confirmation section, but the plugin did not click `変更` under `#cartopt` before confirming payment.
+- The previous detection could treat hidden or stray `ストアからの確認事項` text plus an unrelated `変更` control as store confirmation state.
+
+Fix:
+- Payment page state now treats store confirmation as actionable only when a visible `#cartopt` block contains visible `ストアからの確認事項` and a visible cart options change link.
+- Removed the fallback that inferred store confirmation from body text plus any `変更` control.
+- Added regression coverage that text `ストアからの確認事項` plus a generic `変更` control does not start the store confirmation flow without the cartopt signal.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+
+---
+
 # 2026-06-23 admin orders CSV total row and payable total
 
 Issue:
