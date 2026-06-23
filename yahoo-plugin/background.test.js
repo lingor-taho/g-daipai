@@ -1281,7 +1281,7 @@ async function testStoreConfirmationApplyUsesConfirmUpdateSelector() {
   assert.equal(applyClicked, true);
 }
 
-async function testStoreConfirmationApplyChecksHiddenInputs() {
+async function testStoreConfirmationApplyDoesNotForceHiddenInputsChecked() {
   const checkbox = {
     id: 'agree-hidden',
     checked: false,
@@ -1332,9 +1332,10 @@ async function testStoreConfirmationApplyChecksHiddenInputs() {
 
   const result = await api.checkAllStoreConfirmationItemsAndApply(19, false);
 
-  assert.equal(result.success, true);
-  assert.equal(result.checkedCount, 1);
-  assert.equal(checkbox.checked, true);
+  assert.equal(result.success, false);
+  assert.equal(result.checkedCount, 0);
+  assert.equal(result.checkboxCount, 1);
+  assert.equal(checkbox.checked, false);
   assert.equal(checkbox.clicked, true);
 }
 
@@ -3428,7 +3429,7 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
   assert.equal(calls[0].status, 'success');
 }
 
-async function testCompleteStoreConfirmationItemsUsesJsBeforeTrustedMouse() {
+async function testCompleteStoreConfirmationItemsUsesJsClickBeforeTrustedFallback() {
   let trustedAttachCount = 0;
   let jsChangeClicks = 0;
   let jsCheckboxChecks = 0;
@@ -5833,7 +5834,7 @@ async function run() {
   testPaymentPageStateRequiresCartoptForStoreConfirmation();
   await testStoreConfirmationChangeUsesCartoptSelector();
   await testStoreConfirmationApplyUsesConfirmUpdateSelector();
-  await testStoreConfirmationApplyChecksHiddenInputs();
+  await testStoreConfirmationApplyDoesNotForceHiddenInputsChecked();
   await testStoreConfirmationTrustedClickPointsUseRealSelectors();
   testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
   testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice();
@@ -5861,7 +5862,7 @@ async function run() {
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
   await testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage();
   await testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure();
-  await testCompleteStoreConfirmationItemsUsesJsBeforeTrustedMouse();
+  await testCompleteStoreConfirmationItemsUsesJsClickBeforeTrustedFallback();
   await testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProcessingPage();
   await testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMissing();
   await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();

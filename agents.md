@@ -65,6 +65,27 @@ Validation:
 
 ---
 
+# 2026-06-23 store confirmation JS click-only checkbox handling
+
+Issue:
+- Yahoo store confirmation edit page could show checkboxes visually selected, but submitting `変更する` still failed with a missing/invalid selection message.
+- Remote diagnostics for product `1234243432` showed no trusted `storeConfirmation:change` record, so entering the edit page was likely done by JS click successfully.
+- The unsafe behavior was forcing `checkbox.checked = true`; that can desynchronize visible checkbox state from Yahoo's internal validation state.
+
+Fix:
+- Store confirmation checkbox selection now uses JS click-only first: click label/container/input and never force `.checked = true`.
+- If JS click-only does not leave all required checkboxes checked, it falls back to `chrome.debugger` real mouse clicks.
+- `変更する` now tries JS click first and waits for the review page; if the page does not return, it retries trusted checkbox clicks and trusted apply click.
+- Hidden checkbox tests now expect JS click-only to fail instead of mutating state directly, so trusted input handles that path.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
+---
+
 # 2026-06-23 admin orders CSV total row and payable total
 
 Issue:

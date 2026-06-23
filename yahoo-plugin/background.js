@@ -2214,46 +2214,34 @@ async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) 
         el.click?.();
         el.dispatchEvent(new MouseEvent('click', eventOptions));
       };
-      const setChecked = checkbox => {
-        const proto = window.HTMLInputElement?.prototype;
-        const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'checked') : null;
-        if (descriptor?.set) {
-          descriptor.set.call(checkbox, true);
-        } else {
-          checkbox.checked = true;
-        }
-      };
       for (const checkbox of checkboxes) {
         const label = checkbox.id ? document.querySelector(`label[for="${CSS.escape(checkbox.id)}"]`) : null;
         const target = label || checkbox.closest('label, li, div, section, p, dd') || checkbox;
         target.scrollIntoView?.({ block: 'center', inline: 'center' });
-        const toggleOnce = () => {
-          const before = checkbox.checked;
+        if (!checkbox.checked) {
           clickElement(target || checkbox);
-          if (checkbox.checked === before && target !== checkbox) clickElement(checkbox);
-          return checkbox.checked !== before;
-        };
-        if (checkbox.checked) {
-          toggleOnce();
-          if (checkbox.checked) {
-            const proto = window.HTMLInputElement?.prototype;
-            const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'checked') : null;
-            if (descriptor?.set) descriptor.set.call(checkbox, false);
-            else checkbox.checked = false;
-            checkbox.dispatchEvent(new Event('input', { bubbles: true }));
-            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-          }
+          if (!checkbox.checked && target !== checkbox) clickElement(checkbox);
         }
-        toggleOnce();
-        setChecked(checkbox);
-        checkbox.dispatchEvent(new Event('input', { bubbles: true }));
-        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        if (checkbox.checked) {
+          checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       }
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span')];
       const button = document.querySelector('#confirm a[data-cl-params*="_cl_link:update"], #confirm button, #confirm input[type="submit"], #confirm [role="button"]') ||
         controls.find(el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el)));
-      if (!button) return { success: false, error: 'store confirmation apply button not found', checkedCount: checkboxes.length };
-      if (!shouldClickApply) return { success: true, checkedCount: checkboxes.length, text: getText(button), applyReady: true };
+      const checkedCount = checkboxes.filter(checkbox => checkbox.checked).length;
+      if (!button) return { success: false, error: 'store confirmation apply button not found', checkedCount, checkboxCount: checkboxes.length };
+      if (!shouldClickApply) {
+        return {
+          success: checkedCount === checkboxes.length,
+          error: checkedCount === checkboxes.length ? '' : 'store confirmation checkbox JS click did not check all boxes',
+          checkedCount,
+          checkboxCount: checkboxes.length,
+          text: getText(button),
+          applyReady: true
+        };
+      }
       const target = button.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || button;
       for (const node of [...new Set([button, target].filter(Boolean))]) {
         clickElement(node);
@@ -2262,7 +2250,7 @@ async function checkAllStoreConfirmationItemsAndApply(tabId, clickApply = true) 
           node.dispatchEvent(new KeyboardEvent('keyup', { ...eventOptions, key: 'Enter', code: 'Enter' }));
         }
       }
-      return { success: true, checkedCount: checkboxes.length, text: getText(button) };
+      return { success: true, checkedCount, checkboxCount: checkboxes.length, text: getText(button) };
     }
   });
   return injectionResult?.[0]?.result || { success: false, error: 'store confirmation apply returned no result' };
@@ -2661,12 +2649,13 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
 
   const readyResult = await waitForStoreConfirmationFormReady(editTab.id);
   if (!readyResult?.success) return { success: false, error: readyResult?.error || 'store confirmation form not ready', tab: editTab };
-  let applyResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
-  if (!applyResult?.success) {
-    applyResult = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
+  let checkboxResult = await checkAllStoreConfirmationItemsAndApply(editTab.id, false);
+  if (!checkboxResult?.success) {
+    console.warn('[Yahoo Bid] JS store confirmation checkbox click failed, falling back to trusted input:', checkboxResult?.error || checkboxResult);
+    checkboxResult = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
   }
-  if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store confirmation apply failed', tab: editTab };
-  await sleep(1200);
+  if (!checkboxResult?.success) return { success: false, error: checkboxResult?.error || 'store confirmation checkbox click failed', tab: editTab };
+  await sleep(800);
 
   const waitForReviewAfterApply = timeoutMs => waitForPaymentStateAcrossTabs(editTab, nextState =>
       nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
@@ -2681,9 +2670,13 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
     await injectContentScript(reviewTab.id).catch(() => {});
     return { success: true, tab: reviewTab, state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(reviewTab.id) };
   } catch (jsError) {
+    const trustedCheckboxes = await dispatchTrustedStoreConfirmationCheckboxes(editTab);
+    if (!trustedCheckboxes?.success) {
+      console.warn('[Yahoo Bid] Trusted store confirmation checkbox click failed before apply retry:', trustedCheckboxes?.error || trustedCheckboxes);
+    }
     const trustedApply = await dispatchTrustedStoreConfirmationClick(editTab, 'apply');
     if (!trustedApply?.success) {
-      return { success: false, error: `store confirmation review page did not return after js click; trusted=${trustedApply?.error || 'failed'}: ${jsError.message || jsError}`, tab: editTab };
+      return { success: false, error: `store confirmation review page did not return after JS click; trusted=${trustedApply?.error || 'failed'}: ${jsError.message || jsError}`, tab: editTab };
     }
     try {
       const reviewTab = await waitForReviewAfterApply(15000);
