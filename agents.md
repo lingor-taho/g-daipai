@@ -4,6 +4,24 @@
 
 ---
 
+# 2026-06-23 admin orders CSV total row
+
+Issue:
+- Admin order export CSV listed every selected order but did not include a bottom total.
+- The user needs an Excel-friendly summary row like `金额汇总` with the sum of the `总价` column.
+
+Fix:
+- Added `src/admin/src/ordersCsv.js` to centralize order CSV generation.
+- CSV export now appends one final row: label `金额汇总` in the first column and summed `总价` in the seventh column.
+- The summary uses the same per-row calculation as the exported rows: `落札价 + 运费`, including manually entered shipping overrides for `落札者負担` / `着払い`.
+
+Validation:
+- `node src/admin/src/ordersCsv.test.js`
+- `node scripts/encoding-guard.js`
+- `npm run build --prefix src/admin`
+
+---
+
 # 2026-06-23 manual import separated from scan workflow
 
 Issue:

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Tag, Typography, message } from 'antd';
 import { authHeaders, fetchAdminJson } from './utils/auth';
 import { formatManualOrderImportFlag } from './manualOrderImportState';
+import { buildOrdersCsv, needsCsvShippingInput } from './ordersCsv';
 
 function formatJPY(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') return '';
@@ -185,24 +186,6 @@ function canRequestPayment(item: any) {
     item?.payable_cny !== undefined &&
     item?.payable_cny !== ''
   );
-}
-
-function parseCsvShippingFee(value: any) {
-  const text = String(value || '').trim();
-  if (!text || text === '-' || /無料/.test(text)) return 0;
-  const match = text.match(/([\d,]+)\s*円/);
-  if (match) return Number(match[1].replace(/,/g, '')) || 0;
-  const numeric = Number(text.replace(/[,\s円]/g, ''));
-  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
-}
-
-function needsCsvShippingInput(row: any) {
-  return /落札者負担|着払い/.test(String(row?.shipping_fee_text || ''));
-}
-
-function csvEscape(value: any) {
-  const text = String(value ?? '');
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 async function fetchSameUserWonDateRangeOrders(params: { userId: number; fromDate: string; toDate: string }) {
@@ -414,25 +397,7 @@ export default function OrdersPage() {
   }
 
   function downloadCsv(rows: any[], shippingOverrides: Record<string, number | null>) {
-    const headers = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '总价'];
-    const lines = rows.map(row => {
-      const finalPrice = Number(row.final_price || 0);
-      const shippingFee = needsCsvShippingInput(row)
-        ? Number(shippingOverrides[String(row.id)] || 0)
-        : parseCsvShippingFee(row.shipping_fee_text);
-      const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
-      const productUrl = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
-      return [
-        formatDateOnly(row.won_at),
-        row.username || '',
-        productUrl,
-        row.product_title || '',
-        finalPrice,
-        shippingFee,
-        finalPrice + shippingFee
-      ].map(csvEscape).join(',');
-    });
-    const csv = `\ufeff${headers.join(',')}\r\n${lines.join('\r\n')}`;
+    const csv = `\ufeff${buildOrdersCsv(rows, shippingOverrides)}`;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
