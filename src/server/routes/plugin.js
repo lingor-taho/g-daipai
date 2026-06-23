@@ -556,7 +556,7 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const nowHour = config.nowHour ?? now.getHours();
   const today = config.today || getLocalDateKey(nowMs);
   if (Number(config.manualOrderImportPending || 0) > 0) {
-    return { action: 'scan', today, manualOrderImportPending: Number(config.manualOrderImportPending || 0) };
+    return { action: 'manual_order_import', today, manualOrderImportPending: Number(config.manualOrderImportPending || 0) };
   }
   const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
   const transactionRequested = Number(config.transactionStartRequested || 0) === 1;
@@ -619,6 +619,8 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
     await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   } else if (action === 'scan') {
     await saveConfigValue(database, 'scan_idle_counter', '0');
+  } else if (action === 'manual_order_import') {
+    // Import is its own workflow step and must not consume the D-scan counter.
   } else {
     await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   }

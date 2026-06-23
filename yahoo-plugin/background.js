@@ -738,6 +738,26 @@ async function updateScanStatus(payload) {
   });
 }
 
+async function postScanDiagnostic(job, result, message, level = 'warn') {
+  const diagnostics = [
+    `orderStatus=${job?.orderStatus || ''}`,
+    `bundleGroupId=${job?.bundleGroupId || ''}`,
+    `resultType=${result?.type || ''}`,
+    `transactionUrl=${job?.transactionUrl || ''}`
+  ].join(',');
+  await postPluginDiagnostic({
+    type: 'scan',
+    level,
+    productId: job?.productId || '',
+    orderId: job?.orderId || 0,
+    action: job?.orderStatus === 'pending_bundle' ? 'bundle_scan' : 'scan',
+    method: 'content-script',
+    message,
+    diagnostics,
+    url: job?.transactionUrl || ''
+  });
+}
+
 async function fetchManualOrderImportJob() {
   const res = await apiFetch('/api/plugin/manual-order-import/jobs');
   const data = await res.json();
@@ -4774,6 +4794,13 @@ function buildScanStatusPayload(job) {
         bundleShippingFeeText: result.bundleShippingFeeText
       };
     }
+    if (result.type) {
+      return {
+        orderId: job.orderId,
+        noProgress: true,
+        resultType: result.type
+      };
+    }
     return null;
   }
   if (result.pending) {
@@ -4814,6 +4841,7 @@ async function executePendingShipmentScanJob(job) {
 
 async function executeWaitingShippingScanJob(job) {
   let tab = null;
+  const beforeTabIds = await getTabIds();
   try {
     tab = await openTransactionPage(job, beforeTabIds);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_WAITING_SHIPPING_SCAN' }).catch(error => {
@@ -4861,6 +4889,7 @@ function shouldAttemptBundleInputAction(result, state) {
 async function executePendingBundleScanJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
+  let noProgressReported = false;
   try {
     tab = await openTransactionPage(job, beforeTabIds);
     let extracted = await extractBundleScanResult(tab);
@@ -4914,14 +4943,23 @@ async function executePendingBundleScanJob(job) {
         if (extracted.stop) return { stop: true };
         result = extracted.result;
         const payload = buildScanStatusPayload({ ...job, result });
-        if (payload) await updateScanStatus(payload);
+        if (payload?.noProgress) {
+          await postScanDiagnostic(job, result, `bundle scan no progress: ${payload.resultType || 'unknown'}`);
+          noProgressReported = true;
+        } else if (payload) {
+          await updateScanStatus(payload);
+        }
         if (payload?.bundleShippingFeeText || payload?.bundleRejected) {
           return { stop: false, processedBundleGroupId: job.bundleGroupId || null };
         }
       }
     }
+    if (result?.type && !noProgressReported) {
+      await postScanDiagnostic(job, result, `bundle scan no progress: ${result.type}`);
+    }
     return { stop: false };
   } catch (e) {
+    await postScanDiagnostic(job, null, `pending bundle scan failed: ${e.message || e}`, 'error').catch(() => {});
     console.warn('[Yahoo Bid] Pending bundle scan job failed:', e.message || e);
     return { stop: false };
   } finally {
@@ -5351,11 +5389,12 @@ async function executeNextWorkflowAction() {
       includeAfterCutoff: idleAction?.config?.transactionStartRequestSource === 'manual',
       processNormalJobs: TRANSACTION_START_ENABLED
     });
+  } else if (idleAction?.action === 'manual_order_import') {
+    await runManualOrderImportJobs();
   } else if (idleAction?.action === 'confirm_receipt') {
     await runConfirmReceiptJobs();
   } else if (idleAction?.action === 'scan') {
-    const imported = await runManualOrderImportJobs();
-    if (!imported) await runScanJobs();
+    await runScanJobs();
   } else if (idleAction?.action === 'payment') {
     await runPaymentJobs();
   }

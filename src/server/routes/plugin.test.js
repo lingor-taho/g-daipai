@@ -510,7 +510,7 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
     scanEndHour: 2,
     nowHour: 10,
     today: '2026-06-01'
-  }).action, 'scan');
+  }).action, 'manual_order_import');
   assert.equal(getNextIdleAction({
     transactionStartRequested: 1,
     scanIdleCounter: 5,
@@ -534,6 +534,26 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
     nowHour: 10,
     today: '2026-06-01'
   }).action, 'scan');
+}
+
+function testManualOrderImportCompletesWithoutClearingScanCounter() {
+  const saved = [];
+  const fakeDb = {
+    async getAll() {
+      return [
+        { key: 'scan_every_idle_runs', value: '5' },
+        { key: 'scan_idle_counter', value: '5' }
+      ];
+    },
+    async query(sql, params) {
+      saved.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  return completeIdleAction('manual_order_import', fakeDb, Date.parse('2026-06-23T09:00:00+08:00')).then(() => {
+    assert.equal(saved.some(call => call.params?.[0] === 'scan_idle_counter'), false);
+  });
 }
 
 function testTransactionStartReadyOneMinuteAfterConfiguredHour() {
@@ -2230,6 +2250,7 @@ Promise.all([
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
   testGetPaymentJobsIncludesBundleFinalPriceTotal(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
+  testManualOrderImportCompletesWithoutClearingScanCounter(),
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
   testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
   testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChangedHour(),

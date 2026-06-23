@@ -863,6 +863,19 @@ function testBuildScanStatusPayloadHandlesBundleRejected() {
   assert.equal(payload.bundleRejected, true);
 }
 
+function testBuildScanStatusPayloadReportsBundleNoProgress() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 24,
+    orderStatus: 'pending_bundle',
+    result: { type: 'child_agreed' }
+  });
+
+  assert.equal(payload.orderId, 24);
+  assert.equal(payload.noProgress, true);
+  assert.equal(payload.resultType, 'child_agreed');
+}
+
 function testBundleInputActionCanRunFromWaitingAgreementState() {
   const api = loadBackgroundForTest();
 
@@ -5661,6 +5674,36 @@ async function testRunWorkflowActionHandlesAnsweredPinBeforeThrottle() {
   );
 }
 
+async function testRunWorkflowActionRunsManualImportSeparatelyFromScan() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      calls.push({ url: value, body: options.body || '' });
+      if (value.includes('/api/plugin/config')) {
+        return { ok: true, async json() { return { idleSyncIntervalMinutes: 0.01 }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/next')) {
+        return { ok: true, async json() { return { success: true, action: 'manual_order_import' }; } };
+      }
+      if (value.includes('/api/plugin/manual-order-import/jobs')) {
+        return { ok: true, async json() { return { success: true, job: null }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/complete')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runWorkflowAction();
+
+  assert.equal(calls.some(call => call.url.includes('/api/plugin/manual-order-import/jobs')), true);
+  assert.equal(calls.some(call => call.url.includes('/api/plugin/scan/jobs')), false);
+  const completeCall = calls.find(call => call.url.includes('/api/plugin/idle-action/complete'));
+  assert.match(completeCall?.body || '', /manual_order_import/);
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -5715,6 +5758,7 @@ async function run() {
   testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan();
   testBuildScanStatusPayloadHandlesBundleShippingFee();
   testBuildScanStatusPayloadHandlesBundleRejected();
+  testBuildScanStatusPayloadReportsBundleNoProgress();
   testBundleInputActionCanRunFromWaitingAgreementState();
   testPaymentPageStateDetectsPurchaseCompletePage();
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
@@ -5809,6 +5853,7 @@ async function run() {
   await testExecuteBidTaskMarksServerTabErrorAfterRetryFails();
   await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
   await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();
+  await testRunWorkflowActionRunsManualImportSeparatelyFromScan();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }

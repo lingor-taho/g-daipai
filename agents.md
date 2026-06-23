@@ -1,6 +1,66 @@
 # g-daipai 项目状态
 
-**最后更新**: 2026-06-22
+**最后更新**: 2026-06-23
+
+---
+
+# 2026-06-23 manual import separated from scan workflow
+
+Issue:
+- Manual order import (G) was implemented inside the scan (D) workflow.
+- When import batches existed, `/api/plugin/idle-action/next` returned `scan`; the plugin then ran import first and skipped real scan.
+- This made admin/manual operation confusing: a "scan" run could actually be import, and completing that action cleared the D scan counter.
+
+Fix:
+- G import is now its own idle action: `manual_order_import`.
+- Workflow priority is now:
+  `G manual_order_import -> C transaction_start -> D scan -> E payment -> F confirm_receipt -> none`.
+- The plugin handles `manual_order_import` by running only manual import jobs.
+- The plugin handles `scan` by running only scan jobs.
+- Completing `manual_order_import` no longer changes `scan_idle_counter`, so queued D scan work is not consumed by import.
+
+Validation:
+- `node src/server/routes/plugin.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node --check src/server/routes/plugin.js`
+- `node --check src/server/routes/plugin.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+
+---
+
+# 2026-06-23 pending bundle scan diagnostics
+
+Issue:
+- Remote server `http://43.165.177.49:3034` had bundle orders `c1234279423` / `p1234276940` stuck in `pending_bundle`.
+- Remote `/api/plugin/scan/jobs` confirmed both orders were still queued for scan:
+  - order `175`, product `c1234279423`, `bundle_group_id=bundle-20260621-c1234279423`
+  - order `181`, product `p1234276940`, same bundle group
+- Remote `/api/plugin/idle-action/next` returned `scan`, so server-side scheduling was ready.
+- Remote diagnostics had no records for these two products, and latest diagnostics were from 2026-06-22, so bundle scan failures/no-progress states were not visible.
+- Code review also found `executeWaitingShippingScanJob()` referenced `beforeTabIds` without defining it. This affects `waiting_shipping` scan jobs and could create silent scan noise, though it is not the direct state for these two `pending_bundle` orders.
+
+Fix:
+- Added scan diagnostics for pending bundle scans when the page is recognized but cannot progress, e.g. `child_agreed`, `waiting_agreement`, `shipping_pending`, `input_required`, or `unknown`.
+- Pending bundle scan exceptions now post `type=scan`, `action=bundle_scan` diagnostics with order/product/bundle group context.
+- `buildScanStatusPayload()` now returns an explicit `noProgress` payload for non-terminal `pending_bundle` scan results, instead of silently returning `null`.
+- Fixed `executeWaitingShippingScanJob()` to define `beforeTabIds` before calling `openTransactionPage()`.
+
+Current boundary:
+- This local change does not directly mutate remote order statuses.
+- Deploy/reload the updated extension on the remote server, then let/trigger scan. If the two orders remain `pending_bundle`, query:
+  `http://43.165.177.49:3034/api/plugin/diagnostics?productId=c1234279423`
+  and
+  `http://43.165.177.49:3034/api/plugin/diagnostics?productId=p1234276940`
+  to see the exact bundle page state.
+- If diagnostics report `child_agreed`, the scan is likely opening the child agreed page instead of the main bundle/payment-ready page; the next fix should follow the bundle group's main transaction URL or detect the main page before expecting shipping.
+- If no new diagnostics appear after reload, the remote Chrome extension workflow is not running or is blocked before scan execution.
+
+Validation:
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
 
 ---
 
