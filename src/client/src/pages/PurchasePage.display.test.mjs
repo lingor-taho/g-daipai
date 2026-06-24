@@ -9,6 +9,7 @@ const appSource = readFileSync(join(currentDir, '..', 'App.jsx'), 'utf8');
 
 assert.equal(source.includes('buildSellerDisplay'), true, 'Purchase page must generate a stable randomized seller display');
 assert.equal(source.includes('1000 + (hashString(`${productId}-rating`) % 15001)'), true, 'Purchase page seller rating must be in the 1000-16000 range');
+assert.equal(source.includes('index === previousIndex + 1') && source.includes('index === previousIndex - 1'), true, 'Purchase page seller prefix must avoid sequential letters');
 assert.equal(source.includes('https://s.yimg.jp/c/logo/f/2.1/a/auctions_r_34_2x.png'), false, 'Purchase page must not load Yahoo logo from Yahoo at runtime');
 assert.equal(source.includes('/yahoo-assets/auctions_r_34_2x.png'), true, 'Purchase page must use the local Yahoo logo asset');
 assert.equal(source.includes('/yahoo-assets/user_64_00.png'), true, 'Purchase page must use the local Yahoo user icon asset');

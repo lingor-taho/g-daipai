@@ -35,8 +35,18 @@ function buildSellerDisplay(productId) {
   let seed = hashString(productId);
   let prefix = '';
   for (let i = 0; i < 3; i += 1) {
-    prefix += letters[seed % letters.length];
-    seed = Math.floor(seed / letters.length) || hashString(`${productId}-${i}`);
+    let index = seed % letters.length;
+    if (i > 0) {
+      const previousIndex = letters.indexOf(prefix[i - 1]);
+      if (index === previousIndex + 1 || index === previousIndex - 1) {
+        index = (index + 7) % letters.length;
+      }
+      if (index === previousIndex) {
+        index = (index + 11) % letters.length;
+      }
+    }
+    prefix += letters[index];
+    seed = Math.floor(seed / letters.length) ^ hashString(`${productId}-${i}`);
   }
   const rating = 1000 + (hashString(`${productId}-rating`) % 15001);
   return { name: `${prefix}********`, rating };
