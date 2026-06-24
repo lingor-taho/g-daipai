@@ -1864,10 +1864,71 @@ async function getPaymentShippingChangeClickPoint(tabId) {
   return result?.success ? result : { success: false, error: result?.error || 'shipping change button click point not found' };
 }
 
+async function clickPaymentShippingChangeButton(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const isFollowing = (first, second) => Boolean(first?.compareDocumentPosition?.(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const controlSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], span';
+      const controls = [...document.querySelectorAll(controlSelector)];
+      const textElements = [...document.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')];
+      const stopKeywords = /\u843d\u672d\u8005\u60c5\u5831|\u304a\u5c4a\u3051\u5148|\u3054\u8cfc\u5165\u5185\u5bb9|\u304a\u652f\u6255\u3044\u65b9\u6cd5|PayPay\u30dd\u30a4\u30f3\u30c8|\u30af\u30fc\u30dd\u30f3/;
+      const clickTargetFor = el => el?.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || el;
+      const isChangeButton = el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el));
+      const clickElement = el => {
+        const target = clickTargetFor(el);
+        const eventOptions = { bubbles: true, cancelable: true, view: window };
+        for (const node of [...new Set([el, target].filter(Boolean))]) {
+          node.scrollIntoView?.({ block: 'center', inline: 'center' });
+          node.focus?.();
+          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+          node.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+          node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+          node.click?.();
+          node.dispatchEvent(new KeyboardEvent('keydown', { ...eventOptions, key: 'Enter', code: 'Enter' }));
+          node.dispatchEvent(new KeyboardEvent('keyup', { ...eventOptions, key: 'Enter', code: 'Enter' }));
+        }
+        return target || el;
+      };
+      let button = null;
+      const shippingSection = [...document.querySelectorAll('section')]
+        .filter(section => typeof section.querySelectorAll === 'function')
+        .find(section => [...section.querySelectorAll('h1,h2,h3,h4,span')]
+          .some(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el))));
+      if (shippingSection) {
+        button = [...shippingSection.querySelectorAll(controlSelector)].find(isChangeButton);
+      }
+      const shippingHeaders = textElements.filter(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
+      const changeControls = controls.filter(isChangeButton);
+      for (const header of shippingHeaders) {
+        if (button) break;
+        const nextStop = textElements.find(el => el !== header && isFollowing(header, el) && stopKeywords.test(getText(el)));
+        button = changeControls.find(el => isFollowing(header, el) && (!nextStop || isFollowing(el, nextStop)));
+      }
+      if (!button) return { success: false, error: 'shipping change button JS click not found' };
+      const clicked = clickElement(button);
+      return { success: true, method: 'jsClick', text: getText(button), clickedText: getText(clicked) };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'shipping change JS click returned no result' };
+}
+
 async function dispatchTrustedPaymentShippingChangeClick(tab) {
   const tabId = tab?.id || tab;
   if (!tabId) return { success: false, error: 'tabId is required for trusted shipping change click' };
-  if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
+
+  const jsClick = await clickPaymentShippingChangeButton(tabId);
+  if (jsClick?.success) return jsClick;
+  if (!chrome.debugger?.attach) return { ...jsClick, error: jsClick?.error || 'chrome.debugger API unavailable' };
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {

@@ -4,6 +4,24 @@
 
 ---
 
+# 2026-06-24 normal payment shipping change JS click first
+
+Issue:
+- For normal Yahoo items with multiple shipping methods, the payment page `henkou suru` (`変更する`) control could fall through to the `paymentShippingChange` trusted-input path.
+- That path used `chrome.debugger` mouse events first, while the desired behavior is to use the same in-page JS click style as the store-confirmation `変更する` button.
+
+Fix:
+- Added `clickPaymentShippingChangeButton()` in `yahoo-plugin/background.js`.
+- `dispatchTrustedPaymentShippingChangeClick()` now tries the in-page JS click first and only keeps the existing debugger mouse path as a fallback when the JS click cannot find/click the shipping change control.
+- The JS click sends pointer/mouse down/up plus one `node.click()` and Enter key events, matching the store-confirmation apply click pattern and avoiding debugger-first behavior for normal multi-shipping expansion.
+- Added regression coverage that a normal payment job needing the shipping `変更する` expansion uses JS click and does not call `chrome.debugger.attach`.
+
+Validation:
+- `node yahoo-plugin/background.test.js`
+- `node --check yahoo-plugin/background.js`
+- `node --check yahoo-plugin/background.test.js`
+- `node scripts/encoding-guard.js`
+
 # 2026-06-24 user-side read-only purchase page
 
 Issue:

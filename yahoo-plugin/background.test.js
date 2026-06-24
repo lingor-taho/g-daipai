@@ -3050,6 +3050,145 @@ async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugger() {
+  const calls = [];
+  const actions = [];
+  let paymentPhase = 'initial';
+  let shippingSelectionAttempts = 0;
+  let shippingChangeJsClicks = 0;
+  let debuggerAttachCalls = 0;
+  let now = 0;
+  class FakeDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [now]));
+    }
+    static now() {
+      return now;
+    }
+  }
+  const paymentState = () => {
+    if (paymentPhase === 'confirm') {
+      return { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 535 } };
+    }
+    if (paymentPhase === 'complete') {
+      return { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } };
+    }
+    if (paymentPhase === 'shippingSelected') {
+      return {
+        success: true,
+        state: {
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298',
+          hasReviewButton: true,
+          paymentAmountJpy: 535,
+          textSample: '\u914d\u9001\u65b9\u6cd5 \u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8 185\u5186',
+          selectedShippingAmountJpy: 185,
+          shippingOptions: [
+            { amountJpy: 230, checked: false, disabled: false },
+            { amountJpy: 185, checked: true, disabled: false }
+          ]
+        }
+      };
+    }
+    if (paymentPhase === 'expanded') {
+      return {
+        success: true,
+        state: {
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298',
+          hasReviewButton: true,
+          paymentAmountJpy: 910,
+          textSample: '\u914d\u9001\u65b9\u6cd5 \u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8 230\u5186 \u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8 185\u5186',
+          selectedShippingAmountJpy: 230,
+          shippingOptions: [
+            { amountJpy: 230, checked: true, disabled: false },
+            { amountJpy: 185, checked: false, disabled: false }
+          ]
+        }
+      };
+    }
+    return {
+      success: true,
+      state: {
+        url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298',
+        hasReviewButton: true,
+        paymentAmountJpy: 910,
+        textSample: '\u914d\u9001\u65b9\u6cd5 \u5909\u66f4\u3059\u308b \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u5408\u8a08\uff09 910\u5186',
+        selectedShippingAmountJpy: 230,
+        shippingOptions: []
+      }
+    };
+  };
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    setTimeout(fn, ms) {
+      now += Number(ms || 0);
+      return fn();
+    },
+    tabs: {
+      async create() { return { id: 28, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298', status: 'complete' }; },
+      async query() { return [{ id: 28, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298', status: 'complete' }]; }
+    },
+    debuggerApi: {
+      async attach() {
+        debuggerAttachCalls += 1;
+      },
+      async sendCommand(target, command, params = {}) {
+        if (command === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+          paymentPhase = 'expanded';
+        }
+      }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
+          shippingSelectionAttempts += 1;
+          paymentPhase = 'shippingSelected';
+          return [{ result: { success: true, changed: true, selectedShippingJpy: payload.args[0] } }];
+        }
+        if (payload.args && payload.args.length >= 2) {
+          actions.push(payload.args[1]);
+          if (payload.args[1] === 'review') paymentPhase = 'confirm';
+          if (payload.args[1] === 'finalize') paymentPhase = 'complete';
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        if (funcText.includes('shipping change button JS click not found')) {
+          shippingChangeJsClicks += 1;
+          paymentPhase = 'expanded';
+          return [{ result: { success: true, method: 'jsClick', text: '\u5909\u66f4\u3059\u308b' } }];
+        }
+        if (funcText.includes("reason: 'shipping change button not found'")) {
+          return [{ result: { success: true, changed: false, reason: 'shipping change button not found' } }];
+        }
+        if (funcText.includes('shipping change button click point not found')) {
+          return [{ result: { success: true, x: 806, y: 369, rect: { left: 752, top: 350, width: 108, height: 38 }, text: '\u5909\u66f4\u3059\u308b' } }];
+        }
+        return [{ result: paymentState() }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 28, productId: 'u1231877298', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298', finalPrice: 350, effectiveShippingFeeText: '185\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(shippingChangeJsClicks, 1);
+  assert.equal(debuggerAttachCalls, 0);
+  assert.equal(shippingSelectionAttempts, 1);
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsSelectsNoAppraisalBeforeReview() {
   const calls = [];
   const actions = [];
@@ -6235,6 +6374,7 @@ async function run() {
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
+  await testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugger();
   await testRunPaymentJobsSelectsNoAppraisalBeforeReview();
   await testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMatches();
   await testRunPaymentJobsWaitsForMatchingAmountBeforeSelectingShipping();
