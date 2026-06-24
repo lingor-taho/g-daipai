@@ -15,6 +15,7 @@ Fix:
 - The `购买页面` button is shown only when the order status is `completed` / `完了`.
 - Added a protected client route `/won/:id/purchase-page`.
 - The purchase route renders as a standalone Yahoo-style page and hides the normal client navigation/footer chrome.
+- `PurchasePage` is lazy-loaded with React `lazy()` / `Suspense`, so the Yahoo-style page code and local masthead assets are not requested while users only browse `落札商品`.
 - The purchase page renders a Yahoo-style read-only `取引ナビ` view with all controls disabled/non-functional.
 - The read-only view now follows the captured Yahoo source structure/class names for the header, item summary, `libBtnGrayS` / `libBtnBlueL` buttons, status progress, trade info, and trade message modules.
 - The Yahoo Auctions logo is loaded directly from Yahoo's `auctions_r_34_2x.png` asset.
