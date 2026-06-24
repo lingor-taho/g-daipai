@@ -14,8 +14,10 @@ Fix:
 - User `落札商品` cards now show a `购买页面` button.
 - The `购买页面` button is shown only when the order status is `completed` / `完了`.
 - Added a protected client route `/won/:id/purchase-page`.
+- The route is display-only and uses only the won item object passed from the `落札商品` button via router state; it does not call any API or fetch extra data.
 - The purchase route renders as a standalone Yahoo-style page and hides the normal client navigation/footer chrome.
 - `PurchasePage` is lazy-loaded with React `lazy()` / `Suspense`, so the Yahoo-style page code and local masthead assets are not requested while users only browse `落札商品`.
+- Browser verification confirmed `/won` does not request `PurchasePage`, `purchase-page`, `yahoo-assets`, `s.yimg`, or `yahoo.co.jp` before the purchase button is clicked.
 - The purchase page renders a Yahoo-style read-only `取引ナビ` view with all controls disabled/non-functional.
 - The read-only view now follows the captured Yahoo source structure/class names for the header, item summary, `libBtnGrayS` / `libBtnBlueL` buttons, status progress, trade info, and trade message modules.
 - The Yahoo Auctions logo is loaded directly from Yahoo's `auctions_r_34_2x.png` asset.
@@ -31,15 +33,20 @@ Fix:
   - `user_64_00.png`
 - Purchase page now uses the local Yahoo masthead assets directly instead of trying Yahoo URLs first.
 - Product images on the purchase page use the same `product_image_url` behavior as the user `落札商品` page; no separate product-image download/cache is used.
-- Seller display is now stable-random per product: 3 random lowercase letters followed by `********`, and rating is a stable random number from 1000 to 16000.
+- Seller display is now stable-random per product and clamped at render time: exactly 3 lowercase letters followed by `********`, and rating is a stable random number from 1000 to 16000.
+- Added database indexes to keep the existing user won-items query from scanning large tables:
+  - `idx_orders_task_id`
+  - `idx_tasks_user_status`
+  - `idx_tasks_user_product_created`
 - `取引情報` now stays collapsed by default and renders only the heading plus `お届け情報・お支払い情報などを確認する`; expanded delivery/payment/seller tables are not shown.
 - Added responsive CSS breakpoints for PC and mobile so the fixed-width Yahoo-style layout stacks safely on narrow screens.
 - The product summary uses the won product data: image, title, final price, won date, and product id.
 - Seller display is fixed to `toy********（15086）`.
-- Added `GET /api/task/won/:id` so the detail page can reload directly without losing data.
+- Direct refresh of `/won/:id/purchase-page` without router state shows a return prompt instead of fetching data, by design, so normal user pages are not slowed down by purchase-page data loading.
 
 Validation:
 - `node src/server/routes/task.test.js`
+- `node --check src/server/models/index.js`
 - `node src/client/src/pages/WonItems.display.test.mjs`
 - `node src/client/src/pages/PurchasePage.display.test.mjs`
 - `node --check src/server/routes/task.js`

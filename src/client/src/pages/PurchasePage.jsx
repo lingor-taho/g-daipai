@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Button, DotLoading, Toast } from 'antd-mobile';
-import { getWonTaskDetail } from '../utils/api';
+import { Button } from 'antd-mobile';
 import { formatBeijingDateTime } from '../utils/datetime';
 
 const SELLER_RATING_URL = 'https://auctions.yahoo.co.jp/jp/show/rating?auc_user_id=EtiXFFxD1RicEcSG7jwNhNU4i2Dt2';
@@ -49,7 +48,12 @@ function buildSellerDisplay(productId) {
     seed = Math.floor(seed / letters.length) ^ hashString(`${productId}-${i}`);
   }
   const rating = 1000 + (hashString(`${productId}-rating`) % 15001);
-  return { name: `${prefix}********`, rating };
+  return { name: `${prefix.slice(0, 3)}********`, rating };
+}
+
+function formatSellerName(name) {
+  const prefix = String(name || '').replace(/[^a-z]/gi, '').toLowerCase().slice(0, 3).padEnd(3, 'x');
+  return `${prefix}********`;
 }
 
 function stopAction(event) {
@@ -68,6 +72,7 @@ function ButtonLike({ className = 'libBtnGrayS', children }) {
 function ProductSummary({ item }) {
   const title = getTitle(item);
   const seller = buildSellerDisplay(item?.product_id);
+  const sellerName = formatSellerName(seller.name);
   return (
     <div className="acMdItemInfo libItemInfo">
       <dl className="ptsItmInfoDl">
@@ -88,7 +93,7 @@ function ProductSummary({ item }) {
         </dd>
         <dd className="decSellerID">
           <p>
-            出品者： {seller.name}（
+            出品者： {sellerName}（
             <a href={SELLER_RATING_URL} onClick={stopAction}>{seller.rating}</a>
             ）
           </p>
@@ -138,6 +143,7 @@ function TradeInfo() {
 
 function TradeMessage({ item }) {
   const seller = buildSellerDisplay(item?.product_id);
+  const sellerName = formatSellerName(seller.name);
   return (
     <>
       <div className="acMdMsgForm" id="messageComment">
@@ -151,7 +157,7 @@ function TradeMessage({ item }) {
           </div>
           <div className="decSmtBtn">
             <input type="hidden" id="aid" value={item?.product_id || ''} readOnly />
-            <input type="hidden" id="partnerDisplayName" value={seller.name} readOnly />
+            <input type="hidden" id="partnerDisplayName" value={sellerName} readOnly />
             <input id="submitButton" className="libBtnGrayM" type="submit" value="送信する" disabled />
           </div>
         </div>
@@ -160,7 +166,7 @@ function TradeMessage({ item }) {
         <div className="untPreMsg" id="messagelist">
           <dl className="ptsPartner">
             <dt>
-              <p id="sellerid">{seller.name}</p>
+              <p id="sellerid">{sellerName}</p>
               <span className="decTime">{formatWonDate(item)}</span>
             </dt>
             <dd id="body">
@@ -312,34 +318,9 @@ export default function PurchasePage() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const [item, setItem] = useState(location.state?.item || null);
-  const [loading, setLoading] = useState(!location.state?.item);
-
-  const loadItem = useCallback(() => {
-    if (!id) return;
-    setLoading(true);
-    getWonTaskDetail(id)
-      .then(res => setItem(res.data?.data || null))
-      .catch(error => {
-        Toast.show({ content: error.response?.data?.error || '购买页面加载失败' });
-        setItem(null);
-      })
-      .finally(() => setLoading(false));
-  }, [id]);
-
-  useEffect(() => {
-    loadItem();
-  }, [loadItem]);
+  const item = location.state?.item || null;
 
   const itemTitle = useMemo(() => getTitle(item), [item]);
-
-  if (loading) {
-    return (
-      <div style={{ padding: 36, textAlign: 'center', color: '#333' }}>
-        <DotLoading /> 加载中
-      </div>
-    );
-  }
 
   if (!item) {
     return (

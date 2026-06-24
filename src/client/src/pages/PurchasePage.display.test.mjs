@@ -8,6 +8,8 @@ const source = readFileSync(join(currentDir, 'PurchasePage.jsx'), 'utf8');
 const appSource = readFileSync(join(currentDir, '..', 'App.jsx'), 'utf8');
 
 assert.equal(source.includes('buildSellerDisplay'), true, 'Purchase page must generate a stable randomized seller display');
+assert.equal(source.includes('formatSellerName'), true, 'Purchase page must clamp seller names before rendering');
+assert.equal(source.includes('slice(0, 3)}********') || source.includes("slice(0, 3).padEnd(3, 'x')"), true, 'Purchase page seller name must render at most three visible letters');
 assert.equal(source.includes('1000 + (hashString(`${productId}-rating`) % 15001)'), true, 'Purchase page seller rating must be in the 1000-16000 range');
 assert.equal(source.includes('index === previousIndex + 1') && source.includes('index === previousIndex - 1'), true, 'Purchase page seller prefix must avoid sequential letters');
 assert.equal(source.includes('https://s.yimg.jp/c/logo/f/2.1/a/auctions_r_34_2x.png'), false, 'Purchase page must not load Yahoo logo from Yahoo at runtime');
@@ -23,7 +25,8 @@ assert.equal(source.includes('mockMiniYahooLogo'), false, 'T-point promo must no
 assert.equal(source.includes('sanitizePurchaseItem'), false, 'Purchase page must use the same product image URL as the won items page');
 assert.equal(source.includes('取引ナビ'), true, 'Purchase page must render Yahoo transaction navigation title');
 assert.equal(source.includes('すべての取引が完了しました'), true, 'Purchase page must render completed transaction notice');
-assert.equal(source.includes('getWonTaskDetail'), true, 'Purchase page must load won item detail when opened directly');
+assert.equal(source.includes('getWonTaskDetail'), false, 'Purchase page must not fetch extra data; it uses won item route state only');
+assert.equal(source.includes('../utils/api'), false, 'Purchase page must not import API helpers');
 assert.equal(source.includes('@media (max-width: 820px)') && source.includes('@media (max-width: 420px)'), true, 'Purchase page must include mobile responsive breakpoints');
 assert.equal(source.includes('お届け情報・お支払い情報などを確認する'), true, 'Trade info must show the collapsed summary link');
 assert.equal(source.includes('配送方法'), false, 'Trade info must not render expanded shipping details by default');

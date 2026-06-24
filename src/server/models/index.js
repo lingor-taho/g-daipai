@@ -80,6 +80,21 @@ db.prepare(`
 `).run();
 
 db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_orders_task_id
+  ON orders(task_id)
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_tasks_user_status
+  ON tasks(user_id, status)
+`).run();
+
+db.prepare(`
+  CREATE INDEX IF NOT EXISTS idx_tasks_user_product_created
+  ON tasks(user_id, product_id, created_at, id)
+`).run();
+
+db.prepare(`
   CREATE TABLE IF NOT EXISTS plugin_diagnostics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type VARCHAR(64),

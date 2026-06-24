@@ -203,8 +203,11 @@ CREATE TABLE IF NOT EXISTS config (
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_product_created ON tasks(user_id, product_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
+CREATE INDEX IF NOT EXISTS idx_orders_task_id ON orders(task_id);
 CREATE INDEX IF NOT EXISTS idx_products_end_time ON products(end_time);
 
 CREATE TABLE IF NOT EXISTS order_status_change_logs (

@@ -226,47 +226,6 @@ function buildWonTaskListInput(user, query = {}) {
   return { userId: user.id, ...normalizePagination(query, 10) };
 }
 
-function buildWonTaskDetailQuery() {
-  return `SELECT
-         t.id,
-         won_task.product_id,
-         p.product_url AS product_url,
-         p.product_title AS product_title,
-         p.product_image_url AS product_image_url,
-         p.current_price AS current_price,
-         p.buyout_price AS buyout_price,
-         COALESCE(p.tax_type, 'tax_zero') AS tax_type,
-         COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
-         p.shipping_fee_text AS shipping_fee_text,
-         t.max_price,
-         t.user_max_price,
-         t.strategy,
-         t.bid_mode,
-         t.status,
-         p.end_time AS end_time,
-         t.updated_at,
-         o.final_price,
-         o.won_at,
-         o.won_time_text,
-         o.total_amount_cny,
-         o.handling_fee,
-         o.jpy_to_cny_rate,
-         o.order_status,
-         o.shipping_company,
-         o.shipped_at,
-         o.tracking_number
-       FROM tasks t
-       INNER JOIN tasks won_task ON won_task.user_id = t.user_id
-         AND won_task.product_id = t.product_id
-         AND won_task.status = 'success'
-       LEFT JOIN orders o ON o.task_id = won_task.id
-       LEFT JOIN products p ON p.product_id = won_task.product_id
-       WHERE t.user_id = ?
-         AND t.id = ?
-       ORDER BY datetime(COALESCE(o.won_at, won_task.updated_at)) DESC, won_task.id DESC
-       LIMIT 1`;
-}
-
 function buildActiveBiddingTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
   return { userId: user.id, ...normalizePagination(query, 10) };
@@ -795,22 +754,6 @@ router.get('/won', async (req, res) => {
   }
 });
 
-// GET /api/task/won/:id - 用户落札商品详情，用于购买页面展示
-router.get('/won/:id', async (req, res) => {
-  try {
-    const taskId = Number(req.params.id);
-    if (!Number.isInteger(taskId) || taskId <= 0) {
-      return res.status(400).json({ error: 'invalid task id' });
-    }
-    const query = buildWonTaskDetailQuery();
-    const item = await db.getOne(query, [req.actingUser.id, taskId]);
-    if (!item) return res.status(404).json({ error: 'won item not found' });
-    res.json({ success: true, data: item });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // GET /api/task/bidding - 用户入札中商品列表
 router.get('/bidding', async (req, res) => {
   try {
@@ -929,7 +872,6 @@ module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
 module.exports.buildActiveBiddingTaskListQuery = buildActiveBiddingTaskListQuery;
 module.exports.buildWonTaskListInput = buildWonTaskListInput;
-module.exports.buildWonTaskDetailQuery = buildWonTaskDetailQuery;
 module.exports.buildWonStatsInput = buildWonStatsInput;
 module.exports.buildWonStatsSummaryQuery = buildWonStatsSummaryQuery;
 module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;
