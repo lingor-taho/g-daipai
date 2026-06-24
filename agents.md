@@ -4,6 +4,43 @@
 
 ---
 
+# 2026-06-24 user-side read-only purchase page
+
+Issue:
+- Some customers cannot directly access Yahoo Japan, but still need to view the corresponding Yahoo `取引連絡` buyer page style for won products.
+- The requirement changed from generating real screenshots to rendering a local, read-only page that looks like the Yahoo transaction navigation homepage.
+
+Fix:
+- User `落札商品` cards now show a `购买页面` button.
+- Added a protected client route `/won/:id/purchase-page`.
+- The purchase route renders as a standalone Yahoo-style page and hides the normal client navigation/footer chrome.
+- The purchase page renders a Yahoo-style read-only `取引ナビ` view with all controls disabled/non-functional.
+- The read-only view now follows the captured Yahoo source structure/class names for the header, item summary, `libBtnGrayS` / `libBtnBlueL` buttons, status progress, trade info, and trade message modules.
+- The Yahoo Auctions logo is loaded directly from Yahoo's `auctions_r_34_2x.png` asset.
+- Header was refined from the captured Yahoo masthead HTML: `mhHeadLine`, search links/search box, `mhMain`, `mhServiceLogo`, user icon, PayPay/registration text, coupon line, T-point promo, and `libPointNavi`.
+- Header follow-up details:
+  - Removed the pickup keyword link (`久住尚人`).
+  - Removed the orange arrow before `【おトク】10%OFFクーポンあります`.
+  - Removed the extra top border above `マイオク / 出品 / オプション/設定`.
+  - Changed the user icon to a small circular icon.
+  - Removed the square T-point mark and does not render a small Yahoo logo in the promo area.
+- Saved local fallbacks for Yahoo masthead assets under `src/client/public/yahoo-assets/`:
+  - `auctions_r_34_2x.png`
+  - `user_64_00.png`
+- `取引情報` now stays collapsed by default and renders only the heading plus `お届け情報・お支払い情報などを確認する`; expanded delivery/payment/seller tables are not shown.
+- Added responsive CSS breakpoints for PC and mobile so the fixed-width Yahoo-style layout stacks safely on narrow screens.
+- The product summary uses the won product data: image, title, final price, won date, and product id.
+- Seller display is fixed to `toy********（15086）`.
+- Added `GET /api/task/won/:id` so the detail page can reload directly without losing data.
+
+Validation:
+- `node src/server/routes/task.test.js`
+- `node src/client/src/pages/WonItems.display.test.mjs`
+- `node src/client/src/pages/PurchasePage.display.test.mjs`
+- `node --check src/server/routes/task.js`
+- `npm run build --prefix src/client`
+- `node scripts/encoding-guard.js`
+
 # 2026-06-23 bid task opened complete tab but did not execute
 
 Issue:

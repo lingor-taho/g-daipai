@@ -11,3 +11,9 @@ assert.equal(
   true,
   'WonItems page must render manual_import strategy as 导入'
 );
+
+assert.equal(
+  source.includes('购买页面') && source.includes('/purchase-page'),
+  true,
+  'WonItems page must link won items to the read-only purchase page'
+);

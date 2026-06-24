@@ -1,0 +1,28 @@
+import assert from 'assert/strict';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const source = readFileSync(join(currentDir, 'PurchasePage.jsx'), 'utf8');
+const appSource = readFileSync(join(currentDir, '..', 'App.jsx'), 'utf8');
+
+assert.equal(source.includes("const SELLER_NAME = 'toy********'"), true, 'Purchase page must show fixed Yahoo seller name');
+assert.equal(source.includes("const SELLER_RATING = '15086'"), true, 'Purchase page must show fixed Yahoo seller rating');
+assert.equal(source.includes('https://s.yimg.jp/c/logo/f/2.1/a/auctions_r_34_2x.png'), true, 'Purchase page must use the Yahoo Auctions logo asset');
+assert.equal(source.includes('/yahoo-assets/auctions_r_34_2x.png'), true, 'Purchase page must keep a local Yahoo logo fallback');
+assert.equal(source.includes('mhHeadLine') && source.includes('mhMain') && source.includes('mhServiceLogo'), true, 'Purchase page header must follow Yahoo masthead structure');
+assert.equal(source.includes('久住尚人'), false, 'Purchase page header must not show the pickup keyword link');
+assert.equal(source.includes('msthdNewAucIcon:before'), false, 'Coupon link must not render the orange arrow icon');
+assert.equal(source.includes('border-top:1px solid #e6e6e6'), false, 'Point navigation must not render an extra top border');
+assert.equal(source.includes('border-radius:50%'), true, 'Yahoo user icon must render as a circle');
+assert.equal(source.includes('mockTPointMark'), false, 'T-point promo must not render the square mark');
+assert.equal(source.includes('mockMiniYahooLogo'), false, 'T-point promo must not render the mini Yahoo logo image');
+assert.equal(source.includes('取引ナビ'), true, 'Purchase page must render Yahoo transaction navigation title');
+assert.equal(source.includes('すべての取引が完了しました'), true, 'Purchase page must render completed transaction notice');
+assert.equal(source.includes('getWonTaskDetail'), true, 'Purchase page must load won item detail when opened directly');
+assert.equal(source.includes('@media (max-width: 820px)') && source.includes('@media (max-width: 420px)'), true, 'Purchase page must include mobile responsive breakpoints');
+assert.equal(source.includes('お届け情報・お支払い情報などを確認する'), true, 'Trade info must show the collapsed summary link');
+assert.equal(source.includes('配送方法'), false, 'Trade info must not render expanded shipping details by default');
+assert.equal(source.includes('支払い金額'), false, 'Trade info must not render expanded payment details by default');
+assert.equal(appSource.includes('isPurchasePage') && appSource.includes('!isPurchasePage && <UserNav />'), true, 'Purchase page must render outside the normal user navigation chrome');

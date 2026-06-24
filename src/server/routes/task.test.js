@@ -6,6 +6,7 @@ const {
   buildActiveBiddingTaskListInput,
   buildWonTaskListInput,
   buildActiveBiddingTaskListQuery,
+  buildWonTaskDetailQuery,
   buildWonStatsInput,
   buildWonStatsSummaryQuery,
   buildWonStatsExportQuery,
@@ -310,6 +311,22 @@ function testWonStatsQueriesUseWonDateAndExportFields() {
   assert.deepEqual(exportQuery.params, [9, 30]);
 }
 
+function testWonTaskDetailQueryUsesProductFieldsAndUserScope() {
+  const query = buildWonTaskDetailQuery();
+
+  assert.match(query, /FROM tasks t/);
+  assert.match(query, /INNER JOIN tasks won_task/);
+  assert.match(query, /won_task\.status = 'success'/);
+  assert.match(query, /LEFT JOIN products p ON p\.product_id = won_task\.product_id/);
+  assert.match(query, /p\.product_title AS product_title/);
+  assert.match(query, /p\.product_image_url AS product_image_url/);
+  assert.match(query, /o\.final_price/);
+  assert.match(query, /WHERE t\.user_id = \?/);
+  assert.match(query, /AND t\.id = \?/);
+  assert.doesNotMatch(query, /t\.product_title/);
+  assert.doesNotMatch(query, /t\.product_image_url/);
+}
+
 function testWonStatsPerformanceQueryUsesThirtyDayTaskAndWonCounts() {
   const query = buildWonStatsPerformanceQuery({ userId: 9, days: 30 });
 
@@ -611,6 +628,7 @@ testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testProductTypeFallsBackToTaxLabel();
 testWonStatsInputDefaultsToThirtyDays();
 testWonStatsQueriesUseWonDateAndExportFields();
+testWonTaskDetailQueryUsesProductFieldsAndUserScope();
 testWonStatsPerformanceQueryUsesThirtyDayTaskAndWonCounts();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();
 testStoreCurrentPriceDisplaysAsTaxIncluded();

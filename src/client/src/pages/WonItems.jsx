@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import { getWonTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
@@ -55,6 +56,7 @@ function getWonItemStyle(item) {
 }
 
 export default function WonItems() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -137,10 +139,20 @@ export default function WonItems() {
                   <div style={imageThumbStyle} />
                 )}
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                    {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">落札成功</Tag>}
-                    {!isCancelled && renderOrderStatusTag(item.order_status)}
-                    <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
+                      {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">落札成功</Tag>}
+                      {!isCancelled && renderOrderStatusTag(item.order_status)}
+                      <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
+                    </div>
+                    <Button
+                      size="mini"
+                      fill="outline"
+                      style={{ ...outlineButtonStyle, flex: '0 0 auto', '--border-radius': '4px', fontSize: 12 }}
+                      onClick={() => navigate(`/won/${item.id}/purchase-page`, { state: { item } })}
+                    >
+                      购买页面
+                    </Button>
                   </div>
                   <a
                     href={getProductUrl(item)}
