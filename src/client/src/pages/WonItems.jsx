@@ -126,6 +126,7 @@ export default function WonItems() {
           const finalPrice = getFinalPrice(item);
           const wonTime = getWonTimeDisplay(item);
           const isCancelled = item.order_status === 'cancelled';
+          const canViewPurchasePage = item.order_status === 'completed';
           return (
             <List.Item key={item.id} style={getWonItemStyle(item)}>
               <div style={{ display: 'flex', gap: 12 }}>
@@ -145,14 +146,16 @@ export default function WonItems() {
                       {!isCancelled && renderOrderStatusTag(item.order_status)}
                       <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                     </div>
-                    <Button
-                      size="mini"
-                      fill="outline"
-                      style={{ ...outlineButtonStyle, flex: '0 0 auto', '--border-radius': '4px', fontSize: 12 }}
-                      onClick={() => navigate(`/won/${item.id}/purchase-page`, { state: { item } })}
-                    >
-                      购买页面
-                    </Button>
+                    {canViewPurchasePage ? (
+                      <Button
+                        size="mini"
+                        fill="outline"
+                        style={{ ...outlineButtonStyle, flex: '0 0 auto', '--border-radius': '4px', fontSize: 12 }}
+                        onClick={() => navigate(`/won/${item.id}/purchase-page`, { state: { item } })}
+                      >
+                        购买页面
+                      </Button>
+                    ) : null}
                   </div>
                   <a
                     href={getProductUrl(item)}

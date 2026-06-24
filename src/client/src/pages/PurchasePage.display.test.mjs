@@ -7,10 +7,11 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(currentDir, 'PurchasePage.jsx'), 'utf8');
 const appSource = readFileSync(join(currentDir, '..', 'App.jsx'), 'utf8');
 
-assert.equal(source.includes("const SELLER_NAME = 'toy********'"), true, 'Purchase page must show fixed Yahoo seller name');
-assert.equal(source.includes("const SELLER_RATING = '15086'"), true, 'Purchase page must show fixed Yahoo seller rating');
-assert.equal(source.includes('https://s.yimg.jp/c/logo/f/2.1/a/auctions_r_34_2x.png'), true, 'Purchase page must use the Yahoo Auctions logo asset');
-assert.equal(source.includes('/yahoo-assets/auctions_r_34_2x.png'), true, 'Purchase page must keep a local Yahoo logo fallback');
+assert.equal(source.includes('buildSellerDisplay'), true, 'Purchase page must generate a stable randomized seller display');
+assert.equal(source.includes('1000 + (hashString(`${productId}-rating`) % 15001)'), true, 'Purchase page seller rating must be in the 1000-16000 range');
+assert.equal(source.includes('https://s.yimg.jp/c/logo/f/2.1/a/auctions_r_34_2x.png'), false, 'Purchase page must not load Yahoo logo from Yahoo at runtime');
+assert.equal(source.includes('/yahoo-assets/auctions_r_34_2x.png'), true, 'Purchase page must use the local Yahoo logo asset');
+assert.equal(source.includes('/yahoo-assets/user_64_00.png'), true, 'Purchase page must use the local Yahoo user icon asset');
 assert.equal(source.includes('mhHeadLine') && source.includes('mhMain') && source.includes('mhServiceLogo'), true, 'Purchase page header must follow Yahoo masthead structure');
 assert.equal(source.includes('久住尚人'), false, 'Purchase page header must not show the pickup keyword link');
 assert.equal(source.includes('msthdNewAucIcon:before'), false, 'Coupon link must not render the orange arrow icon');
@@ -18,6 +19,7 @@ assert.equal(source.includes('border-top:1px solid #e6e6e6'), false, 'Point navi
 assert.equal(source.includes('border-radius:50%'), true, 'Yahoo user icon must render as a circle');
 assert.equal(source.includes('mockTPointMark'), false, 'T-point promo must not render the square mark');
 assert.equal(source.includes('mockMiniYahooLogo'), false, 'T-point promo must not render the mini Yahoo logo image');
+assert.equal(source.includes('sanitizePurchaseItem'), false, 'Purchase page must use the same product image URL as the won items page');
 assert.equal(source.includes('取引ナビ'), true, 'Purchase page must render Yahoo transaction navigation title');
 assert.equal(source.includes('すべての取引が完了しました'), true, 'Purchase page must render completed transaction notice');
 assert.equal(source.includes('getWonTaskDetail'), true, 'Purchase page must load won item detail when opened directly');

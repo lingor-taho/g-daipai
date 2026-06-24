@@ -12,6 +12,7 @@ Issue:
 
 Fix:
 - User `落札商品` cards now show a `购买页面` button.
+- The `购买页面` button is shown only when the order status is `completed` / `完了`.
 - Added a protected client route `/won/:id/purchase-page`.
 - The purchase route renders as a standalone Yahoo-style page and hides the normal client navigation/footer chrome.
 - The purchase page renders a Yahoo-style read-only `取引ナビ` view with all controls disabled/non-functional.
@@ -27,6 +28,9 @@ Fix:
 - Saved local fallbacks for Yahoo masthead assets under `src/client/public/yahoo-assets/`:
   - `auctions_r_34_2x.png`
   - `user_64_00.png`
+- Purchase page now uses the local Yahoo masthead assets directly instead of trying Yahoo URLs first.
+- Product images on the purchase page use the same `product_image_url` behavior as the user `落札商品` page; no separate product-image download/cache is used.
+- Seller display is now stable-random per product: 3 random lowercase letters followed by `********`, and rating is a stable random number from 1000 to 16000.
 - `取引情報` now stays collapsed by default and renders only the heading plus `お届け情報・お支払い情報などを確認する`; expanded delivery/payment/seller tables are not shown.
 - Added responsive CSS breakpoints for PC and mobile so the fixed-width Yahoo-style layout stacks safely on narrow screens.
 - The product summary uses the won product data: image, title, final price, won date, and product id.

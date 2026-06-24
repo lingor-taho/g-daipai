@@ -4,13 +4,9 @@ import { Button, DotLoading, Toast } from 'antd-mobile';
 import { getWonTaskDetail } from '../utils/api';
 import { formatBeijingDateTime } from '../utils/datetime';
 
-const SELLER_NAME = 'toy********';
-const SELLER_RATING = '15086';
 const SELLER_RATING_URL = 'https://auctions.yahoo.co.jp/jp/show/rating?auc_user_id=EtiXFFxD1RicEcSG7jwNhNU4i2Dt2';
-const YAHOO_LOGO_URL = 'https://s.yimg.jp/c/logo/f/2.1/a/auctions_r_34_2x.png';
-const YAHOO_LOGO_FALLBACK_URL = '/yahoo-assets/auctions_r_34_2x.png';
-const YAHOO_USER_ICON_URL = 'https://s.yimg.jp/images/account/sp/img/display_name/user/64/00.png';
-const YAHOO_USER_ICON_FALLBACK_URL = '/yahoo-assets/user_64_00.png';
+const YAHOO_LOGO_URL = '/yahoo-assets/auctions_r_34_2x.png';
+const YAHOO_USER_ICON_URL = '/yahoo-assets/user_64_00.png';
 
 function formatJPY(value) {
   const amount = Number(value || 0);
@@ -28,14 +24,27 @@ function getTitle(item) {
   return item?.product_title || `商品 ${item?.product_id || ''}`.trim();
 }
 
+function hashString(value) {
+  return String(value || '').split('').reduce((hash, char) => {
+    return ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  }, 2166136261);
+}
+
+function buildSellerDisplay(productId) {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  let seed = hashString(productId);
+  let prefix = '';
+  for (let i = 0; i < 3; i += 1) {
+    prefix += letters[seed % letters.length];
+    seed = Math.floor(seed / letters.length) || hashString(`${productId}-${i}`);
+  }
+  const rating = 1000 + (hashString(`${productId}-rating`) % 15001);
+  return { name: `${prefix}********`, rating };
+}
+
 function stopAction(event) {
   event.preventDefault();
   event.stopPropagation();
-}
-
-function fallbackImage(event, fallbackUrl) {
-  if (event.currentTarget.src.endsWith(fallbackUrl)) return;
-  event.currentTarget.src = fallbackUrl;
 }
 
 function ButtonLike({ className = 'libBtnGrayS', children }) {
@@ -48,6 +57,7 @@ function ButtonLike({ className = 'libBtnGrayS', children }) {
 
 function ProductSummary({ item }) {
   const title = getTitle(item);
+  const seller = buildSellerDisplay(item?.product_id);
   return (
     <div className="acMdItemInfo libItemInfo">
       <dl className="ptsItmInfoDl">
@@ -68,8 +78,8 @@ function ProductSummary({ item }) {
         </dd>
         <dd className="decSellerID">
           <p>
-            出品者： {SELLER_NAME}（
-            <a href={SELLER_RATING_URL} onClick={stopAction}>{SELLER_RATING}</a>
+            出品者： {seller.name}（
+            <a href={SELLER_RATING_URL} onClick={stopAction}>{seller.rating}</a>
             ）
           </p>
         </dd>
@@ -117,6 +127,7 @@ function TradeInfo() {
 }
 
 function TradeMessage({ item }) {
+  const seller = buildSellerDisplay(item?.product_id);
   return (
     <>
       <div className="acMdMsgForm" id="messageComment">
@@ -130,7 +141,7 @@ function TradeMessage({ item }) {
           </div>
           <div className="decSmtBtn">
             <input type="hidden" id="aid" value={item?.product_id || ''} readOnly />
-            <input type="hidden" id="partnerDisplayName" value={SELLER_NAME} readOnly />
+            <input type="hidden" id="partnerDisplayName" value={seller.name} readOnly />
             <input id="submitButton" className="libBtnGrayM" type="submit" value="送信する" disabled />
           </div>
         </div>
@@ -139,7 +150,7 @@ function TradeMessage({ item }) {
         <div className="untPreMsg" id="messagelist">
           <dl className="ptsPartner">
             <dt>
-              <p id="sellerid">{SELLER_NAME}</p>
+              <p id="sellerid">{seller.name}</p>
               <span className="decTime">{formatWonDate(item)}</span>
             </dt>
             <dd id="body">
@@ -307,8 +318,8 @@ export default function PurchasePage() {
   }, [id]);
 
   useEffect(() => {
-    if (!item) loadItem();
-  }, [item, loadItem]);
+    loadItem();
+  }, [loadItem]);
 
   const itemTitle = useMemo(() => getTitle(item), [item]);
 
@@ -372,7 +383,6 @@ export default function PurchasePage() {
                       alt="Yahoo!オークション"
                       width="238"
                       height="34"
-                      onError={event => fallbackImage(event, YAHOO_LOGO_FALLBACK_URL)}
                     />
                   </a>
                 </div>
@@ -385,7 +395,6 @@ export default function PurchasePage() {
                         width="36"
                         height="36"
                         id="mhUserIconImg"
-                        onError={event => fallbackImage(event, YAHOO_USER_ICON_FALLBACK_URL)}
                       />
                     </a>
                     <div id="mhLoginUser">

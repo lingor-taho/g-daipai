@@ -17,3 +17,9 @@ assert.equal(
   true,
   'WonItems page must link won items to the read-only purchase page'
 );
+
+assert.equal(
+  source.includes("canViewPurchasePage = item.order_status === 'completed'") && source.includes('{canViewPurchasePage ?'),
+  true,
+  'WonItems page must show the purchase page button only for completed orders'
+);
