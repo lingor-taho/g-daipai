@@ -1708,6 +1708,12 @@ function shouldSelectPaymentShippingOption(job = {}, state = {}) {
   return selectedShipping !== expectedShipping;
 }
 
+function isStorePaymentShippingChangePage(state = {}, job = {}) {
+  const productType = String(job?.productType || job?.product_type || '');
+  const url = String(state?.url || '');
+  return productType === 'store' && /buy\.auctions\.yahoo\.co\.jp\/order\/change\/pay-method/i.test(url);
+}
+
 async function expandPaymentShippingOptions(tabId) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
@@ -2110,6 +2116,73 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
   return injectionResult?.[0]?.result || { success: false, error: 'shipping option selection returned no result' };
 }
 
+async function clickStorePaymentShippingApplyButton(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const getText = el => normalize([
+        el?.textContent,
+        el?.value,
+        el?.title,
+        el?.getAttribute?.('aria-label')
+      ].filter(Boolean).join(' '));
+      const controlSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"]';
+      const controls = [...document.querySelectorAll(controlSelector)];
+      const button = controls.find(el => /^\s*\u5909\u66f4\u3059\u308b\s*$/.test(getText(el)) && !(el.disabled || el.getAttribute?.('aria-disabled') === 'true'));
+      if (!button) return { success: false, error: 'store payment shipping apply button not found' };
+      const target = button.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || button;
+      const eventOptions = { bubbles: true, cancelable: true, view: window };
+      for (const node of [...new Set([button, target].filter(Boolean))]) {
+        node.scrollIntoView?.({ block: 'center', inline: 'center' });
+        node.focus?.();
+        if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
+        node.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+        if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
+        node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+        node.click?.();
+        node.dispatchEvent(new KeyboardEvent('keydown', { ...eventOptions, key: 'Enter', code: 'Enter' }));
+        node.dispatchEvent(new KeyboardEvent('keyup', { ...eventOptions, key: 'Enter', code: 'Enter' }));
+      }
+      return { success: true, method: 'jsClick', text: getText(button), clickedText: getText(target) };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'store payment shipping apply returned no result' };
+}
+
+async function completeStorePaymentShippingChangePage(tab, job) {
+  const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
+  if (!tab?.id || expectedShipping === null || expectedShipping <= 0) {
+    return { success: false, error: 'store payment shipping change page missing expected shipping' };
+  }
+  const selectResult = await selectPaymentShippingOption(tab.id, expectedShipping);
+  if (!selectResult?.success) {
+    const optionSummary = Array.isArray(selectResult?.options)
+      ? selectResult.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')
+      : '';
+    return {
+      success: false,
+      error: `store payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}`
+    };
+  }
+  if (selectResult.changed) await sleep(500);
+  const applyResult = await clickStorePaymentShippingApplyButton(tab.id);
+  if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store payment shipping apply click failed' };
+  const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
+    nextState.cancelled || nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+    15000
+  );
+  if (!reviewTab) return { success: false, error: 'store payment shipping review page did not return after JS click' };
+  return {
+    success: true,
+    state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id),
+    tab: reviewTab,
+    selectResult,
+    applyResult
+  };
+}
+
 async function refreshPaymentPageState(tab, waitMs = 1500) {
   if (!tab?.id) return null;
   if (chrome.tabs.reload) {
@@ -2141,6 +2214,11 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
     expandResult = await expandPaymentShippingOptions(tab.id);
     await sleep(500);
     state = await getPaymentPageState(tab.id);
+    if (isStorePaymentShippingChangePage(state, job)) {
+      const storeChangeResult = await completeStorePaymentShippingChangePage(tab, job);
+      if (!storeChangeResult?.success) throw new Error(storeChangeResult?.error || 'store payment shipping change flow failed');
+      return storeChangeResult.state || state;
+    }
     const expandedOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
     const expandedHasExpectedOption = expandedOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
     if (!expandedHasExpectedOption) {
@@ -2148,6 +2226,11 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
       if (trustedExpand?.success) {
         await sleep(800);
         state = await getPaymentPageState(tab.id);
+        if (isStorePaymentShippingChangePage(state, job)) {
+          const storeChangeResult = await completeStorePaymentShippingChangePage(tab, job);
+          if (!storeChangeResult?.success) throw new Error(storeChangeResult?.error || 'store payment shipping change flow failed');
+          return storeChangeResult.state || state;
+        }
       }
     }
   }
