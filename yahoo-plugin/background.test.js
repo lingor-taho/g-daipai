@@ -4989,6 +4989,85 @@ async function testSelectPaymentShippingOptionScopesStoreShippingSection() {
   assert.equal(shippingRadio185.checked, true);
 }
 
+async function testSelectPaymentShippingOptionAllowsHiddenStoreShippingRadio() {
+  const body = { textContent: '', parentElement: null };
+  const shippingPanel = {
+    textContent: '\u914d\u9001\u65b9\u6cd5 \u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08185\u5186\uff09 \u9001\u6599\uff1a185\u5186',
+    parentElement: body,
+    querySelectorAll(selector) {
+      return String(selector).includes('shipMethodPullDown') || String(selector).includes('value^="postage"') ? [radio185] : [];
+    },
+    getBoundingClientRect() { return { width: 0, height: 0 }; }
+  };
+  const shipHeader = {
+    id: 'shipMethod',
+    textContent: '\u914d\u9001\u65b9\u6cd5',
+    parentElement: shippingPanel,
+    querySelectorAll() { return []; },
+    contains() { return false; },
+    compareDocumentPosition() { return 0; }
+  };
+  const label185 = {
+    textContent: '\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08185\u5186\uff09 \u9001\u6599\uff1a185\u5186',
+    parentElement: shippingPanel,
+    closest() { return this; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; radio185.checked = true; },
+    dispatchEvent() { return true; }
+  };
+  const radio185 = {
+    id: '',
+    name: 'shipMethodPullDown',
+    value: 'postage8',
+    textContent: '',
+    checked: false,
+    disabled: false,
+    parentElement: label185,
+    closest() { return label185; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    dispatchEvent(event) { this.events = [...(this.events || []), event.type]; return true; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(185)`, {
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+          Event: class Event { constructor(type) { this.type = type; } },
+          PointerEvent: class PointerEvent { constructor(type) { this.type = type; } },
+          MouseEvent: class MouseEvent { constructor(type) { this.type = type; } },
+          CSS: { escape(value) { return String(value); } },
+          window: {
+            getComputedStyle() {
+              return { display: 'block', visibility: 'visible', opacity: '1' };
+            }
+          },
+          document: {
+            body,
+            querySelector(selector) {
+              return selector === '#shipMethod' ? shipHeader : null;
+            },
+            querySelectorAll(selector) {
+              const value = String(selector);
+              if (value.includes('input[type="radio"]')) return [radio185];
+              if (value.includes('h1')) return [shipHeader];
+              return [];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.selectPaymentShippingOption(77, 185);
+
+  assert.equal(result.success, true);
+  assert.equal(label185.clicked, true);
+  assert.equal(radio185.checked, true);
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -7164,6 +7243,7 @@ async function run() {
   await testSelectPaymentShippingOptionAcceptsHeaderContainerContainingRadios();
   await testSelectPaymentShippingOptionUsesStoreShipMethodRadioName();
   await testSelectPaymentShippingOptionScopesStoreShippingSection();
+  await testSelectPaymentShippingOptionAllowsHiddenStoreShippingRadio();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testManualCaptchaTabDetection();

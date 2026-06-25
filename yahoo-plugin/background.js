@@ -1271,10 +1271,11 @@ async function getPaymentPageState(tabId) {
             disabled: !!radio.disabled,
             text,
             visible: isVisibleRadioOption(radio),
+            isKnownShippingRadio,
             isShipping: afterShippingHeader && !looksLikePaymentMethod
           };
         })
-        .filter(option => option.isShipping && option.visible && option.amountJpy > 0)
+        .filter(option => option.isShipping && (option.visible || option.isKnownShippingRadio) && option.amountJpy > 0)
         .map(({ amountJpy, checked, disabled, text, visible }) => ({ amountJpy, checked, disabled, visible, text: text.slice(0, 200) }));
       const appraisalSections = [
         document.querySelector('#appraisal'),
@@ -2116,10 +2117,11 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
             disabled: !!radio.disabled,
             text,
             visible: isVisibleRadioOption(radio),
+            isKnownShippingRadio,
             isShipping: afterShippingHeader && !looksLikePaymentMethod
           };
         });
-      const options = candidates.filter(option => option.isShipping && option.visible && option.amountJpy > 0);
+      const options = candidates.filter(option => option.isShipping && (option.visible || option.isKnownShippingRadio) && option.amountJpy > 0);
       const target = options.find(option => option.amountJpy === expectedAmount && !option.disabled);
       if (!target) {
         return {
@@ -2132,6 +2134,7 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
             checked: option.checked,
             disabled: option.disabled,
             visible: option.visible,
+            isKnownShippingRadio: option.isKnownShippingRadio,
             isShipping: option.isShipping,
             text: option.text.slice(0, 160)
           }))
