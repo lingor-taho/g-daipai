@@ -4855,6 +4855,140 @@ async function testSelectPaymentShippingOptionUsesStoreShipMethodRadioName() {
   assert.equal(label185.clicked, true);
 }
 
+async function testSelectPaymentShippingOptionScopesStoreShippingSection() {
+  const body = { textContent: '', parentElement: null };
+  const paymentLabel185 = {
+    textContent: '\u304a\u652f\u6255\u3044\u65b9\u6cd5 \u652f\u6255\u3044\u624b\u6570\u6599 185\u5186',
+    parentElement: body,
+    closest() { return this; },
+    getBoundingClientRect() { return { width: 500, height: 40 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; },
+    dispatchEvent() { return true; }
+  };
+  const paymentRadio185 = {
+    id: '',
+    name: 'pay_method',
+    value: 'payment_a6',
+    textContent: '',
+    checked: false,
+    disabled: false,
+    parentElement: paymentLabel185,
+    closest() { return paymentLabel185; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    dispatchEvent(event) { this.events = [...(this.events || []), event.type]; return true; }
+  };
+  const shippingPanel = {
+    textContent: '\u914d\u9001\u65b9\u6cd5 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba \u9001\u6599\uff1a760\u5186 \u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08185\u5186\uff09 \u9001\u6599\uff1a185\u5186',
+    parentElement: body,
+    querySelectorAll(selector) {
+      return String(selector).includes('shipMethodPullDown') || String(selector).includes('value^="postage"')
+        ? [shippingRadio760, shippingRadio185]
+        : [];
+    },
+    contains(node) {
+      return node === shipHeader || node === shippingRadio760 || node === shippingRadio185 || node === shippingLabel760 || node === shippingLabel185;
+    },
+    compareDocumentPosition() {
+      return 0;
+    },
+    getBoundingClientRect() {
+      return { width: 600, height: 180 };
+    }
+  };
+  const shipHeader = {
+    id: 'shipMethod',
+    textContent: '\u914d\u9001\u65b9\u6cd5',
+    parentElement: shippingPanel,
+    querySelectorAll() { return []; },
+    contains(node) { return node === this; },
+    compareDocumentPosition() { return 0; }
+  };
+  const shippingLabel760 = {
+    textContent: '\u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba \u9001\u6599\uff1a760\u5186',
+    parentElement: shippingPanel,
+    closest() { return this; },
+    getBoundingClientRect() { return { width: 500, height: 40 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; shippingRadio760.checked = true; shippingRadio185.checked = false; },
+    dispatchEvent() { return true; }
+  };
+  const shippingLabel185 = {
+    textContent: '\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08185\u5186\uff09 \u9001\u6599\uff1a185\u5186',
+    parentElement: shippingPanel,
+    closest() { return this; },
+    getBoundingClientRect() { return { width: 500, height: 40 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; shippingRadio760.checked = false; shippingRadio185.checked = true; },
+    dispatchEvent() { return true; }
+  };
+  const shippingRadio760 = {
+    id: '',
+    name: 'shipMethodPullDown',
+    value: 'postage1',
+    textContent: '',
+    checked: true,
+    disabled: false,
+    parentElement: shippingLabel760,
+    closest() { return shippingLabel760; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    dispatchEvent(event) { this.events = [...(this.events || []), event.type]; return true; }
+  };
+  const shippingRadio185 = {
+    id: '',
+    name: 'shipMethodPullDown',
+    value: 'postage8',
+    textContent: '',
+    checked: false,
+    disabled: false,
+    parentElement: shippingLabel185,
+    closest() { return shippingLabel185; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    dispatchEvent(event) { this.events = [...(this.events || []), event.type]; return true; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(185)`, {
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+          Event: class Event { constructor(type) { this.type = type; } },
+          PointerEvent: class PointerEvent { constructor(type) { this.type = type; } },
+          MouseEvent: class MouseEvent { constructor(type) { this.type = type; } },
+          CSS: { escape(value) { return String(value); } },
+          window: {
+            getComputedStyle() {
+              return { display: 'block', visibility: 'visible', opacity: '1' };
+            }
+          },
+          document: {
+            body,
+            querySelector(selector) {
+              return selector === '#shipMethod' ? shipHeader : null;
+            },
+            querySelectorAll(selector) {
+              const value = String(selector);
+              if (value.includes('input[type="radio"]')) return [paymentRadio185, shippingRadio760, shippingRadio185];
+              if (value.includes('h1')) return [shipHeader];
+              return [];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.selectPaymentShippingOption(77, 185);
+
+  assert.equal(result.success, true);
+  assert.equal(paymentLabel185.clicked, undefined);
+  assert.equal(shippingLabel185.clicked, true);
+  assert.equal(shippingRadio185.checked, true);
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -7029,6 +7163,7 @@ async function run() {
   await testStorePaymentShippingChangeUsesDlvrySelectorJsClick();
   await testSelectPaymentShippingOptionAcceptsHeaderContainerContainingRadios();
   await testSelectPaymentShippingOptionUsesStoreShipMethodRadioName();
+  await testSelectPaymentShippingOptionScopesStoreShippingSection();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testManualCaptchaTabDetection();

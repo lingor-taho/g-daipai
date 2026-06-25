@@ -2082,7 +2082,23 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
         .find(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
       const shippingKeywords = /\u914d\u9001|\u9001\u6599|\u304a\u3066\u304c\u308b|\u3086\u3046|\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8|\u30ec\u30bf\u30fc\u30d1\u30c3\u30af|\u5b9a\u5f62|\u5b85\u6025\u4fbf/;
       const paymentKeywords = /\u30af\u30ec\u30b8\u30c3\u30c8|\u30b3\u30f3\u30d3\u30cb|PayPay|\u9280\u884c\u632f\u8fbc|\u652f\u6255|\u624b\u6570\u6599/;
-      const candidates = [...document.querySelectorAll('input[type="radio"]')]
+      const knownShippingSelector = 'input[type="radio"][name="shipMethodPullDown"], input[type="radio"][value^="postage"]';
+      const findShippingScope = () => {
+        const header = document.querySelector('#shipMethod') || shippingHeader;
+        let node = header;
+        let depth = 0;
+        while (node && node !== document.body && depth < 8) {
+          if (node.querySelectorAll?.(knownShippingSelector).length) return node;
+          node = node.parentElement;
+          depth += 1;
+        }
+        return null;
+      };
+      const shippingScope = findShippingScope();
+      const radioSource = shippingScope?.querySelectorAll?.(knownShippingSelector).length
+        ? [...shippingScope.querySelectorAll(knownShippingSelector)]
+        : [...document.querySelectorAll('input[type="radio"]')];
+      const candidates = radioSource
         .map((radio, index) => {
           const text = optionTextFromRadio(radio);
           const radioName = String(radio.name || radio.getAttribute?.('name') || '');
@@ -2134,7 +2150,6 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
       if (typeof PointerEvent !== 'undefined') clickTarget.dispatchEvent(new PointerEvent('pointerup', eventOptions));
       clickTarget.dispatchEvent(new MouseEvent('mouseup', eventOptions));
       clickTarget.click?.();
-      target.radio.checked = true;
       target.radio.dispatchEvent(new Event('input', { bubbles: true }));
       target.radio.dispatchEvent(new Event('change', { bubbles: true }));
       return {
