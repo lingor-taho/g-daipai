@@ -1762,6 +1762,12 @@ async function expandPaymentShippingOptions(tabId) {
         fireKeyboard(target);
         return target;
       };
+      const dlvryBlock = document.querySelector?.('#dlvry');
+      const dlvryChange = dlvryBlock?.querySelector?.('a[data-cl-params*="_cl_link:dlvry"], a');
+      if (dlvryBlock && /\u914d\u9001\u65b9\u6cd5/.test(getText(dlvryBlock)) && dlvryChange && isChangeButton(dlvryChange)) {
+        const clicked = clickElement(dlvryChange);
+        return { success: true, changed: true, text: getText(dlvryChange), method: 'storeDlvrySelector', clickedText: getText(clicked) };
+      }
       const shippingSection = [...document.querySelectorAll('section')]
         .filter(section => typeof section.querySelectorAll === 'function')
         .find(section => [...section.querySelectorAll('h1,h2,h3,h4,span')]
@@ -1837,6 +1843,12 @@ async function getPaymentShippingChangeClickPoint(tabId) {
       const changeControls = controls.filter(el => /^\s*\u5909\u66f4(?:\u3059\u308b)?\s*$/.test(getText(el)));
       const shippingHeaders = textElements.filter(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
       let button = null;
+      const dlvryBlock = document.querySelector?.('#dlvry');
+      const dlvryChange = dlvryBlock?.querySelector?.('a[data-cl-params*="_cl_link:dlvry"], a');
+      if (dlvryBlock && /\u914d\u9001\u65b9\u6cd5/.test(getText(dlvryBlock)) && dlvryChange && /^\s*\u5909\u66f4(?:\u3059\u308b)?\s*$/.test(getText(dlvryChange))) {
+        button = clickTargetFor(dlvryChange);
+        if (button && !isClickable(button)) button = dlvryChange;
+      }
       const shippingSection = [...document.querySelectorAll('section')]
         .filter(section => typeof section.querySelectorAll === 'function')
         .find(section => [...section.querySelectorAll('h1,h2,h3,h4,span')]
@@ -1906,6 +1918,12 @@ async function clickPaymentShippingChangeButton(tabId) {
         return target || el;
       };
       let button = null;
+      const dlvryBlock = document.querySelector?.('#dlvry');
+      const dlvryChange = dlvryBlock?.querySelector?.('a[data-cl-params*="_cl_link:dlvry"], a');
+      if (dlvryBlock && /\u914d\u9001\u65b9\u6cd5/.test(getText(dlvryBlock)) && dlvryChange && isChangeButton(dlvryChange)) {
+        const clicked = clickElement(dlvryChange);
+        return { success: true, method: 'storeDlvrySelector', text: getText(dlvryChange), clickedText: getText(clicked) };
+      }
       const shippingSection = [...document.querySelectorAll('section')]
         .filter(section => typeof section.querySelectorAll === 'function')
         .find(section => [...section.querySelectorAll('h1,h2,h3,h4,span')]
@@ -2209,10 +2227,13 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   const visibleOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
   const hasExpectedOption = visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
   let expandResult = null;
-  let trustedExpand = null;
   if (!hasExpectedOption) {
-    expandResult = await expandPaymentShippingOptions(tab.id);
-    await sleep(500);
+    const expandAttempts = isStorePaymentJob(job) ? 5 : 1;
+    for (let attempt = 0; attempt < expandAttempts; attempt += 1) {
+      expandResult = await expandPaymentShippingOptions(tab.id);
+      await sleep(500);
+      if (expandResult?.changed || expandResult?.success === false) break;
+    }
     state = await getPaymentPageState(tab.id);
     if (isStorePaymentShippingChangePage(state, job)) {
       const storeChangeResult = await completeStorePaymentShippingChangePage(tab, job);
@@ -2222,16 +2243,8 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
     const expandedOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
     const expandedHasExpectedOption = expandedOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
     if (!expandedHasExpectedOption) {
-      trustedExpand = await dispatchTrustedPaymentShippingChangeClick(tab);
-      if (trustedExpand?.success) {
-        await sleep(800);
-        state = await getPaymentPageState(tab.id);
-        if (isStorePaymentShippingChangePage(state, job)) {
-          const storeChangeResult = await completeStorePaymentShippingChangePage(tab, job);
-          if (!storeChangeResult?.success) throw new Error(storeChangeResult?.error || 'store payment shipping change flow failed');
-          return storeChangeResult.state || state;
-        }
-      }
+      // Payment shipping expansion is intentionally JS-only. If Yahoo does not expose
+      // a clickable control to the page script, fail or refresh instead of using debugger.
     }
   }
   const result = await selectPaymentShippingOption(tab.id, expectedShipping);
@@ -2239,7 +2252,7 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
     const latestState = await getPaymentPageState(tab.id).catch(() => null);
     if (expectedAmount !== null && Number(latestState?.paymentAmountJpy || 0) === expectedAmount) return latestState;
     const noVisibleShippingControls = !Array.isArray(result?.options) || result.options.length === 0;
-    const expansionUnavailable = expandResult?.changed === false || trustedExpand?.success === false;
+    const expansionUnavailable = expandResult?.changed === false;
     if (!options.refreshed && noVisibleShippingControls && expansionUnavailable) {
       const refreshedState = await refreshPaymentPageState(tab);
       if (expectedAmount !== null && Number(refreshedState?.paymentAmountJpy || 0) === expectedAmount) return refreshedState;
@@ -2252,10 +2265,7 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
       : '';
     const stateSummary = summarizePaymentShippingState(state);
     const expandSummary = expandResult ? `; expand=${expandResult.method || expandResult.reason || expandResult.error || 'unknown'}:${expandResult.text || ''}:${expandResult.clickedText || ''}` : '';
-    const trustedSummary = trustedExpand
-      ? `; trustedExpand=${trustedExpand.success ? 'success' : 'failed'}:${trustedExpand.method || ''}:${trustedExpand.text || trustedExpand.error || ''}${trustedExpand.diagnostics ? `; diagnostics=${trustedExpand.diagnostics}` : ''}`
-      : '';
-    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${stateSummary ? `; visibleState: ${stateSummary}` : ''}${expandSummary}${trustedSummary}`);
+    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${stateSummary ? `; visibleState: ${stateSummary}` : ''}${expandSummary}`);
   }
   if (result.changed) await sleep(800);
   return await getPaymentPageState(tab.id);

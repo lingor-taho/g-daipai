@@ -3155,12 +3155,12 @@ async function testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugg
           return [{ result: { success: true, text: 'clicked' } }];
         }
         if (funcText.includes('shipping change button JS click not found')) {
-          shippingChangeJsClicks += 1;
-          paymentPhase = 'expanded';
-          return [{ result: { success: true, method: 'jsClick', text: '\u5909\u66f4\u3059\u308b' } }];
+          throw new Error('debugger payment shipping change fallback must not be called');
         }
         if (funcText.includes("reason: 'shipping change button not found'")) {
-          return [{ result: { success: true, changed: false, reason: 'shipping change button not found' } }];
+          shippingChangeJsClicks += 1;
+          paymentPhase = 'expanded';
+          return [{ result: { success: true, changed: true, method: 'jsClick', text: '\u5909\u66f4\u3059\u308b' } }];
         }
         if (funcText.includes('shipping change button click point not found')) {
           return [{ result: { success: true, x: 806, y: 369, rect: { left: 752, top: 350, width: 108, height: 38 }, text: '\u5909\u66f4\u3059\u308b' } }];
@@ -3457,6 +3457,219 @@ async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMa
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 23);
   assert.equal(calls[0].status, 'success');
+}
+
+async function testRunStorePaymentJobsRetriesDlvryChangeUntilRenderedWhenAmountMismatches() {
+  const calls = [];
+  const actions = [];
+  let paymentPhase = 'reviewMismatch';
+  let expandAttempts = 0;
+  let shippingSelectionAttempts = 0;
+  let debuggerAttachCalls = 0;
+  let now = 0;
+  class FakeDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [now]));
+    }
+    static now() {
+      return now;
+    }
+  }
+  const stateForPhase = () => {
+    if (paymentPhase === 'changePage') {
+      return {
+        success: true,
+        state: {
+          url: 'https://buy.auctions.yahoo.co.jp/order/change/pay-method?auctionId=h1217537840',
+          paymentAmountJpy: 6759,
+          textSample: '\u914d\u9001\u65b9\u6cd5 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba 760\u5186 \u30ec\u30bf\u30fc\u30d1\u30c3\u30af 950\u5186',
+          shippingOptions: [
+            { amountJpy: 760, checked: true, disabled: false },
+            { amountJpy: 950, checked: false, disabled: false }
+          ]
+        }
+      };
+    }
+    if (paymentPhase === 'reviewSelected') {
+      return {
+        success: true,
+        state: {
+          url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840',
+          hasReviewButton: true,
+          paymentAmountJpy: 6949,
+          textSample: '\u914d\u9001\u65b9\u6cd5 \u30ec\u30bf\u30fc\u30d1\u30c3\u30af 950\u5186',
+          selectedShippingAmountJpy: 950,
+          shippingOptions: []
+        }
+      };
+    }
+    if (paymentPhase === 'confirm') {
+      return { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=h1217537840', hasFinalizeButton: true, paymentAmountJpy: 6949 } };
+    }
+    if (paymentPhase === 'complete') {
+      return { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/complete?auctionId=h1217537840', complete: true } };
+    }
+    return {
+      success: true,
+      state: {
+        url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840',
+        hasReviewButton: true,
+        paymentAmountJpy: 6759,
+        textSample: '\u914d\u9001\u65b9\u6cd5 \u5909\u66f4 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba 760\u5186',
+        selectedShippingAmountJpy: 760,
+        shippingOptions: []
+      }
+    };
+  };
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    setTimeout(fn, ms) {
+      now += Number(ms || 0);
+      return fn();
+    },
+    tabs: {
+      async create() { return { id: 29, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', status: 'complete' }; },
+      async query() { return [{ id: 29, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', status: 'complete' }]; }
+    },
+    debuggerApi: {
+      async attach() {
+        debuggerAttachCalls += 1;
+      }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
+          shippingSelectionAttempts += 1;
+          return [{ result: { success: true, changed: true, selectedShippingJpy: payload.args[0] } }];
+        }
+        if (payload.args && payload.args.length >= 2) {
+          actions.push(payload.args[1]);
+          if (payload.args[1] === 'review') paymentPhase = 'confirm';
+          if (payload.args[1] === 'finalize') paymentPhase = 'complete';
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        if (funcText.includes('store payment shipping apply button not found')) {
+          paymentPhase = 'reviewSelected';
+          return [{ result: { success: true, method: 'jsClick', text: '\u5909\u66f4\u3059\u308b' } }];
+        }
+        if (funcText.includes("reason: 'shipping change button not found'")) {
+          expandAttempts += 1;
+          if (expandAttempts >= 2) {
+            paymentPhase = 'changePage';
+            return [{ result: { success: true, changed: true, method: 'storeDlvrySelector', text: '\u5909\u66f4' } }];
+          }
+          return [{ result: { success: true, changed: false, reason: 'shipping change button not found' } }];
+        }
+        if (funcText.includes('shipping change button JS click not found')) {
+          return [{ result: { success: false, error: 'shipping change button JS click not found' } }];
+        }
+        return [{ result: stateForPhase() }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 29, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '950\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(expandAttempts, 2);
+  assert.equal(debuggerAttachCalls, 0);
+  assert.equal(shippingSelectionAttempts, 1);
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].status, 'success');
+}
+
+async function testRunStorePaymentShippingMismatchDoesNotUseDebuggerFallback() {
+  const calls = [];
+  let expandAttempts = 0;
+  let shippingSelectionAttempts = 0;
+  let debuggerAttachCalls = 0;
+  let now = 0;
+  class FakeDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [now]));
+    }
+    static now() {
+      return now;
+    }
+  }
+  const reviewState = {
+    success: true,
+    state: {
+      url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840',
+      hasReviewButton: true,
+      paymentAmountJpy: 6759,
+      textSample: '\u914d\u9001\u65b9\u6cd5 \u5909\u66f4 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba 760\u5186',
+      selectedShippingAmountJpy: 760,
+      shippingOptions: []
+    }
+  };
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    setTimeout(fn, ms) {
+      now += Number(ms || 0);
+      return fn();
+    },
+    tabs: {
+      async create() { return { id: 31, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', status: 'complete' }; },
+      async query() { return [{ id: 31, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', status: 'complete' }]; }
+    },
+    debuggerApi: {
+      async attach() {
+        debuggerAttachCalls += 1;
+      }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
+          shippingSelectionAttempts += 1;
+          return [{ result: { success: false, options: [{ amountJpy: 760, checked: true, disabled: false }] } }];
+        }
+        if (funcText.includes("reason: 'shipping change button not found'")) {
+          expandAttempts += 1;
+          return [{ result: { success: true, changed: false, reason: 'shipping change button not found' } }];
+        }
+        if (funcText.includes('shipping change button JS click not found')) {
+          throw new Error('debugger fallback must not be called');
+        }
+        return [{ result: reviewState }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 31, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '950\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(expandAttempts, 5);
+  assert.equal(shippingSelectionAttempts, 1);
+  assert.equal(debuggerAttachCalls, 0);
+  assert.match(calls[0].error, /payment shipping option 950\u5186 not selectable/);
+  assert.equal(String(calls[0].error).includes('trustedExpand'), false);
 }
 
 async function testRunPaymentJobsWaitsForMatchingAmountBeforeSelectingShipping() {
@@ -4417,6 +4630,67 @@ async function testStorePaymentShippingChangeUsesShortChangeJsClick() {
   assert.equal(shippingChange.clicked, true);
   assert.equal(paymentChange.clicked, undefined);
   assert.deepEqual(shippingChange.events, ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'keydown', 'keyup']);
+}
+
+async function testStorePaymentShippingChangeUsesDlvrySelectorJsClick() {
+  const shippingChange = {
+    textContent: '\u5909\u66f4',
+    value: '',
+    title: '',
+    disabled: false,
+    href: '',
+    getAttribute(name) {
+      return name === 'data-cl-params' ? '_cl_link:dlvry;_cl_position:1;' : '';
+    },
+    closest(selector) {
+      return selector.includes('a') ? this : null;
+    },
+    scrollIntoView() {},
+    focus() {},
+    click() {
+      this.clicked = true;
+    },
+    dispatchEvent(event) {
+      this.events = this.events || [];
+      this.events.push(event.type);
+      return true;
+    }
+  };
+  const dlvryBlock = {
+    textContent: '\u914d\u9001\u65b9\u6cd5 \u5909\u66f4',
+    querySelector(selector) {
+      return String(selector).includes('_cl_link:dlvry') ? shippingChange : null;
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+          PointerEvent: class PointerEvent { constructor(type) { this.type = type; } },
+          MouseEvent: class MouseEvent { constructor(type) { this.type = type; } },
+          KeyboardEvent: class KeyboardEvent { constructor(type) { this.type = type; } },
+          window: {},
+          document: {
+            querySelector(selector) {
+              return selector === '#dlvry' ? dlvryBlock : null;
+            },
+            querySelectorAll() {
+              return [];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.clickPaymentShippingChangeButton(99);
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'storeDlvrySelector');
+  assert.equal(result.text, '\u5909\u66f4');
+  assert.equal(shippingChange.clicked, true);
 }
 
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
@@ -6578,6 +6852,8 @@ async function run() {
   await testRunPaymentJobsCompletesStoreShippingChangePage();
   await testRunPaymentJobsSelectsNoAppraisalBeforeReview();
   await testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMatches();
+  await testRunStorePaymentJobsRetriesDlvryChangeUntilRenderedWhenAmountMismatches();
+  await testRunStorePaymentShippingMismatchDoesNotUseDebuggerFallback();
   await testRunPaymentJobsWaitsForMatchingAmountBeforeSelectingShipping();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
   await testPaymentTrustedClickPointFindsRoleButton();
@@ -6588,6 +6864,7 @@ async function run() {
   await testPaymentShippingChangeClickPointFindsButtonAfterHeaderSibling();
   await testPaymentShippingChangeClickPointUsesShippingSectionRoleButton();
   await testStorePaymentShippingChangeUsesShortChangeJsClick();
+  await testStorePaymentShippingChangeUsesDlvrySelectorJsClick();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testManualCaptchaTabDetection();
