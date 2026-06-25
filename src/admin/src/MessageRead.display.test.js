@@ -37,3 +37,9 @@ assert.equal(
   true,
   'MessageRead should hide update button for completed, cancelled, bundle child, and one-month-old won orders'
 );
+
+assert.equal(
+  source.includes("title: '订单状态'") && source.includes("dataIndex: 'order_status'") && source.includes('renderOrderStatus'),
+  true,
+  'MessageRead table should show order status after won time'
+);

@@ -75,6 +75,19 @@ function renderProductTypeTag(productType: string | null | undefined) {
   return <Tag color="green">普</Tag>;
 }
 
+function renderOrderStatus(status: string | null | undefined) {
+  if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
+  if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
+  if (status === 'pending_shipment') return <Tag color="lime">待发货</Tag>;
+  if (status === 'pending_receipt') return <Tag color="geekblue">待收货</Tag>;
+  if (status === 'cancelled') return <Tag color="red">取消</Tag>;
+  if (status === 'waiting_shipping') return <Tag color="orange">等待运费</Tag>;
+  if (status === 'pending_bundle') return <Tag color="purple">待同捆</Tag>;
+  if (status === 'bundle_completed') return <Tag color="cyan">同捆完了</Tag>;
+  if (status === 'completed') return <Tag color="success">完了</Tag>;
+  return '-';
+}
+
 export default function MessageReadPage() {
   const [form] = Form.useForm();
   const [items, setItems] = useState<any[]>([]);
@@ -192,7 +205,7 @@ export default function MessageReadPage() {
           showTotal: total => `共 ${total} 条`,
           onChange: (current, pageSize) => load({ current, pageSize, total: pagination.total })
         }}
-        scroll={{ x: 980 }}
+        scroll={{ x: 1100 }}
         columns={[
           { title: '用户名', dataIndex: 'username', width: 150, render: value => value || '-' },
           {
@@ -208,6 +221,7 @@ export default function MessageReadPage() {
           },
           { title: '商品名称', dataIndex: 'product_title', width: 260, ellipsis: true, render: value => value || '-' },
           { title: '落札时间', dataIndex: 'won_at', width: 180, render: value => formatDateTime(value) },
+          { title: '订单状态', dataIndex: 'order_status', width: 120, render: renderOrderStatus },
           {
             title: '消息更新',
             width: 130,
