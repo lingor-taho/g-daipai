@@ -2174,7 +2174,12 @@ async function completeStorePaymentShippingChangePage(tab, job) {
   if (!tab?.id || expectedShipping === null || expectedShipping <= 0) {
     return { success: false, error: 'store payment shipping change page missing expected shipping' };
   }
-  const selectResult = await selectPaymentShippingOption(tab.id, expectedShipping);
+  let selectResult = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    selectResult = await selectPaymentShippingOption(tab.id, expectedShipping);
+    if (selectResult?.success) break;
+    await sleep(500);
+  }
   if (!selectResult?.success) {
     const optionSummary = Array.isArray(selectResult?.options)
       ? selectResult.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')

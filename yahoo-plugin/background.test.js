@@ -3194,6 +3194,7 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
   const actions = [];
   let paymentPhase = 'reviewInitial';
   let expandClicks = 0;
+  let selectAttempts = 0;
   let selectedShippingAmount = null;
   let applyClicks = 0;
   let now = 0;
@@ -3277,6 +3278,10 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
         const funcText = String(payload.func || '');
         if (payload.files) return undefined;
         if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
+          selectAttempts += 1;
+          if (selectAttempts === 1) {
+            return [{ result: { success: false, error: 'matching payment shipping option not found', options: [] } }];
+          }
           selectedShippingAmount = payload.args[0];
           paymentPhase = 'changeSelected';
           return [{ result: { success: true, changed: true, selectedShippingJpy: payload.args[0] } }];
@@ -3318,6 +3323,7 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
   await api.runPaymentJobs();
 
   assert.equal(expandClicks, 1);
+  assert.equal(selectAttempts, 2);
   assert.equal(selectedShippingAmount, 185);
   assert.equal(applyClicks, 1);
   assert.deepEqual(actions, ['review', 'finalize']);
