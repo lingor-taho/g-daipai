@@ -3,6 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+function testYahooMessageJobsUseThirtySecondTimeout() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  assert.match(source, /MESSAGE_JOB_TIMEOUT_MS = 30000/);
+  assert.match(source, /message job timeout after 30s/);
+  assert.match(source, /withTimeout\([\s\S]*MESSAGE_JOB_TIMEOUT_MS/);
+}
+
 function loadBackgroundForTest(overrides = {}) {
   let code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   if (overrides.disableAutoStart) {
@@ -7187,6 +7194,7 @@ function testWorkerIntervalConfigReschedulesPollingTimer() {
 }
 
 async function run() {
+  testYahooMessageJobsUseThirtySecondTimeout();
   await testStartPollingIsIdempotentWithinWorker();
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();

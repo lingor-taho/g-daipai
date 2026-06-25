@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Button, Card, DatePicker, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
 
+const MESSAGE_PROCESSING_TIMEOUT_MS = 30000;
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-';
   const raw = String(value).trim();
@@ -41,6 +43,16 @@ function canRequestMessageUpdate(row: any) {
   if (row.order_status === 'bundle_completed') return false;
   if (isWonMoreThan45DaysAgo(row.won_at)) return false;
   return true;
+}
+
+function isMessageFetchInProgress(row: any, updatingOrderId: number | null) {
+  if (updatingOrderId === row.order_id) return true;
+  if (row.fetch_status === 'pending') return true;
+  if (row.fetch_status !== 'processing') return false;
+  const raw = String(row.fetch_started_at || '').trim();
+  const startedAt = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') + 'Z' : raw);
+  if (Number.isNaN(startedAt.getTime())) return false;
+  return Date.now() - startedAt.getTime() <= MESSAGE_PROCESSING_TIMEOUT_MS;
 }
 
 function sanitizeTradeHtml(html: string) {
@@ -224,7 +236,7 @@ export default function MessageReadPage() {
             width: 130,
             render: (_, row: any) => {
               if (!canRequestMessageUpdate(row)) return '-';
-              const fetching = updatingOrderId === row.order_id || row.fetch_status === 'pending' || row.fetch_status === 'processing';
+              const fetching = isMessageFetchInProgress(row, updatingOrderId);
               return (
                 <Button size="small" loading={fetching} onClick={() => requestUpdate(row)}>
                   {fetching ? '消息抓取中' : '消息更新'}

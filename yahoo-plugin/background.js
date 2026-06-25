@@ -11,6 +11,7 @@ const MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+const MESSAGE_JOB_TIMEOUT_MS = 30000;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = true;
 
@@ -5761,26 +5762,29 @@ async function executeYahooMessageJob(job) {
   const beforeTabIds = await getTabIds();
   let tab = null;
   try {
-    tab = await openTransactionPage(job, beforeTabIds);
-    if (job.jobType === 'send') {
-      const sendResult = await sendYahooTradeMessage(tab.id, job.sendText || '');
-      if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
+    const result = await withTimeout((async () => {
+      tab = await openTransactionPage(job, beforeTabIds);
+      if (job.jobType === 'send') {
+        const sendResult = await sendYahooTradeMessage(tab.id, job.sendText || '');
+        if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
+        await updateYahooMessageStatus({
+          orderId: job.orderId,
+          productId: job.productId,
+          jobType: 'send'
+        });
+        return { success: true };
+      }
+      const extractResult = await extractYahooTradeMessages(tab.id);
+      if (!extractResult?.success) throw new Error(extractResult?.error || 'message extraction failed');
       await updateYahooMessageStatus({
         orderId: job.orderId,
         productId: job.productId,
-        jobType: 'send'
+        jobType: 'fetch',
+        messageHtml: extractResult.messageHtml
       });
       return { success: true };
-    }
-    const result = await extractYahooTradeMessages(tab.id);
-    if (!result?.success) throw new Error(result?.error || 'message extraction failed');
-    await updateYahooMessageStatus({
-      orderId: job.orderId,
-      productId: job.productId,
-      jobType: 'fetch',
-      messageHtml: result.messageHtml
-    });
-    return { success: true };
+    })(), MESSAGE_JOB_TIMEOUT_MS, () => new Error('message job timeout after 30s'));
+    return result;
   } catch (error) {
     await updateYahooMessageStatus({
       orderId: job.orderId,

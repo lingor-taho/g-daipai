@@ -628,6 +628,7 @@ function buildAdminMessagesListQuery(filters = {}) {
             u.username,
             m.message_html,
             m.fetch_status,
+            m.fetch_started_at,
             m.fetch_error,
             m.send_status,
             m.send_error,
