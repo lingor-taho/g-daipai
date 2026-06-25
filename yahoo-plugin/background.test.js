@@ -4219,6 +4219,71 @@ async function testPaymentShippingChangeClickPointUsesShippingSectionRoleButton(
   assert.equal(point.y, 364);
 }
 
+async function testStorePaymentShippingChangeUsesShortChangeJsClick() {
+  const makeElement = (order, text, rect = null) => ({
+    order,
+    textContent: text,
+    value: '',
+    title: '',
+    disabled: false,
+    href: '',
+    getAttribute() { return ''; },
+    closest(selector) {
+      return selector.includes('a') && rect ? this : null;
+    },
+    scrollIntoView() {},
+    focus() {},
+    click() {
+      this.clicked = true;
+    },
+    dispatchEvent(event) {
+      this.events = this.events || [];
+      this.events.push(event.type);
+      return true;
+    },
+    compareDocumentPosition(other) {
+      return this.order < other.order ? 4 : 0;
+    },
+    getBoundingClientRect() {
+      return rect || { left: 0, top: 0, width: 0, height: 0 };
+    }
+  });
+  const paymentHeader = makeElement(5, '\u304a\u652f\u6255\u3044\u65b9\u6cd5');
+  const paymentChange = makeElement(6, '\u5909\u66f4', { left: 540, top: 180, width: 40, height: 20 });
+  const shippingHeader = makeElement(10, '\u914d\u9001\u65b9\u6cd5');
+  const shippingChange = makeElement(35, '\u5909\u66f4', { left: 485, top: 282, width: 40, height: 20 });
+  const deliveryStop = makeElement(45, '\u304a\u5c4a\u3051\u5148');
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+          PointerEvent: class PointerEvent { constructor(type) { this.type = type; } },
+          MouseEvent: class MouseEvent { constructor(type) { this.type = type; } },
+          KeyboardEvent: class KeyboardEvent { constructor(type) { this.type = type; } },
+          window: {},
+          document: {
+            querySelectorAll(selector) {
+              if (selector === 'section') return [];
+              if (String(selector).startsWith('button')) return [paymentChange, shippingChange];
+              return [shippingHeader, paymentHeader, deliveryStop];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.clickPaymentShippingChangeButton(99);
+
+  assert.equal(result.success, true);
+  assert.equal(result.text, '\u5909\u66f4');
+  assert.equal(shippingChange.clicked, true);
+  assert.equal(paymentChange.clicked, undefined);
+  assert.deepEqual(shippingChange.events, ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'keydown', 'keyup']);
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -6386,6 +6451,7 @@ async function run() {
   await testPaymentReviewClickPointDoesNotFallbackToPayPayBenefit();
   await testPaymentShippingChangeClickPointFindsButtonAfterHeaderSibling();
   await testPaymentShippingChangeClickPointUsesShippingSectionRoleButton();
+  await testStorePaymentShippingChangeUsesShortChangeJsClick();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testManualCaptchaTabDetection();
