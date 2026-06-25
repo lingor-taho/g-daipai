@@ -30,12 +30,18 @@ assert.equal(
 
 assert.equal(
   source.includes('canRequestMessageUpdate') &&
-    source.includes("row.order_status === 'completed'") &&
     source.includes("row.order_status === 'cancelled'") &&
     source.includes("row.order_status === 'bundle_completed'") &&
-    source.includes('isWonMoreThanOneMonthAgo'),
+    source.includes('isWonMoreThan45DaysAgo') &&
+    source.includes('45 * 24 * 60 * 60 * 1000'),
   true,
-  'MessageRead should hide update button for completed, cancelled, bundle child, and one-month-old won orders'
+  'MessageRead should hide update button for cancelled, bundle child, and 45-day-old won orders'
+);
+
+assert.equal(
+  source.includes("row.order_status === 'completed'"),
+  false,
+  'MessageRead should allow message updates for completed orders'
 );
 
 assert.equal(

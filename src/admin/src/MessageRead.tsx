@@ -28,21 +28,18 @@ function formatDateOnly(value: any) {
   return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
 }
 
-function isWonMoreThanOneMonthAgo(value: string | null | undefined) {
+function isWonMoreThan45DaysAgo(value: string | null | undefined) {
   if (!value) return false;
   const raw = String(value).trim();
   const wonAt = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') + 'Z' : raw);
   if (Number.isNaN(wonAt.getTime())) return false;
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - 1);
-  return wonAt.getTime() < cutoff.getTime();
+  return Date.now() - wonAt.getTime() > 45 * 24 * 60 * 60 * 1000;
 }
 
 function canRequestMessageUpdate(row: any) {
-  if (row.order_status === 'completed') return false;
   if (row.order_status === 'cancelled') return false;
   if (row.order_status === 'bundle_completed') return false;
-  if (isWonMoreThanOneMonthAgo(row.won_at)) return false;
+  if (isWonMoreThan45DaysAgo(row.won_at)) return false;
   return true;
 }
 
