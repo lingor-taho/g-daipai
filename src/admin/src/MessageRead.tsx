@@ -28,6 +28,24 @@ function formatDateOnly(value: any) {
   return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
 }
 
+function isWonMoreThanOneMonthAgo(value: string | null | undefined) {
+  if (!value) return false;
+  const raw = String(value).trim();
+  const wonAt = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') + 'Z' : raw);
+  if (Number.isNaN(wonAt.getTime())) return false;
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 1);
+  return wonAt.getTime() < cutoff.getTime();
+}
+
+function canRequestMessageUpdate(row: any) {
+  if (row.order_status === 'completed') return false;
+  if (row.order_status === 'cancelled') return false;
+  if (row.order_status === 'bundle_completed') return false;
+  if (isWonMoreThanOneMonthAgo(row.won_at)) return false;
+  return true;
+}
+
 function sanitizeTradeHtml(html: string) {
   return String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -194,6 +212,7 @@ export default function MessageReadPage() {
             title: '消息更新',
             width: 130,
             render: (_, row: any) => {
+              if (!canRequestMessageUpdate(row)) return '-';
               const fetching = updatingOrderId === row.order_id || row.fetch_status === 'pending' || row.fetch_status === 'processing';
               return (
                 <Button size="small" loading={fetching} onClick={() => requestUpdate(row)}>

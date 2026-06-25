@@ -27,3 +27,13 @@ assert.equal(
   true,
   'MessageRead modal should style both store and normal Yahoo message markup'
 );
+
+assert.equal(
+  source.includes('canRequestMessageUpdate') &&
+    source.includes("row.order_status === 'completed'") &&
+    source.includes("row.order_status === 'cancelled'") &&
+    source.includes("row.order_status === 'bundle_completed'") &&
+    source.includes('isWonMoreThanOneMonthAgo'),
+  true,
+  'MessageRead should hide update button for completed, cancelled, bundle child, and one-month-old won orders'
+);

@@ -133,6 +133,7 @@ function testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus() {
   assert.match(query.rows.sql, /INNER JOIN tasks t ON o\.task_id = t\.id/);
   assert.match(query.rows.sql, /LEFT JOIN products p ON p\.product_id = COALESCE\(o\.product_id, t\.product_id\)/);
   assert.match(query.rows.sql, /LEFT JOIN yahoo_trade_messages m ON m\.order_id = o\.id/);
+  assert.match(query.rows.sql, /o\.order_status/);
   assert.match(query.rows.sql, /u\.username LIKE \?/);
   assert.match(query.rows.sql, /LOWER\(COALESCE\(o\.product_id, t\.product_id\)\) = \?/);
   assert.match(query.rows.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) >= \?/);

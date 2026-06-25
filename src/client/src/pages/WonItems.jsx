@@ -59,9 +59,6 @@ const sellerMessageHeaderStyle = {
 
 const sellerMessageButtonStyle = {
   '--border-radius': '4px',
-  background: '#fff4b8',
-  borderColor: '#f0c94b',
-  color: '#7a5200',
   fontSize: 12,
   fontWeight: 700,
   flex: '0 0 auto'
@@ -363,7 +360,7 @@ export default function WonItems() {
                         style={sellerMessageButtonStyle}
                         onClick={() => setSellerMessageModal(item)}
                       >
-                        卖家消息
+                        消息
                       </Button>
                     </div>
                   ) : null}
@@ -390,7 +387,7 @@ export default function WonItems() {
           <div style={sellerMessageDialogStyle} onClick={event => event.stopPropagation()}>
             <div style={sellerMessageHeaderStyle}>
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                卖家消息：{sellerMessageModal.product_id}
+                消息：{sellerMessageModal.product_id}
               </span>
               <Button size="mini" fill="none" onClick={() => setSellerMessageModal(null)}>关闭</Button>
             </div>

@@ -25,9 +25,9 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('卖家消息') && source.includes('seller_message_html') && source.includes('sellerMessageModal'),
+  source.includes('消息') && !source.includes('卖家消息') && source.includes('seller_message_html') && source.includes('sellerMessageModal'),
   true,
-  'WonItems page must show a seller message button and read-only modal when fetched message HTML exists'
+  'WonItems page must show a neutral message button and read-only modal when fetched message HTML exists'
 );
 
 assert.equal(
