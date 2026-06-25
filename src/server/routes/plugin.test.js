@@ -396,6 +396,45 @@ async function testSyncBiddingItemsStoresRemainingTimeText() {
   assert.equal(insertCall.params.includes('5分'), true);
 }
 
+async function testSyncBiddingItemsDoesNotOverwriteProductIdentityFields() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    },
+    async getAll() {
+      return [];
+    },
+    async getOne() {
+      return { tax_type: 'tax_zero' };
+    }
+  };
+
+  await syncBiddingItems([
+    {
+      productId: 'u1234595011',
+      title: 's4236k [送料',
+      price: '20,500',
+      url: 'https://auctions.yahoo.co.jp/jp/auction/u1234595011',
+      imageUrl: 'https://example.invalid/short.jpg',
+      status: 'highest'
+    }
+  ], fakeDb);
+
+  const biddingInsert = calls.find(call => /INSERT INTO bidding_items/.test(call.sql));
+  assert.equal(biddingInsert.params[1], 'https://auctions.yahoo.co.jp/jp/auction/u1234595011');
+  assert.equal(biddingInsert.params[2], 's4236k [送料');
+  assert.equal(biddingInsert.params[3], 'https://example.invalid/short.jpg');
+
+  const productUpsert = calls.find(call => /INSERT INTO products/.test(call.sql));
+  assert.equal(productUpsert.params[1], null);
+  assert.equal(productUpsert.params[2], null);
+  assert.equal(productUpsert.params[3], null);
+  assert.equal(productUpsert.params[4], 20500);
+  assert.equal(productUpsert.params.includes('scan'), true);
+}
+
 function testResolveOrderFinalPriceUsesYahooParsedPriceEvenWhenLowerThanMaxPrice() {
   assert.equal(resolveOrderFinalPrice({ current_price: 2530, max_price: 5000 }, '3,200'), 3200);
 }
@@ -1019,8 +1058,9 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
   const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
   assert.equal(orderInsert.params[0], 110);
   assert.match(orderInsert.sql, /product_id/);
+  assert.doesNotMatch(orderInsert.sql, /product_title|product_url/);
   assert.equal(orderInsert.params[1], 'u1231877298');
-  assert.equal(orderInsert.params[4], 350);
+  assert.equal(orderInsert.params[2], 350);
 }
 
 async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
@@ -1062,8 +1102,9 @@ async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
   assert.equal(result.forcedResync, 1);
   const orderUpdate = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql) && /final_price/.test(call.sql));
   assert.ok(orderUpdate);
+  assert.doesNotMatch(orderUpdate.sql, /product_title|product_url/);
   assert.match(orderUpdate.sql, /final_price = COALESCE\(\?, final_price\)/);
-  assert.equal(orderUpdate.params[3], 6600);
+  assert.equal(orderUpdate.params[1], 6600);
 }
 
 async function testSyncYahooWonOrdersMovesExistingPendingShipmentWithTrackingToPendingReceipt() {
@@ -2218,6 +2259,7 @@ testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly();
 testSummarizePaymentErrorRemovesDebugDetails();
 Promise.all([
   testSyncBiddingItemsStoresRemainingTimeText(),
+  testSyncBiddingItemsDoesNotOverwriteProductIdentityFields(),
   testSyncBiddingItemsConvertsTaxIncludedListPriceToTaxExcluded(),
   testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker(),
   testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxExcluded(),

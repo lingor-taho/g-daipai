@@ -179,7 +179,10 @@ async function testConfirmManualOrderImportSkipsUnassignedItems() {
   assert.equal(result.skippedUnassigned, 1);
   assert.equal(queries.some(query => /INSERT INTO products/.test(query.sql)), true);
   assert.equal(queries.some(query => /INSERT INTO tasks/.test(query.sql)), true);
-  assert.equal(queries.some(query => /INSERT INTO orders/.test(query.sql) && /product_id/.test(query.sql)), true);
+  const orderInsert = queries.find(query => /INSERT INTO orders/.test(query.sql));
+  assert.ok(orderInsert);
+  assert.match(orderInsert.sql, /product_id/);
+  assert.doesNotMatch(orderInsert.sql, /product_title|product_url/);
   assert.equal(queries.some(query => /status = 'confirmed'/.test(query.sql)), true);
   assert.equal(
     queries.some(query => query.params?.[0] === 'transaction_start_requested' || query.params?.[0] === 'transaction_start_requested_source'),
@@ -437,7 +440,9 @@ function testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly() {
 
   assert.match(query.sql, /u\.id = \?/);
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /p\.product_title AS product_title/);
   assert.match(query.sql, /p\.product_url AS product_url/);
+  assert.doesNotMatch(query.sql, /o\.product_title/);
   assert.doesNotMatch(query.sql, /o\.product_url/);
   assert.match(query.sql, /p\.shipping_fee_text AS shipping_fee_text/);
   assert.match(query.sql, /COALESCE\(p\.tax_type, 'tax_zero'\) AS tax_type/);

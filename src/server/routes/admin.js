@@ -267,7 +267,7 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
   return {
     sql: `SELECT o.id,
             o.task_id,
-            o.product_title,
+            p.product_title AS product_title,
             p.product_url AS product_url,
             o.final_price,
             o.won_at,
@@ -2429,14 +2429,12 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     const taskRow = await database.getOne('SELECT last_insert_rowid() AS id');
     await database.query(
       `INSERT INTO orders
-        (task_id, product_id, product_title, product_url, final_price, won_at, won_time_text,
+        (task_id, product_id, final_price, won_at, won_time_text,
          transaction_url, order_status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         taskRow.id,
         productId,
-        item.product_title || null,
-        importProductUrl,
         importFinalPrice,
         item.won_at || null,
         item.won_time_text || null,

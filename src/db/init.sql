@@ -79,8 +79,6 @@ CREATE TABLE IF NOT EXISTS orders (
   task_id INTEGER REFERENCES tasks(id),
   product_id VARCHAR(32),
   account_id INTEGER REFERENCES yahoo_accounts(id),
-  product_title VARCHAR(512),
-  product_url TEXT,
   final_price INTEGER,
   won_at DATETIME,
   won_time_text VARCHAR(64),

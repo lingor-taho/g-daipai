@@ -993,8 +993,6 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
   const task = await database.getOne(
     `SELECT t.id,
             t.product_id,
-            p.product_url,
-            p.product_title,
             p.current_price
      FROM tasks t
      LEFT JOIN products p ON p.product_id = t.product_id
@@ -1007,24 +1005,23 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
   const transactionUrl = String(options.transactionUrl || '').trim() || null;
-  const productTitle = task.product_title || null;
   if (existing) {
     await database.query(
       `UPDATE orders
        SET product_id = COALESCE(product_id, ?),
-            product_title = ?, product_url = ?, final_price = COALESCE(?, final_price),
+           final_price = COALESCE(?, final_price),
            won_at = COALESCE(?, won_at),
            won_time_text = COALESCE(?, won_time_text),
            transaction_url = COALESCE(?, transaction_url),
            updated_at = CURRENT_TIMESTAMP
        WHERE task_id = ?`,
-      [task.product_id, productTitle, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
+      [task.product_id, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
     );
   } else {
     await database.query(
-      `INSERT INTO orders (task_id, product_id, product_title, product_url, final_price, won_at, won_time_text, transaction_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [taskId, task.product_id, productTitle, task.product_url, finalPrice, wonAt, wonTimeText, transactionUrl]
+      `INSERT INTO orders (task_id, product_id, final_price, won_at, won_time_text, transaction_url)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [taskId, task.product_id, finalPrice, wonAt, wonTimeText, transactionUrl]
     );
   }
 }
@@ -1176,9 +1173,6 @@ async function syncBiddingItems(items, database = db) {
     );
     await upsertProductSnapshot(database, {
       product_id: productId,
-      product_url: item.url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
-      product_title: item.title || null,
-      product_image_url: item.imageUrl || null,
       current_price: currentPrice,
       tax_type: taxType
     }, { source: 'scan' });
