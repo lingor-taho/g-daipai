@@ -25,6 +25,7 @@ ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
 ensureColumn('tasks', 'client_request_id', 'VARCHAR(128)');
 ensureColumn('tasks', 'pending_followup_max_price', 'INTEGER');
 ensureColumn('tasks', 'force_orders_resync', 'INTEGER DEFAULT 0');
+ensureColumn('tasks', 'buyout_auto_paid', 'INTEGER DEFAULT 0');
 ensureColumn('orders', 'product_id', 'VARCHAR(32)');
 ensureColumn('orders', 'won_at', 'DATETIME');
 ensureColumn('orders', 'won_time_text', 'VARCHAR(64)');

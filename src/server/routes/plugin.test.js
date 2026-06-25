@@ -71,6 +71,15 @@ function sqliteTimeFromNow(minutes) {
   return new Date(now + minutes * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 }
 
+function testTaskSchemaIncludesBuyoutAutoPaid() {
+  const fs = require('fs');
+  const path = require('path');
+  const modelsSource = fs.readFileSync(path.join(__dirname, '../models/index.js'), 'utf8');
+  const initSql = fs.readFileSync(path.join(__dirname, '../../db/init.sql'), 'utf8');
+  assert.match(modelsSource, /ensureColumn\('tasks', 'buyout_auto_paid', 'INTEGER DEFAULT 0'\)/);
+  assert.match(initSql, /buyout_auto_paid\s+INTEGER DEFAULT 0/);
+}
+
 function testDirectTaskIsReadyImmediately() {
   assert.equal(isTaskReadyForDispatch({ strategy: 'direct', end_time: minutesFromNow(60) }, now), true);
   assert.equal(isTaskReadyForDispatch({ strategy: 'direct', end_time: minutesFromNow(-1) }, now), false);
@@ -2270,6 +2279,7 @@ testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
 testHeartbeatProcessingTaskOnlyRefreshesProcessingUpdatedAt();
+testTaskSchemaIncludesBuyoutAutoPaid();
 testClaimTaskForProcessingOnlyClaimsPendingTask();
 Promise.resolve().then(testClaimReadyPluginTasksClaimsMultipleReadyTasks).catch(err => {
   console.error(err);
