@@ -2183,6 +2183,36 @@ async function clickStorePaymentShippingApplyButton(tabId) {
   return injectionResult?.[0]?.result || { success: false, error: 'store payment shipping apply returned no result' };
 }
 
+async function revealStorePaymentShippingOptions(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+      const shipRadios = [...document.querySelectorAll('input[type="radio"][name="shipMethodPullDown"], input[type="radio"][value^="postage"]')];
+      if (shipRadios.length) {
+        const target = shipRadios.find(radio => !radio.checked) || shipRadios[0];
+        const container = target?.closest?.('label, li, section, div') || target;
+        container?.scrollIntoView?.({ block: 'center', inline: 'center' });
+        return { success: true, found: shipRadios.length, method: 'shipMethodRadio' };
+      }
+      const headings = [...document.querySelectorAll('#shipMethod, h1,h2,h3,h4,section,div,p,span')];
+      const heading = headings.find(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(normalize(el.textContent)) || normalize(el.textContent).startsWith('\u914d\u9001\u65b9\u6cd5 '));
+      if (heading) {
+        heading.scrollIntoView?.({ block: 'center', inline: 'center' });
+        return { success: true, found: 0, method: 'shipMethodHeading', text: normalize(heading.textContent).slice(0, 120) };
+      }
+      const scrollHeight = Math.max(document.documentElement?.scrollHeight || 0, document.body?.scrollHeight || 0);
+      const viewport = window.innerHeight || 800;
+      const current = window.scrollY || document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+      const next = Math.min(scrollHeight, current + Math.floor(viewport * 0.8));
+      window.scrollTo?.({ top: next, behavior: 'instant' });
+      return { success: true, found: 0, method: 'scrollDown', top: next, scrollHeight };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'store payment shipping reveal returned no result' };
+}
+
 async function completeStorePaymentShippingChangePage(tab, job) {
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
   if (!tab?.id || expectedShipping === null || expectedShipping <= 0) {
@@ -2190,6 +2220,8 @@ async function completeStorePaymentShippingChangePage(tab, job) {
   }
   let selectResult = null;
   for (let attempt = 0; attempt < 10; attempt += 1) {
+    await revealStorePaymentShippingOptions(tab.id).catch(() => null);
+    await sleep(200);
     selectResult = await selectPaymentShippingOption(tab.id, expectedShipping);
     if (selectResult?.success) break;
     await sleep(500);
@@ -5888,6 +5920,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   getPaymentShippingChangeClickPoint,
   clickPaymentShippingChangeButton,
   selectPaymentShippingOption,
+  revealStorePaymentShippingOptions,
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
