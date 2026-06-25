@@ -1,141 +1,143 @@
 @echo off
-chcp 65001 > nul
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-title g-daipai 环境安装脚本
+title g-daipai environment setup
 echo ========================================
-echo   g-daipai 环境安装脚本
+echo   g-daipai environment setup
 echo ========================================
+echo.
+echo Project root: %ROOT%
 echo.
 
 where /Q winget
 set "HAS_WINGET=0"
 if not errorlevel 1 set "HAS_WINGET=1"
 
-echo [1/6] 检查 Git
+echo [1/6] Check Git
 where /Q git
 if errorlevel 1 (
   if "%HAS_WINGET%"=="0" (
-    echo 未检测到 git，且当前环境未安装 winget。
+    echo Git was not found, and winget is not available.
     goto :fail
   )
-  echo 未检测到 git，自动使用 winget 安装...
+  echo Git was not found. Installing with winget...
   winget install -e --id Git.Git --silent --accept-package-agreements --accept-source-agreements
   where /Q git
   if errorlevel 1 (
-    echo git 安装失败，请检查网络或安装源。
+    echo Git install failed. Check network or winget source settings.
     goto :fail
   )
 ) else (
-  echo git 已存在
+  echo Git found.
 )
 
 echo.
-echo [2/6] 检查 Node.js
+echo [2/6] Check Node.js
 where /Q node
 if errorlevel 1 (
   if "%HAS_WINGET%"=="0" (
-    echo 未检测到 Node.js，且当前环境未安装 winget。
+    echo Node.js was not found, and winget is not available.
     goto :fail
   )
-  echo 未检测到 Node.js，自动使用 winget 安装...
+  echo Node.js was not found. Installing with winget...
   winget install -e --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
   where /Q node
   if errorlevel 1 (
-    echo Node.js 安装失败，请检查网络或安装源。
+    echo Node.js install failed. Check network or winget source settings.
     goto :fail
   )
 ) else (
-  echo Node.js 已存在
+  echo Node.js found.
 )
 
 echo.
-echo [3/6] 检查项目目录
+echo [3/6] Check project directory
 if not exist "%ROOT%\package.json" (
-  echo 当前目录不是项目根目录：%ROOT%
+  echo This is not the project root: %ROOT%
   goto :fail
 )
 
 cd /d "%ROOT%"
+
 echo.
-echo [4/6] 拉取最新代码
+echo [4/6] Pull latest code
 if not exist "%ROOT%\.git" (
-  echo 当前不是 Git 仓库，跳过 git pull。
+  echo This directory is not a Git repository. Skip git pull.
 ) else (
   where /Q git
   if errorlevel 1 (
-    echo git 命令不可用，跳过 git pull。
+    echo Git command is not available. Skip git pull.
   ) else (
     git remote get-url origin > nul 2>&1
     if errorlevel 0 (
       git fetch --all --prune
       git pull
       if errorlevel 1 (
-        echo git pull 失败，请检查网络/分支状态。
+        echo git pull failed. Check network, branch status, or local changes.
         goto :fail
       )
     ) else (
-      echo 未配置 origin 远程仓库，跳过 git pull。
+      echo No origin remote configured. Skip git pull.
     )
   )
 )
 
 echo.
-echo [5/6] 初始化 .env
+echo [5/6] Prepare .env
 if not exist "%ROOT%\.env" (
   if exist "%ROOT%\.env.example" (
     copy /Y "%ROOT%\.env.example" "%ROOT%\.env" > nul
-    echo 已从 .env.example 复制生成 .env
+    echo Created .env from .env.example.
   ) else (
-    echo 未检测到 .env 且未发现 .env.example，请手动提供配置文件
+    echo .env was not found and .env.example is missing.
     goto :fail
   )
 ) else (
-  echo .env 已存在
+  echo .env found.
 )
 
 echo.
-echo [6/6] 安装依赖
+echo [6/6] Install dependencies
 cd /d "%ROOT%"
-echo 安装根目录依赖...
-npm install
+echo Installing root dependencies...
+call npm install
 if errorlevel 1 goto :fail
 
-if exist "src\client\package.json" goto :install_client
-if exist "src\admin\package.json" goto :install_admin
-goto :end_install
+if exist "%ROOT%\src\client\package.json" (
+  echo.
+  echo Installing client dependencies...
+  cd /d "%ROOT%\src\client"
+  call npm install
+  if errorlevel 1 goto :fail
+)
 
-:install_client
-echo 安装前端依赖...
-cd /d "%ROOT%\src\client"
-npm install
-if errorlevel 1 goto :fail
-if exist "%ROOT%\src\admin\package.json" goto :install_admin
-goto :end_install
-
-:install_admin
-echo 安装管理后台依赖...
-cd /d "%ROOT%\src\admin"
-npm install
-if errorlevel 1 goto :fail
-
-:end_install
+if exist "%ROOT%\src\admin\package.json" (
+  echo.
+  echo Installing admin dependencies...
+  cd /d "%ROOT%\src\admin"
+  call npm install
+  if errorlevel 1 goto :fail
+)
 
 echo.
-echo 完成。
+echo Done.
 node -v
-npm -v
+call npm -v
 echo.
-echo git pull 只会更新代码，不会创建 SQLite 数据库。
-echo 新机器若无数据库，请先执行 setup-db-admin.bat。
+echo Note:
+echo - This script installs Git, Node.js, and npm dependencies.
+echo - It does not create the SQLite database.
+echo - For a new machine, run the database initialization BAT file after this script.
 echo.
-echo root: %ROOT%
+pause
 exit /b 0
 
 :fail
 echo.
-echo 初始化失败，请根据上方提示处理后重试。
+echo Environment setup failed. Read the message above, fix it, then run again.
+echo.
+pause
 exit /b 1

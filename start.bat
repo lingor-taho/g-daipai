@@ -48,7 +48,9 @@ echo.
 if "%API_OK%"=="1" (
   echo API Server OK: http://localhost:3034
 ) else (
-  echo API Server NOT running. Check %ROOT%\server-start.log
+  echo API Server NOT running.
+  echo Check %ROOT%\server-start.log
+  echo Check %ROOT%\server-start.err.log
 )
 
 if "%CLIENT_OK%"=="1" (

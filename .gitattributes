@@ -9,4 +9,4 @@
 *.css text eol=lf working-tree-encoding=UTF-8
 *.html text eol=lf working-tree-encoding=UTF-8
 *.sql text eol=lf working-tree-encoding=UTF-8
-
+*.bat text eol=crlf
