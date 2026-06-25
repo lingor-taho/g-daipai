@@ -1257,8 +1257,11 @@ async function getPaymentPageState(tabId) {
       const shippingOptions = [...document.querySelectorAll('input[type="radio"]')]
         .map((radio, index) => {
           const text = optionTextFromRadio(radio);
+          const radioName = String(radio.name || radio.getAttribute?.('name') || '');
+          const radioValue = String(radio.value || radio.getAttribute?.('value') || '');
+          const isKnownShippingRadio = radioName === 'shipMethodPullDown' || /^postage\d*/i.test(radioValue);
           const afterShippingHeader = shippingHeader
-            ? shippingHeader.contains?.(radio) || !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
+            ? isKnownShippingRadio || shippingHeader.contains?.(radio) || !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
             : shippingKeywords.test(text);
           const looksLikePaymentMethod = paymentKeywords.test(text) && !shippingKeywords.test(text);
           return {
@@ -2079,11 +2082,14 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
         .find(el => /^\s*\u914d\u9001\u65b9\u6cd5\s*$/.test(getText(el)) || getText(el).startsWith('\u914d\u9001\u65b9\u6cd5 '));
       const shippingKeywords = /\u914d\u9001|\u9001\u6599|\u304a\u3066\u304c\u308b|\u3086\u3046|\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8|\u30ec\u30bf\u30fc\u30d1\u30c3\u30af|\u5b9a\u5f62|\u5b85\u6025\u4fbf/;
       const paymentKeywords = /\u30af\u30ec\u30b8\u30c3\u30c8|\u30b3\u30f3\u30d3\u30cb|PayPay|\u9280\u884c\u632f\u8fbc|\u652f\u6255|\u624b\u6570\u6599/;
-      const options = [...document.querySelectorAll('input[type="radio"]')]
+      const candidates = [...document.querySelectorAll('input[type="radio"]')]
         .map((radio, index) => {
           const text = optionTextFromRadio(radio);
+          const radioName = String(radio.name || radio.getAttribute?.('name') || '');
+          const radioValue = String(radio.value || radio.getAttribute?.('value') || '');
+          const isKnownShippingRadio = radioName === 'shipMethodPullDown' || /^postage\d*/i.test(radioValue);
           const afterShippingHeader = shippingHeader
-            ? shippingHeader.contains?.(radio) || !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
+            ? isKnownShippingRadio || shippingHeader.contains?.(radio) || !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
             : shippingKeywords.test(text);
           const looksLikePaymentMethod = paymentKeywords.test(text) && !shippingKeywords.test(text);
           return {
@@ -2096,15 +2102,23 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
             visible: isVisibleRadioOption(radio),
             isShipping: afterShippingHeader && !looksLikePaymentMethod
           };
-        })
-        .filter(option => option.isShipping && option.visible && option.amountJpy > 0);
+        });
+      const options = candidates.filter(option => option.isShipping && option.visible && option.amountJpy > 0);
       const target = options.find(option => option.amountJpy === expectedAmount && !option.disabled);
       if (!target) {
         return {
           success: false,
           error: 'matching payment shipping option not found',
           expectedShippingJpy: expectedAmount,
-          options: options.map(option => ({ amountJpy: option.amountJpy, checked: option.checked, disabled: option.disabled, text: option.text.slice(0, 160) }))
+          options: options.map(option => ({ amountJpy: option.amountJpy, checked: option.checked, disabled: option.disabled, text: option.text.slice(0, 160) })),
+          candidates: candidates.map(option => ({
+            amountJpy: option.amountJpy,
+            checked: option.checked,
+            disabled: option.disabled,
+            visible: option.visible,
+            isShipping: option.isShipping,
+            text: option.text.slice(0, 160)
+          }))
         };
       }
       if (target.checked) {
@@ -2184,9 +2198,12 @@ async function completeStorePaymentShippingChangePage(tab, job) {
     const optionSummary = Array.isArray(selectResult?.options)
       ? selectResult.options.map(option => `${option.amountJpy}\u5186${option.checked ? ':checked' : ''}`).join(', ')
       : '';
+    const candidateSummary = !optionSummary && Array.isArray(selectResult?.candidates)
+      ? selectResult.candidates.map(option => `${option.amountJpy || 0}\u5186${option.checked ? ':checked' : ''}${option.visible === false ? ':hidden' : ''}${option.isShipping === false ? ':nonShipping' : ''}:${option.text || ''}`).join(' | ').slice(0, 700)
+      : '';
     return {
       success: false,
-      error: `store payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}`
+      error: `store payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${candidateSummary ? `; candidates: ${candidateSummary}` : ''}`
     };
   }
   if (selectResult.changed) await sleep(500);
