@@ -138,6 +138,32 @@ ON plugin_diagnostics(product_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_plugin_diagnostics_created
 ON plugin_diagnostics(created_at);
 
+CREATE TABLE IF NOT EXISTS yahoo_trade_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL UNIQUE,
+  product_id VARCHAR(32),
+  message_html TEXT,
+  fetch_status VARCHAR(32) DEFAULT 'idle',
+  fetch_requested_at DATETIME,
+  fetch_started_at DATETIME,
+  fetch_error TEXT,
+  send_status VARCHAR(32) DEFAULT 'idle',
+  send_text TEXT,
+  send_requested_at DATETIME,
+  send_started_at DATETIME,
+  send_error TEXT,
+  last_message_sent_at DATETIME,
+  updated_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_yahoo_trade_messages_status
+ON yahoo_trade_messages(fetch_status, send_status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_yahoo_trade_messages_product
+ON yahoo_trade_messages(product_id, updated_at);
+
 CREATE TABLE IF NOT EXISTS data_cleanup_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_type VARCHAR(32) NOT NULL,

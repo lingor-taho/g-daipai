@@ -542,6 +542,7 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   assert.equal(ORDER_STATUS_PENDING_BUNDLE, 'pending_bundle');
   assert.equal(getNextIdleAction({
     manualOrderImportPending: 1,
+    yahooMessagePending: 1,
     transactionStartRequested: 1,
     scanIdleCounter: 0,
     scanEveryIdleRuns: 5,
@@ -550,6 +551,16 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
     nowHour: 10,
     today: '2026-06-01'
   }).action, 'manual_order_import');
+  assert.equal(getNextIdleAction({
+    yahooMessagePending: 1,
+    transactionStartRequested: 1,
+    scanIdleCounter: 5,
+    scanEveryIdleRuns: 5,
+    scanStartHour: 1,
+    scanEndHour: 20,
+    nowHour: 10,
+    today: '2026-06-01'
+  }).action, 'yahoo_message');
   assert.equal(getNextIdleAction({
     transactionStartRequested: 1,
     scanIdleCounter: 5,
@@ -591,6 +602,31 @@ function testManualOrderImportCompletesWithoutClearingScanCounter() {
   };
 
   return completeIdleAction('manual_order_import', fakeDb, Date.parse('2026-06-23T09:00:00+08:00')).then(() => {
+    assert.equal(saved.some(call => call.params?.[0] === 'scan_idle_counter'), false);
+  });
+}
+
+function testYahooMessageCompletesWithoutClearingScanCounter() {
+  const saved = [];
+  const fakeDb = {
+    async getAll() {
+      return [
+        { key: 'scan_every_idle_runs', value: '5' },
+        { key: 'scan_idle_counter', value: '5' }
+      ];
+    },
+    async getOne(sql) {
+      if (/manual_order_import_batches/.test(sql)) return { count: 0 };
+      if (/yahoo_trade_messages/.test(sql)) return { count: 0 };
+      return null;
+    },
+    async query(sql, params) {
+      saved.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  return completeIdleAction('yahoo_message', fakeDb, Date.parse('2026-06-25T09:00:00+08:00')).then(() => {
     assert.equal(saved.some(call => call.params?.[0] === 'scan_idle_counter'), false);
   });
 }
@@ -2293,6 +2329,7 @@ Promise.all([
   testGetPaymentJobsIncludesBundleFinalPriceTotal(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
   testManualOrderImportCompletesWithoutClearingScanCounter(),
+  testYahooMessageCompletesWithoutClearingScanCounter(),
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
   testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
   testEnsureScheduledTransactionStartRequestDoesNotBackfillPastChangedHour(),

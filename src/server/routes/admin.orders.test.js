@@ -21,6 +21,7 @@ const {
   buildTrustedInputReportQueries,
   buildBidFailureReportQueries,
   buildRecentTaskFailureUserReportQuery,
+  buildAdminMessagesListQuery,
   buildOrderSettlementSelectQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
@@ -116,6 +117,31 @@ function testBuildRecentTaskFailureUserReportQuery() {
   assert.match(query.sql, /system_count/);
   assert.match(query.sql, /GROUP BY t\.user_id, u\.username/);
   assert.deepEqual(query.params, [-5]);
+}
+
+function testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus() {
+  const query = buildAdminMessagesListQuery({
+    current: '2',
+    pageSize: '25',
+    username: 'stone',
+    productId: 'M1233870776',
+    wonFrom: '2026-06-24',
+    wonTo: '2026-06-25'
+  });
+
+  assert.match(query.rows.sql, /FROM orders o/);
+  assert.match(query.rows.sql, /INNER JOIN tasks t ON o\.task_id = t\.id/);
+  assert.match(query.rows.sql, /LEFT JOIN products p ON p\.product_id = COALESCE\(o\.product_id, t\.product_id\)/);
+  assert.match(query.rows.sql, /LEFT JOIN yahoo_trade_messages m ON m\.order_id = o\.id/);
+  assert.match(query.rows.sql, /u\.username LIKE \?/);
+  assert.match(query.rows.sql, /LOWER\(COALESCE\(o\.product_id, t\.product_id\)\) = \?/);
+  assert.match(query.rows.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) >= \?/);
+  assert.match(query.rows.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) <= \?/);
+  assert.match(query.rows.sql, /ORDER BY datetime\(COALESCE\(o\.won_at, t\.updated_at\)\) DESC, o\.id DESC/);
+  assert.deepEqual(query.rows.params, ['%stone%', 'm1233870776', '2026-06-24', '2026-06-25', 25, 25]);
+  assert.deepEqual(query.count.params, ['%stone%', 'm1233870776', '2026-06-24', '2026-06-25']);
+  assert.equal(query.pagination.current, 2);
+  assert.equal(query.pagination.pageSize, 25);
 }
 
 function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {
@@ -1128,6 +1154,7 @@ testBuildGoogleSheetUrl();
 testBuildTrustedInputReportQueries();
 testBuildBidFailureReportQueries();
 testBuildRecentTaskFailureUserReportQuery();
+testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 testManualOrderImportSummarySeparatesEmptyReadyBatches();
 

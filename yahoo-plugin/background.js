@@ -856,6 +856,109 @@ async function updatePaymentStatus(payload) {
   });
 }
 
+async function fetchYahooMessageJobs() {
+  const res = await apiFetch('/api/plugin/yahoo-messages/jobs');
+  const data = await res.json();
+  return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+async function updateYahooMessageStatus(payload) {
+  await apiFetch('/api/plugin/yahoo-messages/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {})
+  });
+}
+
+function getYahooTradeMessageExtractScript() {
+  return `(() => {
+    const normal = document.querySelector('#messagelist');
+    if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
+    const store = document.querySelector('ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]');
+    if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
+    const fallback = [...document.querySelectorAll('ul, .acMdMsgForm, [id*="message"], [class*="Msg"]')]
+      .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
+    if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
+    return { success: false, error: 'message list not found' };
+  })()`;
+}
+
+function getYahooTradeMessageSendScript(messageText) {
+  const encoded = JSON.stringify(String(messageText || ''));
+  return `(() => {
+    const messageText = ${encoded};
+    const textarea = document.querySelector('#textarea') ||
+      document.querySelector('textarea[placeholder*="メッセージ"]') ||
+      document.querySelector('textarea');
+    if (!textarea) return { success: false, error: 'message textarea not found' };
+    textarea.focus();
+    textarea.value = messageText;
+    textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: messageText }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    const button = document.querySelector('#submitButton') ||
+      document.querySelector('#msg button[type="submit"], #msg button') ||
+      [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+        .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
+    if (!button) return { success: false, error: 'message submit button not found' };
+    if (button.disabled) return { success: false, error: 'message submit button disabled' };
+    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+    button.click();
+    return { success: true };
+  })()`;
+}
+
+async function extractYahooTradeMessages(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const normal = document.querySelector('#messagelist');
+      if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
+      const store = document.querySelector('ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]');
+      if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
+      const fallback = [...document.querySelectorAll('ul, .acMdMsgForm, [id*="message"], [class*="Msg"]')]
+        .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
+      if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
+      return { success: false, error: 'message list not found' };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
+}
+
+async function sendYahooTradeMessage(tabId, messageText) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [String(messageText || '')],
+    func: messageText => {
+      const textarea = document.querySelector('#textarea') ||
+        document.querySelector('textarea[placeholder*="メッセージ"]') ||
+        document.querySelector('textarea');
+      if (!textarea) return { success: false, error: 'message textarea not found' };
+      textarea.focus();
+      textarea.value = messageText;
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: messageText }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      const button = document.querySelector('#submitButton') ||
+        document.querySelector('#msg button[type="submit"], #msg button') ||
+        [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+          .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
+      if (!button) return { success: false, error: 'message submit button not found' };
+      if (button.disabled) return { success: false, error: 'message submit button disabled' };
+      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+      button.click();
+      return { success: true };
+    }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'message send returned no result' };
+}
+
 function extractAuctionIdFromText(value) {
   const match = String(value || '').match(/[a-zA-Z]?\d{8,10}/);
   return match ? match[0].toLowerCase() : '';
@@ -5654,6 +5757,54 @@ async function executeConfirmReceiptJob(job) {
   }
 }
 
+async function executeYahooMessageJob(job) {
+  const beforeTabIds = await getTabIds();
+  let tab = null;
+  try {
+    tab = await openTransactionPage(job, beforeTabIds);
+    if (job.jobType === 'send') {
+      const sendResult = await sendYahooTradeMessage(tab.id, job.sendText || '');
+      if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
+      await updateYahooMessageStatus({
+        orderId: job.orderId,
+        productId: job.productId,
+        jobType: 'send'
+      });
+      return { success: true };
+    }
+    const result = await extractYahooTradeMessages(tab.id);
+    if (!result?.success) throw new Error(result?.error || 'message extraction failed');
+    await updateYahooMessageStatus({
+      orderId: job.orderId,
+      productId: job.productId,
+      jobType: 'fetch',
+      messageHtml: result.messageHtml
+    });
+    return { success: true };
+  } catch (error) {
+    await updateYahooMessageStatus({
+      orderId: job.orderId,
+      productId: job.productId,
+      jobType: job.jobType === 'send' ? 'send' : 'fetch',
+      error: error?.message || String(error || 'message job failed')
+    }).catch(() => {});
+    return { success: false, error: error?.message || String(error || 'message job failed') };
+  } finally {
+    if (tab?._gdaipaiCreatedTabIds) {
+      await closeTabsForTransactionFlow(tab._gdaipaiCreatedTabIds).catch(() => {});
+    } else if (tab?.id) {
+      await closeTaskTab(tab.id).catch(() => {});
+    }
+  }
+}
+
+async function runYahooMessageJobs() {
+  const jobs = await fetchYahooMessageJobs();
+  for (const job of jobs) {
+    await executeYahooMessageJob(job);
+  }
+}
+
 async function runConfirmReceiptJobs() {
   const jobs = await fetchConfirmReceiptJobs();
   if (!jobs.length) {
@@ -5733,6 +5884,8 @@ async function executeNextWorkflowAction() {
     });
   } else if (idleAction?.action === 'manual_order_import') {
     await runManualOrderImportJobs();
+  } else if (idleAction?.action === 'yahoo_message') {
+    await runYahooMessageJobs();
   } else if (idleAction?.action === 'confirm_receipt') {
     await runConfirmReceiptJobs();
   } else if (idleAction?.action === 'scan') {
@@ -5969,6 +6122,14 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   pollAndExecute,
   runTransactionStartJobs,
   runPaymentJobs,
+  fetchYahooMessageJobs,
+  updateYahooMessageStatus,
+  getYahooTradeMessageExtractScript,
+  getYahooTradeMessageSendScript,
+  extractYahooTradeMessages,
+  sendYahooTradeMessage,
+  executeYahooMessageJob,
+  runYahooMessageJobs,
   runConfirmReceiptJobs,
   extractAuctionIdFromText,
   normalizeWorkerIntervalMs,

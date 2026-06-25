@@ -575,6 +575,125 @@ function buildAdminLogsQuery({ pageSize, offset }) {
   };
 }
 
+function normalizeMessagesPage(value, fallback = 1) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
+}
+
+function buildAdminMessagesListQuery(filters = {}) {
+  const current = normalizeMessagesPage(filters.current, 1);
+  const pageSize = Math.min(200, normalizeMessagesPage(filters.pageSize, 20));
+  const offset = (current - 1) * pageSize;
+  const where = ["t.status = 'success'"];
+  const params = [];
+  const username = String(filters.username || '').trim();
+  if (username) {
+    where.push('u.username LIKE ?');
+    params.push(`%${username}%`);
+  }
+  const productId = String(filters.productId || '').trim().toLowerCase();
+  if (productId) {
+    where.push('LOWER(COALESCE(o.product_id, t.product_id)) = ?');
+    params.push(productId);
+  }
+  const wonFrom = String(filters.wonFrom || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(wonFrom)) {
+    where.push("substr(COALESCE(o.won_at, ''), 1, 10) >= ?");
+    params.push(wonFrom);
+  }
+  const wonTo = String(filters.wonTo || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(wonTo)) {
+    where.push("substr(COALESCE(o.won_at, ''), 1, 10) <= ?");
+    params.push(wonTo);
+  }
+  const fromSql = `FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN users u ON u.id = t.user_id
+     LEFT JOIN products p ON p.product_id = COALESCE(o.product_id, t.product_id)
+     LEFT JOIN yahoo_trade_messages m ON m.order_id = o.id
+     WHERE ${where.join(' AND ')}`;
+  return {
+    rows: {
+      sql: `SELECT o.id AS order_id,
+            COALESCE(o.product_id, t.product_id) AS product_id,
+            o.won_at,
+            o.won_time_text,
+            o.transaction_url,
+            p.product_title,
+            COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            u.id AS user_id,
+            u.username,
+            m.message_html,
+            m.fetch_status,
+            m.fetch_error,
+            m.send_status,
+            m.send_error,
+            m.updated_at AS message_updated_at
+     ${fromSql}
+     ORDER BY datetime(COALESCE(o.won_at, t.updated_at)) DESC, o.id DESC
+     LIMIT ? OFFSET ?`,
+      params: [...params, pageSize, offset]
+    },
+    count: {
+      sql: `SELECT COUNT(*) AS total ${fromSql}`,
+      params
+    },
+    pagination: { current, pageSize }
+  };
+}
+
+async function requestYahooMessageFetch(database, orderId) {
+  const id = Number(orderId || 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    const error = new Error('valid order id is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const order = await database.getOne(
+    `SELECT o.id AS order_id, COALESCE(o.product_id, t.product_id) AS product_id
+     FROM orders o
+     INNER JOIN tasks t ON t.id = o.task_id
+     WHERE o.id = ? AND t.status = 'success'`,
+    [id]
+  );
+  if (!order) {
+    const error = new Error('order not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  await database.query(
+    `INSERT INTO yahoo_trade_messages (order_id, product_id, fetch_status, fetch_requested_at, fetch_error, created_at)
+     VALUES (?, ?, 'pending', CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP)
+     ON CONFLICT(order_id) DO UPDATE SET
+       product_id = excluded.product_id,
+       fetch_status = 'pending',
+       fetch_requested_at = CURRENT_TIMESTAMP,
+       fetch_error = NULL`,
+    [order.order_id, order.product_id]
+  );
+  return { success: true, orderId: order.order_id, productId: order.product_id };
+}
+
+async function requestYahooMessageSend(database, orderId, messageText) {
+  const text = String(messageText || '').trim();
+  if (!text) {
+    const error = new Error('message is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const result = await requestYahooMessageFetch(database, orderId);
+  await database.query(
+    `UPDATE yahoo_trade_messages
+     SET send_status = 'pending',
+         send_text = ?,
+         send_requested_at = CURRENT_TIMESTAMP,
+         send_error = NULL
+     WHERE order_id = ?`,
+    [text, result.orderId]
+  );
+  return { ...result, sendRequested: true };
+}
+
 function normalizeReportPage(value, fallback = 1) {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
@@ -1249,6 +1368,36 @@ router.get('/orders/user-won-date-range', async (req, res) => {
   const query = buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate });
   const items = await db.getAll(query.sql, query.params);
   res.json({ items: items.map(mapAdminOrderListItem), total: items.length });
+});
+
+router.get('/messages', async (req, res) => {
+  const query = buildAdminMessagesListQuery(req.query || {});
+  const [items, countResult] = await Promise.all([
+    db.getAll(query.rows.sql, query.rows.params),
+    db.getOne(query.count.sql, query.count.params)
+  ]);
+  res.json({
+    items,
+    total: countResult?.total || 0,
+    current: query.pagination.current,
+    pageSize: query.pagination.pageSize
+  });
+});
+
+router.post('/messages/:orderId/update', async (req, res) => {
+  try {
+    res.json(await requestYahooMessageFetch(db, req.params.orderId));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'message update request failed' });
+  }
+});
+
+router.post('/messages/:orderId/send', async (req, res) => {
+  try {
+    res.json(await requestYahooMessageSend(db, req.params.orderId, req.body?.message));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'message send request failed' });
+  }
 });
 
 router.get('/online-users', async (req, res) => {
@@ -3279,6 +3428,7 @@ module.exports.buildAdminLogsQuery = buildAdminLogsQuery;
 module.exports.buildTrustedInputReportQueries = buildTrustedInputReportQueries;
 module.exports.buildBidFailureReportQueries = buildBidFailureReportQueries;
 module.exports.buildRecentTaskFailureUserReportQuery = buildRecentTaskFailureUserReportQuery;
+module.exports.buildAdminMessagesListQuery = buildAdminMessagesListQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.calculateOrderPayable = calculateOrderPayable;
@@ -3306,6 +3456,8 @@ module.exports.markProductOrdersForResync = markProductOrdersForResync;
 module.exports.markTrackingRescanByProductId = markTrackingRescanByProductId;
 module.exports.requestScan = requestScan;
 module.exports.requestPayment = requestPayment;
+module.exports.requestYahooMessageFetch = requestYahooMessageFetch;
+module.exports.requestYahooMessageSend = requestYahooMessageSend;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
 module.exports.normalizePositiveIntegerConfig = normalizePositiveIntegerConfig;
 module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;

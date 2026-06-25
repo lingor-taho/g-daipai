@@ -24,6 +24,180 @@ const titleLinkStyle = {
   wordBreak: 'break-word'
 };
 
+const sellerMessageOverlayStyle = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(15, 23, 42, 0.45)',
+  zIndex: 1200,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 12
+};
+
+const sellerMessageDialogStyle = {
+  width: 'min(860px, 100%)',
+  maxHeight: '88vh',
+  background: '#fff',
+  borderRadius: 8,
+  boxShadow: '0 18px 50px rgba(15, 23, 42, 0.25)',
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden'
+};
+
+const sellerMessageHeaderStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '12px 14px',
+  borderBottom: '1px solid #eee',
+  color: colors.text,
+  fontWeight: 700
+};
+
+const sellerMessageButtonStyle = {
+  '--border-radius': '4px',
+  background: '#fff4b8',
+  borderColor: '#f0c94b',
+  color: '#7a5200',
+  fontSize: 12,
+  fontWeight: 700,
+  flex: '0 0 auto'
+};
+
+const sellerMessageBodyStyle = {
+  padding: 12,
+  overflow: 'auto',
+  maxHeight: 'calc(88vh - 54px)',
+  color: '#222',
+  background: '#fff'
+};
+
+const sellerMessageCss = `
+  .seller-message-view, .seller-message-view * {
+    box-sizing: border-box;
+  }
+  .seller-message-view {
+    font-size: 14px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+  .seller-message-view script,
+  .seller-message-view style,
+  .seller-message-view input,
+  .seller-message-view textarea,
+  .seller-message-view button {
+    display: none !important;
+  }
+  .seller-message-view .acMdMsgForm,
+  .seller-message-view .untPreMsg,
+  .seller-message-view #messagelist,
+  .seller-message-view ul,
+  .seller-message-view ol {
+    margin: 0;
+    padding: 0;
+  }
+  .seller-message-view li {
+    list-style: none;
+  }
+  .seller-message-view dl,
+  .seller-message-view li > div {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 0;
+    margin: 0 0 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #ffffd8;
+  }
+  .seller-message-view .yahoo-own-message,
+  .seller-message-view dl.ptsOwn {
+    background: #f0f0ff;
+  }
+  .seller-message-view dt,
+  .seller-message-view li > div > div:first-child {
+    padding: 12px 8px;
+    text-align: center;
+    color: #666;
+    background: rgba(255, 255, 255, 0.35);
+  }
+  .seller-message-view dt p,
+  .seller-message-view dt span {
+    display: block;
+    margin: 0 0 6px;
+  }
+  .seller-message-view #buyerid,
+  .seller-message-view .decUsrName {
+    color: #c96b00;
+    font-weight: 700;
+  }
+  .seller-message-view dl.ptsOwn #buyerid,
+  .seller-message-view .yahoo-own-message #buyerid,
+  .seller-message-view .yahoo-own-message .decUsrName {
+    color: #111;
+  }
+  .seller-message-view .decTime {
+    color: #888;
+    font-size: 12px;
+    font-weight: 400;
+  }
+  .seller-message-view dd,
+  .seller-message-view li > div > div:last-child {
+    margin: 0;
+    padding: 12px;
+    white-space: pre-wrap;
+    color: #111;
+  }
+  @media (max-width: 520px) {
+    .seller-message-view {
+      font-size: 13px;
+    }
+    .seller-message-view dl,
+    .seller-message-view li > div {
+      grid-template-columns: 86px minmax(0, 1fr);
+    }
+    .seller-message-view dt,
+    .seller-message-view li > div > div:first-child,
+    .seller-message-view dd,
+    .seller-message-view li > div > div:last-child {
+      padding: 10px 8px;
+    }
+  }
+`;
+
+function sanitizeTradeHtml(html) {
+  if (!html) return '';
+  const doc = new DOMParser().parseFromString(String(html), 'text/html');
+  doc.querySelectorAll('script, style, iframe, object, embed').forEach(node => node.remove());
+  doc.querySelectorAll('*').forEach(node => {
+    [...node.attributes].forEach(attr => {
+      const name = attr.name.toLowerCase();
+      const value = String(attr.value || '').trim().toLowerCase();
+      if (name.startsWith('on') || (['href', 'src', 'action'].includes(name) && value.startsWith('javascript:'))) {
+        node.removeAttribute(attr.name);
+      }
+    });
+  });
+  return doc.body.innerHTML;
+}
+
+function renderTradeHtml(html) {
+  const safeHtml = sanitizeTradeHtml(html);
+  if (!safeHtml) return '';
+  const doc = new DOMParser().parseFromString(safeHtml, 'text/html');
+  doc.querySelectorAll('dl').forEach(dl => {
+    const name = (dl.querySelector('dt')?.textContent || '').trim();
+    dl.classList.add(name.includes('\u3042\u306a\u305f') ? 'yahoo-own-message' : 'yahoo-partner-message');
+  });
+  doc.querySelectorAll('li > div').forEach(row => {
+    const name = (row.firstElementChild?.textContent || '').trim();
+    row.classList.add(name.includes('\u3042\u306a\u305f') ? 'yahoo-own-message' : 'yahoo-partner-message');
+  });
+  return doc.body.innerHTML;
+}
+
 function formatJPY(value) {
   const amount = Number(value || 0);
   return amount > 0 ? `${amount.toLocaleString('ja-JP')}円` : '-';
@@ -61,6 +235,7 @@ export default function WonItems() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sellerMessageModal, setSellerMessageModal] = useState(null);
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -180,6 +355,18 @@ export default function WonItems() {
                       </>
                     ) : null}
                   </div>
+                  {item.seller_message_html ? (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                      <Button
+                        size="mini"
+                        fill="outline"
+                        style={sellerMessageButtonStyle}
+                        onClick={() => setSellerMessageModal(item)}
+                      >
+                        卖家消息
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </List.Item>
@@ -193,6 +380,29 @@ export default function WonItems() {
           </div>
         )}
       </List>
+      {sellerMessageModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={sellerMessageOverlayStyle}
+          onClick={() => setSellerMessageModal(null)}
+        >
+          <div style={sellerMessageDialogStyle} onClick={event => event.stopPropagation()}>
+            <div style={sellerMessageHeaderStyle}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                卖家消息：{sellerMessageModal.product_id}
+              </span>
+              <Button size="mini" fill="none" onClick={() => setSellerMessageModal(null)}>关闭</Button>
+            </div>
+            <style>{sellerMessageCss}</style>
+            <div
+              className="seller-message-view"
+              style={sellerMessageBodyStyle}
+              dangerouslySetInnerHTML={{ __html: renderTradeHtml(sellerMessageModal.seller_message_html) }}
+            />
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

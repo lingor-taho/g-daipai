@@ -730,7 +730,9 @@ router.get('/won', async (req, res) => {
          o.order_status,
          o.shipping_company,
          o.shipped_at,
-         o.tracking_number
+         o.tracking_number,
+         CASE WHEN m.message_html IS NOT NULL AND TRIM(m.message_html) <> '' THEN m.message_html ELSE NULL END AS seller_message_html,
+         m.updated_at AS seller_message_updated_at
        FROM tasks won_task
        LEFT JOIN orders o ON o.task_id = won_task.id
        INNER JOIN tasks t ON t.id = (
@@ -742,6 +744,7 @@ router.get('/won', async (req, res) => {
          LIMIT 1
        )
        LEFT JOIN products p ON p.product_id = won_task.product_id
+       LEFT JOIN yahoo_trade_messages m ON m.order_id = o.id
        WHERE won_task.user_id = ?
          AND won_task.status = 'success'
        ORDER BY datetime(COALESCE(o.won_at, won_task.updated_at)) DESC, won_task.id DESC

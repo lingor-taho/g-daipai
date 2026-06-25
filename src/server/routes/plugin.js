@@ -558,6 +558,9 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   if (Number(config.manualOrderImportPending || 0) > 0) {
     return { action: 'manual_order_import', today, manualOrderImportPending: Number(config.manualOrderImportPending || 0) };
   }
+  if (Number(config.yahooMessagePending || 0) > 0) {
+    return { action: 'yahoo_message', today, yahooMessagePending: Number(config.yahooMessagePending || 0) };
+  }
   const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
   const transactionRequested = Number(config.transactionStartRequested || 0) === 1;
   if (transactionRequested || shouldAutoRequestTransactionStart({ ...config, transactionStartHour }, nowMs)) {
@@ -619,6 +622,8 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
     await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   } else if (action === 'scan') {
     await saveConfigValue(database, 'scan_idle_counter', '0');
+  } else if (action === 'yahoo_message') {
+    // Message reading/sending is an explicit queue and must not consume the D-scan counter.
   } else if (action === 'manual_order_import') {
     // Import is its own workflow step and must not consume the D-scan counter.
   } else {
@@ -656,6 +661,7 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   const updatedAt = Object.fromEntries(rows.map(row => [row.key, row.updated_at]));
   let manualOrderImportPending = 0;
+  let yahooMessagePending = 0;
   if (typeof database.getOne === 'function') {
     const pendingImport = await database.getOne(
       `SELECT COUNT(*) AS count
@@ -663,9 +669,17 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
        WHERE status = 'requested'`
     );
     manualOrderImportPending = Number(pendingImport?.count || 0);
+    const pendingMessages = await database.getOne(
+      `SELECT COUNT(*) AS count
+       FROM yahoo_trade_messages
+       WHERE fetch_status = 'pending'
+          OR send_status = 'pending'`
+    );
+    yahooMessagePending = Number(pendingMessages?.count || 0);
   }
   return {
     manualOrderImportPending,
+    yahooMessagePending,
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
     transactionStartHourUpdatedAt: updatedAt.transaction_start_hour || '',
     transactionStartRequested: Number(values.transaction_start_requested || 0),
@@ -1791,6 +1805,117 @@ async function getManualOrderImportJob(database = db) {
   };
 }
 
+async function getYahooMessageJobs(database = db, limit = 3) {
+  const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit || 3))));
+  const jobs = await database.getAll(
+    `SELECT m.id AS messageId,
+            m.order_id AS orderId,
+            COALESCE(m.product_id, o.product_id, t.product_id) AS productId,
+            m.fetch_status AS fetchStatus,
+            m.send_status AS sendStatus,
+            m.send_text AS sendText,
+            o.transaction_url AS transactionUrl,
+            COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS productType
+     FROM yahoo_trade_messages m
+     INNER JOIN orders o ON o.id = m.order_id
+     INNER JOIN tasks t ON t.id = o.task_id
+     LEFT JOIN products p ON p.product_id = COALESCE(o.product_id, t.product_id)
+     WHERE m.fetch_status = 'pending'
+        OR m.send_status = 'pending'
+     ORDER BY datetime(COALESCE(m.send_requested_at, m.fetch_requested_at, m.created_at)) ASC, m.id ASC
+     LIMIT ?`,
+    [safeLimit]
+  );
+  for (const job of jobs) {
+    if (job.sendStatus === 'pending') {
+      await database.query(
+        `UPDATE yahoo_trade_messages
+         SET send_status = 'processing',
+             send_started_at = CURRENT_TIMESTAMP,
+             send_error = NULL
+         WHERE id = ? AND send_status = 'pending'`,
+        [job.messageId]
+      );
+      job.jobType = 'send';
+    } else {
+      await database.query(
+        `UPDATE yahoo_trade_messages
+         SET fetch_status = 'processing',
+             fetch_started_at = CURRENT_TIMESTAMP,
+             fetch_error = NULL
+         WHERE id = ? AND fetch_status = 'pending'`,
+        [job.messageId]
+      );
+      job.jobType = 'fetch';
+    }
+  }
+  return { jobs, total: jobs.length };
+}
+
+async function updateYahooMessageStatus(payload = {}, database = db) {
+  const orderId = Number(payload.orderId || 0);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    const error = new Error('valid orderId is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const jobType = payload.jobType === 'send' ? 'send' : 'fetch';
+  const errorText = String(payload.error || '').trim();
+  if (jobType === 'send') {
+    if (errorText) {
+      const result = await database.query(
+        `UPDATE yahoo_trade_messages
+         SET send_status = 'failed',
+             send_error = ?,
+             updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+         WHERE order_id = ?`,
+        [errorText, orderId]
+      );
+      return { updated: result.rowCount || 0 };
+    }
+    const messageHtml = String(payload.messageHtml || '').trim();
+    const result = await database.query(
+      `UPDATE yahoo_trade_messages
+       SET send_status = 'idle',
+           send_text = NULL,
+           send_error = NULL,
+           last_message_sent_at = CURRENT_TIMESTAMP,
+           message_html = COALESCE(NULLIF(?, ''), message_html),
+           fetch_status = CASE WHEN NULLIF(?, '') IS NULL THEN fetch_status ELSE 'idle' END,
+           updated_at = CASE WHEN NULLIF(?, '') IS NULL THEN updated_at ELSE CURRENT_TIMESTAMP END
+       WHERE order_id = ?`,
+      [messageHtml, messageHtml, messageHtml, orderId]
+    );
+    return { updated: result.rowCount || 0 };
+  }
+  if (errorText) {
+    const result = await database.query(
+      `UPDATE yahoo_trade_messages
+       SET fetch_status = 'failed',
+           fetch_error = ?
+       WHERE order_id = ?`,
+      [errorText, orderId]
+    );
+    return { updated: result.rowCount || 0 };
+  }
+  const messageHtml = String(payload.messageHtml || '').trim();
+  if (!messageHtml) {
+    const error = new Error('messageHtml is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const result = await database.query(
+    `UPDATE yahoo_trade_messages
+     SET fetch_status = 'idle',
+         fetch_error = NULL,
+         message_html = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE order_id = ?`,
+    [messageHtml, orderId]
+  );
+  return { updated: result.rowCount || 0 };
+}
+
 async function updateManualOrderImportStatus(payload = {}, database = db) {
   const batchId = Number(payload.batchId || payload.batch_id || 0);
   if (!Number.isInteger(batchId) || batchId <= 0) {
@@ -2731,6 +2856,24 @@ router.post('/manual-order-import/status', async (req, res) => {
   }
 });
 
+router.get('/yahoo-messages/jobs', async (req, res) => {
+  try {
+    const result = await getYahooMessageJobs(db, req.query.limit || 3);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'message jobs failed' });
+  }
+});
+
+router.post('/yahoo-messages/status', async (req, res) => {
+  try {
+    const result = await updateYahooMessageStatus(req.body || {}, db);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'message status update failed' });
+  }
+});
+
 router.post('/scan/status', async (req, res) => {
   try {
     const result = await updateScanStatus(req.body || {});
@@ -2962,6 +3105,8 @@ module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.syncYahooWonOrders = syncYahooWonOrders;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
+module.exports.getYahooMessageJobs = getYahooMessageJobs;
+module.exports.updateYahooMessageStatus = updateYahooMessageStatus;
 module.exports.buildDaipaiSheetRow = buildDaipaiSheetRow;
 module.exports.calculateSheetPayable = calculateSheetPayable;
 module.exports.getOrdersForSheetAppend = getOrdersForSheetAppend;

@@ -20,10 +20,11 @@ const menuItemsConfig = [
 ];
 
 menuItemsConfig.push({ key: '/online-users', fullLabel: '在线用户', shortLabel: '在', mobileLabel: '在线' });
+menuItemsConfig.push({ key: '/message-read', fullLabel: '消息读取', shortLabel: '消', mobileLabel: '消息' });
 
 const orderedMenuItemsConfig = [
-  ...menuItemsConfig.filter(item => item.key !== '/reports'),
-  ...menuItemsConfig.filter(item => item.key === '/reports')
+  ...menuItemsConfig.filter(item => item.key !== '/message-read'),
+  ...menuItemsConfig.filter(item => item.key === '/message-read')
 ];
 
 function renderPaymentAlertMessage(messageText: string) {

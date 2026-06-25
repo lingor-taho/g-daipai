@@ -189,6 +189,27 @@ function testNoServiceWorkerLifecycleErrorDetection() {
   assert.equal(api.isNoServiceWorkerLifecycleError(new Error('payment failed')), false);
 }
 
+function testYahooTradeMessageSelectorsCoverNormalAndStorePages() {
+  const api = loadBackgroundForTest();
+
+  assert.match(api.getYahooTradeMessageExtractScript(), /messagelist/);
+  assert.match(api.getYahooTradeMessageExtractScript(), /sc-c46fd2ce-0/);
+  assert.match(api.getYahooTradeMessageSendScript('hello'), /submitButton/);
+  assert.match(api.getYahooTradeMessageSendScript('hello'), /#msg button/);
+  assert.match(api.getYahooTradeMessageSendScript('hello'), /textarea/);
+}
+
+function testSendYahooMessageJobDoesNotAutoFetchAfterSend() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
+  assert.ok(sendBranch, 'send branch should be present');
+  assert.doesNotMatch(
+    sendBranch[1],
+    /extractYahooTradeMessages/,
+    'sending a Yahoo message should not automatically fetch messages afterward'
+  );
+}
+
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
   const api = loadBackgroundForTest();
   const calls = [];
@@ -7144,7 +7165,9 @@ async function run() {
   await testWithTimeoutMarksCloseTab();
   testTaskExecutionTimeoutIsLongerForMultiBid();
   testPendingFinalRetryDelayIsShortForDirectBid();
-  testNoServiceWorkerLifecycleErrorDetection();
+testNoServiceWorkerLifecycleErrorDetection();
+testYahooTradeMessageSelectorsCoverNormalAndStorePages();
+testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleActionTimeoutErrorIncludesActionName();

@@ -23,3 +23,15 @@ assert.equal(
   true,
   'WonItems page must show the purchase page button only for completed orders'
 );
+
+assert.equal(
+  source.includes('卖家消息') && source.includes('seller_message_html') && source.includes('sellerMessageModal'),
+  true,
+  'WonItems page must show a seller message button and read-only modal when fetched message HTML exists'
+);
+
+assert.equal(
+  source.includes('seller-message-view') && !source.includes('sendSellerMessage'),
+  true,
+  'WonItems seller message modal must be read-only and use scoped message styles'
+);

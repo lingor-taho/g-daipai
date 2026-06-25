@@ -239,6 +239,13 @@ function testWonTaskListUsesAuthenticatedUserIdAndCapsLimit() {
   assert.throws(() => buildWonTaskListInput(null, {}), /not logged in/);
 }
 
+function testWonTaskRouteExposesFetchedSellerMessagesOnly() {
+  const source = require('fs').readFileSync(require('path').join(__dirname, 'task.js'), 'utf8');
+  assert.match(source, /LEFT JOIN yahoo_trade_messages m ON m\.order_id = o\.id/);
+  assert.match(source, /CASE WHEN m\.message_html IS NOT NULL AND TRIM\(m\.message_html\) <> '' THEN m\.message_html ELSE NULL END AS seller_message_html/);
+  assert.match(source, /m\.updated_at AS seller_message_updated_at/);
+}
+
 function testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit() {
   const input = buildActiveBiddingTaskListInput({ id: 9 }, { page: '2', limit: '999' });
   assert.equal(input.userId, 9);
@@ -606,6 +613,7 @@ testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
 testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
 testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
+testWonTaskRouteExposesFetchedSellerMessagesOnly();
 testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testProductTypeFallsBackToTaxLabel();
