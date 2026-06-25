@@ -5803,6 +5803,7 @@ async function runYahooMessageJobs() {
   for (const job of jobs) {
     await executeYahooMessageJob(job);
   }
+  return jobs.length;
 }
 
 async function runConfirmReceiptJobs() {
@@ -5864,6 +5865,8 @@ async function runWorkflowAction() {
   if (await pauseIdleWorkForOpenManualPin()) {
     return;
   }
+  const messageJobCount = await runYahooMessageJobs();
+  if (messageJobCount > 0) return;
   const now = Date.now();
   if (now - lastWorkflowSyncAt < idleSyncIntervalMs) return;
   workflowRunning = true;

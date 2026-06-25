@@ -7132,6 +7132,35 @@ async function testRunWorkflowActionRunsManualImportSeparatelyFromScan() {
   assert.match(completeCall?.body || '', /manual_order_import/);
 }
 
+async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {
+  const calls = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      calls.push({ url: value, body: options.body || '' });
+      if (value.includes('/api/plugin/config')) {
+        return { ok: true, async json() { return { idleSyncIntervalMinutes: 60 }; } };
+      }
+      if (value.includes('/api/plugin/yahoo-messages/jobs')) {
+        return { ok: true, async json() { return { success: true, jobs: [] }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/next')) {
+        return { ok: true, async json() { return { success: true, action: 'none' }; } };
+      }
+      if (value.includes('/api/plugin/idle-action/complete')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runWorkflowAction();
+  await api.runWorkflowAction();
+
+  assert.equal(calls.filter(call => call.url.includes('/api/plugin/yahoo-messages/jobs')).length, 2);
+  assert.equal(calls.filter(call => call.url.includes('/api/plugin/idle-action/next')).length, 1);
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -7303,6 +7332,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
   await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();
   await testRunWorkflowActionRunsManualImportSeparatelyFromScan();
+  await testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }
