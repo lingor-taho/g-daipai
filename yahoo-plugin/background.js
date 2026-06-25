@@ -1258,7 +1258,7 @@ async function getPaymentPageState(tabId) {
         .map((radio, index) => {
           const text = optionTextFromRadio(radio);
           const afterShippingHeader = shippingHeader
-            ? !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
+            ? shippingHeader.contains?.(radio) || !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
             : shippingKeywords.test(text);
           const looksLikePaymentMethod = paymentKeywords.test(text) && !shippingKeywords.test(text);
           return {
@@ -2083,7 +2083,7 @@ async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
         .map((radio, index) => {
           const text = optionTextFromRadio(radio);
           const afterShippingHeader = shippingHeader
-            ? !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
+            ? shippingHeader.contains?.(radio) || !!(shippingHeader.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)
             : shippingKeywords.test(text);
           const looksLikePaymentMethod = paymentKeywords.test(text) && !shippingKeywords.test(text);
           return {
@@ -5870,6 +5870,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   getPaymentActionClickPoint,
   getPaymentShippingChangeClickPoint,
   clickPaymentShippingChangeButton,
+  selectPaymentShippingOption,
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,

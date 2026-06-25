@@ -4699,6 +4699,98 @@ async function testStorePaymentShippingChangeUsesDlvrySelectorJsClick() {
   assert.equal(shippingChange.clicked, true);
 }
 
+async function testSelectPaymentShippingOptionAcceptsHeaderContainerContainingRadios() {
+  const body = { textContent: '', parentElement: null };
+  const shippingContainer = {
+    textContent: '\u914d\u9001\u65b9\u6cd5 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba \u9001\u6599\uff1a760\u5186 \u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08185\u5186\uff09 \u9001\u6599\uff1a185\u5186',
+    parentElement: body,
+    contains(node) {
+      return node === radio760 || node === radio185 || node === label760 || node === label185;
+    },
+    compareDocumentPosition() {
+      return 0;
+    },
+    getBoundingClientRect() {
+      return { width: 600, height: 160 };
+    }
+  };
+  const label760 = {
+    textContent: '\u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba \u9001\u6599\uff1a760\u5186',
+    parentElement: shippingContainer,
+    closest() { return this; },
+    getBoundingClientRect() { return { width: 500, height: 40 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; },
+    dispatchEvent() { return true; }
+  };
+  const label185 = {
+    textContent: '\u30af\u30ea\u30c3\u30af\u30dd\u30b9\u30c8\uff08185\u5186\uff09 \u9001\u6599\uff1a185\u5186',
+    parentElement: shippingContainer,
+    closest() { return this; },
+    getBoundingClientRect() { return { width: 500, height: 40 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; },
+    dispatchEvent() { return true; }
+  };
+  const radio760 = {
+    id: '',
+    textContent: '',
+    checked: true,
+    disabled: false,
+    parentElement: label760,
+    closest() { return label760; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    dispatchEvent(event) { this.events = [...(this.events || []), event.type]; return true; }
+  };
+  const radio185 = {
+    id: '',
+    textContent: '',
+    checked: false,
+    disabled: false,
+    parentElement: label185,
+    closest() { return label185; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; },
+    dispatchEvent(event) { this.events = [...(this.events || []), event.type]; return true; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(185)`, {
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+          Event: class Event { constructor(type) { this.type = type; } },
+          PointerEvent: class PointerEvent { constructor(type) { this.type = type; } },
+          MouseEvent: class MouseEvent { constructor(type) { this.type = type; } },
+          CSS: { escape(value) { return String(value); } },
+          window: {
+            getComputedStyle() {
+              return { display: 'block', visibility: 'visible', opacity: '1' };
+            }
+          },
+          document: {
+            body,
+            querySelector() { return null; },
+            querySelectorAll(selector) {
+              if (String(selector).includes('input[type="radio"]')) return [radio760, radio185];
+              if (String(selector).includes('h1')) return [shippingContainer];
+              return [];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const result = await api.selectPaymentShippingOption(77, 185);
+
+  assert.equal(result.success, true);
+  assert.equal(result.selectedShippingJpy, 185);
+  assert.equal(label185.clicked, true);
+  assert.deepEqual(radio185.events, ['input', 'change']);
+}
+
 async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -6871,6 +6963,7 @@ async function run() {
   await testPaymentShippingChangeClickPointUsesShippingSectionRoleButton();
   await testStorePaymentShippingChangeUsesShortChangeJsClick();
   await testStorePaymentShippingChangeUsesDlvrySelectorJsClick();
+  await testSelectPaymentShippingOptionAcceptsHeaderContainerContainingRadios();
   await testRunPaymentJobsReportsUnknownPaymentPageFailure();
   testBuildPaymentFailurePayloadIncludesProductId();
   testManualCaptchaTabDetection();
