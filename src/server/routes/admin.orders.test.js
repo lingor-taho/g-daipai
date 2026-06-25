@@ -448,6 +448,7 @@ function testAdminOrdersQueryIncludesProductType() {
   const query = buildAdminOrdersListQuery({ pageSize: 10, offset: 0 });
 
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
+  assert.match(query.sql, /p\.product_title AS product_title/);
   assert.match(query.sql, /p\.product_url AS product_url/);
   assert.match(query.sql, /p\.shipping_fee_text AS shipping_fee_text/);
   assert.match(query.sql, /COALESCE\(p\.tax_type, 'tax_zero'\) AS tax_type/);

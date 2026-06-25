@@ -207,6 +207,7 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
   return {
     sql: `SELECT o.*,
             COALESCE(o.product_id, t.product_id) AS product_id,
+            p.product_title AS product_title,
             p.product_url AS product_url,
             p.shipping_fee_text AS shipping_fee_text,
             COALESCE(p.tax_type, 'tax_zero') AS tax_type,
