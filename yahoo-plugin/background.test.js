@@ -7139,6 +7139,69 @@ async function testRunWorkflowActionRunsManualImportSeparatelyFromScan() {
   assert.match(completeCall?.body || '', /manual_order_import/);
 }
 
+async function testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType() {
+  const fetchCalls = [];
+  let sendMessageCount = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), options });
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create(createInfo) {
+        return { id: createInfo.url.includes('/my/won') ? 10 : 20, status: 'complete', url: createInfo.url };
+      },
+      async get(tabId) {
+        return { id: tabId, status: 'complete' };
+      },
+      async sendMessage(tabId, message) {
+        sendMessageCount += 1;
+        if (message?.type === 'EXTRACT_ORDER_IMPORT_PAGE') {
+          return {
+            success: true,
+            orders: [{
+              productId: 'g1234019868',
+              title: 'store won item',
+              price: '41251',
+              wonTimeText: '6/25 23:48',
+              url: 'https://auctions.yahoo.co.jp/jp/auction/g1234019868',
+              transactionUrl: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=g1234019868',
+              productType: 'store'
+            }],
+            nextPageUrl: ''
+          };
+        }
+        if (message?.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'g1234019868',
+            title: 'snapshot title',
+            imageUrl: 'https://example.com/item.jpg',
+            shippingFeeText: '1340\u5186'
+          };
+        }
+        return {};
+      }
+    }
+  });
+
+  const result = await api.executeManualOrderImportJob({
+    batchId: 7,
+    startDate: '2026-06-25',
+    endDate: '2026-06-25',
+    maxPages: 1
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(sendMessageCount, 2);
+  const statusCall = fetchCalls.find(call => /\/api\/plugin\/manual-order-import\/status$/.test(call.url));
+  assert.ok(statusCall);
+  const payload = JSON.parse(statusCall.options.body);
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0].productType, 'store');
+  assert.equal(payload.items[0].taxType, 'tax_included');
+}
+
 async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -7340,6 +7403,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
   await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();
   await testRunWorkflowActionRunsManualImportSeparatelyFromScan();
+  await testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType();
   await testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();

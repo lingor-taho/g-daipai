@@ -610,7 +610,7 @@ export default function OrdersPage() {
         <Space wrap className="admin-mobile-action-space admin-orders-action-panel">
           <span className="admin-orders-settle-line">
             <span className="admin-orders-rate-row">
-              <Typography.Text>结算汇率</Typography.Text>
+              <Typography.Text>今日结算汇率</Typography.Text>
               <InputNumber min={0} step={0.001} precision={4} value={settlementRate} onChange={value => setSettlementRate(value === null ? null : Number(value))} />
             </span>
             <Button type="primary" loading={settling} onClick={handleSettle}>结算</Button>

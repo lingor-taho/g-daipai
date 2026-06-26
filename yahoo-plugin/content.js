@@ -1284,6 +1284,14 @@ function extractOrderHistory() {
     return match?.[1] || '';
   }
 
+  function extractOrderProductType(text) {
+    const lines = String(text || '')
+      .split(/\n+|\r+|\s{2,}/)
+      .map(line => normalizeVisibleText(line))
+      .filter(Boolean);
+    return lines.some(line => line === '\u30b9\u30c8\u30a2') ? 'store' : 'normal';
+  }
+
   function extractOrderShippingFeeText(text) {
     const value = String(text || '');
     if (/\u9001\u6599[^\n\r]{0,40}\u7740\u6255\u3044/.test(value)) return '\u7740\u6255\u3044';
@@ -1297,12 +1305,15 @@ function extractOrderHistory() {
   const seen = new Set();
   const orders = [];
   for (const item of containers) {
-    const link = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
-      .find(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
+    const auctionLinks = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
+      .filter(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
+    const uniqueProductIds = [...new Set(auctionLinks
+      .map(a => String(a.href || '').match(/[a-zA-Z]?\d{8,10}/)?.[0]?.toLowerCase())
+      .filter(Boolean))];
+    if (uniqueProductIds.length !== 1) continue;
+    const link = auctionLinks.find(a => String(a.href || '').toLowerCase().includes(uniqueProductIds[0])) || auctionLinks[0];
     if (!link) continue;
-    const match = link.href.match(/[a-zA-Z]?\d{8,10}/);
-    if (!match) continue;
-    const productId = match[0].toLowerCase();
+    const productId = uniqueProductIds[0];
     const text = item.textContent || '';
     const contactLink = [...item.querySelectorAll('a')]
       .find(a => /contact\.auctions\.yahoo\.co\.jp/i.test(String(a.href || a.getAttribute?.('href') || '')) || /\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent)));
@@ -1317,7 +1328,8 @@ function extractOrderHistory() {
       wonTimeText: extractWonTimeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       transactionUrl: contactLink?.href || '',
-      trackingNumber: trackingMatch?.[1] || ''
+      trackingNumber: trackingMatch?.[1] || '',
+      productType: extractOrderProductType(text)
     });
   }
   return orders;

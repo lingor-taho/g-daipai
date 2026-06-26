@@ -3631,7 +3631,8 @@ async function executeManualOrderImportJob(job) {
           finalPrice: order.price || '',
           wonAt: new Date(wonMs).toISOString(),
           wonTimeText: order.wonTimeText || '',
-          transactionUrl: order.transactionUrl || ''
+          transactionUrl: order.transactionUrl || '',
+          productType: order.productType || order.product_type || ''
         });
       }
       if (shouldStop || !pageResult.nextPageUrl) break;
@@ -3641,13 +3642,14 @@ async function executeManualOrderImportJob(job) {
     const items = [];
     for (const item of itemsByProduct.values()) {
       const snapshot = await getProductSnapshotForImport(item.productId, item.productUrl);
+      const productType = item.productType === 'store' || snapshot?.productType === 'store' ? 'store' : 'normal';
       items.push({
         ...item,
         productTitle: snapshot?.title || item.productTitle,
         productImageUrl: snapshot?.imageUrl || '',
         shippingFeeText: snapshot?.shippingFeeText || '',
-        taxType: snapshot?.taxType || 'tax_zero',
-        productType: snapshot?.productType || 'normal'
+        taxType: snapshot?.taxType || (productType === 'store' ? 'tax_included' : 'tax_zero'),
+        productType
       });
     }
 
@@ -6120,6 +6122,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   assertPaymentAmountMatches,
   syncIdleYahooPages,
   syncMonitorYahooPages,
+  executeManualOrderImportJob,
   injectContentScript,
   runWorkflowAction,
   executeBidTask,

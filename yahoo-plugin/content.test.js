@@ -2258,6 +2258,75 @@ function testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice() {
   assert.equal(orders[0].price, '31,500');
 }
 
+function testOrderHistoryKeepsWonTimeScopedToEachRow() {
+  const first = createOrderContainer(
+    '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n41,251\u5186\n\u30b9\u30c8\u30a2\n6/25 23:48\n\u5546\u54c1ID\uff1ag1234019868',
+    '1\u5186 \u30d7\u30e9\u30c1\u30ca #3776 \u30da\u30f3\u5148',
+    'https://auctions.yahoo.co.jp/jp/auction/g1234019868',
+    ['41,251\u5186']
+  );
+  const second = createOrderContainer(
+    '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n25,851\u5186\n\u30b9\u30c8\u30a2\n6/25 23:26\n\u5546\u54c1ID\uff1a1234017498',
+    '1\u5186 \u4efb\u5929\u5802 GB \u904a\u622f\u738b',
+    'https://auctions.yahoo.co.jp/jp/auction/1234017498',
+    ['25,851\u5186']
+  );
+  const outer = {
+    textContent: `${first.textContent}\n${second.textContent}`,
+    querySelectorAll(selector) {
+      if (selector === 'a[href*="/jp/auction/"]') {
+        return [
+          createTestAnchor('outer first', 'https://auctions.yahoo.co.jp/jp/auction/g1234019868'),
+          createTestAnchor('outer second', 'https://auctions.yahoo.co.jp/jp/auction/1234017498')
+        ];
+      }
+      if (selector === 'a') {
+        return [
+          createTestAnchor('\u53d6\u5f15\u9023\u7d61', 'https://contact.auctions.yahoo.co.jp/seller/top?aid=g1234019868'),
+          createTestAnchor('\u53d6\u5f15\u9023\u7d61', 'https://contact.auctions.yahoo.co.jp/seller/top?aid=1234017498')
+        ];
+      }
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [outer, first, second];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 2);
+  assert.equal(orders[0].productId, 'g1234019868');
+  assert.equal(orders[0].wonTimeText, '6/25 23:48');
+  assert.equal(orders[1].productId, '1234017498');
+  assert.equal(orders[1].wonTimeText, '6/25 23:26');
+}
+
+function testOrderHistoryExtractsStoreProductTypeFromWonRow() {
+  const orderContainer = createOrderContainer(
+    '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n25,851\u5186\n\u30b9\u30c8\u30a2\n6/25 23:26\n\u5546\u54c1ID\uff1a1234017498',
+    '1\u5186 \u4efb\u5929\u5802 GB \u904a\u622f\u738b',
+    'https://auctions.yahoo.co.jp/jp/auction/1234017498',
+    ['25,851\u5186']
+  );
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productType, 'store');
+}
+
 function testWonHistoryNextPageUsesSharedVisibleTextNormalizer() {
   const nextLink = createTestAnchor('next', 'https://auctions.yahoo.co.jp/my/won?page=2');
   nextLink.getAttribute = name => {
@@ -3474,6 +3543,8 @@ async function run() {
   testOrderHistoryUsesPriceElementWhenTextContentMergesTitleCodeWithPrice();
   testOrderHistoryPriceElementAcceptsRealYenCharacter();
   testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
+  testOrderHistoryKeepsWonTimeScopedToEachRow();
+  testOrderHistoryExtractsStoreProductTypeFromWonRow();
   testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
   testBiddingItemsExtractsOutbidRebidRows();
   testBiddingItemsExtractsRemainingTimeFromListRow();
