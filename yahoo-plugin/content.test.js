@@ -2085,7 +2085,17 @@ function testOrderHistoryPrefersWinningPriceLabelOverFirstYenAmount() {
     'MD ゴールデンアックス',
     'https://auctions.yahoo.co.jp/jp/auction/x1230699905'
   );
+  const itemListRoot = {
+    querySelectorAll(selector) {
+      if (selector === 'li, article, tr') return [orderContainer];
+      return [];
+    }
+  };
   const api = loadContentForTest('', '/my/won', {
+    querySelector(selector) {
+      if (selector === '#itm') return itemListRoot;
+      return null;
+    },
     querySelectorAll(selector) {
       if (selector === 'script') return [];
       if (selector === 'li, article, tr, div') return [orderContainer];
@@ -2306,10 +2316,214 @@ function testOrderHistoryKeepsWonTimeScopedToEachRow() {
   assert.equal(orders[1].wonTimeText, '6/25 23:26');
 }
 
-function testOrderHistoryExtractsStoreProductTypeFromWonRow() {
+function testOrderHistoryUsesVisibleProductIdWhenRowContainsExtraAuctionLink() {
+  const orderContainer = createOrderContainer(
+    '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044\n2,480\u5186\n6/26 11:29\n\u5546\u54c1ID\uff1ah1233553510',
+    'LAVA \u30e8\u30ac\u30e9\u30b0',
+    'https://auctions.yahoo.co.jp/jp/auction/h1233553510',
+    ['2,480\u5186']
+  );
+  const productLink = orderContainer.querySelectorAll('a[href*="/jp/auction/"]')[0];
+  const relatedLink = createTestAnchor('related auction', 'https://auctions.yahoo.co.jp/jp/auction/z9999999999');
+  const originalQuerySelectorAll = orderContainer.querySelectorAll;
+  orderContainer.querySelectorAll = selector => {
+    if (selector === 'a[href*="/jp/auction/"]') return [productLink, relatedLink];
+    return originalQuerySelectorAll.call(orderContainer, selector);
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'h1233553510');
+  assert.equal(orders[0].price, '2,480');
+}
+
+function testOrderHistoryParsesYahooWonListRowsAndSkipsOuterCard() {
+  const first = createOrderContainer(
+    '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044\n2,480\u5186\n6/26 11:29\n\u5546\u54c1ID\uff1ah1233553510',
+    'LAVA \u30e8\u30ac\u30e9\u30b0',
+    'https://auctions.yahoo.co.jp/jp/auction/h1233553510',
+    ['2,480\u5186'],
+    [{ text: '\u53d6\u5f15\u9023\u7d61', href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=h1233553510' }]
+  );
+  const second = createOrderContainer(
+    '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044\n2,480\u5186\n6/26 11:28\n\u5546\u54c1ID\uff1al1227821234',
+    'LAVA \u30e8\u30ac\u30bf\u30aa\u30eb',
+    'https://auctions.yahoo.co.jp/jp/auction/l1227821234',
+    ['2,480\u5186'],
+    [{ text: '\u53d6\u5f15\u9023\u7d61', href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=l1227821234' }]
+  );
+  const outerCard = {
+    textContent: `${first.textContent}\n${second.textContent}`,
+    querySelectorAll(selector) {
+      if (selector === 'a[href*="/jp/auction/"]') {
+        return [
+          ...first.querySelectorAll(selector),
+          ...second.querySelectorAll(selector)
+        ];
+      }
+      if (selector === 'a') {
+        return [
+          ...first.querySelectorAll(selector),
+          ...second.querySelectorAll(selector)
+        ];
+      }
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [outerCard, first, second];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(JSON.stringify(orders.map(order => order.productId)), JSON.stringify(['h1233553510', 'l1227821234']));
+  assert.equal(JSON.stringify(orders.map(order => order.wonTimeText)), JSON.stringify(['6/26 11:29', '6/26 11:28']));
+}
+
+function testOrderImportHistoryScopesExtractionToYahooWonItemList() {
+  const listRow = createOrderContainer(
+    '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044\n2,480\u5186\n6/26 11:29\n\u5546\u54c1ID\uff1ah1233553510',
+    'LAVA \u30e8\u30ac\u30e9\u30b0',
+    'https://auctions.yahoo.co.jp/jp/auction/h1233553510',
+    ['2,480\u5186'],
+    [{ text: '\u53d6\u5f15\u9023\u7d61', href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=h1233553510' }]
+  );
+  const outsideRow = createOrderContainer(
+    '\u30ed\u30b0\u30a4\u30f3\u5c65\u6b74\n999,999\u5186\n1/1 00:00\n\u5546\u54c1ID\uff1az9999999999',
+    'outside item',
+    'https://auctions.yahoo.co.jp/jp/auction/z9999999999',
+    ['999,999\u5186'],
+    [{ text: '\u53d6\u5f15\u9023\u7d61', href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=z9999999999' }]
+  );
+  const itemListRoot = {
+    querySelectorAll(selector) {
+      if (selector === 'li, article, tr, div') return [listRow];
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelector(selector) {
+      if (selector === '#itm') return itemListRoot;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [outsideRow, listRow];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderImportHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productId, 'h1233553510');
+  assert.equal(orders[0].wonTimeText, '6/26 11:29');
+}
+
+function testOrderImportHistoryExtractsStoreProductTypeFromWonRow() {
   const orderContainer = createOrderContainer(
     '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n25,851\u5186\n\u30b9\u30c8\u30a2\n6/25 23:26\n\u5546\u54c1ID\uff1a1234017498',
     '1\u5186 \u4efb\u5929\u5802 GB \u904a\u622f\u738b',
+    'https://auctions.yahoo.co.jp/jp/auction/1234017498',
+    ['25,851\u5186']
+  );
+  const itemListRoot = {
+    querySelectorAll(selector) {
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelector(selector) {
+      if (selector === '#itm') return itemListRoot;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [orderContainer];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderImportHistory();
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productType, 'store');
+}
+
+function testOrderImportHistoryKeepsWonTimeAndTypeScopedToEachWonRow() {
+  const normalRow = createOrderContainer(
+    '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044\n2,480\u5186\n6/26 11:29\n\u5546\u54c1ID\uff1ah1233553510',
+    'LAVA \u30e8\u30ac\u30e9\u30b0',
+    'https://auctions.yahoo.co.jp/jp/auction/h1233553510',
+    ['2,480\u5186'],
+    [{ text: '\u53d6\u5f15\u9023\u7d61', href: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=h1233553510' }]
+  );
+  const storeRow = createOrderContainer(
+    '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n523\u5186\n\u672a\u4f7f\u7528\n\u30b9\u30c8\u30a2\n6/19 21:35\n\u5546\u54c1ID\uff1ao1113090605',
+    '\u30d9\u30b9\u30c8\u30fb\u30aa\u30d6 \u30af\u30e9\u30b7\u30c3\u30af\u30b9',
+    'https://auctions.yahoo.co.jp/jp/auction/o1113090605',
+    ['523\u5186'],
+    [{ text: '\u53d6\u5f15\u9023\u7d61', href: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=o1113090605' }]
+  );
+  const outerCard = {
+    textContent: `${normalRow.textContent}\n${storeRow.textContent}`,
+    querySelectorAll(selector) {
+      if (selector === 'a[href*="/jp/auction/"]') {
+        return [
+          ...normalRow.querySelectorAll(selector),
+          ...storeRow.querySelectorAll(selector)
+        ];
+      }
+      if (selector === 'a') {
+        return [
+          ...normalRow.querySelectorAll(selector),
+          ...storeRow.querySelectorAll(selector)
+        ];
+      }
+      return [];
+    }
+  };
+  const itemListRoot = {
+    querySelectorAll(selector) {
+      if (selector === 'li, article, tr, div') return [outerCard, normalRow, storeRow];
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelector(selector) {
+      if (selector === '#itm') return itemListRoot;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderImportHistory();
+
+  assert.equal(JSON.stringify(orders.map(order => order.productId)), JSON.stringify(['h1233553510', 'o1113090605']));
+  assert.equal(JSON.stringify(orders.map(order => order.wonTimeText)), JSON.stringify(['6/26 11:29', '6/19 21:35']));
+  assert.equal(JSON.stringify(orders.map(order => order.productType)), JSON.stringify(['normal', 'store']));
+}
+
+function testOrderHistoryDoesNotUseImportProductTypeField() {
+  const orderContainer = createOrderContainer(
+    '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n25,851\u5186\n\u30b9\u30c8\u30a2\n6/25 23:26\n\u5546\u54c1ID\uff1a1234017498',
+    '1\u5186 \u4efb\u5929\u5802 GB',
     'https://auctions.yahoo.co.jp/jp/auction/1234017498',
     ['25,851\u5186']
   );
@@ -2324,7 +2538,7 @@ function testOrderHistoryExtractsStoreProductTypeFromWonRow() {
   const orders = api.extractOrderHistory();
 
   assert.equal(orders.length, 1);
-  assert.equal(orders[0].productType, 'store');
+  assert.equal(Object.prototype.hasOwnProperty.call(orders[0], 'productType'), false);
 }
 
 function testWonHistoryNextPageUsesSharedVisibleTextNormalizer() {
@@ -2476,6 +2690,42 @@ function testLoginUrlStillMeansLoggedOut() {
   });
 
   assert.equal(api.detectYahooLoginStatus().status, 'failed');
+}
+
+function testExplicitLoginPromptTextDoesNotMeanLoggedOutWithoutLoginUrl() {
+  const api = loadContentForTest('\u30ed\u30b0\u30a4\u30f3\u304c\u5fc5\u8981\u3067\u3059', '/my/won', {
+    href: 'https://auctions.yahoo.co.jp/my/won'
+  });
+
+  assert.equal(api.detectYahooLoginStatus().status, 'ok');
+}
+
+function testWonPageSeparatedLoginAndRequiredWordsDoNotMeanLoggedOut() {
+  const api = loadContentForTest(
+    '\u30ed\u30b0\u30a4\u30f3\u5c65\u6b74\n\u843d\u672d\u5206\n\u304a\u5c4a\u3051\u5730\u57df \u5fc5\u8981\n\u5546\u54c1ID\uff1ah1233553510',
+    '/my/won',
+    { href: 'https://auctions.yahoo.co.jp/my/won' }
+  );
+
+  assert.equal(api.detectYahooLoginStatus().status, 'ok');
+}
+
+function testWonPageItemListOverridesGlobalLoginPromptText() {
+  const api = loadContentForTest(
+    '\u30ed\u30b0\u30a4\u30f3\u304c\u5fc5\u8981\u3067\u3059\n\u843d\u672d\u5206\n\u5546\u54c1ID\uff1ah1233553510',
+    '/my/won',
+    {
+      href: 'https://auctions.yahoo.co.jp/my/won',
+      querySelector(selector) {
+        if (selector === '#itm a[href*="/jp/auction/"]') {
+          return createTestAnchor('item', 'https://auctions.yahoo.co.jp/jp/auction/h1233553510');
+        }
+        return null;
+      }
+    }
+  );
+
+  assert.equal(api.detectYahooLoginStatus().status, 'ok');
 }
 
 async function testProductPageLoginHintDoesNotShortCircuitBidExecution() {
@@ -3544,7 +3794,12 @@ async function run() {
   testOrderHistoryPriceElementAcceptsRealYenCharacter();
   testOrderHistoryFallbackTreatsCommaSeparatedNumberAsPrice();
   testOrderHistoryKeepsWonTimeScopedToEachRow();
-  testOrderHistoryExtractsStoreProductTypeFromWonRow();
+  testOrderHistoryUsesVisibleProductIdWhenRowContainsExtraAuctionLink();
+  testOrderHistoryParsesYahooWonListRowsAndSkipsOuterCard();
+  testOrderImportHistoryScopesExtractionToYahooWonItemList();
+  testOrderImportHistoryExtractsStoreProductTypeFromWonRow();
+  testOrderImportHistoryKeepsWonTimeAndTypeScopedToEachWonRow();
+  testOrderHistoryDoesNotUseImportProductTypeField();
   testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
   testBiddingItemsExtractsOutbidRebidRows();
   testBiddingItemsExtractsRemainingTimeFromListRow();
@@ -3554,6 +3809,9 @@ async function run() {
   testDetectBundleRequestedComplete();
   testTransactionPageYahooIdTextDoesNotMeanLoggedOut();
   testLoginUrlStillMeansLoggedOut();
+  testExplicitLoginPromptTextDoesNotMeanLoggedOutWithoutLoginUrl();
+  testWonPageSeparatedLoginAndRequiredWordsDoNotMeanLoggedOut();
+  testWonPageItemListOverridesGlobalLoginPromptText();
   await testProductPageLoginHintDoesNotShortCircuitBidExecution();
   testClickTransactionContactForProduct();
   testClickBundleTransactionActionFindsRequestButton();

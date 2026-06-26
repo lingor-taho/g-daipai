@@ -273,6 +273,111 @@ async function testBundleStartWaitsForDecideButtonState() {
   assert.equal(injected, true);
 }
 
+async function testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick() {
+  let readyChecks = 0;
+  let mainClickReadyChecks = 0;
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [{ id: 7, url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578', status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 7);
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return { success: true, state: { canDecide: true, complete: false } };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        if (details.args?.[1] === 'renderReady') {
+          readyChecks += 1;
+          return [{ result: { success: readyChecks >= 3, ready: readyChecks >= 3 } }];
+        }
+        mainClickReadyChecks = readyChecks;
+        return [{ result: { success: true, method: 'click', text: 'まとめて取引を依頼する' } }];
+      }
+    }
+  });
+
+  const result = await api.clickBundleActionAndFollowTab({
+    id: 7,
+    url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578',
+    _gdaipaiCreatedTabIds: [7]
+  }, 'start');
+
+  assert.equal(result.success, true);
+  assert.equal(readyChecks, 3);
+  assert.equal(mainClickReadyChecks, 3);
+}
+
+async function testBundleStartTradePageUsesClickBeforeRequestSubmitFallback() {
+  let nowMs = 0;
+  class FakeDate extends Date {
+    static now() {
+      nowMs += 1000;
+      return nowMs;
+    }
+  }
+  const jsModes = [];
+  let debuggerAttached = false;
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    tabs: {
+      async query() {
+        return [{ id: 8, url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578', status: 'complete', windowId: 1 };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 8);
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canDecide: jsModes.includes('requestSubmit'),
+              complete: false
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        const mode = details.args?.[1] || 'default';
+        if (mode === 'renderReady') {
+          return [{ result: { success: true, ready: true } }];
+        }
+        jsModes.push(mode);
+        return [{ result: { success: true, method: mode, text: 'まとめて取引を依頼する' } }];
+      }
+    },
+    debuggerApi: {
+      async attach() {
+        debuggerAttached = true;
+      }
+    }
+  });
+
+  const result = await api.clickBundleActionAndFollowTab({
+    id: 8,
+    url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578',
+    _gdaipaiCreatedTabIds: [8]
+  }, 'start');
+
+  assert.equal(result.success, true);
+  assert.deepEqual(jsModes, ['click', 'requestSubmit']);
+  assert.equal(debuggerAttached, false);
+}
+
 async function testBundleActionTimeoutErrorIncludesActionName() {
   let nowMs = 0;
   class FakeDate extends Date {
@@ -7270,6 +7375,8 @@ testYahooTradeMessageSelectorsCoverNormalAndStorePages();
 testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
+  await testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick();
+  await testBundleStartTradePageUsesClickBeforeRequestSubmitFallback();
   await testBundleActionTimeoutErrorIncludesActionName();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testNormalBundleRequestCanStartFromInputPage();

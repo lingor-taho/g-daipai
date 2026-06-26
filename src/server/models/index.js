@@ -19,6 +19,64 @@ function ensureColumn(table, column, definition) {
   }
 }
 
+function quoteIdentifier(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function repairStaleTaskForeignKeyReferences() {
+  const staleTable = 'tasks__product_url_not_null_old';
+  const tables = db.prepare(
+    `SELECT name, sql
+     FROM sqlite_master
+     WHERE type = 'table'
+       AND sql LIKE ?`
+  ).all(`%${staleTable}%`);
+  if (!tables.length) return;
+
+  const previousForeignKeys = db.pragma('foreign_keys', { simple: true });
+  const previousLegacyAlterTable = db.pragma('legacy_alter_table', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  db.pragma('legacy_alter_table = ON');
+  const repair = db.transaction(() => {
+    for (const table of tables) {
+      const tableName = table.name;
+      const tempName = `${tableName}__task_fk_repair`;
+      db.prepare(`DROP TABLE IF EXISTS ${quoteIdentifier(tempName)}`).run();
+      const createSql = String(table.sql || '')
+        .replace(new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:"${tableName}"|\\[${tableName}\\]|\\\`${tableName}\\\`|${tableName})`, 'i'), `CREATE TABLE ${quoteIdentifier(tempName)}`)
+        .replace(new RegExp(`REFERENCES\\s+"?${staleTable}"?\\s*\\(`, 'gi'), 'REFERENCES tasks(');
+      const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all().map(col => col.name);
+      const dependentSql = db.prepare(
+        `SELECT type, name, sql
+         FROM sqlite_master
+         WHERE tbl_name = ?
+           AND type IN ('index', 'trigger')
+           AND sql IS NOT NULL`
+      ).all(tableName);
+      db.prepare(createSql).run();
+      const columnList = columns.map(quoteIdentifier).join(', ');
+      db.prepare(`INSERT INTO ${quoteIdentifier(tempName)} (${columnList}) SELECT ${columnList} FROM ${quoteIdentifier(tableName)}`).run();
+      db.prepare(`DROP TABLE ${quoteIdentifier(tableName)}`).run();
+      db.prepare(`ALTER TABLE ${quoteIdentifier(tempName)} RENAME TO ${quoteIdentifier(tableName)}`).run();
+      for (const item of dependentSql) {
+        db.prepare(item.sql).run();
+      }
+      const sequence = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").get();
+      if (sequence && columns.includes('id')) {
+        const maxId = db.prepare(`SELECT COALESCE(MAX(id), 0) AS max_id FROM ${quoteIdentifier(tableName)}`).get().max_id || 0;
+        db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run(tableName);
+        db.prepare('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)').run(tableName, maxId);
+      }
+    }
+  });
+  try {
+    repair();
+  } finally {
+    db.pragma(`legacy_alter_table = ${previousLegacyAlterTable ? 'ON' : 'OFF'}`);
+    db.pragma(`foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+  }
+}
+
 ensureColumn('tasks', 'bid_mode', "VARCHAR(32) DEFAULT 'bid'");
 ensureColumn('tasks', 'user_max_price', 'INTEGER');
 ensureColumn('tasks', 'multi_bid_increment', 'INTEGER');
@@ -307,6 +365,8 @@ db.prepare(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_order_import_items_batch_product
   ON manual_order_import_items(batch_id, product_id)
 `).run();
+
+repairStaleTaskForeignKeyReferences();
 
 module.exports = {
   db,

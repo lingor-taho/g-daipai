@@ -4643,13 +4643,13 @@ function buildBundleActionWaitError(action, error, trustedClick = null) {
     : `bundle ${action} failed`;
 }
 
-async function runMainWorldBundleActionClick(tabId, action) {
+async function runMainWorldBundleActionClick(tabId, action, mode = 'click') {
   const pattern = getBundleActionPatternSource(action);
   if (!pattern) return { success: false, error: 'unknown bundle action' };
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (patternStr) => {
+    func: (patternStr, clickMode) => {
       const pattern = new RegExp(patternStr);
       const getText = el => [
         el.textContent,
@@ -4666,17 +4666,95 @@ async function runMainWorldBundleActionClick(tabId, action) {
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
       button.focus?.();
       const type = String(button.type || '').toLowerCase();
-      if (button.form && typeof button.form.requestSubmit === 'function' && (type === 'submit' || (!type && button.tagName === 'BUTTON'))) {
-        button.form.requestSubmit(button);
-        return { success: true, method: 'requestSubmit', text: getText(button) };
+      if (clickMode === 'requestSubmit') {
+        if (button.form && typeof button.form.requestSubmit === 'function' && (type === 'submit' || (!type && button.tagName === 'BUTTON'))) {
+          button.form.requestSubmit(button);
+          return { success: true, method: 'requestSubmit', text: getText(button) };
+        }
+        return { success: false, error: 'requestSubmit unavailable for bundle action button', text: getText(button) };
       }
+      if (clickMode !== 'click') return { success: false, error: `unknown bundle JS click mode: ${clickMode}` };
       button.click();
       return { success: true, method: 'click', text: getText(button) };
     },
-    args: [pattern]
+    args: [pattern, mode]
   });
   const result = injectionResult?.[0]?.result;
   return result?.success ? result : { success: false, error: result?.error || 'MAIN world click failed' };
+}
+
+function isBundleStartTradePage(tab = {}) {
+  return /contact\.auctions\.yahoo\.co\.jp\/trade\/bundle/i.test(String(tab?.url || ''));
+}
+
+async function tryBundleRequestSubmitFallback(tab, action, waitFor, previousTabIds) {
+  if (action !== 'start' || !tab?.id) return null;
+  const current = await chrome.tabs.get(tab.id).catch(() => tab);
+  if (!isBundleStartTradePage(current) && !isBundleStartTradePage(tab)) return null;
+  const submitResult = await runMainWorldBundleActionClick(tab.id, action, 'requestSubmit');
+  console.log('[Yahoo Bid] requestSubmit bundle click result:', submitResult);
+  if (!submitResult?.success) return { success: false, error: submitResult?.error || 'bundle requestSubmit failed' };
+  const nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
+  return { success: true, tab: nextTab, clickResult: submitResult };
+}
+
+async function waitForBundleStartRenderReady(tab, action, timeoutMs = 6000) {
+  if (action !== 'start' || !tab?.id) return { success: true, skipped: true };
+  const current = await chrome.tabs.get(tab.id).catch(() => tab);
+  const url = String(current?.url || tab?.url || '');
+  if (!/contact\.auctions\.yahoo\.co\.jp\/trade\/bundle/i.test(url)) {
+    return { success: true, skipped: true };
+  }
+
+  const pattern = getBundleActionPatternSource(action);
+  const startAt = Date.now();
+  let lastResult = null;
+  while (Date.now() - startAt < timeoutMs) {
+    const injectionResult = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: (patternStr) => {
+        const pattern = new RegExp(patternStr);
+        const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+        const getText = el => normalize([
+          el?.textContent,
+          el?.value,
+          el?.title,
+          el?.getAttribute?.('aria-label')
+        ].filter(Boolean).join(' '));
+        const isVisible = el => {
+          const rect = el?.getBoundingClientRect?.();
+          const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+          return !!rect && rect.width > 0 && rect.height > 0 &&
+            style?.display !== 'none' && style?.visibility !== 'hidden' && Number(style?.opacity ?? 1) !== 0;
+        };
+        const clickableSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]';
+        const resolveClickable = el => el?.closest?.(clickableSelector) || (el?.matches?.(clickableSelector) ? el : null);
+        const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params], body *')];
+        const matched = controls.find(el => pattern.test(getText(el)) && resolveClickable(el));
+        const button = matched ? resolveClickable(matched) : null;
+        const selects = [...document.querySelectorAll('select')].filter(isVisible);
+        const selectReady = selects.every(select => !select.disabled && select.options?.length > 0 && String(select.value || '').trim());
+        const buttonReady = !!button && isVisible(button) && !button.disabled && button.getAttribute?.('aria-disabled') !== 'true';
+        const documentReady = document.readyState === 'complete';
+        return {
+          success: documentReady && buttonReady && selectReady,
+          ready: documentReady && buttonReady && selectReady,
+          documentReady,
+          buttonReady,
+          selectReady,
+          text: button ? getText(button) : '',
+          selectCount: selects.length
+        };
+      },
+      args: [pattern, 'renderReady']
+    }).catch(error => [{ result: { success: false, error: error.message || 'bundle render readiness check failed' } }]);
+    lastResult = injectionResult?.[0]?.result || null;
+    if (lastResult?.success) return lastResult;
+    await sleep(250);
+  }
+  console.warn('[Yahoo Bid] Bundle start render readiness wait timed out, continuing with JS click:', lastResult);
+  return lastResult || { success: false, error: 'bundle start render readiness wait timed out' };
 }
 
 async function getBundleActionClickPoint(tabId, action) {
@@ -4884,6 +4962,10 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
     return { success: false, error: `content script injection failed: ${e.message}`, tab };
   }
 
+  await waitForBundleStartRenderReady(tab, action).catch(e => {
+    console.warn('[Yahoo Bid] Bundle start render readiness wait failed, continuing with JS click:', e.message || e);
+  });
+
   const previousTabIds = await getTabIds();
   let clickResult = null;
   try {
@@ -4922,16 +5004,28 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
   try {
     nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
   } catch (e) {
-    console.warn('[Yahoo Bid] Synthetic click did not reach next bundle state, trying trusted mouse click:', e.message || e);
-    const trustedClick = await dispatchTrustedBundleActionClick(tab, action);
-    console.log('[Yahoo Bid] Trusted mouse click result:', trustedClick);
-    if (!trustedClick?.success) {
-      return { success: false, error: trustedClick?.error || clickResult?.error || `bundle ${action} failed`, tab };
-    }
+    console.warn('[Yahoo Bid] JS click did not reach next bundle state, trying requestSubmit fallback:', e.message || e);
+    let requestSubmitResult = null;
     try {
-      nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
-    } catch (waitError) {
-      throw new Error(buildBundleActionWaitError(action, waitError, trustedClick));
+      requestSubmitResult = await tryBundleRequestSubmitFallback(tab, action, waitFor, previousTabIds);
+      if (requestSubmitResult?.success) {
+        nextTab = requestSubmitResult.tab;
+      }
+    } catch (submitError) {
+      requestSubmitResult = { success: false, error: submitError.message || String(submitError || 'requestSubmit failed') };
+    }
+    if (!nextTab) {
+      console.warn('[Yahoo Bid] Bundle requestSubmit fallback did not reach next state, trying trusted mouse click:', requestSubmitResult?.error || e.message || e);
+      const trustedClick = await dispatchTrustedBundleActionClick(tab, action);
+      console.log('[Yahoo Bid] Trusted mouse click result:', trustedClick);
+      if (!trustedClick?.success) {
+        return { success: false, error: trustedClick?.error || requestSubmitResult?.error || clickResult?.error || `bundle ${action} failed`, tab };
+      }
+      try {
+        nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
+      } catch (waitError) {
+        throw new Error(buildBundleActionWaitError(action, waitError, trustedClick));
+      }
     }
   }
 

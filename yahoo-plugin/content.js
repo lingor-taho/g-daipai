@@ -371,11 +371,9 @@ function isYahooLoginPageUrl(href = window.location.href || '') {
 }
 
 function detectYahooLoginStatus() {
-  const text = getBodyText();
   const href = window.location.href;
   const isLoginUrl = isYahooLoginPageUrl(href);
-  const hasLoginPrompt = /\u30ed\u30b0\u30a4\u30f3.*\u5fc5\u8981|\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044|login\s*required|please\s*login/i.test(text);
-  if (isLoginUrl || hasLoginPrompt) {
+  if (isLoginUrl) {
     return { status: 'failed', message: 'Yahoo login required' };
   }
   return { status: 'ok', message: '' };
@@ -1284,14 +1282,6 @@ function extractOrderHistory() {
     return match?.[1] || '';
   }
 
-  function extractOrderProductType(text) {
-    const lines = String(text || '')
-      .split(/\n+|\r+|\s{2,}/)
-      .map(line => normalizeVisibleText(line))
-      .filter(Boolean);
-    return lines.some(line => line === '\u30b9\u30c8\u30a2') ? 'store' : 'normal';
-  }
-
   function extractOrderShippingFeeText(text) {
     const value = String(text || '');
     if (/\u9001\u6599[^\n\r]{0,40}\u7740\u6255\u3044/.test(value)) return '\u7740\u6255\u3044';
@@ -1305,15 +1295,12 @@ function extractOrderHistory() {
   const seen = new Set();
   const orders = [];
   for (const item of containers) {
-    const auctionLinks = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
-      .filter(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
-    const uniqueProductIds = [...new Set(auctionLinks
-      .map(a => String(a.href || '').match(/[a-zA-Z]?\d{8,10}/)?.[0]?.toLowerCase())
-      .filter(Boolean))];
-    if (uniqueProductIds.length !== 1) continue;
-    const link = auctionLinks.find(a => String(a.href || '').toLowerCase().includes(uniqueProductIds[0])) || auctionLinks[0];
+    const link = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
+      .find(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
     if (!link) continue;
-    const productId = uniqueProductIds[0];
+    const match = link.href.match(/[a-zA-Z]?\d{8,10}/);
+    if (!match) continue;
+    const productId = match[0].toLowerCase();
     const text = item.textContent || '';
     const contactLink = [...item.querySelectorAll('a')]
       .find(a => /contact\.auctions\.yahoo\.co\.jp/i.test(String(a.href || a.getAttribute?.('href') || '')) || /\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent)));
@@ -1328,8 +1315,7 @@ function extractOrderHistory() {
       wonTimeText: extractWonTimeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       transactionUrl: contactLink?.href || '',
-      trackingNumber: trackingMatch?.[1] || '',
-      productType: extractOrderProductType(text)
+      trackingNumber: trackingMatch?.[1] || ''
     });
   }
   return orders;
@@ -1344,6 +1330,85 @@ function findWonHistoryNextPageUrl() {
     return /\/my\/won/.test(a.href) || /auctions\.yahoo\.co\.jp/.test(a.href);
   });
   return next?.href || '';
+}
+
+function extractOrderImportHistory() {
+  function findImportPriceElementText(container) {
+    const candidates = container.querySelectorAll
+      ? container.querySelectorAll('span, li, dd, td, p, strong, b')
+      : [];
+    for (const el of candidates) {
+      const text = String(el.textContent || '').replace(/\s+/g, '').trim();
+      const match = text.match(/^(\d{1,3}(?:,\d{3})+|\d+)\s*(?:\u5186|JPY)$/i);
+      if (match) return match[1];
+    }
+    return '';
+  }
+
+  function extractImportPrice(text, container) {
+    const fromDom = findImportPriceElementText(container);
+    if (fromDom) return fromDom;
+    const match = String(text || '').match(/(\d{1,3}(?:,\d{3})+|\b\d{1,7})\s*(?:\u5186|JPY)/i);
+    return match?.[1] || '';
+  }
+
+  function extractImportWonTimeText(text) {
+    const match = String(text || '').match(/(\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2})/);
+    return match?.[1] || '';
+  }
+
+  function extractVisibleProductIds(text) {
+    return [...String(text || '').matchAll(/\u5546\u54c1ID\s*[:\uff1a]\s*([a-zA-Z]?\d{8,10})/g)]
+      .map(match => match[1].toLowerCase());
+  }
+
+  function extractImportProductType(row) {
+    const candidates = row.querySelectorAll
+      ? [...row.querySelectorAll('span, li, dd, td, p, strong, b')]
+      : [];
+    if (candidates.some(el => normalizeVisibleText(el.textContent) === '\u30b9\u30c8\u30a2')) return 'store';
+    const lines = String(row.textContent || '')
+      .split(/\n+|\r+|\s{2,}/)
+      .map(line => normalizeVisibleText(line))
+      .filter(Boolean);
+    return lines.some(line => line === '\u30b9\u30c8\u30a2') ? 'store' : 'normal';
+  }
+
+  const root = document.querySelector?.('#itm');
+  const rows = root?.querySelectorAll
+    ? [...root.querySelectorAll('li, article, tr, div')].filter(row => row.querySelectorAll?.('a[href*="/jp/auction/"]')?.length)
+    : [];
+  const seen = new Set();
+  const orders = [];
+  for (const row of rows) {
+    const text = row.textContent || '';
+    const auctionLinks = [...row.querySelectorAll('a[href*="/jp/auction/"]')]
+      .filter(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
+    const uniqueProductIds = [...new Set(auctionLinks
+      .map(a => String(a.href || '').match(/[a-zA-Z]?\d{8,10}/)?.[0]?.toLowerCase())
+      .filter(Boolean))];
+    const visibleProductIds = [...new Set(extractVisibleProductIds(text))];
+    const productId = visibleProductIds.length === 1
+      ? visibleProductIds[0]
+      : (uniqueProductIds.length === 1 ? uniqueProductIds[0] : '');
+    if (!productId || seen.has(productId)) continue;
+    const link = auctionLinks.find(a => String(a.href || '').toLowerCase().includes(productId)) || auctionLinks[0];
+    const contactLink = [...row.querySelectorAll('a')]
+      .find(a => /contact\.auctions\.yahoo\.co\.jp/i.test(String(a.href || a.getAttribute?.('href') || '')) || /\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent)));
+    if (!link || !contactLink?.href) continue;
+    seen.add(productId);
+    orders.push({
+      productId,
+      title: link.textContent?.trim() || '',
+      price: extractImportPrice(text, row),
+      wonTimeText: extractImportWonTimeText(text),
+      url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+      transactionUrl: contactLink.href || '',
+      trackingNumber: '',
+      productType: extractImportProductType(row)
+    });
+  }
+  return orders;
 }
 
 function extractBiddingItems() {
@@ -2187,7 +2252,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const loginStatus = detectYahooLoginStatus();
     sendResponse({
       success: loginStatus.status === 'ok',
-      orders: loginStatus.status === 'ok' ? extractOrderHistory() : [],
+      orders: loginStatus.status === 'ok' ? extractOrderImportHistory() : [],
       nextPageUrl: loginStatus.status === 'ok' ? findWonHistoryNextPageUrl() : '',
       loginStatus
     });
@@ -2303,6 +2368,7 @@ window.__G_DAIPAI_TEST__ = {
   isFinalAgreeButtonText,
   isConfirmButtonText,
   extractOrderHistory,
+  extractOrderImportHistory,
   findWonHistoryNextPageUrl
 };
 })();
