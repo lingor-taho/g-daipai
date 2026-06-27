@@ -2108,20 +2108,32 @@ async function clickPaymentShippingChangeButton(tabId) {
   return injectionResult?.[0]?.result || { success: false, error: 'shipping change JS click returned no result' };
 }
 
-async function dispatchTrustedPaymentShippingChangeClick(tab) {
+async function focusPaymentInteractionTab(tab) {
   const tabId = tab?.id || tab;
-  if (!tabId) return { success: false, error: 'tabId is required for trusted shipping change click' };
-
-  const jsClick = await clickPaymentShippingChangeButton(tabId);
-  if (jsClick?.success) return jsClick;
-  if (!chrome.debugger?.attach) return { ...jsClick, error: jsClick?.error || 'chrome.debugger API unavailable' };
-
+  if (!tabId) return null;
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
     await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
+  return currentTab || tab;
+}
+
+async function dispatchTrustedPaymentShippingChangeClick(tab, options = {}) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return { success: false, error: 'tabId is required for trusted shipping change click' };
+
+  let jsClick = null;
+  if (!options.skipJs) {
+    await focusPaymentInteractionTab(tab);
+    jsClick = await clickPaymentShippingChangeButton(tabId);
+    if (jsClick?.success) return jsClick;
+    if (!chrome.debugger?.attach) return { ...jsClick, error: jsClick?.error || 'chrome.debugger API unavailable' };
+  }
+  if (!chrome.debugger?.attach) return { ...jsClick, error: jsClick?.error || 'chrome.debugger API unavailable' };
+
+  await focusPaymentInteractionTab(tab);
 
   const point = await getPaymentShippingChangeClickPoint(tabId);
   let diagnostics = await getTrustedInputDiagnostics(tabId, 'paymentShippingChange', 'debuggerMouse', point);
@@ -2185,6 +2197,22 @@ function summarizePaymentShippingState(state = {}) {
   return options
     .map(option => `${option.amountJpy || 0}\u5186${option.checked ? ':checked' : ''}${option.visible === false ? ':hidden' : ''}`)
     .join(', ');
+}
+
+function hasExpectedPaymentShippingOption(state = {}, expectedShipping) {
+  const options = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
+  return expectedShipping !== null && options.some(option =>
+    Number(option?.amountJpy || 0) === expectedShipping && !option.disabled
+  );
+}
+
+function shouldRetryPaymentShippingChangeWithDebugger(state = {}, expandResult = {}) {
+  const options = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
+  if (options.length > 0) return false;
+  if (isStorePaymentShippingChangePage(state, {})) return false;
+  const sample = String(state?.textSample || '');
+  const stillShowsChange = /\u5909\u66f4(?:\u3059\u308b)?/.test(sample);
+  return Boolean(stillShowsChange || expandResult?.success === false || expandResult?.changed === false);
 }
 
 async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
@@ -2460,11 +2488,7 @@ async function waitForExpandedPaymentShippingOptions(tab, job, options = {}) {
     }
     if (isStorePaymentShippingChangePage(latest, job)) return latest;
     if (expectedAmount !== null && Number(latest.paymentAmountJpy || 0) === expectedAmount) return latest;
-    const optionsList = Array.isArray(latest.shippingOptions) ? latest.shippingOptions : [];
-    const hasExpectedOption = expectedShipping !== null && optionsList.some(option =>
-      Number(option?.amountJpy || 0) === expectedShipping && !option.disabled
-    );
-    if (hasExpectedOption) return latest;
+    if (hasExpectedPaymentShippingOption(latest, expectedShipping)) return latest;
     await sleep(intervalMs);
   }
   return latest || await getPaymentPageState(tab.id).catch(() => null);
@@ -2482,9 +2506,11 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   const visibleOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
   const hasExpectedOption = visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
   let expandResult = null;
+  let trustedExpandResult = null;
   if (!hasExpectedOption) {
     const expandAttempts = isStorePaymentJob(job) ? 5 : 1;
     for (let attempt = 0; attempt < expandAttempts; attempt += 1) {
+      if (!isStorePaymentJob(job)) await focusPaymentInteractionTab(tab);
       expandResult = await expandPaymentShippingOptions(tab.id);
       state = await waitForExpandedPaymentShippingOptions(tab, job);
       if (expandResult?.changed || expandResult?.success === false) break;
@@ -2498,8 +2524,12 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
     const expandedOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
     const expandedHasExpectedOption = expandedOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
     if (!expandedHasExpectedOption) {
-      // Payment shipping expansion is intentionally JS-only. If Yahoo does not expose
-      // a clickable control to the page script, fail or refresh instead of using debugger.
+      if (!isStorePaymentJob(job) && shouldRetryPaymentShippingChangeWithDebugger(state, expandResult)) {
+        trustedExpandResult = await dispatchTrustedPaymentShippingChangeClick(tab, { skipJs: true });
+        if (trustedExpandResult?.success) {
+          state = await waitForExpandedPaymentShippingOptions(tab, job);
+        }
+      }
     }
   }
   const result = await selectPaymentShippingOption(tab.id, expectedShipping);
@@ -2520,7 +2550,8 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
       : '';
     const stateSummary = summarizePaymentShippingState(state);
     const expandSummary = expandResult ? `; expand=${expandResult.method || expandResult.reason || expandResult.error || 'unknown'}:${expandResult.text || ''}:${expandResult.clickedText || ''}` : '';
-    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${stateSummary ? `; visibleState: ${stateSummary}` : ''}${expandSummary}`);
+    const trustedExpandSummary = trustedExpandResult ? `; trustedExpand=${trustedExpandResult.method || trustedExpandResult.error || 'unknown'}:${trustedExpandResult.text || ''}` : '';
+    throw new Error(`payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${stateSummary ? `; visibleState: ${stateSummary}` : ''}${expandSummary}${trustedExpandSummary}`);
   }
   if (result.changed) await sleep(800);
   return await getPaymentPageState(tab.id);
