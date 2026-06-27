@@ -1066,11 +1066,34 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
   }
 }
 
+function formatPaymentStateDiagnostics(state = {}) {
+  const parts = [];
+  if (state.url) parts.push(`url=${String(state.url).slice(0, 240)}`);
+  if (state.title) parts.push(`title=${String(state.title).slice(0, 160)}`);
+  if (Array.isArray(state.controlsSample) && state.controlsSample.length) {
+    const controls = state.controlsSample
+      .map(value => String(value || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .slice(0, 20)
+      .join(' | ')
+      .slice(0, 500);
+    if (controls) parts.push(`controls=${controls}`);
+  }
+  return parts.join('; ');
+}
+
 function buildPaymentFailurePayload(job, error) {
+  const state = error?.gDaipaiPaymentState || error?.paymentState || null;
+  const diagnostics = [
+    error?.diagnostics || '',
+    state ? formatPaymentStateDiagnostics(state) : ''
+  ].filter(Boolean).join('; ');
   return {
     orderId: job?.orderId,
     productId: job?.productId,
-    error: error?.message || String(error || 'payment failed')
+    error: error?.message || String(error || 'payment failed'),
+    diagnostics: diagnostics || undefined,
+    url: state?.url || undefined
   };
 }
 
@@ -3361,7 +3384,7 @@ async function clickPaymentActionAndFollowTab(tab, action, waitFor, options = {}
     return { success: false, error: clickResult?.error || `payment ${action} click failed`, tab };
   }
   try {
-    const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
+    const nextTab = await waitForPaymentStateAcrossTabs(tab, waitFor, previousTabIds, 10000);
     await injectContentScript(nextTab.id).catch(() => {});
     return { success: true, tab: nextTab, state: nextTab._gdaipaiPaymentState };
   } catch (e) {
@@ -5542,13 +5565,14 @@ async function runScanJobs() {
 
 async function executePaymentJob(job, paymentBatch = {}) {
   let tab = null;
+  let state = null;
   const beforeTabIds = await getTabIds();
   const maxPageStaySeconds = Math.max(1, Math.floor(Number(paymentBatch.paymentPageStaySeconds ?? job.paymentPageStaySeconds ?? 3)));
   let storeConfirmationStarted = false;
   let storeConfirmationCompleted = false;
   try {
     tab = await openTransactionPage(job, beforeTabIds);
-    let state = await getPaymentPageState(tab.id);
+    state = await getPaymentPageState(tab.id);
     let storeConfirmationHandled = false;
     if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
@@ -5717,6 +5741,11 @@ async function executePaymentJob(job, paymentBatch = {}) {
     if (state?.alreadyPaid) return { alreadyPaid: true };
     if (state?.complete) return { success: true };
     throw new Error('payment completion text not found');
+  } catch (error) {
+    if (state && !error.gDaipaiPaymentState && !error.paymentState) {
+      error.gDaipaiPaymentState = state;
+    }
+    throw error;
   } finally {
     if (!storeConfirmationStarted || storeConfirmationCompleted) {
       await closeTabsForTransactionFlow(tab, beforeTabIds);

@@ -10,6 +10,11 @@ function testYahooMessageJobsUseThirtySecondTimeout() {
   assert.match(source, /withTimeout\([\s\S]*MESSAGE_JOB_TIMEOUT_MS/);
 }
 
+function testPaymentSyntheticClickWaitsTenSecondsForNextState() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  assert.match(source, /waitForPaymentStateAcrossTabs\(tab,\s*waitFor,\s*previousTabIds,\s*10000\)/);
+}
+
 function loadBackgroundForTest(overrides = {}) {
   let code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   if (overrides.disableAutoStart) {
@@ -5400,7 +5405,16 @@ async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
       async executeScript(...args) {
         const payload = args[0] || {};
         if (payload.files) return undefined;
-        return [{ result: { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/top' } } }];
+        return [{
+          result: {
+            success: true,
+            state: {
+              url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p10',
+              title: 'Yahoo!オークション - 取引ナビ',
+              controlsSample: ['商品ページへ', '取引情報']
+            }
+          }
+        }];
       }
     },
     fetch: async (url, options = {}) => {
@@ -5420,6 +5434,10 @@ async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
   assert.equal(calls[0].orderId, 10);
   assert.equal(calls[0].productId, 'p10');
   assert.equal(calls[0].error, 'payment entry button not found');
+  assert.equal(calls[0].url, 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p10');
+  assert.match(calls[0].diagnostics, /url=https:\/\/buy\.auctions\.yahoo\.co\.jp\/order\/status\?auctionId=p10/);
+  assert.match(calls[0].diagnostics, /title=Yahoo!オークション - 取引ナビ/);
+  assert.match(calls[0].diagnostics, /controls=商品ページへ \| 取引情報/);
 }
 
 function testBuildPaymentFailurePayloadIncludesProductId() {
@@ -7550,6 +7568,7 @@ function testWorkerIntervalConfigReschedulesPollingTimer() {
 
 async function run() {
   testYahooMessageJobsUseThirtySecondTimeout();
+  testPaymentSyntheticClickWaitsTenSecondsForNextState();
   await testStartPollingIsIdempotentWithinWorker();
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();
