@@ -1213,6 +1213,24 @@ function isStorePaymentReviewPage(state = {}) {
   return /:\/\/buy\.auctions\.yahoo\.co\.jp\/order\/review\b/.test(String(state?.url || ''));
 }
 
+function isStorePaymentStatusPage(job = {}, state = {}) {
+  return isStorePaymentJob(job) && /:\/\/buy\.auctions\.yahoo\.co\.jp\/order\/status\b/.test(String(state?.url || ''));
+}
+
+function isPaymentEntryOrTerminalState(state = {}) {
+  return Boolean(
+    state?.cancelled ||
+    state?.alreadyPaid ||
+    state?.complete ||
+    state?.hasReviewButton ||
+    state?.hasSinglePurchaseProcedureButton ||
+    state?.hasPurchaseProcedureButton ||
+    state?.hasEasyPaymentButton ||
+    state?.hasTransactionInfoInputButton ||
+    (state?.hasStoreBundlePurchaseNotice && state?.hasPaymentCloseButton)
+  );
+}
+
 function getExpectedPaymentShippingFeeJpy(job = {}) {
   return parseYenAmount(job.effectiveShippingFeeText || job.shippingFeeText || '');
 }
@@ -1802,6 +1820,19 @@ async function waitForPaymentStateOnTab(tab, predicate, timeoutMs = 15000) {
     await sleep(500);
   }
   return null;
+}
+
+async function waitForStoreStatusPaymentEntryRender(tab, job, state) {
+  if (!isStorePaymentStatusPage(job, state) || isPaymentEntryOrTerminalState(state)) return { tab, state };
+  const readyTab = await waitForPaymentStateOnTab(tab, nextState =>
+    !isStorePaymentStatusPage(job, nextState) || isPaymentEntryOrTerminalState(nextState),
+    15000
+  );
+  if (!readyTab) return { tab, state };
+  return {
+    tab: readyTab,
+    state: readyTab._gdaipaiPaymentState || await getPaymentPageState(readyTab.id)
+  };
 }
 
 function assertPaymentAmountMatches(job, state) {
@@ -5573,6 +5604,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
   try {
     tab = await openTransactionPage(job, beforeTabIds);
     state = await getPaymentPageState(tab.id);
+    ({ tab, state } = await waitForStoreStatusPaymentEntryRender(tab, job, state));
     let storeConfirmationHandled = false;
     if (state?.cancelled) return { cancelled: true };
     if (state?.alreadyPaid) return { alreadyPaid: true };
