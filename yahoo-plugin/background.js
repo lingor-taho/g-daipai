@@ -4531,8 +4531,7 @@ async function openTransactionPage(job, beforeTabIds = new Set()) {
   if (job.transactionUrl) {
     const tab = await chrome.tabs.create({ url: job.transactionUrl, active: false });
     if (tab.id) createdTabIds.push(tab.id);
-    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
-    await sleep(3000);
+    if (tab.id) await waitForTransactionPageInteractive(tab.id).catch(() => {});
     await injectContentScript(tab.id).catch(() => {});
     tab._gdaipaiCreatedTabIds = createdTabIds;
     const captchaResult = await handleManualCaptchaIfPresent(tab, { productId: job.productId, source: 'transaction_url' });
@@ -4563,13 +4562,39 @@ async function openTransactionPage(job, beforeTabIds = new Set()) {
     captchaResult.tab._gdaipaiCreatedTabIds = [...new Set(createdTabIds)];
     return captchaResult.tab;
   }
-  await waitForTabComplete(tab.id).catch(() => {});
-  await sleep(3000);
+  await waitForTransactionPageInteractive(tab.id).catch(() => {});
   await injectContentScript(tab.id).catch(() => {});
   tab._gdaipaiCreatedTabIds = createdTabIds;
   const captchaResult = await handleManualCaptchaIfPresent(tab, { productId: job.productId, source: 'transaction_contact' });
   captchaResult.tab._gdaipaiCreatedTabIds = createdTabIds;
   return captchaResult.tab;
+}
+
+async function waitForTransactionPageInteractive(tabId, timeoutMs = 8000) {
+  if (!tabId) return null;
+  const startAt = Date.now();
+  while (Date.now() - startAt < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) throw new Error('transaction tab closed while waiting for interactive state');
+    await injectContentScript(tabId, { ignoreMissingTab: true }).catch(() => false);
+    const state = await getBundleActionState(tabId).catch(() => null);
+    if (
+      state?.canStart ||
+      state?.canInputTransaction ||
+      state?.canPlacementOk ||
+      state?.canDecide ||
+      state?.canConfirm ||
+      state?.paymentReady ||
+      state?.waitingShipping ||
+      state?.cancelled ||
+      state?.complete
+    ) {
+      return tab;
+    }
+    if (tab.status === 'complete') return tab;
+    await sleep(250);
+  }
+  return waitForTabComplete(tabId).catch(() => chrome.tabs.get(tabId).catch(() => null));
 }
 
 async function getTabIds() {
@@ -5002,7 +5027,7 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
 
   let nextTab = null;
   try {
-    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 5000);
+    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, action === 'start' ? 15000 : 5000);
   } catch (e) {
     console.warn('[Yahoo Bid] JS click did not reach next bundle state, trying requestSubmit fallback:', e.message || e);
     let requestSubmitResult = null;
@@ -5015,17 +5040,7 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
       requestSubmitResult = { success: false, error: submitError.message || String(submitError || 'requestSubmit failed') };
     }
     if (!nextTab) {
-      console.warn('[Yahoo Bid] Bundle requestSubmit fallback did not reach next state, trying trusted mouse click:', requestSubmitResult?.error || e.message || e);
-      const trustedClick = await dispatchTrustedBundleActionClick(tab, action);
-      console.log('[Yahoo Bid] Trusted mouse click result:', trustedClick);
-      if (!trustedClick?.success) {
-        return { success: false, error: trustedClick?.error || requestSubmitResult?.error || clickResult?.error || `bundle ${action} failed`, tab };
-      }
-      try {
-        nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, 30000);
-      } catch (waitError) {
-        throw new Error(buildBundleActionWaitError(action, waitError, trustedClick));
-      }
+      throw new Error(buildBundleActionWaitError(action, requestSubmitResult?.error || e));
     }
   }
 
@@ -5043,7 +5058,7 @@ async function completeNormalBundleRequest(tab) {
     if (!result?.success) return result;
     tab = result.tab;
 
-    result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canStart || state.canDecide || state.complete);
+    result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canStart || state.canInputTransaction || state.canDecide || state.complete);
     if (!result?.success) return result;
     tab = result.tab;
 
@@ -5051,7 +5066,21 @@ async function completeNormalBundleRequest(tab) {
   }
 
   if (state?.canStart && !state?.canDecide && !state?.canConfirm && !state?.complete) {
-    result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canDecide || state.complete);
+    result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canInputTransaction || state.canDecide || state.complete);
+    if (!result?.success) return result;
+    tab = result.tab;
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (state?.canInputTransaction && !state?.canDecide && !state?.canConfirm && !state?.complete) {
+    result = await clickBundleActionAndFollowTab(tab, 'input', state => state.canPlacementOk || state.canDecide || state.complete);
+    if (!result?.success) return result;
+    tab = result.tab;
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (state?.canPlacementOk && !state?.canDecide && !state?.canConfirm && !state?.complete) {
+    result = await clickBundleActionAndFollowTab(tab, 'placementOk', state => state.canDecide || state.complete);
     if (!result?.success) return result;
     tab = result.tab;
     state = await getBundleActionState(tab.id);
@@ -6179,6 +6208,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   handleBidProgressMessage,
   waitForCurrentTabNavigation,
   switchToNewestNewTab,
+  openTransactionPage,
+  waitForTransactionPageInteractive,
   clickBundleActionAndFollowTab,
   completeNormalBundleRequest,
   completeBidderPaysShippingTransaction,

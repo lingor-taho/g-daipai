@@ -378,6 +378,66 @@ async function testBundleStartTradePageUsesClickBeforeRequestSubmitFallback() {
   assert.equal(debuggerAttached, false);
 }
 
+async function testBundleStartDoesNotUseDebuggerWhenJsAndRequestSubmitFail() {
+  let nowMs = 0;
+  class FakeDate extends Date {
+    static now() {
+      nowMs += 1000;
+      return nowMs;
+    }
+  }
+  const jsModes = [];
+  let debuggerAttached = false;
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    tabs: {
+      async query() {
+        return [{ id: 8, url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578', status: 'complete', windowId: 1 };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 8);
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return { success: true, state: { canDecide: false, complete: false } };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        const mode = details.args?.[1] || 'default';
+        if (mode === 'renderReady') {
+          return [{ result: { success: true, ready: true } }];
+        }
+        jsModes.push(mode);
+        return [{ result: { success: true, method: mode, text: 'まとめて取引を依頼する' } }];
+      }
+    },
+    debuggerApi: {
+      async attach() {
+        debuggerAttached = true;
+      },
+      async sendCommand() {},
+      async detach() {}
+    }
+  });
+
+  await assert.rejects(
+    () => api.clickBundleActionAndFollowTab({
+      id: 8,
+      url: 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=r1234015578',
+      _gdaipaiCreatedTabIds: [8]
+    }, 'start'),
+    /bundle start next page did not appear/
+  );
+
+  assert.deepEqual(jsModes, ['click', 'requestSubmit']);
+  assert.equal(debuggerAttached, false);
+}
+
 async function testBundleActionTimeoutErrorIncludesActionName() {
   let nowMs = 0;
   class FakeDate extends Date {
@@ -522,6 +582,133 @@ async function testNormalBundleRequestCanStartFromInputPage() {
 
   assert.equal(result.success, true);
   assert.deepEqual(clickedActions, ['decide', 'confirm']);
+}
+
+async function testNormalBundleStartAcceptsTransactionInfoInputPage() {
+  const clickedActions = [];
+  let phase = 'request';
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [{ id: 6, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1234947647', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1234947647', status: 'complete' };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 6);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          if (message.action === 'close' && phase === 'request') {
+            return { success: true };
+          }
+          if (message.action === 'start' && phase === 'request') {
+            phase = 'input';
+            return { success: true };
+          }
+          if (message.action === 'input' && phase === 'input') {
+            phase = 'decide';
+            return { success: true };
+          }
+          if (message.action === 'decide' && phase === 'decide') {
+            phase = 'confirm';
+            return { success: true };
+          }
+          if (message.action === 'confirm' && phase === 'confirm') {
+            phase = 'complete';
+            return { success: true };
+          }
+          return { success: false, error: `${message.action} button not found` };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canStart: phase === 'request',
+              canInputTransaction: phase === 'input',
+              canDecide: phase === 'decide',
+              canConfirm: phase === 'confirm',
+              complete: phase === 'complete'
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    }
+  });
+
+  const result = await api.completeNormalBundleRequest({ id: 6 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(clickedActions, ['close', 'start', 'input', 'decide', 'confirm']);
+}
+
+async function testOpenTransactionPageContinuesWhenBundleActionReadyBeforeTabComplete() {
+  const listeners = [];
+  const messages = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async create() {
+        return {
+          id: 9,
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1234947647',
+          status: 'loading'
+        };
+      },
+      async get(id) {
+        return {
+          id,
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1234947647',
+          status: 'loading'
+        };
+      },
+      onUpdatedAddListener(listener) {
+        listeners.push(listener);
+      },
+      onUpdatedRemoveListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      },
+      async sendMessage(id, message) {
+        messages.push(message.type);
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canStart: true,
+              canInputTransaction: false,
+              canDecide: false,
+              canConfirm: false,
+              complete: false
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [];
+      }
+    },
+    setTimeout() {
+      return 1;
+    }
+  });
+
+  const tab = await api.openTransactionPage({
+    transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1234947647'
+  }, new Set());
+
+  assert.equal(tab.id, 9);
+  assert.equal(tab.status, 'loading');
+  assert.ok(messages.includes('GET_BUNDLE_TRANSACTION_ACTION_STATE'));
+  assert.equal(listeners.length, 0);
 }
 
 async function testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab() {
@@ -7377,9 +7564,12 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick();
   await testBundleStartTradePageUsesClickBeforeRequestSubmitFallback();
+  await testBundleStartDoesNotUseDebuggerWhenJsAndRequestSubmitFail();
   await testBundleActionTimeoutErrorIncludesActionName();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testNormalBundleRequestCanStartFromInputPage();
+  await testNormalBundleStartAcceptsTransactionInfoInputPage();
+  await testOpenTransactionPageContinuesWhenBundleActionReadyBeforeTabComplete();
   await testWaitForBundleActionStateAcrossTabsFollowsNewConfirmTab();
   await testSwitchToNewestNewTabIgnoresConcurrentAuctionProductTab();
   await testTrustedBundleClickDispatchesMouseThroughDebugger();
