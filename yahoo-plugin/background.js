@@ -2445,6 +2445,31 @@ async function refreshPaymentPageState(tab, waitMs = 1500) {
   return await getPaymentPageState(tab.id).catch(() => null);
 }
 
+async function waitForExpandedPaymentShippingOptions(tab, job, options = {}) {
+  const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
+  const expectedAmount = getExpectedPaymentAmountJpy(job);
+  const timeoutMs = Number(options.timeoutMs || 8000);
+  const intervalMs = Number(options.intervalMs || 500);
+  const startAt = Date.now();
+  let latest = null;
+  while (Date.now() - startAt < timeoutMs) {
+    latest = await getPaymentPageState(tab.id).catch(() => null);
+    if (!latest) {
+      await sleep(intervalMs);
+      continue;
+    }
+    if (isStorePaymentShippingChangePage(latest, job)) return latest;
+    if (expectedAmount !== null && Number(latest.paymentAmountJpy || 0) === expectedAmount) return latest;
+    const optionsList = Array.isArray(latest.shippingOptions) ? latest.shippingOptions : [];
+    const hasExpectedOption = expectedShipping !== null && optionsList.some(option =>
+      Number(option?.amountJpy || 0) === expectedShipping && !option.disabled
+    );
+    if (hasExpectedOption) return latest;
+    await sleep(intervalMs);
+  }
+  return latest || await getPaymentPageState(tab.id).catch(() => null);
+}
+
 async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
   const expectedAmount = getExpectedPaymentAmountJpy(job);
@@ -2461,10 +2486,10 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
     const expandAttempts = isStorePaymentJob(job) ? 5 : 1;
     for (let attempt = 0; attempt < expandAttempts; attempt += 1) {
       expandResult = await expandPaymentShippingOptions(tab.id);
-      await sleep(500);
+      state = await waitForExpandedPaymentShippingOptions(tab, job);
       if (expandResult?.changed || expandResult?.success === false) break;
     }
-    state = await getPaymentPageState(tab.id);
+    state = state || await getPaymentPageState(tab.id);
     if (isStorePaymentShippingChangePage(state, job)) {
       const storeChangeResult = await completeStorePaymentShippingChangePage(tab, job);
       if (!storeChangeResult?.success) throw new Error(storeChangeResult?.error || 'store payment shipping change flow failed');

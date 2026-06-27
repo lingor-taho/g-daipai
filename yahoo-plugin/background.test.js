@@ -3562,6 +3562,142 @@ async function testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugg
   assert.equal(calls[0].status, 'success');
 }
 
+async function testRunPaymentJobsWaitsForNormalShippingOptionsAfterChangeClick() {
+  const calls = [];
+  const actions = [];
+  let paymentPhase = 'initial';
+  let stateReadsAfterExpand = 0;
+  let shippingChangeJsClicks = 0;
+  let shippingSelectionAttempts = 0;
+  let now = 0;
+  class FakeDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [now]));
+    }
+    static now() {
+      return now;
+    }
+  }
+  const paymentState = () => {
+    if (paymentPhase === 'confirm') {
+      return { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm', hasFinalizeButton: true, paymentAmountJpy: 5441 } };
+    }
+    if (paymentPhase === 'complete') {
+      return { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete', complete: true } };
+    }
+    if (paymentPhase === 'shippingSelected') {
+      return {
+        success: true,
+        state: {
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217',
+          hasReviewButton: true,
+          paymentAmountJpy: 5441,
+          textSample: '\u914d\u9001\u65b9\u6cd5 \u3086\u3046\u30e1\u30fc\u30eb 180\u5186',
+          selectedShippingAmountJpy: 180,
+          shippingOptions: [
+            { amountJpy: 430, checked: false, disabled: false },
+            { amountJpy: 180, checked: true, disabled: false },
+            { amountJpy: 310, checked: false, disabled: false }
+          ]
+        }
+      };
+    }
+    if (paymentPhase === 'expanded') {
+      stateReadsAfterExpand += 1;
+      const rendered = stateReadsAfterExpand >= 3;
+      return {
+        success: true,
+        state: {
+          url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217',
+          hasReviewButton: true,
+          paymentAmountJpy: 5691,
+          textSample: rendered
+            ? '\u914d\u9001\u65b9\u6cd5 \u30ec\u30bf\u30fc\u30d1\u30c3\u30af\u30e9\u30a4\u30c8 430\u5186 \u3086\u3046\u30e1\u30fc\u30eb 180\u5186 \u3086\u3046\u30d1\u30b1\u30c3\u30c8 310\u5186'
+            : '\u914d\u9001\u65b9\u6cd5 \u30ec\u30bf\u30fc\u30d1\u30c3\u30af\u30e9\u30a4\u30c8 430\u5186',
+          selectedShippingAmountJpy: 430,
+          shippingOptions: rendered
+            ? [
+                { amountJpy: 430, checked: true, disabled: false },
+                { amountJpy: 180, checked: false, disabled: false },
+                { amountJpy: 310, checked: false, disabled: false }
+              ]
+            : [
+                { amountJpy: 430, checked: true, disabled: false }
+              ]
+        }
+      };
+    }
+    return {
+      success: true,
+      state: {
+        url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217',
+        hasReviewButton: true,
+        paymentAmountJpy: 5691,
+        textSample: '\u914d\u9001\u65b9\u6cd5 \u30ec\u30bf\u30fc\u30d1\u30c3\u30af\u30e9\u30a4\u30c8 430\u5186 \u5909\u66f4\u3059\u308b',
+        selectedShippingAmountJpy: 430,
+        shippingOptions: []
+      }
+    };
+  };
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    setTimeout(fn, ms) {
+      now += Number(ms || 0);
+      return fn();
+    },
+    tabs: {
+      async create() { return { id: 128, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', status: 'complete' }; },
+      async query() { return [{ id: 128, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(...args) {
+        const payload = args[0] || {};
+        const funcText = String(payload.func || '');
+        if (payload.files) return undefined;
+        if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
+          shippingSelectionAttempts += 1;
+          if (stateReadsAfterExpand < 3) {
+            return [{ result: { success: false, error: 'matching payment shipping option not found', options: [{ amountJpy: 430, checked: true, disabled: false }] } }];
+          }
+          paymentPhase = 'shippingSelected';
+          return [{ result: { success: true, changed: true, selectedShippingJpy: payload.args[0] } }];
+        }
+        if (payload.args && payload.args.length >= 2) {
+          actions.push(payload.args[1]);
+          if (payload.args[1] === 'review') paymentPhase = 'confirm';
+          if (payload.args[1] === 'finalize') paymentPhase = 'complete';
+          return [{ result: { success: true, text: 'clicked' } }];
+        }
+        if (funcText.includes("reason: 'shipping change button not found'")) {
+          shippingChangeJsClicks += 1;
+          paymentPhase = 'expanded';
+          return [{ result: { success: true, changed: true, method: 'shippingSection', text: '\u5909\u66f4\u3059\u308b', clickedText: '\u5909\u66f4\u3059\u308b' } }];
+        }
+        return [{ result: paymentState() }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/payment/jobs')) {
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 128, productId: 'w1234480217', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', finalPrice: 5261, effectiveShippingFeeText: '180\u5186' }] }; } };
+      }
+      if (String(url).includes('/api/plugin/payment/status')) {
+        calls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runPaymentJobs();
+
+  assert.equal(shippingChangeJsClicks, 1);
+  assert.equal(shippingSelectionAttempts, 1);
+  assert.ok(stateReadsAfterExpand >= 3);
+  assert.deepEqual(actions, ['review', 'finalize']);
+  assert.equal(calls[0].status, 'success');
+}
+
 async function testRunPaymentJobsCompletesStoreShippingChangePage() {
   const calls = [];
   const actions = [];
@@ -7712,6 +7848,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugger();
+  await testRunPaymentJobsWaitsForNormalShippingOptionsAfterChangeClick();
   await testRunPaymentJobsCompletesStoreShippingChangePage();
   await testRunPaymentJobsSelectsNoAppraisalBeforeReview();
   await testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMatches();
