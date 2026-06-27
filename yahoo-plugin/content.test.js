@@ -168,6 +168,38 @@ function createOrderContainer(text, linkText, href, priceElements = [], extraLin
   };
 }
 
+function createYahooWonListRow({ productId, title, priceText, wonTimeText, transactionUrl, statusText = '' }) {
+  const productHref = `https://auctions.yahoo.co.jp/jp/auction/${productId}`;
+  const productLink = createTestAnchor(title, productHref);
+  const contactLink = createTestAnchor('\u53d6\u5f15\u9023\u7d61', transactionUrl || `https://contact.auctions.yahoo.co.jp/buyer/top?aid=${productId}`);
+  const infoBlock = {
+    textContent: `${statusText}\n${title}\n${priceText}\n${wonTimeText}\n\u5546\u54c1ID\uff1a${productId}`,
+    querySelectorAll(selector) {
+      if (selector === 'a[href*="/jp/auction/"]') return [productLink];
+      if (selector === 'a') return [productLink];
+      if (/span|li|dd|td|p|strong|b/.test(selector)) {
+        return [
+          { textContent: priceText, querySelectorAll: () => [] },
+          { textContent: wonTimeText, querySelectorAll: () => [] },
+          { textContent: `\u5546\u54c1ID\uff1a${productId}`, querySelectorAll: () => [] }
+        ];
+      }
+      return [];
+    }
+  };
+  return {
+    textContent: `${infoBlock.textContent}\n\u53d6\u5f15\u9023\u7d61`,
+    infoBlock,
+    querySelectorAll(selector) {
+      if (selector === 'a[href*="/jp/auction/"]') return [productLink];
+      if (selector === 'a') return [productLink, contactLink];
+      if (selector === 'span, li, dd, td, p, strong, b') return infoBlock.querySelectorAll(selector);
+      if (selector === 'div') return [infoBlock];
+      return [];
+    }
+  };
+}
+
 function createBiddingContainer(text, linkText, href, imageSrc = '') {
   const link = createTestAnchor(linkText, href);
   const image = imageSrc ? { src: imageSrc, alt: linkText } : null;
@@ -2392,6 +2424,46 @@ function testOrderHistoryParsesYahooWonListRowsAndSkipsOuterCard() {
   assert.equal(JSON.stringify(orders.map(order => order.wonTimeText)), JSON.stringify(['6/26 11:29', '6/26 11:28']));
 }
 
+function testOrderHistoryCombinesInfoBlockAndActionLinkFromYahooWonListItem() {
+  const first = createYahooWonListRow({
+    productId: 'e1217420520',
+    title: '\u30c7\u30f3\u30c9\u30ed\u30d0\u30c6\u30b9 1\u5dfb',
+    priceText: '80\u5186',
+    wonTimeText: '6/27 09:50',
+    statusText: '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044'
+  });
+  const second = createYahooWonListRow({
+    productId: 'x1120628151',
+    title: '\u975e\u58f2\u54c1 \u30d5\u30a1\u30df\u30de\u9650\u5b9a',
+    priceText: '20\u5186',
+    wonTimeText: '6/27 01:16',
+    statusText: '\u767a\u9001\u9023\u7d61\u5f85\u3061\u3067\u3059'
+  });
+  const itemListRoot = {
+    querySelectorAll(selector) {
+      if (selector === ':scope > ul > li' || selector === 'ul > li') return [first, second];
+      return [];
+    }
+  };
+  const api = loadContentForTest('', '/my/won', {
+    querySelector(selector) {
+      if (selector === '#itm') return itemListRoot;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'li, article, tr, div') return [first.infoBlock, second.infoBlock];
+      return [];
+    }
+  });
+
+  const orders = api.extractOrderHistory();
+
+  assert.equal(JSON.stringify(orders.map(order => order.productId)), JSON.stringify(['e1217420520', 'x1120628151']));
+  assert.equal(JSON.stringify(orders.map(order => order.wonTimeText)), JSON.stringify(['6/27 09:50', '6/27 01:16']));
+  assert.equal(JSON.stringify(orders.map(order => order.price)), JSON.stringify(['80', '20']));
+}
+
 function testOrderImportHistoryScopesExtractionToYahooWonItemList() {
   const listRow = createOrderContainer(
     '\u51fa\u54c1\u8005\u306b\u9023\u7d61\u3057\u3066\u304f\u3060\u3055\u3044\n2,480\u5186\n6/26 11:29\n\u5546\u54c1ID\uff1ah1233553510',
@@ -3796,6 +3868,7 @@ async function run() {
   testOrderHistoryKeepsWonTimeScopedToEachRow();
   testOrderHistoryUsesVisibleProductIdWhenRowContainsExtraAuctionLink();
   testOrderHistoryParsesYahooWonListRowsAndSkipsOuterCard();
+  testOrderHistoryCombinesInfoBlockAndActionLinkFromYahooWonListItem();
   testOrderImportHistoryScopesExtractionToYahooWonItemList();
   testOrderImportHistoryExtractsStoreProductTypeFromWonRow();
   testOrderImportHistoryKeepsWonTimeAndTypeScopedToEachWonRow();

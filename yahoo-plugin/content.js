@@ -1234,6 +1234,64 @@ async function executeBidV3(maxPrice, options = {}) {
 }
 
 function extractOrderHistory() {
+  function extractAuctionIdFromHref(value) {
+    const match = String(value || '').match(/[?&](?:aid|auctionId|aID)=([a-zA-Z]?\d{8,10})|\/jp\/auction\/([a-zA-Z]?\d{8,10})/);
+    return match ? String(match[1] || match[2] || '').toLowerCase() : '';
+  }
+
+  function extractVisibleProductIds(text) {
+    return [...String(text || '').matchAll(/\u5546\u54c1ID\s*[:\uff1a]\s*([a-zA-Z]?\d{8,10})/g)]
+      .map(match => match[1].toLowerCase());
+  }
+
+  function getYahooWonRows() {
+    const root = document.querySelector?.('#itm');
+    if (root?.querySelectorAll) {
+      const directRows = [
+        ...root.querySelectorAll(':scope > ul > li'),
+        ...root.querySelectorAll('ul > li')
+      ].filter((row, index, rows) => rows.indexOf(row) === index);
+      if (directRows.length) return directRows;
+      const rootRows = [...root.querySelectorAll('li, article, tr')]
+        .filter(row => row.querySelectorAll?.('a[href*="/jp/auction/"]')?.length);
+      if (rootRows.length) return rootRows;
+      const compatibilityRows = [...root.querySelectorAll('li, article, tr, div')]
+        .filter(row => row.querySelectorAll?.('a[href*="/jp/auction/"]')?.length);
+      if (compatibilityRows.length) return compatibilityRows;
+    }
+    return [...document.querySelectorAll('li, article, tr, div')];
+  }
+
+  function findContactLink(row, productId = '') {
+    const links = row.querySelectorAll ? [...row.querySelectorAll('a')] : [];
+    const contactLinks = links.filter(a => {
+      const href = String(a.href || a.getAttribute?.('href') || '');
+      return /contact\.auctions\.yahoo\.co\.jp|buy\.auctions\.yahoo\.co\.jp\/order/i.test(href) ||
+        /\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent));
+    });
+    if (!contactLinks.length) return null;
+    if (productId) {
+      const matched = contactLinks.find(a => {
+        const href = String(a.href || a.getAttribute?.('href') || '');
+        return extractAuctionIdFromHref(href) === productId || href.toLowerCase().includes(productId);
+      });
+      if (matched) return matched;
+    }
+    return contactLinks[0] || null;
+  }
+
+  function findInfoContainer(row, productId = '') {
+    const candidates = row.querySelectorAll ? [...row.querySelectorAll('div')] : [];
+    const matching = candidates.find(candidate => {
+      const text = candidate.textContent || '';
+      const visibleIds = extractVisibleProductIds(text);
+      return productId
+        ? visibleIds.includes(productId)
+        : visibleIds.length === 1 && /\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}/.test(text);
+    });
+    return matching || row;
+  }
+
   function findPriceElementText(container) {
     const candidates = container.querySelectorAll
       ? container.querySelectorAll('span, li, dd, td, p, strong, b')
@@ -1291,20 +1349,30 @@ function extractOrderHistory() {
     return match?.[1] ? `${match[1].replace(/,/g, '')}\u5186` : '';
   }
 
-  const containers = [...document.querySelectorAll('li, article, tr, div')];
+  const containers = getYahooWonRows();
   const seen = new Set();
   const orders = [];
   for (const item of containers) {
-    const link = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
-      .find(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
-    if (!link) continue;
-    const match = link.href.match(/[a-zA-Z]?\d{8,10}/);
-    if (!match) continue;
-    const productId = match[0].toLowerCase();
-    const text = item.textContent || '';
-    const contactLink = [...item.querySelectorAll('a')]
-      .find(a => /contact\.auctions\.yahoo\.co\.jp/i.test(String(a.href || a.getAttribute?.('href') || '')) || /\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent)));
+    if (!item?.querySelectorAll) continue;
+    const rowText = item.textContent || '';
+    const rowVisibleIds = [...new Set(extractVisibleProductIds(rowText))];
+    if (rowVisibleIds.length > 1) continue;
+    const rowAuctionLinks = [...item.querySelectorAll('a[href*="/jp/auction/"]')]
+      .filter(a => extractAuctionIdFromHref(a.href));
+    const rowAuctionIds = [...new Set(rowAuctionLinks.map(a => extractAuctionIdFromHref(a.href)).filter(Boolean))];
+    if (rowAuctionIds.length > 1 && rowVisibleIds.length !== 1) continue;
+    const contactLink = findContactLink(item, rowVisibleIds[0] || '');
     if (!contactLink?.href) continue;
+    const contactProductId = extractAuctionIdFromHref(contactLink.href);
+    const productId = rowVisibleIds[0] || contactProductId || (rowAuctionIds.length === 1 ? rowAuctionIds[0] : '');
+    if (!productId) continue;
+    const infoContainer = findInfoContainer(item, productId);
+    const text = infoContainer.textContent || rowText;
+    const link = [...infoContainer.querySelectorAll?.('a[href*="/jp/auction/"]') || []]
+      .find(a => extractAuctionIdFromHref(a.href) === productId) ||
+      rowAuctionLinks.find(a => extractAuctionIdFromHref(a.href) === productId) ||
+      rowAuctionLinks[0];
+    if (!link) continue;
     if (seen.has(productId)) continue;
     seen.add(productId);
     const trackingMatch = text.match(/(?:\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u53d7\u4ed8\u756a\u53f7|\u4f1d\u7968\u756a\u53f7|tracking)[^\dA-Z]{0,20}([A-Z0-9-]{8,})/i);
@@ -1333,6 +1401,26 @@ function findWonHistoryNextPageUrl() {
 }
 
 function extractOrderImportHistory() {
+  function extractAuctionIdFromHref(value) {
+    const match = String(value || '').match(/[?&](?:aid|auctionId|aID)=([a-zA-Z]?\d{8,10})|\/jp\/auction\/([a-zA-Z]?\d{8,10})/);
+    return match ? String(match[1] || match[2] || '').toLowerCase() : '';
+  }
+
+  function getYahooWonRows() {
+    const root = document.querySelector?.('#itm');
+    if (!root?.querySelectorAll) return [];
+    const directRows = [
+      ...root.querySelectorAll(':scope > ul > li'),
+      ...root.querySelectorAll('ul > li')
+    ].filter((row, index, rows) => rows.indexOf(row) === index);
+    if (directRows.length) return directRows;
+    const rootRows = [...root.querySelectorAll('li, article, tr')]
+      .filter(row => row.querySelectorAll?.('a[href*="/jp/auction/"]')?.length);
+    if (rootRows.length) return rootRows;
+    return [...root.querySelectorAll('li, article, tr, div')]
+      .filter(row => row.querySelectorAll?.('a[href*="/jp/auction/"]')?.length);
+  }
+
   function findImportPriceElementText(container) {
     const candidates = container.querySelectorAll
       ? container.querySelectorAll('span, li, dd, td, p, strong, b')
@@ -1362,6 +1450,18 @@ function extractOrderImportHistory() {
       .map(match => match[1].toLowerCase());
   }
 
+  function findImportInfoContainer(row, productId = '') {
+    const candidates = row.querySelectorAll ? [...row.querySelectorAll('div')] : [];
+    const matching = candidates.find(candidate => {
+      const text = candidate.textContent || '';
+      const visibleIds = extractVisibleProductIds(text);
+      return productId
+        ? visibleIds.includes(productId)
+        : visibleIds.length === 1 && /\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}/.test(text);
+    });
+    return matching || row;
+  }
+
   function extractImportProductType(row) {
     const candidates = row.querySelectorAll
       ? [...row.querySelectorAll('span, li, dd, td, p, strong, b')]
@@ -1374,27 +1474,35 @@ function extractOrderImportHistory() {
     return lines.some(line => line === '\u30b9\u30c8\u30a2') ? 'store' : 'normal';
   }
 
-  const root = document.querySelector?.('#itm');
-  const rows = root?.querySelectorAll
-    ? [...root.querySelectorAll('li, article, tr, div')].filter(row => row.querySelectorAll?.('a[href*="/jp/auction/"]')?.length)
-    : [];
+  const rows = getYahooWonRows();
   const seen = new Set();
   const orders = [];
   for (const row of rows) {
-    const text = row.textContent || '';
+    if (!row?.querySelectorAll) continue;
+    const rowText = row.textContent || '';
+    const rowVisibleIds = [...new Set(extractVisibleProductIds(rowText))];
+    if (rowVisibleIds.length > 1) continue;
     const auctionLinks = [...row.querySelectorAll('a[href*="/jp/auction/"]')]
-      .filter(a => /[a-zA-Z]?\d{8,10}/.test(a.href));
+      .filter(a => extractAuctionIdFromHref(a.href));
     const uniqueProductIds = [...new Set(auctionLinks
-      .map(a => String(a.href || '').match(/[a-zA-Z]?\d{8,10}/)?.[0]?.toLowerCase())
+      .map(a => extractAuctionIdFromHref(a.href))
       .filter(Boolean))];
-    const visibleProductIds = [...new Set(extractVisibleProductIds(text))];
-    const productId = visibleProductIds.length === 1
-      ? visibleProductIds[0]
+    const productId = rowVisibleIds.length === 1
+      ? rowVisibleIds[0]
       : (uniqueProductIds.length === 1 ? uniqueProductIds[0] : '');
     if (!productId || seen.has(productId)) continue;
+    const infoContainer = findImportInfoContainer(row, productId);
+    const text = infoContainer.textContent || rowText;
     const link = auctionLinks.find(a => String(a.href || '').toLowerCase().includes(productId)) || auctionLinks[0];
     const contactLink = [...row.querySelectorAll('a')]
-      .find(a => /contact\.auctions\.yahoo\.co\.jp/i.test(String(a.href || a.getAttribute?.('href') || '')) || /\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent)));
+      .find(a => {
+        const href = String(a.href || a.getAttribute?.('href') || '');
+        if (!/contact\.auctions\.yahoo\.co\.jp|buy\.auctions\.yahoo\.co\.jp\/order/i.test(href) && !/\u53d6\u5f15\u9023\u7d61/.test(normalizeVisibleText(a.textContent))) {
+          return false;
+        }
+        const contactProductId = extractAuctionIdFromHref(href);
+        return !contactProductId || contactProductId === productId || href.toLowerCase().includes(productId);
+      });
     if (!link || !contactLink?.href) continue;
     seen.add(productId);
     orders.push({
