@@ -826,6 +826,33 @@ async function postScanDiagnostic(job, result, message, level = 'warn') {
   });
 }
 
+async function postTransactionStartDiagnostic(job, tab, message, level = 'error', extra = {}) {
+  const currentTab = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  const state = tab?.id ? await getBundleActionState(tab.id).catch(() => null) : null;
+  const diagnostics = [
+    `orderId=${job?.orderId || 0}`,
+    `productId=${job?.productId || ''}`,
+    `shippingFeeText=${job?.shippingFeeText || ''}`,
+    `transactionUrl=${job?.transactionUrl || ''}`,
+    `tabId=${tab?.id || ''}`,
+    `tabStatus=${currentTab?.status || ''}`,
+    `url=${currentTab?.url || tab?.url || ''}`,
+    `state=${state ? JSON.stringify(state).slice(0, 1200) : ''}`,
+    ...Object.entries(extra || {}).map(([key, value]) => `${key}=${String(value || '').slice(0, 500)}`)
+  ].join(',');
+  await postPluginDiagnostic({
+    type: 'transaction_start',
+    level,
+    productId: job?.productId || '',
+    orderId: job?.orderId || 0,
+    action: 'bundle_start',
+    method: 'background',
+    message,
+    diagnostics,
+    url: currentTab?.url || tab?.url || job?.transactionUrl || ''
+  });
+}
+
 async function fetchManualOrderImportJob() {
   const res = await apiFetch('/api/plugin/manual-order-import/jobs');
   const data = await res.json();
@@ -4892,6 +4919,17 @@ async function waitForBundleStartRenderReady(tab, action, timeoutMs = 6000) {
   return lastResult || { success: false, error: 'bundle start render readiness wait timed out' };
 }
 
+async function activateTabForBundleAction(tab) {
+  const tabId = tab?.id || tab;
+  if (!tabId) return;
+  const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
+  if (currentTab?.windowId && chrome.windows?.update) {
+    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  await sleep(200);
+}
+
 async function getBundleActionClickPoint(tabId, action) {
   const pattern = getBundleActionPatternSource(action);
   if (!pattern) return { success: false, error: 'unknown bundle action' };
@@ -5100,9 +5138,11 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
   await waitForBundleStartRenderReady(tab, action).catch(e => {
     console.warn('[Yahoo Bid] Bundle start render readiness wait failed, continuing with JS click:', e.message || e);
   });
+  await activateTabForBundleAction(tab);
 
   const previousTabIds = await getTabIds();
   let clickResult = null;
+  let usedContentScriptClick = false;
   try {
     clickResult = await runMainWorldBundleActionClick(tab.id, action);
     console.log('[Yahoo Bid] MAIN world click result:', clickResult);
@@ -5114,6 +5154,7 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
       console.log('[Yahoo Bid] Content script click result:', result);
       if (!result?.success) return { success: false, error: result?.error || `bundle ${action} failed`, tab };
       clickResult = result;
+      usedContentScriptClick = true;
     }
   } catch (e) {
     console.error('[Yahoo Bid] MAIN world execution failed:', e);
@@ -5123,6 +5164,7 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
     }).catch(error => ({ success: false, error: error.message || `bundle ${action} failed` }));
     if (!result?.success) return { success: false, error: `MAIN world click failed: ${e.message}; ${result?.error || ''}`.trim(), tab };
     clickResult = result;
+    usedContentScriptClick = true;
   }
 
   if (action === 'close') {
@@ -5139,18 +5181,37 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
   try {
     nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, action === 'start' ? 15000 : 5000);
   } catch (e) {
-    console.warn('[Yahoo Bid] JS click did not reach next bundle state, trying requestSubmit fallback:', e.message || e);
-    let requestSubmitResult = null;
-    try {
-      requestSubmitResult = await tryBundleRequestSubmitFallback(tab, action, waitFor, previousTabIds);
-      if (requestSubmitResult?.success) {
-        nextTab = requestSubmitResult.tab;
+    if (!nextTab && !usedContentScriptClick) {
+      console.warn('[Yahoo Bid] MAIN world click did not reach next bundle state, trying content script click:', e.message || e);
+      const contentClickResult = await chrome.tabs.sendMessage(tab.id, {
+        type: 'CLICK_BUNDLE_TRANSACTION_ACTION',
+        action
+      }).catch(error => ({ success: false, error: error.message || `bundle ${action} failed` }));
+      console.log('[Yahoo Bid] Content script fallback click result:', contentClickResult);
+      if (contentClickResult?.success) {
+        try {
+          nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, action === 'start' ? 10000 : 5000);
+        } catch (contentWaitError) {
+          e = contentWaitError;
+        }
       }
-    } catch (submitError) {
-      requestSubmitResult = { success: false, error: submitError.message || String(submitError || 'requestSubmit failed') };
     }
     if (!nextTab) {
-      throw new Error(buildBundleActionWaitError(action, requestSubmitResult?.error || e));
+      console.warn('[Yahoo Bid] JS click did not reach next bundle state, trying requestSubmit fallback:', e.message || e);
+      let requestSubmitResult = null;
+      try {
+        requestSubmitResult = await tryBundleRequestSubmitFallback(tab, action, waitFor, previousTabIds);
+        if (requestSubmitResult?.success) {
+          nextTab = requestSubmitResult.tab;
+        }
+      } catch (submitError) {
+        requestSubmitResult = { success: false, error: submitError.message || String(submitError || 'requestSubmit failed') };
+      }
+      if (!nextTab) {
+        throw new Error(buildBundleActionWaitError(action, requestSubmitResult?.error || e));
+      }
+    } else {
+      console.log(`[Yahoo Bid] Bundle action state reached after content script fallback, nextTab.id=${nextTab.id}`);
     }
   }
 
@@ -5313,6 +5374,9 @@ async function executeTransactionStartJob(job) {
       const bundleProductIds = info.productIds || [];
       const result = await completeNormalBundleRequest(tab);
       if (!result?.success) {
+        await postTransactionStartDiagnostic(job, result?.tab || tab, result?.error || 'normal bundle request failed', 'error', {
+          bundleProductIds: bundleProductIds.join('|')
+        }).catch(() => {});
         await updateTransactionStartStatus({
           productIds: bundleProductIds.length ? bundleProductIds : [job.productId],
           error: result?.error || 'normal bundle request failed'
@@ -5355,6 +5419,7 @@ async function executeTransactionStartJob(job) {
     }
     return { processedProductIds: [job.productId] };
   } catch (e) {
+    await postTransactionStartDiagnostic(job, tab, e.message || 'transaction start failed', 'error').catch(() => {});
     await updateTransactionStartStatus({ orderId: job.orderId, error: e.message || 'transaction start failed' }).catch(() => {});
     return { processedProductIds: [job.productId] };
   } finally {

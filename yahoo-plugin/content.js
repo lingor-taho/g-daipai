@@ -401,6 +401,20 @@ function isYahooBidAccessFailureText(text = getBodyText()) {
     isYahooSystemBidFailureText(text);
 }
 
+function isSellerBlacklistBidFailureText(text = getBodyText()) {
+  return /\u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f/.test(text) &&
+    /\u51fa\u54c1\u8005\u306e\u30d6\u30e9\u30c3\u30af\u30ea\u30b9\u30c8\u306b\u767b\u9332\u3055\u308c\u3066\u3044\u308b\u305f\u3081[\s\S]{0,40}\u5165\u672d\u3067\u304d\u307e\u305b\u3093/.test(text);
+}
+
+function buildSellerBlacklistBidFailure(stage) {
+  return {
+    success: false,
+    error: '\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355',
+    closeTab: true,
+    ...buildBidPageDiagnostics(stage)
+  };
+}
+
 function buildBidPageDiagnostics(stage) {
   const body = getBodyText().replace(/\s+/g, ' ').trim().slice(0, 1200);
   const href = window.location.href || '';
@@ -649,6 +663,9 @@ async function waitForBidOutcome(timeoutMs = 10000) {
     if (isYahooSystemBidFailureText()) {
       return buildYahooSystemBidFailure('wait-outcome-system-error');
     }
+    if (isSellerBlacklistBidFailureText()) {
+      return buildSellerBlacklistBidFailure('wait-outcome-seller-blacklist');
+    }
     if (isYahooBidAccessFailureText()) {
       return { success: false, error: 'Yahoo bid access failed', closeTab: true };
     }
@@ -689,6 +706,10 @@ async function executeBidV3(maxPrice, options = {}) {
 
   if (isYahooSystemBidFailureText(bodyText)) {
     return buildYahooSystemBidFailure('execute-start-system-error');
+  }
+
+  if (isSellerBlacklistBidFailureText(bodyText)) {
+    return buildSellerBlacklistBidFailure('execute-start-seller-blacklist');
   }
 
   if (isYahooLoginPageUrl()) {
