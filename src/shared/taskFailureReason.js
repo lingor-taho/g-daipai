@@ -35,6 +35,10 @@ export function getTaskFailureLabel(errorMsg) {
     return '失败：yahoo登录失败';
   }
 
+  if (/\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355|\u5356\u5bb6\u9ed1\u540d\u5355|\u51fa\u54c1\u8005\u306e\u30d6\u30e9\u30c3\u30af\u30ea\u30b9\u30c8/i.test(text)) {
+    return '\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355';
+  }
+
   if (/Server tab error|No tab with id|Tabs cannot be edited right now|user may be dragging a tab/i.test(text)) {
     return '失败：服务器tab异常';
   }

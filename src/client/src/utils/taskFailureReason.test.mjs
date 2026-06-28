@@ -66,3 +66,8 @@ assert.equal(
   getTaskFailureLabel('garbled 30 seconds no response task tab'),
   getTaskFailureLabel('timeout')
 );
+
+assert.equal(
+  getTaskFailureLabel('\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355'),
+  '\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355'
+);
