@@ -405,6 +405,7 @@ function testBuildOrderSettlementPrefersBundleShippingFee() {
 
 function testResolveSettlementStatusKeepsBundleCompleted() {
   assert.equal(resolveSettlementOrderStatus('pending_payment'), 'pending_settlement');
+  assert.equal(resolveSettlementOrderStatus('pending_settlement'), 'pending_settlement');
   assert.equal(resolveSettlementOrderStatus('bundle_completed'), 'bundle_completed');
   assert.equal(resolveSettlementOrderStatus('pending_shipment'), 'pending_shipment');
 }

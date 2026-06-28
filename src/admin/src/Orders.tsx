@@ -172,6 +172,9 @@ const noWrapCell = {
 };
 
 function canAutoSettle(item: any) {
+  if (item?.order_status === 'pending_settlement') {
+    return Boolean(item?.can_settle);
+  }
   return Boolean(
     item?.can_settle &&
     !item?.settled_at &&
@@ -350,7 +353,7 @@ export default function OrdersPage() {
       return;
     }
     if (selectedRows.some(item => !canAutoSettle(item))) {
-      message.error('只能选择待支付、待发货或同捆完了的订单进行结算');
+      message.error('只能选择待支付、待发货、同捆完了或待结算的订单进行结算');
       return;
     }
     setSettling(true);
