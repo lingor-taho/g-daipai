@@ -232,6 +232,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_product_created ON tasks(user_id, product_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_unique_product_id
+ON orders(product_id)
+WHERE product_id IS NOT NULL AND TRIM(product_id) <> '';
 CREATE INDEX IF NOT EXISTS idx_orders_task_id ON orders(task_id);
 CREATE INDEX IF NOT EXISTS idx_products_end_time ON products(end_time);
 

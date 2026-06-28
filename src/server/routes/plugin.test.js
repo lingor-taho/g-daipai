@@ -32,6 +32,7 @@ const {
   saveTransactionStartRunLog,
   updateTransactionStartStatus,
   syncYahooWonOrders,
+  upsertOrderFromTask,
   getScanJobs,
   updateScanStatus,
   buildDaipaiSheetRow,
@@ -1059,7 +1060,7 @@ async function testUpdateTransactionStartStatusMarksOrderCancelled() {
   assert.match(statusUpdate.sql, /order_status IS NULL OR order_status = ''/);
 }
 
-async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask() {
+async function testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder() {
   const calls = [];
   const tasks = new Map([
     ['a123456789', { id: 1, force_orders_resync: 0 }],
@@ -1097,7 +1098,7 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
   assert.equal(result.updated, 1);
   const taskSelects = calls.filter(call => call.type === 'getOne' && /FROM tasks\s+WHERE product_id/.test(call.sql));
   assert.equal(taskSelects.length, 2);
-  assert.match(taskSelects[0].sql, /'failed'/);
+  assert.doesNotMatch(taskSelects[0].sql, /'failed'/);
   const statusUpdate = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
   assert.equal(statusUpdate.params[0], 110);
   const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
@@ -1106,6 +1107,160 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask
   assert.doesNotMatch(orderInsert.sql, /product_title|product_url/);
   assert.equal(orderInsert.params[1], 'u1231877298');
   assert.equal(orderInsert.params[2], 350);
+}
+
+async function testSyncYahooWonOrdersDoesNotMarkLatestFailedTaskSuccessful() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) {
+        assert.doesNotMatch(sql, /'failed'/);
+        return { id: 1169, force_orders_resync: 0 };
+      }
+      if (/FROM orders WHERE task_id/.test(sql)) return null;
+      if (/FROM orders o/.test(sql) && /COALESCE\(o\.product_id/.test(sql)) return null;
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) {
+        return {
+          id: 1169,
+          product_id: 'm1235180746',
+          current_price: 20001
+        };
+      }
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    {
+      productId: 'm1235180746',
+      price: '22,001円',
+      wonTimeText: '6/28 13:18',
+      transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235180746'
+    }
+  ], fakeDb);
+
+  assert.equal(result.updated, 1);
+  const statusUpdate = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
+  assert.ok(statusUpdate);
+  assert.equal(statusUpdate.params[0], 1169);
+  const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
+  assert.ok(orderInsert);
+  assert.equal(orderInsert.params[0], 1169);
+}
+
+async function testSyncYahooWonOrdersSkipsWhenOnlyFailedTaskExists() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) {
+        assert.doesNotMatch(sql, /'failed'/);
+        return null;
+      }
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    { productId: 'm1235180746', price: '22,001円', wonTimeText: '6/28 13:18' }
+  ], fakeDb);
+
+  assert.equal(result.updated, 0);
+  assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), false);
+  assert.equal(calls.some(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql)), false);
+}
+
+async function testSyncYahooWonOrdersDoesNotDuplicateExistingProductOrder() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) {
+        return { id: 1170, force_orders_resync: 0 };
+      }
+      if (/FROM orders WHERE task_id/.test(sql)) return null;
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) {
+        return {
+          id: 1170,
+          product_id: 'm1235180746',
+          current_price: 20001
+        };
+      }
+      if (/FROM orders o/.test(sql) && /COALESCE\(o\.product_id/.test(sql)) {
+        return {
+          id: 275,
+          task_id: 1169,
+          order_status: ORDER_STATUS_PENDING_PAYMENT,
+          tracking_number: ''
+        };
+      }
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await syncYahooWonOrders([
+    {
+      productId: 'm1235180746',
+      price: '22,001円',
+      wonTimeText: '6/28 13:18',
+      transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235180746'
+    }
+  ], fakeDb);
+
+  assert.equal(result.skippedExisting, 1);
+  assert.equal(result.updated, 0);
+  assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), false);
+  assert.equal(calls.some(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql)), false);
+}
+
+async function testUpsertOrderFromTaskUsesExistingProductOrder() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) {
+        return {
+          id: 1170,
+          product_id: 'm1235180746',
+          current_price: 20001
+        };
+      }
+      if (/FROM orders WHERE task_id/.test(sql)) return null;
+      if (/FROM orders o/.test(sql) && /COALESCE\(o\.product_id/.test(sql)) {
+        return { id: 275, task_id: 1169 };
+      }
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await upsertOrderFromTask(1170, {
+    finalPrice: 22001,
+    wonTimeText: '6/28 13:18',
+    transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235180746'
+  }, fakeDb);
+
+  assert.equal(calls.some(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql)), false);
+  const orderUpdate = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql));
+  assert.ok(orderUpdate);
+  assert.match(orderUpdate.sql, /WHERE id = \?/);
+  assert.equal(orderUpdate.params.at(-1), 275);
 }
 
 async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
@@ -2317,7 +2472,11 @@ Promise.all([
   testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testUpdateTransactionStartStatusMarksOrderCancelled(),
-  testSyncYahooWonOrdersContinuesAfterExistingAndRecoversFailedTask(),
+  testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder(),
+  testSyncYahooWonOrdersDoesNotMarkLatestFailedTaskSuccessful(),
+  testSyncYahooWonOrdersSkipsWhenOnlyFailedTaskExists(),
+  testSyncYahooWonOrdersDoesNotDuplicateExistingProductOrder(),
+  testUpsertOrderFromTaskUsesExistingProductOrder(),
   testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce(),
   testSyncYahooWonOrdersMovesExistingPendingShipmentWithTrackingToPendingReceipt(),
   testSyncYahooWonOrdersKeepsForcedResyncWhenPriceMissing(),

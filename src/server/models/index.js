@@ -138,6 +138,28 @@ db.prepare(`
   ON orders(product_id)
 `).run();
 
+const duplicateOrderProducts = db.prepare(`
+  SELECT product_id, COUNT(*) AS count
+  FROM orders
+  WHERE product_id IS NOT NULL
+    AND TRIM(product_id) <> ''
+  GROUP BY product_id
+  HAVING COUNT(*) > 1
+  LIMIT 1
+`).get();
+
+if (duplicateOrderProducts) {
+  console.warn(
+    `[DB] Skipped idx_orders_unique_product_id because duplicate order product exists: ${duplicateOrderProducts.product_id}`
+  );
+} else {
+  db.prepare(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_unique_product_id
+    ON orders(product_id)
+    WHERE product_id IS NOT NULL AND TRIM(product_id) <> ''
+  `).run();
+}
+
 db.prepare(`
   CREATE INDEX IF NOT EXISTS idx_orders_task_id
   ON orders(task_id)

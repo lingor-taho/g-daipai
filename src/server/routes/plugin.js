@@ -1015,11 +1015,21 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
   );
   if (!task) return;
   const existing = await database.getOne('SELECT id FROM orders WHERE task_id = ?', [taskId]);
+  const existingProductOrder = existing ? null : await database.getOne(
+    `SELECT o.id
+     FROM orders o
+     LEFT JOIN tasks existing_task ON existing_task.id = o.task_id
+     WHERE COALESCE(o.product_id, existing_task.product_id) = ?
+     ORDER BY datetime(COALESCE(o.won_at, o.updated_at, o.created_at)) DESC, o.id DESC
+     LIMIT 1`,
+    [task.product_id]
+  );
+  const targetOrder = existing || existingProductOrder;
   const finalPrice = resolveOrderFinalPrice(task, options.finalPrice);
   const wonTimeText = String(options.wonTimeText || '').trim() || null;
   const wonAt = normalizeYahooWonTimeText(wonTimeText);
   const transactionUrl = String(options.transactionUrl || '').trim() || null;
-  if (existing) {
+  if (targetOrder) {
     await database.query(
       `UPDATE orders
        SET product_id = COALESCE(product_id, ?),
@@ -1028,8 +1038,8 @@ async function upsertOrderFromTask(taskId, options = {}, database = db) {
            won_time_text = COALESCE(?, won_time_text),
            transaction_url = COALESCE(?, transaction_url),
            updated_at = CURRENT_TIMESTAMP
-       WHERE task_id = ?`,
-      [task.product_id, finalPrice, wonAt, wonTimeText, transactionUrl, taskId]
+       WHERE id = ?`,
+      [task.product_id, finalPrice, wonAt, wonTimeText, transactionUrl, targetOrder.id]
     );
   } else {
     await database.query(
@@ -1718,13 +1728,31 @@ async function syncYahooWonOrders(orders = [], database = db) {
     const task = await database.getOne(
       `SELECT id, force_orders_resync
        FROM tasks
-       WHERE product_id = ? AND status IN ('bidding', 'success', 'failed')
+       WHERE product_id = ? AND status IN ('bidding', 'success')
        ORDER BY force_orders_resync DESC, datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
        LIMIT 1`,
       [productId]
     );
     if (!task) continue;
     const isForced = Number(task.force_orders_resync || 0) === 1;
+    const existingProductOrder = await database.getOne(
+      `SELECT o.id, o.task_id, o.order_status, o.tracking_number
+       FROM orders o
+       INNER JOIN tasks t ON o.task_id = t.id
+       WHERE COALESCE(o.product_id, t.product_id) = ?
+       ORDER BY datetime(COALESCE(o.won_at, o.updated_at, o.created_at)) DESC, o.id DESC
+       LIMIT 1`,
+      [productId]
+    );
+    if (existingProductOrder && !isForced) {
+      const existingUpdate = await updateExistingWonOrderFromSync(existingProductOrder, order, database);
+      if (existingUpdate.updated) {
+        updated += 1;
+        continue;
+      }
+      skippedExisting += 1;
+      continue;
+    }
     const existingOrder = await database.getOne('SELECT id, order_status, tracking_number FROM orders WHERE task_id = ?', [task.id]);
     if (existingOrder && !isForced) {
       const existingUpdate = await updateExistingWonOrderFromSync(existingOrder, order, database);
@@ -3103,6 +3131,7 @@ module.exports.getTransactionStartJobs = getTransactionStartJobs;
 module.exports.saveTransactionStartRunLog = saveTransactionStartRunLog;
 module.exports.updateTransactionStartStatus = updateTransactionStartStatus;
 module.exports.syncYahooWonOrders = syncYahooWonOrders;
+module.exports.upsertOrderFromTask = upsertOrderFromTask;
 module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
 module.exports.getYahooMessageJobs = getYahooMessageJobs;
