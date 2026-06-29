@@ -117,6 +117,12 @@ function extractImage(html) {
     const match = html.match(pattern);
     if (match?.[1]) return match[1];
   }
+  const nextDataItem = extractNextDataItem(html);
+  const nextDataImage = Array.isArray(nextDataItem?.img)
+    ? nextDataItem.img.find(image => image?.image || image?.thumbnail)
+    : null;
+  if (nextDataImage?.image) return nextDataImage.image;
+  if (nextDataImage?.thumbnail) return nextDataImage.thumbnail;
   return '';
 }
 
@@ -683,4 +689,3 @@ module.exports.buildYahooSearchUrl = buildYahooSearchUrl;
 module.exports.normalizeYahooShippingPrefCode = normalizeYahooShippingPrefCode;
 module.exports.getYahooShippingPrefCode = getYahooShippingPrefCode;
 module.exports.productService = productService;
-

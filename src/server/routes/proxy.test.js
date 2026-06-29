@@ -61,6 +61,43 @@ async function testParseProductHtml() {
   assert.equal(product.endTime, '2026-05-13T12:00:00+09:00');
 }
 
+async function testParseProductHtmlUsesNextDataItemImage() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Next Data Product - Yahoo!オークション</title>
+        <script id="__NEXT_DATA__" type="application/json">
+          {
+            "props": {
+              "pageProps": {
+                "initialState": {
+                  "item": {
+                    "detail": {
+                      "item": {
+                        "img": [
+                          {
+                            "image": "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/item-main.jpg",
+                            "thumbnail": "https://auc-pctr.c.yimg.jp/i/item-thumb.jpg"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <span itemprop="price" content="12,300"></span>
+      </body>
+    </html>
+  `, 'x1234567890', 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
+
+  assert.equal(product.imageUrl, 'https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/item-main.jpg');
+}
+
 async function testParseProductTitleWhenYahooPrefixComesFirst() {
   const product = parseProductHtml(`
     <html>
@@ -836,6 +873,7 @@ async function testFailsWhenServerCannotFetchProductAndNoCacheExists() {
 async function run() {
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
+  await testParseProductHtmlUsesNextDataItemImage();
   await testParseProductTitleWhenYahooPrefixComesFirst();
   await testParseProductTitlePrefersPageDataProductName();
   await testParseCurrentDisplayedPriceBeforeJsonLdOffer();

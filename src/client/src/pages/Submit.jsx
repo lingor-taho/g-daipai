@@ -256,7 +256,7 @@ export default function Submit() {
           setBuyoutSelected(false);
         }
         setLastFetchedUrl(normalizedInput);
-        Toast.show({ content: data.imageUrl ? '已获取商品信息' : '已获取标题（价格需在页面提取）' });
+        Toast.show({ content: '已获取商品信息' });
       } else {
         setProduct(null);
         Toast.show({ content: '服务器网络问题，请稍后重试！' });
