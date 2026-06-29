@@ -12,6 +12,8 @@ const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MESSAGE_JOB_TIMEOUT_MS = 30000;
+const PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS = 8000;
+const PENDING_SHIPMENT_SCAN_POLL_MS = 500;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 const PAYMENT_STORE_CONFIRMATION_FLOW_ENABLED = true;
 
@@ -5556,12 +5558,8 @@ async function executePendingShipmentScanJob(job) {
   const beforeTabIds = await getTabIds();
   try {
     tab = await openTransactionPage(job, beforeTabIds);
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_PENDING_SHIPMENT_SCAN' }).catch(error => {
-      console.error('[Yahoo Bid] Failed to extract pending shipment scan:', error);
-      return null;
-    });
-    await reportYahooLoginStatus(response?.loginStatus);
-    if (response?.loginStatus?.status === 'failed') return { stop: true };
+    const response = await waitForPendingShipmentScanResult(tab, job);
+    if (response?.stop) return { stop: true };
     if (!response?.success) return { stop: false };
     const payload = buildScanStatusPayload({ ...job, result: response.result });
     if (payload) await updateScanStatus(payload);
@@ -5572,6 +5570,46 @@ async function executePendingShipmentScanJob(job) {
   } finally {
     await closeTabsForScanFlow(tab, beforeTabIds);
   }
+}
+
+async function readPendingShipmentScanResult(tab) {
+  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_PENDING_SHIPMENT_SCAN' }).catch(error => {
+    console.error('[Yahoo Bid] Failed to extract pending shipment scan:', error);
+    return null;
+  });
+  await reportYahooLoginStatus(response?.loginStatus);
+  if (response?.loginStatus?.status === 'failed') return { stop: true, success: false, loginStatus: response.loginStatus };
+  return response;
+}
+
+function isRenderedPendingShipmentScanResult(result = {}) {
+  return result.type === 'shipped' || result.type === 'cancelled' || result.type === 'pending_shipment';
+}
+
+async function waitForPendingShipmentScanResult(tab, job = {}, timeoutMs = PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS) {
+  const startAt = Date.now();
+  let latestResponse = null;
+  let attempt = 0;
+  while (Date.now() - startAt <= timeoutMs) {
+    attempt += 1;
+    const response = await readPendingShipmentScanResult(tab);
+    if (response?.stop) return response;
+    if (response?.success) {
+      latestResponse = response;
+      if (isRenderedPendingShipmentScanResult(response.result || {})) {
+        return response;
+      }
+    }
+    await sleep(PENDING_SHIPMENT_SCAN_POLL_MS);
+  }
+  if (latestResponse?.success) {
+    await postScanDiagnostic(
+      job,
+      latestResponse.result,
+      `pending shipment scan render wait timed out after ${attempt} reads: ${latestResponse.result?.type || 'unknown'}`
+    ).catch(() => {});
+  }
+  return latestResponse || { success: false };
 }
 
 async function executeWaitingShippingScanJob(job) {
@@ -6415,6 +6453,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   isLikelyYahooTransactionTab,
   closeTabsForTransactionFlow,
   buildScanStatusPayload,
+  executePendingShipmentScanJob,
   shouldAttemptBundleInputAction,
   buildPaymentPageStateFromSnapshot,
   parsePaymentAmountJpyFromText,
