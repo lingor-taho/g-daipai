@@ -1420,6 +1420,66 @@ async function testPendingShipmentScanWaitsForRenderedShipmentState() {
   assert.equal(statusCall.body.trackingNumber, '450053704833');
 }
 
+async function testStorePendingShipmentScanKeepsPollingPastInitialPendingState() {
+  const apiCalls = [];
+  let messageCalls = 0;
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      apiCalls.push({
+        url,
+        body: options.body ? JSON.parse(options.body) : null
+      });
+      return {
+        async json() {
+          return { success: true };
+        }
+      };
+    },
+    tabs: {
+      async query() { return []; },
+      async create() { return { id: 78, status: 'complete', url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=b1234714536' }; },
+      async get(tabId) { return { id: tabId, status: 'complete', url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=b1234714536' }; },
+      async sendMessage(tabId, message) {
+        assert.equal(tabId, 78);
+        assert.equal(message.type, 'EXTRACT_PENDING_SHIPMENT_SCAN');
+        messageCalls += 1;
+        if (messageCalls === 1) {
+          return {
+            success: true,
+            loginStatus: { status: 'ok' },
+            result: { type: 'pending_shipment' }
+          };
+        }
+        return {
+          success: true,
+          loginStatus: { status: 'ok' },
+          result: {
+            type: 'shipped',
+            shippingCompany: '\u4f50\u5ddd\u6025\u4fbf',
+            trackingNumber: '450053704833'
+          }
+        };
+      }
+    }
+  });
+
+  const result = await api.executePendingShipmentScanJob({
+    orderId: 286,
+    orderStatus: 'pending_shipment',
+    productId: 'b1234714536',
+    productType: 'store',
+    transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=b1234714536'
+  });
+
+  assert.equal(result.stop, false);
+  assert.equal(messageCalls, 2);
+  const statusCall = apiCalls.find(call => String(call.url || '').endsWith('/api/plugin/scan/status'));
+  assert.ok(statusCall);
+  assert.equal(statusCall.body.orderId, 286);
+  assert.equal(statusCall.body.shipped, true);
+  assert.equal(statusCall.body.trackingNumber, '450053704833');
+}
+
 function testPaymentPageStateDetectsPurchaseCompletePage() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
@@ -8260,6 +8320,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBuildScanStatusPayloadReportsBundleNoProgress();
   testBundleInputActionCanRunFromWaitingAgreementState();
   await testPendingShipmentScanWaitsForRenderedShipmentState();
+  await testStorePendingShipmentScanKeepsPollingPastInitialPendingState();
   testPaymentPageStateDetectsPurchaseCompletePage();
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
   testPaymentPageStateKeepsSelectedShippingOption();

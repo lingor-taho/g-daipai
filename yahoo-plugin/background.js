@@ -5582,8 +5582,10 @@ async function readPendingShipmentScanResult(tab) {
   return response;
 }
 
-function isRenderedPendingShipmentScanResult(result = {}) {
-  return result.type === 'shipped' || result.type === 'cancelled' || result.type === 'pending_shipment';
+function isRenderedPendingShipmentScanResult(result = {}, job = {}) {
+  if (result.type === 'shipped' || result.type === 'cancelled') return true;
+  if (result.type !== 'pending_shipment') return false;
+  return job.productType !== 'store';
 }
 
 async function waitForPendingShipmentScanResult(tab, job = {}, timeoutMs = PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS) {
@@ -5596,7 +5598,7 @@ async function waitForPendingShipmentScanResult(tab, job = {}, timeoutMs = PENDI
     if (response?.stop) return response;
     if (response?.success) {
       latestResponse = response;
-      if (isRenderedPendingShipmentScanResult(response.result || {})) {
+      if (isRenderedPendingShipmentScanResult(response.result || {}, job)) {
         return response;
       }
     }
