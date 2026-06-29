@@ -596,6 +596,20 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   }).action, 'scan');
 }
 
+function testManualScanRequestBypassesScanWindow() {
+  assert.equal(getNextIdleAction({
+    transactionStartHour: 1,
+    transactionStartLastRunSlot: '2026-06-29-01',
+    scanRequested: 1,
+    scanIdleCounter: 0,
+    scanEveryIdleRuns: 10,
+    scanStartHour: 1,
+    scanEndHour: 19,
+    nowHour: 21,
+    today: '2026-06-29'
+  }).action, 'scan');
+}
+
 function testManualOrderImportCompletesWithoutClearingScanCounter() {
   const saved = [];
   const fakeDb = {
@@ -2449,6 +2463,7 @@ testNormalizeYahooWonTimeTextInfersCurrentYear();
 testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIdleActionChoosesTransactionStartBeforeScan();
+testManualScanRequestBypassesScanWindow();
 testTransactionStartReadyOneMinuteAfterConfiguredHour();
 testTransactionStartScheduleFollowsChangedHourSlots();
 testPaymentIdleActionUsesFlagAfterScanPriority();

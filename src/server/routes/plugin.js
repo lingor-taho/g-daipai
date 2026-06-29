@@ -571,6 +571,9 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const scanEndHour = clampHour(config.scanEndHour, DEFAULT_SCAN_END_HOUR);
   const scanEvery = Math.max(1, Math.floor(Number(config.scanEveryIdleRuns || DEFAULT_SCAN_EVERY_IDLE_RUNS)));
   const scanCounter = Math.max(0, Math.floor(Number(config.scanIdleCounter || 0)));
+  if (Number(config.scanRequested || 0) === 1) {
+    return { action: 'scan', today };
+  }
   const inScanWindow = scanStartHour <= scanEndHour
     ? Number(nowHour) >= scanStartHour && Number(nowHour) <= scanEndHour
     : Number(nowHour) >= scanStartHour || Number(nowHour) <= scanEndHour;
@@ -621,6 +624,7 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
     }
     await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   } else if (action === 'scan') {
+    await saveConfigValue(database, 'scan_requested', '0');
     await saveConfigValue(database, 'scan_idle_counter', '0');
   } else if (action === 'yahoo_message') {
     // Message reading/sending is an explicit queue and must not consume the D-scan counter.
@@ -653,6 +657,7 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
        'scan_end_hour',
        'scan_every_idle_runs',
        'scan_idle_counter',
+       'scan_requested',
        'payment_requested',
        'payment_job_limit',
        'payment_page_stay_seconds'
@@ -697,6 +702,7 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
     scanEndHour: Number(values.scan_end_hour ?? DEFAULT_SCAN_END_HOUR),
     scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? DEFAULT_SCAN_EVERY_IDLE_RUNS),
     scanIdleCounter: Number(values.scan_idle_counter || 0),
+    scanRequested: Number(values.scan_requested || 0),
     paymentRequested: Number(values.payment_requested || 0),
     paymentJobLimit: parsePositiveInt(values.payment_job_limit, DEFAULT_PAYMENT_JOB_LIMIT),
     paymentPageStaySeconds: parsePositiveInt(values.payment_page_stay_seconds, DEFAULT_PAYMENT_PAGE_STAY_SECONDS),

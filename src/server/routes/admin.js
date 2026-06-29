@@ -2307,7 +2307,11 @@ async function requestScan(database = db) {
      VALUES ('scan_idle_counter', ?, CURRENT_TIMESTAMP)`,
     [String(scanEveryIdleRuns)]
   );
-  return { scanIdleCounter: scanEveryIdleRuns };
+  await database.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES ('scan_requested', '1', CURRENT_TIMESTAMP)`
+  );
+  return { scanIdleCounter: scanEveryIdleRuns, scanRequested: true };
 }
 
 async function saveConfigValue(database, key, value) {
