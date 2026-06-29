@@ -368,6 +368,9 @@ function extractEndTime(html) {
     const match = html.match(pattern);
     if (match?.[1]) return match[1].trim();
   }
+  const nextDataItem = extractNextDataItem(html);
+  if (nextDataItem?.endTime) return String(nextDataItem.endTime).trim();
+  if (nextDataItem?.timeForBrightTag?.endTime) return String(nextDataItem.timeForBrightTag.endTime).trim();
   return '';
 }
 
