@@ -1335,9 +1335,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     (/\u9451\u5b9a/.test(bodyText) && (/\u9451\u5b9a\u3057\u306a\u3044/.test(bodyText) || controls.some(text => /\u9451\u5b9a\u3057\u306a\u3044/.test(text))));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(bodyText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(bodyText) && waitingShipmentText);
-  const cancelled = /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081/.test(bodyText) ||
-    /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u307e\u3057\u305f/.test(bodyText) ||
-    /\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(bodyText);
+  const cancelled = isYahooTransactionCancelledText(bodyText);
   return {
     url: snapshot.url || '',
     title: snapshot.title || '',
@@ -3188,12 +3186,18 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
   }
 }
 
+function isYahooTransactionCancelledText(text = '') {
+  const source = String(text || '');
+  return /\u843d\u672d\u8005\u524a\u9664/.test(source) ||
+    /\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
+    /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
+    /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
+}
+
 function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   const text = String(snapshot.bodyText || '').replace(/\s+/g, ' ').trim();
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
-  const cancelled = /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u307e\u3057\u305f/.test(text) ||
-    /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
-    /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text);
+  const cancelled = isYahooTransactionCancelledText(text);
   return {
     url: snapshot.url || '',
     textSample: text.slice(0, 500),

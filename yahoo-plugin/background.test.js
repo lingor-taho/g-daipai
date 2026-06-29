@@ -1536,6 +1536,14 @@ function testPaymentPageStateDetectsBuyerDeletedCancellation() {
   assert.equal(state.cancelled, true);
   assert.equal(state.hasEasyPaymentButton, false);
   assert.equal(state.hasReviewButton, false);
+
+  const cancelledState = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298',
+    bodyText: '\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002',
+    controls: []
+  });
+
+  assert.equal(cancelledState.cancelled, true);
 }
 
 function testPaymentPageStateDetectsStoreConfirmationSection() {
@@ -3426,6 +3434,13 @@ function testConfirmReceiptPageStateDetectsWinnerDeletedCancellation() {
   assert.equal(state.cancelled, true);
   assert.equal(state.complete, false);
   assert.equal(state.hasReceiptCheckbox, false);
+
+  const deletedBecauseState = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: '\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3002\u904e\u53bb\u306e\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8\u306e\u95b2\u89a7\u306e\u307f\u53ef\u80fd\u3067\u3059\u3002',
+    controls: ['\u5546\u54c1\u30da\u30fc\u30b8\u3078']
+  });
+
+  assert.equal(deletedBecauseState.cancelled, true);
 }
 
 async function testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled() {

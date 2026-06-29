@@ -1869,11 +1869,16 @@ function detectPlacementDefaultModal(text = getBodyText()) {
     !!findClickableByText(/^\s*OK\s*$/);
 }
 
-function detectBuyerDeletedCancellation(text = getBodyText()) {
+function isYahooTransactionCancelledText(text = getBodyText()) {
   const source = String(text || '');
-  return /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081[\s\S]{0,20}\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
-    /\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u307e\u3057\u305f/.test(source) ||
-    /\u843d\u672d\u8005\u524a\u9664/.test(source);
+  return /\u843d\u672d\u8005\u524a\u9664/.test(source) ||
+    /\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
+    /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
+    /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
+}
+
+function detectBuyerDeletedCancellation(text = getBodyText()) {
+  return isYahooTransactionCancelledText(text);
 }
 
 function normalizeYenText(value) {

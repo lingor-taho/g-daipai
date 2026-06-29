@@ -3012,6 +3012,13 @@ function testBundleTransactionActionStateDetectsBuyerDeletedCancellation() {
   const state = api.getBundleTransactionActionState();
 
   assert.equal(state.cancelled, true);
+
+  const cancelledState = loadContentForTest(
+    '\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002',
+    '/buyer/top'
+  ).getBundleTransactionActionState();
+
+  assert.equal(cancelledState.cancelled, true);
 }
 
 function testExtractWaitingShippingScanResultFindsShippingFee() {
