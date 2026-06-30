@@ -22,6 +22,12 @@ const menuItemsConfig = [
 menuItemsConfig.push({ key: '/online-users', fullLabel: '在线用户', shortLabel: '在', mobileLabel: '在线' });
 menuItemsConfig.push({ key: '/message-read', fullLabel: '消息读取', shortLabel: '消', mobileLabel: '消息' });
 
+menuItemsConfig.splice(
+  Math.max(menuItemsConfig.findIndex(item => item.key === '/data-batch'), 0),
+  0,
+  { key: '/data-cleanup/db-backup', fullLabel: '服务器DB下载', shortLabel: 'DB', mobileLabel: 'DB下载' }
+);
+
 const orderedMenuItemsConfig = [
   ...menuItemsConfig.filter(item => item.key !== '/reports'),
   ...menuItemsConfig.filter(item => item.key === '/reports')
@@ -60,7 +66,9 @@ function renderPaymentAlertMessage(messageText: string) {
 export default function AdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const selectedKey = orderedMenuItemsConfig.find(item => location.pathname.startsWith(item.key))?.key || '/tasks';
+  const selectedKey = orderedMenuItemsConfig
+    .filter(item => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))
+    .sort((a, b) => b.key.length - a.key.length)[0]?.key || '/tasks';
   const username = localStorage.getItem('username') || 'admin';
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
   const [paymentAlert, setPaymentAlert] = useState('');

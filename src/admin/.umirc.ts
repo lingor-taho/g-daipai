@@ -19,6 +19,7 @@ export default {
         { path: '/users', redirect: '/accounts' },
         { path: '/server-accounts', redirect: '/accounts' },
         { path: '/multi-bid-settings', component: '@/MultiBidSettings' },
+        { path: '/data-cleanup/db-backup', component: '@/DatabaseBackup' },
         { path: '/data-cleanup', component: '@/DataCleanup' },
         { path: '/data-batch', component: '@/DataBatch' },
         { path: '/manual-order-import', component: '@/ManualOrderImport' },

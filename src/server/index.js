@@ -12,10 +12,16 @@ const {
   getDataCleanupConfig,
   shouldRunAutoCleanup
 } = require('./services/dataCleanup');
+const {
+  cleanupOldDatabaseBackups,
+  getWeeklyDatabaseBackupCleanupSlot,
+  isWeeklyDatabaseBackupCleanupDue
+} = require('./services/databaseBackup');
 
 const app = express();
 const PENDING_TASK_SWEEP_INTERVAL_MS = 60 * 1000;
 const DATA_CLEANUP_CHECK_INTERVAL_MS = 60 * 1000;
+let lastDatabaseBackupCleanupSlot = '';
 const allowedHttpOrigins = new Set([
   'http://localhost:3035',
   'http://127.0.0.1:3035',
@@ -104,12 +110,30 @@ async function runScheduledDataCleanup() {
   }
 }
 
+async function runScheduledDatabaseBackupCleanup(nowMs = Date.now()) {
+  try {
+    if (!isWeeklyDatabaseBackupCleanupDue(nowMs)) return;
+    const slot = getWeeklyDatabaseBackupCleanupSlot(nowMs);
+    if (slot === lastDatabaseBackupCleanupSlot) return;
+    const result = await cleanupOldDatabaseBackups({ nowMs });
+    lastDatabaseBackupCleanupSlot = slot;
+    console.log(`Database backup cleanup completed: deleted=${result.deletedCount}`);
+  } catch (err) {
+    console.error('Failed to run scheduled database backup cleanup:', err);
+  }
+}
+
+async function runScheduledMaintenance() {
+  await runScheduledDataCleanup();
+  await runScheduledDatabaseBackupCleanup();
+}
+
 app.listen(config.port, () => {
   console.log(`API Server running on port ${config.port}`);
   sweepPendingTasks();
   const sweepTimer = setInterval(sweepPendingTasks, PENDING_TASK_SWEEP_INTERVAL_MS);
   sweepTimer.unref?.();
-  runScheduledDataCleanup();
-  const cleanupTimer = setInterval(runScheduledDataCleanup, DATA_CLEANUP_CHECK_INTERVAL_MS);
+  runScheduledMaintenance();
+  const cleanupTimer = setInterval(runScheduledMaintenance, DATA_CLEANUP_CHECK_INTERVAL_MS);
   cleanupTimer.unref?.();
 });

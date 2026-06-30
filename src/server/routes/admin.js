@@ -2,6 +2,7 @@
 const router = express.Router();
 const db = require('../models');
 const bcrypt = require('bcryptjs');
+const fs = require('fs/promises');
 const authMiddleware = require('../middleware/auth');
 const adminAuthMiddleware = require('../middleware/adminAuth');
 const {
@@ -28,6 +29,15 @@ const {
   getDataCleanupConfig,
   saveDataCleanupConfig
 } = require('../services/dataCleanup');
+const {
+  createDatabaseBackup,
+  getDatabaseBackupDir,
+  getDatabasePath,
+  isValidDatabaseBackupFileName,
+  listDatabaseBackups,
+  resolveBackupFilePath,
+  displayPath: displayDatabaseBackupPath
+} = require('../services/databaseBackup');
 const {
   previewWonDateCleanup,
   runWonDateCleanup
@@ -3387,6 +3397,48 @@ router.post('/data-cleanup/won-date/run', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(400).json({ error: err.message || 'valid cleanup date is required' });
+  }
+});
+
+router.get('/data-cleanup/db-backups', async (req, res) => {
+  const backups = await listDatabaseBackups();
+  const databasePath = getDatabasePath(db);
+  const backupDir = getDatabaseBackupDir();
+  res.json({
+    databasePath,
+    displayDatabasePath: displayDatabaseBackupPath(databasePath),
+    backupDir,
+    displayBackupDir: displayDatabaseBackupPath(backupDir),
+    backups,
+    cleanupSchedule: '每周一 04:00 自动清空 04:00 前已存在的备份文件'
+  });
+});
+
+router.post('/data-cleanup/db-backups', async (req, res) => {
+  try {
+    const backup = await createDatabaseBackup(db);
+    res.json({
+      success: true,
+      ...backup,
+      filePath: undefined,
+      downloadUrl: `/api/admin/data-cleanup/db-backups/${encodeURIComponent(backup.fileName)}/download`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'database backup failed' });
+  }
+});
+
+router.get('/data-cleanup/db-backups/:fileName/download', async (req, res) => {
+  const fileName = String(req.params.fileName || '');
+  if (!isValidDatabaseBackupFileName(fileName)) {
+    return res.status(400).json({ error: 'invalid backup file name' });
+  }
+  try {
+    const filePath = resolveBackupFilePath(fileName);
+    await fs.access(filePath);
+    res.download(filePath, fileName);
+  } catch (err) {
+    res.status(404).json({ error: 'backup file not found' });
   }
 });
 
