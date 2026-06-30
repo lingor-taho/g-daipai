@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { authHeaders, fetchAdminJson, getAdminHttpErrorMessage } from './utils/auth';
+import DatabaseBackupPage from './DatabaseBackup';
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-';
@@ -333,7 +334,8 @@ export default function DataCleanupPage() {
     <Tabs
       items={[
         { key: 'regular', label: '日常清理', children: regularCleanup },
-        { key: 'force-date', label: '按日期强制清理', children: forceCleanup }
+        { key: 'force-date', label: '按日期强制清理', children: forceCleanup },
+        { key: 'db-backup', label: '服务器DB下载', children: <DatabaseBackupPage /> }
       ]}
     />
   );

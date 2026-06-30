@@ -22,11 +22,6 @@ const menuItemsConfig = [
 menuItemsConfig.push({ key: '/online-users', fullLabel: '在线用户', shortLabel: '在', mobileLabel: '在线' });
 menuItemsConfig.push({ key: '/message-read', fullLabel: '消息读取', shortLabel: '消', mobileLabel: '消息' });
 
-menuItemsConfig.splice(
-  Math.max(menuItemsConfig.findIndex(item => item.key === '/data-batch'), 0),
-  0,
-  { key: '/data-cleanup/db-backup', fullLabel: '服务器DB下载', shortLabel: 'DB', mobileLabel: 'DB下载' }
-);
 
 const orderedMenuItemsConfig = [
   ...menuItemsConfig.filter(item => item.key !== '/reports'),
