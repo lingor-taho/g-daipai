@@ -1734,7 +1734,8 @@ async function syncYahooWonOrders(orders = [], database = db) {
     const task = await database.getOne(
       `SELECT id, force_orders_resync
        FROM tasks
-       WHERE product_id = ? AND status IN ('bidding', 'success')
+       WHERE product_id = ?
+         AND status <> 'cancelled'
        ORDER BY force_orders_resync DESC, datetime(COALESCE(last_bid_at, updated_at, created_at)) DESC, id DESC
        LIMIT 1`,
       [productId]

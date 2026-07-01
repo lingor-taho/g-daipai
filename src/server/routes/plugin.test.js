@@ -1112,7 +1112,7 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder() 
   assert.equal(result.updated, 1);
   const taskSelects = calls.filter(call => call.type === 'getOne' && /FROM tasks\s+WHERE product_id/.test(call.sql));
   assert.equal(taskSelects.length, 2);
-  assert.doesNotMatch(taskSelects[0].sql, /'failed'/);
+  assert.match(taskSelects[0].sql, /status <> 'cancelled'/);
   const statusUpdate = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
   assert.equal(statusUpdate.params[0], 110);
   const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
@@ -1123,13 +1123,13 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder() 
   assert.equal(orderInsert.params[2], 350);
 }
 
-async function testSyncYahooWonOrdersDoesNotMarkLatestFailedTaskSuccessful() {
+async function testSyncYahooWonOrdersUsesWonPageAsSourceOfTruthForFailedTask() {
   const calls = [];
   const fakeDb = {
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) {
-        assert.doesNotMatch(sql, /'failed'/);
+        assert.match(sql, /status <> 'cancelled'/);
         return { id: 1169, force_orders_resync: 0 };
       }
       if (/FROM orders WHERE task_id/.test(sql)) return null;
@@ -1167,14 +1167,23 @@ async function testSyncYahooWonOrdersDoesNotMarkLatestFailedTaskSuccessful() {
   assert.equal(orderInsert.params[0], 1169);
 }
 
-async function testSyncYahooWonOrdersSkipsWhenOnlyFailedTaskExists() {
+async function testSyncYahooWonOrdersCreatesOrderFromFailedTaskWhenWonPageHasProduct() {
   const calls = [];
   const fakeDb = {
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
       if (/FROM tasks\s+WHERE product_id/.test(sql)) {
-        assert.doesNotMatch(sql, /'failed'/);
-        return null;
+        assert.match(sql, /status <> 'cancelled'/);
+        return { id: 1439, force_orders_resync: 0 };
+      }
+      if (/FROM orders WHERE task_id/.test(sql)) return null;
+      if (/FROM orders o/.test(sql) && /COALESCE\(o\.product_id/.test(sql)) return null;
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) {
+        return {
+          id: 1439,
+          product_id: 'x1235487667',
+          current_price: 8600
+        };
       }
       return null;
     },
@@ -1185,12 +1194,23 @@ async function testSyncYahooWonOrdersSkipsWhenOnlyFailedTaskExists() {
   };
 
   const result = await syncYahooWonOrders([
-    { productId: 'm1235180746', price: '22,001円', wonTimeText: '6/28 13:18' }
+    {
+      productId: 'x1235487667',
+      price: '9,460円',
+      wonTimeText: '7/1 14:19',
+      transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1235487667'
+    }
   ], fakeDb);
 
-  assert.equal(result.updated, 0);
-  assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), false);
-  assert.equal(calls.some(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql)), false);
+  assert.equal(result.updated, 1);
+  const statusUpdate = calls.find(call => call.type === 'query' && /UPDATE tasks/.test(call.sql));
+  assert.ok(statusUpdate);
+  assert.equal(statusUpdate.params[0], 1439);
+  const orderInsert = calls.find(call => call.type === 'query' && /INSERT INTO orders/.test(call.sql));
+  assert.ok(orderInsert);
+  assert.equal(orderInsert.params[0], 1439);
+  assert.equal(orderInsert.params[1], 'x1235487667');
+  assert.equal(orderInsert.params[2], 9460);
 }
 
 async function testSyncYahooWonOrdersDoesNotDuplicateExistingProductOrder() {
@@ -2488,8 +2508,8 @@ Promise.all([
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testUpdateTransactionStartStatusMarksOrderCancelled(),
   testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder(),
-  testSyncYahooWonOrdersDoesNotMarkLatestFailedTaskSuccessful(),
-  testSyncYahooWonOrdersSkipsWhenOnlyFailedTaskExists(),
+  testSyncYahooWonOrdersUsesWonPageAsSourceOfTruthForFailedTask(),
+  testSyncYahooWonOrdersCreatesOrderFromFailedTaskWhenWonPageHasProduct(),
   testSyncYahooWonOrdersDoesNotDuplicateExistingProductOrder(),
   testUpsertOrderFromTaskUsesExistingProductOrder(),
   testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce(),

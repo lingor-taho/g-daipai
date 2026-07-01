@@ -169,6 +169,24 @@ function buildBuyoutPendingFinalResult(task = {}, result = {}) {
   };
 }
 
+function isBuyoutPurchaseCompleteSnapshot(snapshot = {}) {
+  const url = String(snapshot.url || '').toLowerCase();
+  const title = String(snapshot.title || '');
+  const body = String(snapshot.bodyText || '');
+  return /buy\.auctions\.yahoo\.co\.jp\/order\/thank-you\b/i.test(url) ||
+    /\/order\/thank-you\b/i.test(url) ||
+    /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u8cfc\u5165\u624b\u7d9a\u304d\u306e\u5b8c\u4e86/.test(`${title} ${body}`);
+}
+
+async function recoverBuyoutCompletionAfterMessageDisconnect(tab, task, stage) {
+  if (task?.bid_mode !== 'buyout' || !tab?.id) return null;
+  const snapshot = await getTabPageDiagnosticSnapshot(tab.id).catch(() => null);
+  if (!isBuyoutPurchaseCompleteSnapshot(snapshot)) return null;
+  return buildBuyoutPendingFinalResult(task, {
+    stage: stage || 'buyout-message-disconnected-after-completion'
+  });
+}
+
 function isBuyoutFinalPending(task = {}, result = {}) {
   return task?.bid_mode === 'buyout' &&
     result?.success &&
@@ -251,7 +269,7 @@ function handleBidProgressMessage(msg = {}) {
 }
 
 function isMessageChannelClosed(error) {
-  return /message channel closed|Receiving end does not exist|Could not establish connection/i.test(error?.message || '');
+  return /message channel closed|Receiving end does not exist|Could not establish connection|back\/forward cache|message channel is closed/i.test(error?.message || '');
 }
 
 function isNoTabWithIdError(error) {
@@ -629,6 +647,8 @@ async function executeTaskInTabV2(tab, task) {
     if (!isMessageChannelClosed(e)) {
       throw e;
     }
+    const completed = await recoverBuyoutCompletionAfterMessageDisconnect(tab, task, 'buyout-message-disconnected-after-completion');
+    if (completed) return completed;
     await sleep(3000);
     await injectContentScript(tab.id);
     result = await sendBidMessageV2(tab.id, task);
@@ -652,6 +672,8 @@ async function executeTaskInTabV2(tab, task) {
         if (!isMessageChannelClosed(e)) {
           throw e;
         }
+        const completed = await recoverBuyoutCompletionAfterMessageDisconnect(tab, task, 'buyout-final-message-disconnected-after-completion');
+        if (completed) return completed;
         await sleep(3000);
         await injectContentScript(tab.id);
         finalResult = await sendBidMessageV2(tab.id, task);

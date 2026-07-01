@@ -7704,6 +7704,95 @@ async function testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComple
   assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
 }
 
+async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
+  const calls = [];
+  let executeBidMessages = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/diagnostics')) {
+        calls.push({ type: 'diagnostic', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/907/status')) {
+        calls.push({ type: 'status', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/907/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        return { id: 970, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/x1235487667' };
+      },
+      async get(id) {
+        return {
+          id,
+          status: 'loading',
+          active: true,
+          windowId: 4,
+          title: 'Yahoo!オークション - 購入完了',
+          url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=x1235487667'
+        };
+      },
+      async sendMessage(_id, msg) {
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'x1235487667',
+            currentPrice: 8600,
+            endTime: '2026-07-08T12:19:38+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID') {
+          executeBidMessages += 1;
+          throw new Error('The page keeping the extension port is moved into back/forward cache, so the message channel is closed.');
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        calls.push({ type: 'remove', id });
+      }
+    },
+    scripting: {
+      async executeScript(args) {
+        if (args?.files) return [];
+        return [{
+          result: {
+            title: 'Yahoo!オークション - 購入完了',
+            url: 'https://buy.auctions.yahoo.co.jp/order/thank-you?auctionId=x1235487667',
+            bodyText: '購入手続きの完了 購入が完了しました！ 購入完了メールを送信しました。'
+          }
+        }];
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 907,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/x1235487667',
+    current_price: 8600,
+    max_price: 9460,
+    user_max_price: 9460,
+    strategy: 'direct',
+    bid_mode: 'buyout',
+    tax_type: 'tax_included',
+    end_time: '2026-07-08T12:19:38+09:00'
+  }, { alreadyClaimed: true });
+
+  const statuses = calls.filter(call => call.type === 'status').map(call => call.body.status);
+  assert.equal(executeBidMessages, 1);
+  assert.equal(statuses.includes('failed'), false);
+  assert.equal(statuses.includes('bidding'), true);
+  assert.equal(calls.some(call => call.type === 'diagnostic'), false);
+  assert.equal(calls.some(call => call.type === 'remove' && call.id === 970), true);
+}
+
 async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoadingTab() {
   const calls = [];
   const api = loadBackgroundForTest({
@@ -8429,6 +8518,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
+  await testBuyoutMessageChannelClosedOnThankYouStaysBidding();
   await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
   await testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComplete();
   await testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoadingTab();
