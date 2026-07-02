@@ -218,6 +218,8 @@ node scripts/encoding-guard.js
 - Yahoo 商城商品页面价格通常按税前价处理，含税展示和校验由系统计算。
 - `tax_type=tax_included` 表示商城含税商品。
 - `tax_type=tax_zero` 表示个人商品或税 0 商品。
+- `product_type=store` 表示走 Yahoo ストア订单/付款流程；`product_type=normal` 表示走普通取引ナビ流程。
+- `product_type` 和 `tax_type` 不要互相强推。存在 `product_type=store` 且 `tax_type=tax_zero` 的“ストア但税 0/不含税表现”商品；只有 `tax_type=tax_included` 才能触发 1.1 含税换算。
 - 提交给插件和任务的最高价仍以日元为准。
 - 人民币只用于页面换算和展示，不进入插件出价逻辑。
 
@@ -310,6 +312,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-02 ストア但税 0 商品落札同步
+
+生产商品 `1234843296` 的落札页带 `ストア` 标识，但商品页/前台税判断表现为普通税 0 商品。系统原先按 `product_type=normal` 进入普通付款流程，打开 `buy.auctions.yahoo.co.jp/order/status?...` 后找不到普通付款入口按钮，报 `payment entry button not found`。
+
+修复：`/my/won` 落札页同步现在识别行内 `ストア` 标识并透传 `productType=store`；服务端 `/api/plugin/orders/sync` 只把 `products.product_type` 补正为 `store`，不改 `tax_type`。手动“落札商品更新”批处理保留落札页 `store` 类型，但商品页快照缺少税类型时默认 `tax_zero`，避免把税 0 ストア误补成 `tax_included`。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.js
+node --check src/server/routes/plugin.js
+node yahoo-plugin/content.test.js
+node src/server/routes/plugin.test.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 仍会在既有 `testExecuteBidTaskRetriesTransientServerTabErrorOnce` 失败；本次已通过语法检查，未把该既有失败作为本次变更阻塞。
 
 ### 2026-07-01 即决购买完成页消息断开兜底
 

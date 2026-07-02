@@ -1370,6 +1370,18 @@ function extractOrderHistory() {
     return match?.[1] ? `${match[1].replace(/,/g, '')}\u5186` : '';
   }
 
+  function extractOrderProductType(row) {
+    const candidates = row.querySelectorAll
+      ? [...row.querySelectorAll('span, li, dd, td, p, strong, b')]
+      : [];
+    if (candidates.some(el => normalizeVisibleText(el.textContent) === '\u30b9\u30c8\u30a2')) return 'store';
+    const lines = String(row.textContent || '')
+      .split(/\n+|\r+|\s{2,}/)
+      .map(line => normalizeVisibleText(line))
+      .filter(Boolean);
+    return lines.some(line => line === '\u30b9\u30c8\u30a2') ? 'store' : 'normal';
+  }
+
   const containers = getYahooWonRows();
   const seen = new Set();
   const orders = [];
@@ -1404,7 +1416,8 @@ function extractOrderHistory() {
       wonTimeText: extractWonTimeText(text),
       url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
       transactionUrl: contactLink?.href || '',
-      trackingNumber: trackingMatch?.[1] || ''
+      trackingNumber: trackingMatch?.[1] || '',
+      productType: extractOrderProductType(item)
     });
   }
   return orders;

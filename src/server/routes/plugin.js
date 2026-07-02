@@ -1731,6 +1731,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
     const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
+    const wonProductType = String(order.productType || order.product_type || '').trim() === 'store' ? 'store' : '';
     const task = await database.getOne(
       `SELECT id, force_orders_resync
        FROM tasks
@@ -1741,6 +1742,12 @@ async function syncYahooWonOrders(orders = [], database = db) {
       [productId]
     );
     if (!task) continue;
+    if (wonProductType === 'store') {
+      await upsertProductSnapshot(database, {
+        productId,
+        productType: 'store'
+      }, { source: 'won_sync' });
+    }
     const isForced = Number(task.force_orders_resync || 0) === 1;
     const existingProductOrder = await database.getOne(
       `SELECT o.id, o.task_id, o.order_status, o.tracking_number

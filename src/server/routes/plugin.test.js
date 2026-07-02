@@ -1123,6 +1123,41 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder() 
   assert.equal(orderInsert.params[2], 350);
 }
 
+async function testSyncYahooWonOrdersMarksStoreProductTypeWithoutTaxType() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      if (/FROM tasks\s+WHERE product_id/.test(sql)) return { id: 343, force_orders_resync: 0 };
+      if (/FROM orders WHERE task_id/.test(sql)) return null;
+      if (/FROM orders o/.test(sql) && /COALESCE\(o\.product_id/.test(sql)) return null;
+      if (/FROM tasks t\s+LEFT JOIN products p/.test(sql) && /WHERE t\.id = \?/.test(sql)) {
+        return { id: 343, product_id: '1234843296', max_price: 1200, tax_type: 'tax_zero' };
+      }
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await syncYahooWonOrders([
+    {
+      productId: '1234843296',
+      price: '1,200\u5186',
+      transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=1234843296',
+      productType: 'store'
+    }
+  ], fakeDb);
+
+  const productUpsert = calls.find(call => call.type === 'query' && /INSERT INTO products/.test(call.sql));
+  assert.ok(productUpsert);
+  assert.equal(productUpsert.params[0], '1234843296');
+  assert.equal(productUpsert.params[7], null);
+  assert.equal(productUpsert.params[8], 'store');
+}
+
 async function testSyncYahooWonOrdersUsesWonPageAsSourceOfTruthForFailedTask() {
   const calls = [];
   const fakeDb = {
@@ -2508,6 +2543,7 @@ Promise.all([
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testUpdateTransactionStartStatusMarksOrderCancelled(),
   testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder(),
+  testSyncYahooWonOrdersMarksStoreProductTypeWithoutTaxType(),
   testSyncYahooWonOrdersUsesWonPageAsSourceOfTruthForFailedTask(),
   testSyncYahooWonOrdersCreatesOrderFromFailedTaskWhenWonPageHasProduct(),
   testSyncYahooWonOrdersDoesNotDuplicateExistingProductOrder(),

@@ -2604,7 +2604,7 @@ function testOrderImportHistoryKeepsWonTimeAndTypeScopedToEachWonRow() {
   assert.equal(JSON.stringify(orders.map(order => order.productType)), JSON.stringify(['normal', 'store']));
 }
 
-function testOrderHistoryDoesNotUseImportProductTypeField() {
+function testOrderHistoryExtractsStoreProductType() {
   const orderContainer = createOrderContainer(
     '\u53d6\u5f15\u30ca\u30d3\u304b\u3089\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\n25,851\u5186\n\u30b9\u30c8\u30a2\n6/25 23:26\n\u5546\u54c1ID\uff1a1234017498',
     '1\u5186 \u4efb\u5929\u5802 GB',
@@ -2622,7 +2622,7 @@ function testOrderHistoryDoesNotUseImportProductTypeField() {
   const orders = api.extractOrderHistory();
 
   assert.equal(orders.length, 1);
-  assert.equal(Object.prototype.hasOwnProperty.call(orders[0], 'productType'), false);
+  assert.equal(orders[0].productType, 'store');
 }
 
 function testWonHistoryNextPageUsesSharedVisibleTextNormalizer() {
@@ -3892,7 +3892,7 @@ async function run() {
   testOrderImportHistoryScopesExtractionToYahooWonItemList();
   testOrderImportHistoryExtractsStoreProductTypeFromWonRow();
   testOrderImportHistoryKeepsWonTimeAndTypeScopedToEachWonRow();
-  testOrderHistoryDoesNotUseImportProductTypeField();
+  testOrderHistoryExtractsStoreProductType();
   testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
   testBiddingItemsExtractsOutbidRebidRows();
   testBiddingItemsExtractsRemainingTimeFromListRow();

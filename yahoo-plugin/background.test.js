@@ -8308,7 +8308,7 @@ async function testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmit
   const payload = JSON.parse(statusCall.options.body);
   assert.equal(payload.items.length, 1);
   assert.equal(payload.items[0].productType, 'store');
-  assert.equal(payload.items[0].taxType, 'tax_included');
+  assert.equal(payload.items[0].taxType, 'tax_zero');
 }
 
 async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {

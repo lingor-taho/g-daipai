@@ -3813,7 +3813,7 @@ async function executeManualOrderImportJob(job) {
         productTitle: snapshot?.title || item.productTitle,
         productImageUrl: snapshot?.imageUrl || '',
         shippingFeeText: snapshot?.shippingFeeText || '',
-        taxType: snapshot?.taxType || (productType === 'store' ? 'tax_included' : 'tax_zero'),
+        taxType: snapshot?.taxType || 'tax_zero',
         productType
       });
     }
