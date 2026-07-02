@@ -2332,6 +2332,30 @@ async function testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancel
   assert.equal(updateCall.params[4], ORDER_STATUS_PENDING_RECEIPT);
 }
 
+async function testUpdateConfirmReceiptStatusMarksPaidCancelCheckOrderPendingShipment() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ type: 'getAll', sql, params });
+      return [{ order_id: 43, old_status: ORDER_STATUS_PENDING_SETTLEMENT, product_id: 'p222222222' }];
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: /UPDATE orders/.test(sql) ? 1 : 0 };
+    }
+  };
+
+  const result = await updateConfirmReceiptStatus({ orderId: 43, productId: 'p222222222', status: 'pending_shipment' }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  assert.equal(result.pendingShipment, true);
+  const updateCall = calls.find(call => call.type === 'query' && /UPDATE orders/.test(call.sql));
+  assert.equal(updateCall.params[0], ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(updateCall.params[1], 43);
+  assert.equal(updateCall.params[2], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(updateCall.params[3], ORDER_STATUS_PENDING_SETTLEMENT);
+}
+
 async function testCompleteManualTransactionStartDoesNotWriteAutoRunDate() {
   const queries = [];
   const fakeDb = {
@@ -2578,6 +2602,7 @@ Promise.all([
   testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCancelChecks(),
   testUpdateConfirmReceiptStatusCompletesBundleGroup(),
   testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled(),
+  testUpdateConfirmReceiptStatusMarksPaidCancelCheckOrderPendingShipment(),
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),
   testUpdatePaymentStatusSuccessAndEmptyQueue(),
   testUpdatePaymentStatusFailureWritesAlertAndClearsFlag(),

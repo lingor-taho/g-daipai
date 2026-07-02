@@ -3222,10 +3222,24 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   const text = String(snapshot.bodyText || '').replace(/\s+/g, ' ').trim();
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
   const cancelled = isYahooTransactionCancelledText(text);
+  const paidOrShipped = (
+    /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text) &&
+    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text)
+  ) || (
+    /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(text) &&
+    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text)
+  ) || (
+    /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(text) &&
+    /\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text)
+  ) || (
+    /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(text) &&
+    /\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(text)
+  );
   return {
     url: snapshot.url || '',
     textSample: text.slice(0, 500),
     cancelled,
+    paidOrShipped,
     complete: /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text),
     hasReceiptCheckbox: /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(text) || Boolean(snapshot.hasReceiptCheckbox),
     hasReceiptCheckboxChecked: Boolean(snapshot.hasReceiptCheckboxChecked),
@@ -6015,6 +6029,15 @@ async function executeConfirmReceiptJob(job) {
           bundleGroupId: job.bundleGroupId || ''
         });
         return { success: true, cancelled: true };
+      }
+      if (state?.paidOrShipped) {
+        await updateConfirmReceiptStatus({
+          orderId: job.orderId,
+          productId: job.productId,
+          status: 'pending_shipment',
+          bundleGroupId: job.bundleGroupId || ''
+        });
+        return { success: true, pendingShipment: true };
       }
       return { success: true, skippedCancelCheck: true };
     } finally {

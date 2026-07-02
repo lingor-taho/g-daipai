@@ -2551,6 +2551,31 @@ async function updateConfirmReceiptStatus(payload = {}, database = db) {
     }
     return { updated: result.rowCount || 0, cancelled: true };
   }
+  if (status === ORDER_STATUS_PENDING_SHIPMENT || status === 'pending_shipment') {
+    const beforeRows = await getOrderStatusAuditRows(database, [orderId]);
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND order_status IN (?, ?)`,
+      [
+        ORDER_STATUS_PENDING_SHIPMENT,
+        orderId,
+        ORDER_STATUS_PENDING_PAYMENT,
+        ORDER_STATUS_PENDING_SETTLEMENT
+      ]
+    );
+    if (result.rowCount) {
+      await saveConfigValue(database, 'confirm_receipt_alert_message', '');
+      await writeOrderStatusAuditLogs(database, beforeRows, {
+        status: ORDER_STATUS_PENDING_SHIPMENT,
+        source: 'confirm_receipt_paid_or_shipped_check',
+        metadata: { orderId, productId: payload.productId || '' }
+      }).catch(() => null);
+    }
+    return { updated: result.rowCount || 0, pendingShipment: true };
+  }
   if (status !== 'success' && status !== 'already_completed') {
     const err = new Error('valid confirm receipt status is required');
     err.statusCode = 400;

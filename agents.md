@@ -313,6 +313,25 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-02 确认收货流程同步手动付款状态
+
+部分普通/商城订单在 Yahoo 后台手动支付后，系统订单仍停留在 `pending_payment` 或 `pending_settlement`。确认收货流程的 `cancel_check` 现在除检查取消页外，还会识别交易页前两行强状态文案：`ご購入ありがとうございます。` + `商品の発送連絡をお待ちください。`、`出品者に支払い完了の連絡をしました。` + `商品の発送連絡をお待ちください。`、`商品が発送されました。` + `到着までお待ちください。`、`出品者から商品発送の連絡がありました。` + `到着したら、受け取り連絡をしてください。`。
+
+修复：`pending_payment` / `pending_settlement` 的 `cancel_check` 命中上述已付款或已发货文案时，服务端只允许把订单推进到 `pending_shipment`，后续仍交给扫描流程推进到 `pending_receipt`。取消文案优先级仍高于已付款/已发货判断。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node --check src/server/routes/plugin.js
+node --check src/server/routes/plugin.test.js
+node src/server/routes/plugin.test.js
+node scripts/encoding-guard.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 仍会在既有 `testExecuteBidTaskRetriesTransientServerTabErrorOnce` 失败；本次新增确认收货回归在该既有失败前已执行通过。
+
 ### 2026-07-02 ストア但税 0 商品落札同步
 
 生产商品 `1234843296` 的落札页带 `ストア` 标识，但商品页/前台税判断表现为普通税 0 商品。系统原先按 `product_type=normal` 进入普通付款流程，打开 `buy.auctions.yahoo.co.jp/order/status?...` 后找不到普通付款入口按钮，报 `payment entry button not found`。
