@@ -6,6 +6,11 @@ export default defineConfig({
   server: {
     port: 3035,
     strictPort: true,
+    allowedHosts: [
+      'kumohiro.com',
+      'www.kumohiro.com',
+      'buy.kumohiro.com'
+    ],
     proxy: {
       '/api': 'http://localhost:3034'
     }
