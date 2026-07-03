@@ -1,6 +1,6 @@
 ﻿# g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-01
+**最后更新**: 2026-07-03
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -312,6 +312,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-03 入札页全分页同步
+
+入札中监控原先只抓取 `/my/bidding` 第一页。Yahoo 入札页分页使用 `次へ` 链接，例如 `/my/bidding?page=2`，当入札中商品超过第一页时，后续页商品不会进入 `/api/plugin/bidding/sync`，并可能因服务端先将旧 `bidding_items` 标记为 `stale` 而显示为过期。
+
+修复：`content.js` 新增入札页下一页链接识别，支持 Yahoo pagination 的 `data-cl-params="_cl_vmodule:pagination;_cl_link:next;..."`、`rel=next` 和 `次へ/next` 文案；`background.js` 的入札监控在同一 tab 内最多翻 50 页，按商品 ID 去重汇总后一次性同步给服务端，避免分页同步时误 stale。
+
+验证：
+
+```powershell
+node yahoo-plugin/content.test.js
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.js
+node scripts/encoding-guard.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 仍会在既有 `testExecuteBidTaskRetriesTransientServerTabErrorOnce` 失败；本次新增入札翻页回归 `testMonitorSyncCollectsAllBiddingPagesBeforeSync` 在该既有失败前已执行通过。
 
 ### 2026-07-02 确认收货流程同步手动付款状态
 

@@ -2644,6 +2644,32 @@ function testWonHistoryNextPageUsesSharedVisibleTextNormalizer() {
   assert.equal(api.findWonHistoryNextPageUrl(), 'https://auctions.yahoo.co.jp/my/won?page=2');
 }
 
+function testBiddingNextPageFindsYahooPaginationNextLink() {
+  const nextLink = createTestAnchor('\u6b21\u3078', 'https://auctions.yahoo.co.jp/my/bidding?page=2');
+  nextLink.getAttribute = name => {
+    if (name === 'href') return '/my/bidding?page=2';
+    if (name === 'data-cl-params') return '_cl_vmodule:pagination;_cl_link:next;_cl_position:1';
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  const numberLink = createTestAnchor('2', 'https://auctions.yahoo.co.jp/my/bidding?page=2');
+  numberLink.getAttribute = name => {
+    if (name === 'href') return '/my/bidding?page=2';
+    if (name === 'data-cl-params') return '_cl_vmodule:pagination;_cl_link:number;_cl_position:2';
+    if (name === 'aria-label') return '';
+    return '';
+  };
+  const api = loadContentForTest('', '/my/bidding', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href]') return [numberLink, nextLink];
+      return [];
+    }
+  });
+
+  assert.equal(api.findBiddingNextPageUrl(), 'https://auctions.yahoo.co.jp/my/bidding?page=2');
+}
+
 function testBiddingItemsExtractsOutbidRebidRows() {
   const { container, link } = createBiddingContainer(
     '高値更新 再入札する 現在 1,500円 MD ゴールデンアックス',
@@ -3894,6 +3920,7 @@ async function run() {
   testOrderImportHistoryKeepsWonTimeAndTypeScopedToEachWonRow();
   testOrderHistoryExtractsStoreProductType();
   testWonHistoryNextPageUsesSharedVisibleTextNormalizer();
+  testBiddingNextPageFindsYahooPaginationNextLink();
   testBiddingItemsExtractsOutbidRebidRows();
   testBiddingItemsExtractsRemainingTimeFromListRow();
   testBundleTransactionInfoValidatesQuantity();

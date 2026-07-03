@@ -12,6 +12,7 @@ const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MESSAGE_JOB_TIMEOUT_MS = 30000;
+const BIDDING_SYNC_MAX_PAGES = 50;
 const PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS = 8000;
 const PENDING_SHIPMENT_SCAN_POLL_MS = 500;
 const MANUAL_CAPTCHA_FALLBACK_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -3866,22 +3867,31 @@ async function openBiddingPageForSync(options = {}) {
     ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/bidding', active: false })
     : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/bidding', active: false });
   try {
-    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
-    await sleep(3000);
-    const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
-    if (!injected) return null;
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
-      if (closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
-        console.warn('[Yahoo Bid] Skip bidding sync because message receiver is gone:', tab.id, error.message || error);
+    const itemsByProduct = new Map();
+    for (let page = 0; page < BIDDING_SYNC_MAX_PAGES; page += 1) {
+      if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
+      await sleep(3000);
+      const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
+      if (!injected) return null;
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
+        if (closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
+          console.warn('[Yahoo Bid] Skip bidding sync because message receiver is gone:', tab.id, error.message || error);
+          return null;
+        }
+        console.error('[Yahoo Bid] Failed to extract bidding items:', error);
         return null;
+      });
+      await reportYahooLoginStatus(response?.loginStatus);
+      if (!response?.success) return null;
+      for (const item of response.items || []) {
+        const match = String(item?.url || item?.productId || '').match(/[a-zA-Z]?\d{8,10}/);
+        if (!match) continue;
+        itemsByProduct.set(match[0].toLowerCase(), item);
       }
-      console.error('[Yahoo Bid] Failed to extract bidding items:', error);
-      return null;
-    });
-    await reportYahooLoginStatus(response?.loginStatus);
-    if (response?.success) {
-      await syncBiddingItems(response.items || []);
+      if (!response.nextPageUrl) break;
+      await chrome.tabs.update(tab.id, { url: response.nextPageUrl, active: false });
     }
+    await syncBiddingItems([...itemsByProduct.values()]);
   } finally {
     if (closeAfter && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
   }

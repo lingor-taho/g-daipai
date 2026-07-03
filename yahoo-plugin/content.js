@@ -1434,6 +1434,20 @@ function findWonHistoryNextPageUrl() {
   return next?.href || '';
 }
 
+function findBiddingNextPageUrl() {
+  const links = [...document.querySelectorAll('a[href]')];
+  const next = links.find(a => {
+    const href = String(a.href || a.getAttribute('href') || '');
+    if (!/\/my\/bidding(?:[?#]|$)/.test(href)) return false;
+    const params = String(a.getAttribute('data-cl-params') || '').toLowerCase();
+    if (/(?:^|;)_cl_link:next(?:;|$)/.test(params)) return true;
+    if (String(a.getAttribute('rel') || '').toLowerCase() === 'next') return true;
+    const text = normalizeVisibleText(a.textContent || a.getAttribute('aria-label') || a.title || '');
+    return /\u6b21|\u6b21\u3078|next/i.test(text);
+  });
+  return next?.href || '';
+}
+
 function extractOrderImportHistory() {
   function extractAuctionIdFromHref(value) {
     const match = String(value || '').match(/[?&](?:aid|auctionId|aID)=([a-zA-Z]?\d{8,10})|\/jp\/auction\/([a-zA-Z]?\d{8,10})/);
@@ -2365,7 +2379,13 @@ getTaskData().then(taskData => {
       console.log('[Yahoo Bid] Order history:', orders);
     } else if (window.location.href.includes('/my/bidding')) {
       const items = extractBiddingItems();
-      chrome.runtime.sendMessage({ type: 'BIDDING_ITEMS', items, loginStatus: detectYahooLoginStatus() });
+      const loginStatus = detectYahooLoginStatus();
+      chrome.runtime.sendMessage({
+        type: 'BIDDING_ITEMS',
+        items,
+        nextPageUrl: loginStatus.status === 'ok' ? findBiddingNextPageUrl() : '',
+        loginStatus
+      });
       console.log('[Yahoo Bid] Bidding items:', items);
     }
   }
@@ -2385,7 +2405,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'EXTRACT_BIDDING_ITEMS') {
     const loginStatus = detectYahooLoginStatus();
-    sendResponse({ success: loginStatus.status === 'ok', items: loginStatus.status === 'ok' ? extractBiddingItems() : [], loginStatus });
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      items: loginStatus.status === 'ok' ? extractBiddingItems() : [],
+      nextPageUrl: loginStatus.status === 'ok' ? findBiddingNextPageUrl() : '',
+      loginStatus
+    });
     return true;
   }
 
@@ -2516,6 +2541,7 @@ window.__G_DAIPAI_TEST__ = {
   isConfirmButtonText,
   extractOrderHistory,
   extractOrderImportHistory,
-  findWonHistoryNextPageUrl
+  findWonHistoryNextPageUrl,
+  findBiddingNextPageUrl
 };
 })();

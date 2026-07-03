@@ -2673,6 +2673,69 @@ async function testMonitorSyncSkipsTabThatDisappearsBeforeInjection() {
   assert.equal(warnings.some(entry => /tab no longer exists/.test(String(entry[0]))), true);
 }
 
+async function testMonitorSyncCollectsAllBiddingPagesBeforeSync() {
+  const fetchCalls = [];
+  const visitedUrls = [];
+  let currentBiddingUrl = 'https://auctions.yahoo.co.jp/my/bidding';
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    fetch: async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), options });
+      if (String(url).includes('/api/plugin/config')) {
+        return { async json() { return { idleSyncIntervalMinutes: 1 }; } };
+      }
+      return { ok: true, async json() { return { success: true }; } };
+    },
+    tabs: {
+      async create(details) {
+        visitedUrls.push(details.url);
+        if (String(details.url).includes('/my/bidding')) {
+          currentBiddingUrl = details.url;
+          return { id: 57600239, status: 'complete', url: details.url };
+        }
+        return { id: 57600240, status: 'complete', url: details.url };
+      },
+      async update(tabId, details) {
+        visitedUrls.push(details.url);
+        if (tabId === 57600239) currentBiddingUrl = details.url;
+        return { id: tabId, status: 'complete', url: details.url };
+      },
+      async sendMessage(tabId, message) {
+        if (message?.type === 'EXTRACT_BIDDING_ITEMS') {
+          if (/page=2/.test(currentBiddingUrl)) {
+            return {
+              success: true,
+              items: [{ productId: 'b1234567890', status: 'outbid', price: '2000' }],
+              nextPageUrl: ''
+            };
+          }
+          return {
+            success: true,
+            items: [{ productId: 'a1234567890', status: 'highest', price: '1000' }],
+            nextPageUrl: 'https://auctions.yahoo.co.jp/my/bidding?page=2'
+          };
+        }
+        if (message?.type === 'EXTRACT_ORDER_HISTORY') {
+          return { success: true, orders: [], loginStatus: { status: 'ok' } };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    }
+  });
+
+  await api.syncMonitorYahooPages();
+
+  const biddingSyncCalls = fetchCalls.filter(call => call.url.includes('/api/plugin/bidding/sync'));
+  assert.equal(biddingSyncCalls.length, 1);
+  const body = JSON.parse(biddingSyncCalls[0].options.body);
+  assert.deepEqual(body.items.map(item => item.productId), ['a1234567890', 'b1234567890']);
+  assert.deepEqual(
+    visitedUrls.filter(url => String(url).includes('/my/bidding')),
+    ['https://auctions.yahoo.co.jp/my/bidding', 'https://auctions.yahoo.co.jp/my/bidding?page=2']
+  );
+}
+
 async function testMonitorSyncSkipsFrameRemovedBeforeInjection() {
   const errors = [];
   const warnings = [];
@@ -8517,6 +8580,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment();
   await testRunTransactionStartMarksBuyerDeletedPageCancelled();
   await testRunTransactionStartPostsDiagnosticWhenNormalBundleStartFails();
+  await testMonitorSyncCollectsAllBiddingPagesBeforeSync();
   await testMonitorSyncSkipsTabThatDisappearsBeforeInjection();
   await testMonitorSyncSkipsFrameRemovedBeforeInjection();
   await testMonitorSyncSkipsClosedMessageReceiver();
