@@ -175,6 +175,34 @@ function dropColumns(db, table, columns) {
   }
 }
 
+function findIndexesReferencingColumns(db, table, columns) {
+  if (!columns.length) return [];
+
+  const columnSet = new Set(columns.map(col => col.toLowerCase()));
+  return db.prepare(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type = 'index'
+      AND tbl_name = ?
+      AND sql IS NOT NULL
+  `).all(table).filter(index => {
+    const indexedColumns = db.prepare(`PRAGMA index_info(${quoteIdentifier(index.name)})`).all()
+      .map(col => String(col.name || '').toLowerCase());
+    if (indexedColumns.some(col => columnSet.has(col))) return true;
+
+    const sql = String(index.sql || '').toLowerCase();
+    return columns.some(col => new RegExp(`(^|[^a-z0-9_])${col.toLowerCase()}([^a-z0-9_]|$)`).test(sql));
+  });
+}
+
+function dropDependentIndexes(db, table, columns) {
+  const indexes = findIndexesReferencingColumns(db, table, columns);
+  for (const index of indexes) {
+    console.log(`正在删除废弃索引 ${index.name} ...`);
+    db.prepare(`DROP INDEX IF EXISTS ${quoteIdentifier(index.name)}`).run();
+  }
+}
+
 async function main() {
   printIntro();
 
@@ -234,6 +262,8 @@ async function main() {
   await db.backup(backupPath);
 
   const migrate = db.transaction(() => {
+    dropDependentIndexes(db, 'tasks', taskExisting);
+    dropDependentIndexes(db, 'orders', orderExisting);
     dropColumns(db, 'tasks', taskExisting);
     dropColumns(db, 'orders', orderExisting);
 
