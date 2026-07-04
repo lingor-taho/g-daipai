@@ -27,3 +27,21 @@ assert.equal(
   true,
   'Admin Orders settlement validation message should mention \u5f85\u7ed3\u7b97'
 );
+
+assert.equal(
+  source.includes('openRemarkEditor'),
+  true,
+  'Admin Orders should open a remark editor from the product title'
+);
+
+assert.equal(
+  source.includes('/api/admin/orders/${remarkEditorOrder.id}/remark'),
+  true,
+  'Admin Orders should save remarks through the order remark API'
+);
+
+assert.equal(
+  source.includes('>\u5907<'),
+  true,
+  'Admin Orders should show \u5907 marker for orders with remarks'
+);

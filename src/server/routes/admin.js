@@ -216,6 +216,7 @@ function buildAdminPendingTasksQuery() {
 function buildAdminOrdersListQuery({ pageSize, offset }) {
   return {
     sql: `SELECT o.*,
+            o.order_remark AS order_remark,
             COALESCE(o.product_id, t.product_id) AS product_id,
             p.product_title AS product_title,
             p.product_url AS product_url,
@@ -284,6 +285,7 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
             o.won_at,
             o.won_time_text,
             o.order_status,
+            o.order_remark,
             o.bundle_shipping_fee_text,
             o.transaction_url,
             o.transaction_start_error,
@@ -972,6 +974,34 @@ function mapAdminOrderListItem(item) {
   };
 }
 
+function normalizeOrderRemark(value) {
+  const text = String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  return text.slice(0, 1000);
+}
+
+async function updateOrderRemark(database, { orderId, remark }) {
+  const normalizedOrderId = Number(orderId);
+  if (!Number.isInteger(normalizedOrderId) || normalizedOrderId <= 0) {
+    const error = new Error('valid order id is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const normalizedRemark = normalizeOrderRemark(remark);
+  const result = await database.query(
+    `UPDATE orders
+     SET order_remark = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [normalizedRemark, normalizedOrderId]
+  );
+  if (!result?.rowCount) {
+    const error = new Error('order not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return { id: normalizedOrderId, order_remark: normalizedRemark };
+}
+
 async function reassignOrderOwner(database, { orderId, userId }) {
   const normalizedOrderId = Number(orderId);
   const normalizedUserId = Number(userId);
@@ -1433,6 +1463,18 @@ router.get('/orders/:id/status-logs', async (req, res) => {
     [orderId]
   );
   res.json({ items });
+});
+
+router.put('/orders/:id/remark', async (req, res) => {
+  try {
+    const result = await updateOrderRemark(db, {
+      orderId: req.params.id,
+      remark: req.body?.order_remark ?? req.body?.remark ?? ''
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '备注保存失败' });
+  }
 });
 
 router.put('/orders/:id/user', async (req, res) => {
@@ -3491,6 +3533,7 @@ module.exports.buildRecentTaskFailureUserReportQuery = buildRecentTaskFailureUse
 module.exports.buildAdminMessagesListQuery = buildAdminMessagesListQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.reassignOrderOwner = reassignOrderOwner;
+module.exports.updateOrderRemark = updateOrderRemark;
 module.exports.calculateOrderPayable = calculateOrderPayable;
 module.exports.canSettleShippingFeeText = canSettleShippingFeeText;
 module.exports.ORDER_STATUS_PENDING_SETTLEMENT = ORDER_STATUS_PENDING_SETTLEMENT;

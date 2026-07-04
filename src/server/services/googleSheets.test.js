@@ -3,6 +3,7 @@ const path = require('path');
 const {
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,
+  buildEnsureRemarkColumnRequest,
   buildAppendRowsFormatRequest,
   extractSpreadsheetId,
   getGoogleSheetsCredentialPath,
@@ -116,7 +117,7 @@ function testAppendRowFormatSetsBlackText() {
     startRowIndex: 4,
     endRowIndex: 6,
     startColumnIndex: 0,
-    endColumnIndex: 10
+    endColumnIndex: 11
   });
   assert.deepEqual(
     request.repeatCell.cell.userEnteredFormat.textFormat.foregroundColor,
@@ -125,6 +126,17 @@ function testAppendRowFormatSetsBlackText() {
   assert.deepEqual(request.repeatCell.cell.userEnteredFormat.backgroundColor, backgroundColor);
   assert.match(request.repeatCell.fields, /userEnteredFormat\.textFormat\.foregroundColor/);
   assert.match(request.repeatCell.fields, /userEnteredFormat\.backgroundColor/);
+}
+
+function testBuildEnsureRemarkColumnRequestInsertsKColumn() {
+  const request = buildEnsureRemarkColumnRequest({ sheetId: 123 });
+  assert.deepEqual(request.insertDimension.range, {
+    sheetId: 123,
+    dimension: 'COLUMNS',
+    startIndex: 10,
+    endIndex: 11
+  });
+  assert.equal(request.insertDimension.inheritFromBefore, true);
 }
 
 function testAppendRowFormatUsesWhiteBackgroundByDefault() {
@@ -152,6 +164,7 @@ async function run() {
   testExtractSpreadsheetIdFromUrl();
   testAppendRowFormatSetsBlackText();
   testAppendRowFormatUsesWhiteBackgroundByDefault();
+  testBuildEnsureRemarkColumnRequestInsertsKColumn();
   await testApplyConfigFromDbOverridesEnv();
   await testMojibakeSheetNameFallsBackToDefault();
   await testUpdateRowsByProductIdSkipsWhenUnconfigured();

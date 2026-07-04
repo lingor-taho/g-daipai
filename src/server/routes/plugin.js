@@ -1543,7 +1543,8 @@ function buildDaipaiSheetRow(order = {}, baseConfig = {}) {
     order.bundle_shipping_fee_text || '',
     payable.totalJpy,
     order.shipping_company || '',
-    order.tracking_number || ''
+    order.tracking_number || '',
+    order.order_remark || ''
   ];
 }
 
@@ -1583,6 +1584,7 @@ async function getOrdersForSheetAppend(orderId, database = db) {
             p.tax_type AS tax_type,
             o.shipping_company,
             o.tracking_number,
+            o.order_remark,
             u.username,
             ufo.rate_adjustment AS user_rate_adjustment,
             ufo.bank_fee_jpy AS user_bank_fee_jpy,
@@ -1643,6 +1645,7 @@ async function getOrderForSheetUpdate(orderId, database = db) {
             p.tax_type AS tax_type,
             o.shipping_company,
             o.tracking_number,
+            o.order_remark,
             u.username,
             ufo.rate_adjustment AS user_rate_adjustment,
             ufo.bank_fee_jpy AS user_bank_fee_jpy,

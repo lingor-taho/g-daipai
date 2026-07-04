@@ -1,4 +1,4 @@
-﻿# g-daipai 项目说明与当前计划
+# g-daipai 项目说明与当前计划
 
 **最后更新**: 2026-07-03
 
@@ -312,6 +312,28 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-04 订单管理备注与 Google 表格备注列
+
+后台订单管理新增订单备注：双击商品名称可打开备注弹窗，保存后只更新系统数据库 `orders.order_remark`，不会立即同步 Google 表格。有备注的订单在商品 ID 的 `普/商` 标识后显示 `备`，备注内容不作为订单表格列展示。
+
+Google 表格同步在原有“追加待收货订单”和“重扫/更新物流单号”流程中顺带写入备注。表格在 `J 单号` 后使用 `K 备注`；如果检测到现有 K 列已有人工 tag 数据，会先在 K 位置插入新列，把原 K 列右移到 L，再写入 `备注` 表头，避免覆盖现有 tag。备注保存本身不触发 Google 写入。
+
+验证：
+
+```powershell
+node src/server/services/googleSheets.test.js
+node src/server/routes/admin.orders.test.js
+node src/server/routes/plugin.test.js
+node src/admin/src/Orders.display.test.js
+node --check src/server/routes/admin.js
+node --check src/server/routes/plugin.js
+node --check src/server/services/googleSheets.js
+node --check src/server/models/index.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-07-03 入札页全分页同步
 

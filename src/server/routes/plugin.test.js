@@ -1609,8 +1609,33 @@ function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
     '110円',
     1110,
     '日本郵便',
-    '628620458093'
+    '628620458093',
+    ''
   ]);
+}
+
+function testBuildDaipaiSheetRowAppendsOrderRemarkAfterTrackingNumber() {
+  const row = buildDaipaiSheetRow({
+    won_at: '2026-06-06 12:34:56',
+    username: 'user-a',
+    product_id: 's1113817953',
+    product_title: 'remark item',
+    final_price: 1000,
+    shipping_fee_text: '無料',
+    shipping_company: '佐川急便',
+    tracking_number: '123456789012',
+    order_remark: 'fragile box',
+    tax_type: 'tax_zero'
+  }, {
+    rate: 0.05,
+    bankFeeJpy: 0,
+    handlingFeeCny: 0,
+    largeAmountFeeCny: 0
+  });
+
+  assert.equal(row.length, 11);
+  assert.equal(row[9], '123456789012');
+  assert.equal(row[10], 'fragile box');
 }
 
 function testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching() {
@@ -1653,6 +1678,7 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
       assert.match(sql, /p\.product_title AS product_title/);
       assert.match(sql, /p\.shipping_fee_text AS shipping_fee_text/);
       assert.match(sql, /p\.tax_type AS tax_type/);
+      assert.match(sql, /o\.order_remark/);
       assert.doesNotMatch(sql, /t\.(product_url|product_title|shipping_fee_text|tax_type)/);
       assert.deepEqual(params, ['bundle-a', ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
       return [
@@ -1694,6 +1720,7 @@ async function testGetOrderForSheetUpdateUsesProductSnapshotFields() {
   assert.match(calls[0].sql, /p\.product_title AS product_title/);
   assert.match(calls[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
   assert.match(calls[0].sql, /p\.tax_type AS tax_type/);
+  assert.match(calls[0].sql, /o\.order_remark/);
   assert.doesNotMatch(calls[0].sql, /t\.(product_url|product_title|shipping_fee_text|tax_type)/);
   assert.deepEqual(calls[0].params, [15, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
 }
@@ -2580,6 +2607,7 @@ Promise.all([
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
   testUpdateScanStatusRefreshesTrackingForRescanOrder(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),
+  Promise.resolve().then(testBuildDaipaiSheetRowAppendsOrderRemarkAfterTrackingNumber),
   Promise.resolve().then(testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching),
   testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
   testGetOrderForSheetUpdateUsesProductSnapshotFields(),

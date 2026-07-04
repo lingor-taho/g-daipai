@@ -255,9 +255,13 @@ export default function OrdersPage() {
   const [ownerEditorOrder, setOwnerEditorOrder] = useState<any>(null);
   const [ownerEditorUserId, setOwnerEditorUserId] = useState<number | undefined>();
   const [ownerEditorSubmitting, setOwnerEditorSubmitting] = useState(false);
+  const [remarkEditorOpen, setRemarkEditorOpen] = useState(false);
+  const [remarkEditorOrder, setRemarkEditorOrder] = useState<any>(null);
+  const [remarkEditorSubmitting, setRemarkEditorSubmitting] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
   const [flagsExpanded, setFlagsExpanded] = useState(false);
   const [storeBundleForm] = Form.useForm();
+  const [remarkForm] = Form.useForm();
 
   const bundleRowClassMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -455,6 +459,34 @@ export default function OrdersPage() {
     }
   }
 
+  function openRemarkEditor(row: any) {
+    setRemarkEditorOrder(row);
+    remarkForm.setFieldsValue({ order_remark: row?.order_remark || '' });
+    setRemarkEditorOpen(true);
+  }
+
+  async function saveOrderRemark() {
+    if (!remarkEditorOrder?.id) return;
+    const values = await remarkForm.validateFields();
+    setRemarkEditorSubmitting(true);
+    try {
+      const data = await fetchAdminJson(`/api/admin/orders/${remarkEditorOrder.id}/remark`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ order_remark: values.order_remark || '' })
+      });
+      message.success('备注已保存');
+      setRemarkEditorOpen(false);
+      setRemarkEditorOrder(null);
+      setCurrentRows(prev => prev.map(row => row.id === remarkEditorOrder.id ? { ...row, order_remark: data.order_remark || '' } : row));
+      setReloadKey(key => key + 1);
+    } catch (e: any) {
+      message.error(e.message || '备注保存失败');
+    } finally {
+      setRemarkEditorSubmitting(false);
+    }
+  }
+
   function openOwnerEditor(row: any) {
     setOwnerEditorOrder(row);
     setOwnerEditorUserId(row?.user_id ? Number(row.user_id) : undefined);
@@ -559,7 +591,8 @@ export default function OrdersPage() {
         const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
         const url = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
         const idNode = url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : productId || '-';
-        return <span>{idNode}{renderProductTypeTag(row.product_type)}</span>;
+        const hasRemark = Boolean(String(row.order_remark || '').trim());
+        return <span>{idNode}{renderProductTypeTag(row.product_type)}{hasRemark ? <Tag color="blue">备</Tag> : null}</span>;
       }
     },
     {
@@ -567,7 +600,16 @@ export default function OrdersPage() {
       dataIndex: 'product_title',
       width: 190,
       ellipsis: true,
-      render: (_: any, row: any) => truncateText(row.product_title)
+      onCell: (row: any) => ({
+        ...noWrapCell,
+        onDoubleClick: () => openRemarkEditor(row),
+        title: '双击编辑订单备注'
+      }),
+      render: (_: any, row: any) => (
+        <span style={{ cursor: 'pointer' }} title="双击编辑订单备注">
+          {truncateText(row.product_title)}
+        </span>
+      )
     },
     { title: '落札时间', dataIndex: 'won_at', width: 155, onCell: () => noWrapCell, render: (_: any, row: any) => formatDateTime(row.won_at || row.won_time_text) },
     { title: '运费', dataIndex: 'shipping_fee_text', width: 150, ellipsis: true, onCell: () => noWrapCell, render: (_: any, row: any) => renderShippingText(row) },
@@ -787,6 +829,26 @@ export default function OrdersPage() {
             onChange={value => setOwnerEditorUserId(Number(value))}
           />
         </Space>
+      </Modal>
+
+      <Modal
+        open={remarkEditorOpen}
+        title={`订单备注：${remarkEditorOrder?.product_id || remarkEditorOrder?.id || '-'}`}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={remarkEditorSubmitting}
+        onOk={saveOrderRemark}
+        onCancel={() => {
+          setRemarkEditorOpen(false);
+          setRemarkEditorOrder(null);
+        }}
+        destroyOnClose
+      >
+        <Form form={remarkForm} layout="vertical">
+          <Form.Item name="order_remark" label="备注">
+            <Input.TextArea rows={5} maxLength={1000} showCount autoFocus />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <ProTable

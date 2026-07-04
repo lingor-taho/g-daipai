@@ -8,7 +8,11 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const DEFAULT_HEADERS = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '同捆运费', '总价', '物流', '单号'];
-const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150];
+const REMARK_HEADER = '备注';
+const SHEET_BASE_COLUMN_COUNT = 10;
+const SHEET_REMARK_COLUMN_COUNT = 11;
+const REMARK_COLUMN_INDEX = 10;
+const DEFAULT_COLUMN_WIDTHS = [96, 110, 210, 360, 90, 100, 110, 90, 120, 150, 160];
 const DEFAULT_APPEND_TEXT_COLOR = { red: 0, green: 0, blue: 0 };
 const DEFAULT_APPEND_BACKGROUND_COLOR = { red: 1, green: 1, blue: 1 };
 
@@ -204,7 +208,7 @@ function buildAppendRowsFormatRequest({ sheetId, startRowIndex, endRowIndex, bac
         startRowIndex,
         endRowIndex,
         startColumnIndex: 0,
-        endColumnIndex: 10
+        endColumnIndex: SHEET_REMARK_COLUMN_COUNT
       },
       cell: {
         userEnteredFormat
@@ -212,6 +216,52 @@ function buildAppendRowsFormatRequest({ sheetId, startRowIndex, endRowIndex, bac
       fields: fields.join(',')
     }
   };
+}
+
+function buildEnsureRemarkColumnRequest({ sheetId }) {
+  return {
+    insertDimension: {
+      range: {
+        sheetId,
+        dimension: 'COLUMNS',
+        startIndex: REMARK_COLUMN_INDEX,
+        endIndex: REMARK_COLUMN_INDEX + 1
+      },
+      inheritFromBefore: true
+    }
+  };
+}
+
+async function getSheetValues(spreadsheetId, range) {
+  const data = await googleRequest(`${spreadsheetId}/values/${encodeURIComponent(range)}?majorDimension=ROWS`);
+  return Array.isArray(data.values) ? data.values : [];
+}
+
+async function ensureRemarkColumn(spreadsheetId, sheetName) {
+  const headerRows = await getSheetValues(spreadsheetId, `${sheetName}!A1:K1`);
+  const firstRow = headerRows[0] || [];
+  const currentJ = String(firstRow[9] || '').trim();
+  const currentK = String(firstRow[10] || '').trim();
+  if (currentK === REMARK_HEADER) return { updated: false, inserted: false };
+
+  const kColumnRows = await getSheetValues(spreadsheetId, `${sheetName}!K1:K50`);
+  const kColumnHasData = kColumnRows.some((row, index) => index > 0 && String(row?.[0] || '').trim());
+  const shouldInsert = currentJ === DEFAULT_HEADERS[9] && (Boolean(currentK) || kColumnHasData);
+  if (shouldInsert) {
+    const sheetId = await getSheetId(spreadsheetId, sheetName);
+    await googleRequest(`${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        requests: [buildEnsureRemarkColumnRequest({ sheetId })]
+      })
+    });
+  }
+
+  await googleRequest(`${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!K1`)}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[REMARK_HEADER]] })
+  });
+  return { updated: true, inserted: shouldInsert };
 }
 
 async function appendRows({ rows, backgroundColor = null }) {
@@ -223,7 +273,7 @@ async function appendRows({ rows, backgroundColor = null }) {
     console.warn('[Google Sheets] apply style skipped:', error.message || error);
   });
   const appendResult = await googleRequest(
-    `${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A:J`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&includeValuesInResponse=false`,
+    `${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A:K`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&includeValuesInResponse=false`,
     {
       method: 'POST',
       body: JSON.stringify({ values: rows })
@@ -248,7 +298,7 @@ async function appendRows({ rows, backgroundColor = null }) {
     skipped: false,
     updatedRange: appendResult.updates?.updatedRange || '',
     appendedRows: rows.length,
-    lastColumn: toColumnLetters(9)
+    lastColumn: toColumnLetters(REMARK_COLUMN_INDEX)
   };
 }
 
@@ -280,14 +330,14 @@ function extractCellText(cell = {}) {
 function rowMatchesProductId(rowData = {}, productId = '') {
   const target = String(productId || '').trim().toLowerCase();
   if (!target) return false;
-  const cells = Array.isArray(rowData.values) ? rowData.values.slice(0, 10) : [];
+  const cells = Array.isArray(rowData.values) ? rowData.values.slice(0, SHEET_BASE_COLUMN_COUNT) : [];
   return cells.some(cell => String(extractCellText(cell)).toLowerCase().includes(target));
 }
 
 function rowMatchesAnyBackgroundColor(rowData = {}, targetHex = '') {
   const normalizedTarget = normalizeHexColor(targetHex);
   if (!normalizedTarget) return false;
-  const cells = Array.isArray(rowData.values) ? rowData.values.slice(0, 10) : [];
+  const cells = Array.isArray(rowData.values) ? rowData.values.slice(0, SHEET_BASE_COLUMN_COUNT) : [];
   return cells.some(cell => {
     const color = cell.userEnteredFormat?.backgroundColor || cell.effectiveFormat?.backgroundColor;
     return googleColorToHex(color) === normalizedTarget;
@@ -297,7 +347,7 @@ function rowMatchesAnyBackgroundColor(rowData = {}, targetHex = '') {
 async function findRowsByProductIdWithAnyColor(productId, targetHex) {
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', matched: false, rows: [] };
   const { spreadsheetId, sheetName } = getSheetConfig();
-  const range = `${sheetName}!A:J`;
+  const range = `${sheetName}!A:K`;
   const data = await googleRequest(
     `${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(startRow,rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat/backgroundColor,effectiveFormat/backgroundColor))))`
   );
@@ -319,7 +369,7 @@ async function findRowsByProductIdWithAnyColor(productId, targetHex) {
 async function findRowsByProductId(productId) {
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', matched: false, rows: [] };
   const { spreadsheetId, sheetName } = getSheetConfig();
-  const range = `${sheetName}!A:J`;
+  const range = `${sheetName}!A:K`;
   const data = await googleRequest(
     `${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(startRow,rowData(values(formattedValue,userEnteredValue,effectiveValue))))`
   );
@@ -345,10 +395,11 @@ async function updateRowsByProductId(productId, row) {
   const found = await findRowsByProductId(productId);
   if (found.skipped) return { ...found, updatedRows: 0 };
   if (!found.rows.length) return { skipped: true, reason: 'google sheet row not found', matched: false, updatedRows: 0 };
-  const values = row.slice(0, 10);
-  while (values.length < 10) values.push('');
+  await ensureRemarkColumn(spreadsheetId, sheetName);
+  const values = row.slice(0, SHEET_REMARK_COLUMN_COUNT);
+  while (values.length < SHEET_REMARK_COLUMN_COUNT) values.push('');
   const data = found.rows.map(match => ({
-    range: `${sheetName}!A${match.rowNumber}:J${match.rowNumber}`,
+    range: `${sheetName}!A${match.rowNumber}:K${match.rowNumber}`,
     values: [values]
   }));
   await googleRequest(`${spreadsheetId}/values:batchUpdate`, {
@@ -372,11 +423,15 @@ async function ensureHeaderRow(spreadsheetId, sheetName) {
   const firstRow = data.values?.[0] || [];
   const hasAnyHeader = firstRow.some(value => String(value || '').trim());
   const headerMatches = DEFAULT_HEADERS.every((header, index) => String(firstRow[index] || '').trim() === header);
-  if (hasAnyHeader && headerMatches) return { updated: false };
+  if (hasAnyHeader && headerMatches) {
+    await ensureRemarkColumn(spreadsheetId, sheetName);
+    return { updated: false };
+  }
   await googleRequest(`${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     body: JSON.stringify({ values: [DEFAULT_HEADERS] })
   });
+  await ensureRemarkColumn(spreadsheetId, sheetName);
   return { updated: true };
 }
 
@@ -416,7 +471,7 @@ async function applySheetBaseStyle(spreadsheetId, sheetName) {
               startRowIndex: 0,
               endRowIndex: 1,
               startColumnIndex: 0,
-              endColumnIndex: 10
+              endColumnIndex: SHEET_REMARK_COLUMN_COUNT
             },
             cell: {
               userEnteredFormat: {
@@ -440,7 +495,7 @@ async function applySheetBaseStyle(spreadsheetId, sheetName) {
               sheetId,
               startRowIndex: 1,
               startColumnIndex: 0,
-              endColumnIndex: 10
+              endColumnIndex: SHEET_REMARK_COLUMN_COUNT
             },
             cell: {
               userEnteredFormat: {
@@ -479,7 +534,9 @@ module.exports = {
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,
   applySheetBaseStyle,
+  buildEnsureRemarkColumnRequest,
   buildAppendRowsFormatRequest,
+  ensureRemarkColumn,
   ensureHeaderRow,
   extractSpreadsheetId,
   findRowsByProductId,

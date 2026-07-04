@@ -25,6 +25,7 @@ const {
   buildOrderSettlementSelectQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
+  updateOrderRemark,
   resolveSettlementOrderStatus,
   ORDER_STATUS_PENDING_SETTLEMENT,
   ORDER_STATUS_COMPLETED,
@@ -453,11 +454,58 @@ function testAdminOrdersQueryIncludesProductType() {
   assert.match(query.sql, /p\.product_title AS product_title/);
   assert.match(query.sql, /p\.product_url AS product_url/);
   assert.match(query.sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.match(query.sql, /o\.order_remark/);
   assert.match(query.sql, /COALESCE\(p\.tax_type, 'tax_zero'\) AS tax_type/);
   assert.match(query.sql, /COALESCE\(p\.product_type, CASE WHEN COALESCE\(p\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);
   assert.doesNotMatch(query.sql, /t\.(product_url|shipping_fee_text|tax_type|product_type)/);
   assert.match(query.sql, /ORDER BY datetime\(COALESCE\(o\.won_at, t\.updated_at\)\) DESC, t\.id DESC/);
   assert.deepEqual(query.params, [10, 0]);
+}
+
+function testMapAdminOrderListItemKeepsOrderRemark() {
+  const mapped = mapAdminOrderListItem({
+    id: 100,
+    product_id: 'r123456789',
+    product_url: '',
+    shipping_fee_text: '無料',
+    settled_at: null,
+    username: 'remark-user',
+    order_status: 'pending_receipt',
+    order_remark: 'ship with invoice'
+  });
+
+  assert.equal(mapped.order_remark, 'ship with invoice');
+}
+
+async function testUpdateOrderRemarkStoresTrimmedRemark() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updateOrderRemark(fakeDb, { orderId: 77, remark: '  fragile\nbox  ' });
+
+  assert.equal(result.id, 77);
+  assert.equal(result.order_remark, 'fragile\nbox');
+  assert.match(calls[0].sql, /UPDATE orders/);
+  assert.match(calls[0].sql, /order_remark = \?/);
+  assert.deepEqual(calls[0].params, ['fragile\nbox', 77]);
+}
+
+async function testUpdateOrderRemarkRejectsMissingOrder() {
+  const fakeDb = {
+    async query() {
+      return { rowCount: 0 };
+    }
+  };
+
+  await assert.rejects(
+    () => updateOrderRemark(fakeDb, { orderId: 404, remark: 'missing' }),
+    error => error.statusCode === 404 && /order not found/.test(error.message)
+  );
 }
 
 function testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly() {
@@ -471,6 +519,7 @@ function testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly() {
   assert.match(query.sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
   assert.match(query.sql, /p\.product_title AS product_title/);
   assert.match(query.sql, /p\.product_url AS product_url/);
+  assert.match(query.sql, /o\.order_remark/);
   assert.doesNotMatch(query.sql, /o\.product_title/);
   assert.doesNotMatch(query.sql, /o\.product_url/);
   assert.match(query.sql, /p\.shipping_fee_text AS shipping_fee_text/);
@@ -1140,6 +1189,7 @@ testNormalizeProductTypeForBatchRefresh();
 testAdminTasksListQueryUsesProductsOnly();
 testAdminPendingTasksQueryUsesProductsOnly();
 testAdminOrdersQueryIncludesProductType();
+testMapAdminOrderListItemKeepsOrderRemark();
 testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();
 testOrderStatusDebugOrdersQueryUsesProductsOnly();
 testOrderStatusDebugTasksQueryUsesProductsOnly();
@@ -1162,6 +1212,8 @@ testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 testManualOrderImportSummarySeparatesEmptyReadyBatches();
 
 Promise.all([
+  testUpdateOrderRemarkStoresTrimmedRemark(),
+  testUpdateOrderRemarkRejectsMissingOrder(),
   testRequestScanSetsCounterToConfiguredEveryRuns(),
   testCreateManualOrderImportBatchDoesNotMutateScanCounter(),
   testConfirmManualOrderImportRejectsAdminUserAssignment(),
