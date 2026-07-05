@@ -313,6 +313,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-05 商城即决确认事项复用付款流程
+
+商城即决商品在 `buy.auctions.yahoo.co.jp/order/review` 页面出现 `ストアからの確認事項` 时，原即决出价流程没有处理确认事项，可能停在 review/change/store-options 页面直到任务响应超时。现在仅当任务同时满足 `bid_mode=buyout` 且 `product_type=store` 时，`content.js` 才会在即决路径识别 `#cartopt` 的 `ストアからの確認事項` + `変更` 并返回 `buyout-store-confirmation-required`；`background.js` 再次校验商城即决边界后，复用付款流程已有的 `completeStoreConfirmationItems()`，点击 `変更`、等待编辑页、JS 勾选所有确认框、点击 `変更する` 回到 review 页后，再继续原来的即决确认/购买完成判断。普通出价、普通即决和订单付款工作流不进入该新增分支。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/content.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 新增回归 `testBuyoutStoreConfirmationCompletesBeforeFinalPurchase` 已在既有失败前执行通过；当前完整测试仍会在既有 `testExecuteBidTaskRetriesTransientServerTabErrorOnce` 失败。
+
 ### 2026-07-04 订单管理备注与 Google 表格备注列
 
 后台订单管理新增订单备注：双击商品名称可打开备注弹窗，保存后只更新系统数据库 `orders.order_remark`，不会立即同步 Google 表格。有备注的订单在商品 ID 的 `普/商` 标识后显示 `备`，备注内容不作为订单表格列展示。

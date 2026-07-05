@@ -7687,6 +7687,7 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
     user_max_price: 3142,
     strategy: 'direct',
     bid_mode: 'buyout',
+    product_type: 'store',
     tax_type: 'tax_included',
     end_time: '2026-06-28T23:59:00+09:00'
   }, { alreadyClaimed: true });
@@ -7694,6 +7695,133 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
   assert.equal(statusBodies.some(body => body.status === 'failed'), false);
   assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
   assert.deepEqual(removedTabs, [18]);
+}
+
+async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
+  const statusBodies = [];
+  const removedTabs = [];
+  const bidMessages = [];
+  const scriptCalls = [];
+  const paymentStates = [
+    {
+      url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1226403738',
+      hasStoreConfirmationSection: true,
+      controls: ['確認する']
+    },
+    {
+      url: 'https://buy.auctions.yahoo.co.jp/order/change/store-options?auctionId=p1226403738',
+      hasStoreConfirmationSection: true,
+      hasStoreConfirmationEditPage: true
+    },
+    {
+      url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1226403738',
+      controls: ['確認する']
+    }
+  ];
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/task/89/status')) {
+        statusBodies.push(JSON.parse(options.body || '{}'));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/89/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        return { id: 19, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/p1226403738' };
+      },
+      async get(id) {
+        return { id, status: 'complete', url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1226403738' };
+      },
+      async query() {
+        return [{ id: 19, status: 'complete', url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=p1226403738' }];
+      },
+      async sendMessage(id, msg) {
+        assert.equal(id, 19);
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'p1226403738',
+            currentPrice: 500,
+            buyoutPrice: 500,
+            endTime: '2026-07-05T18:59:00+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID') {
+          bidMessages.push(msg);
+          if (bidMessages.length === 1) {
+            return {
+              success: true,
+              storeConfirmationRequired: true,
+              stage: 'buyout-store-confirmation-required'
+            };
+          }
+          return { success: true, pendingFinal: true, stage: 'buyout-final-waiting' };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removedTabs.push(id);
+      }
+    },
+    scripting: {
+      async executeScript(args) {
+        if (args?.files) return [];
+        const funcText = String(args?.func || '');
+        if (funcText.includes('storeConfirmationBlock')) {
+          return [{ result: { success: true, snapshot: paymentStates.shift() || { controls: ['確認する'] } } }];
+        }
+        if (funcText.includes('findStoreConfirmationChange')) {
+          scriptCalls.push('change');
+          return [{ result: { success: true, method: 'storeConfirmationSelector', text: '変更' } }];
+        }
+        if (funcText.includes('hasStoreOptionText')) {
+          scriptCalls.push('ready');
+          return [{ result: { success: true, readyState: 'complete', checkboxCount: 1, checkedCount: 0, hasApplyButton: true, buttonText: '変更する', hasStoreOptionText: true, hasSkeleton: false, textLength: 120 } }];
+        }
+        if (funcText.includes('store confirmation checkbox JS click did not check all boxes')) {
+          scriptCalls.push('checkbox');
+          return [{ result: { success: true, checkedCount: 1, checkboxCount: 1, text: '変更する', applyReady: true } }];
+        }
+        if (funcText.includes('store confirmation apply button not found')) {
+          scriptCalls.push('apply');
+          return [{ result: { success: true, text: '変更する' } }];
+        }
+        return [{ result: { success: true } }];
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 89,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/p1226403738',
+    current_price: 500,
+    max_price: 500,
+    user_max_price: 500,
+    strategy: 'direct',
+    bid_mode: 'buyout',
+    product_type: 'store',
+    tax_type: 'tax_included',
+    end_time: '2026-07-05T18:59:00+09:00'
+  }, { alreadyClaimed: true });
+
+  assert.equal(bidMessages.length, 2);
+  assert.equal(bidMessages.every(msg => msg.productType === 'store'), true);
+  assert.equal(scriptCalls[0], 'change');
+  assert.equal(scriptCalls.includes('ready'), true);
+  assert.equal(scriptCalls.includes('checkbox'), true);
+  assert.equal(scriptCalls.includes('apply'), true);
+  assert.equal(scriptCalls.indexOf('checkbox') < scriptCalls.indexOf('apply'), true);
+  assert.equal(statusBodies.some(body => body.status === 'failed'), false);
+  assert.equal(statusBodies.some(body => body.status === 'bidding'), true);
+  assert.deepEqual(removedTabs, [19]);
 }
 
 async function testExecuteBidTaskRetriesTransientServerTabErrorOnce() {
@@ -8658,6 +8786,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
   await testBuyoutMessageChannelClosedOnThankYouStaysBidding();
+  await testBuyoutStoreConfirmationCompletesBeforeFinalPurchase();
   await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
   await testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComplete();
   await testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoadingTab();

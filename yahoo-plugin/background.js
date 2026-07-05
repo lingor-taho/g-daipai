@@ -195,6 +195,17 @@ function isBuyoutFinalPending(task = {}, result = {}) {
     /buyout-final/i.test(String(result?.stage || ''));
 }
 
+function isStoreBuyoutTask(task = {}) {
+  return task?.bid_mode === 'buyout' &&
+    String(task.product_type || task.productType || '') === 'store';
+}
+
+function isBuyoutStoreConfirmationRequired(task = {}, result = {}) {
+  return isStoreBuyoutTask(task) &&
+    result?.success &&
+    result?.storeConfirmationRequired === true;
+}
+
 function getPendingFinalRetryDelayMs(task = {}, result = {}) {
   if (task?.bid_mode === 'buyout' || /buyout-final/i.test(String(result?.stage || ''))) {
     return BID_PENDING_FINAL_RETRY_DELAY_MS;
@@ -332,6 +343,7 @@ async function openTaskPage(task, options = {}) {
       taxType: task.tax_type || 'tax_zero',
       multiBidIncrement: task.multi_bid_increment || 0,
       bidMode: task.bid_mode || 'bid',
+      productType: task.product_type || task.productType || 'normal',
       strategy: task.strategy || 'direct',
       auctionId,
       executeBid: false
@@ -386,6 +398,7 @@ async function executeTaskInTab(tab, task) {
       taxType: task.tax_type || 'tax_zero',
       multiBidIncrement: task.multi_bid_increment || 0,
       bidMode: task.bid_mode || 'bid',
+      productType: task.product_type || task.productType || 'normal',
     strategy: task.strategy || 'direct'
   });
 
@@ -408,6 +421,7 @@ async function sendBidMessageV2(tabId, task) {
       taxType: task.tax_type || 'tax_zero',
       multiBidIncrement: task.multi_bid_increment || 0,
       bidMode: task.bid_mode || 'bid',
+      productType: task.product_type || task.productType || 'normal',
     strategy: task.strategy || 'direct'
   });
 }
@@ -657,6 +671,39 @@ async function executeTaskInTabV2(tab, task) {
 
   if (!result?.success) {
     throw buildBidError(result, 'bid execution failed');
+  }
+
+  for (let attempt = 0; attempt < 2 && isBuyoutStoreConfirmationRequired(task, result); attempt += 1) {
+    const state = await getPaymentPageState(tab.id);
+    if (!state?.hasStoreConfirmationSection) {
+      throw buildBidError({
+        ...result,
+        success: false,
+        error: 'buyout store confirmation section not detected by background'
+      }, 'buyout store confirmation section not detected');
+    }
+    const storeResult = await completeStoreConfirmationItems(tab, state, task);
+    if (!storeResult?.success) {
+      throw buildBidError({
+        ...result,
+        success: false,
+        error: storeResult?.error || 'buyout store confirmation flow failed'
+      }, 'buyout store confirmation flow failed');
+    }
+    const nextTab = storeResult.tab || tab;
+    await injectContentScript(nextTab.id);
+    result = await sendBidMessageV2(nextTab.id, task);
+    if (!result?.success) {
+      throw buildBidError(result, 'bid execution failed after store confirmation');
+    }
+  }
+
+  if (isBuyoutStoreConfirmationRequired(task, result)) {
+    throw buildBidError({
+      ...result,
+      success: false,
+      error: 'buyout store confirmation repeated'
+    }, 'buyout store confirmation repeated');
   }
 
   if (result.pendingFinal) {

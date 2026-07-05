@@ -700,6 +700,7 @@ async function executeBidV3(maxPrice, options = {}) {
   const numericMultiBidIncrement = Number(options.multiBidIncrement || 0);
   const taxType = options.taxType === 'tax_included' ? 'tax_included' : 'tax_zero';
   const bidMode = options.bidMode === 'buyout' ? 'buyout' : 'bid';
+  const productType = options.productType === 'store' ? 'store' : 'normal';
   const strategy = options.strategy || 'direct';
   const taskId = options.taskId || null;
   const bodyText = getBodyText();
@@ -803,6 +804,15 @@ async function executeBidV3(maxPrice, options = {}) {
 
     return [...document.querySelectorAll(selector)]
       .find(el => isClickableElement(el) && isBuyoutFinalPurchaseButton(el)) || null;
+  }
+
+  function hasStoreConfirmationSectionForBuyout() {
+    const block = document.querySelector('#cartopt');
+    if (!block || !isClickableElement(block)) return false;
+    const title = [...block.querySelectorAll('h1,h2,h3,h4,th,dt,div,section,p,span')]
+      .find(el => /^\s*\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805\s*$/.test(textOf(el)) && isClickableElement(el));
+    const change = block.querySelector('a[data-cl-params*="_cl_link:cartopt"], a');
+    return Boolean(title && change && isClickableElement(change));
   }
 
   function findActiveDialog() {
@@ -1177,6 +1187,13 @@ async function executeBidV3(maxPrice, options = {}) {
       !findBuyoutFinalPurchaseButton() &&
       !findBulkPurchaseInstantBuyButton()) {
       return { success: false, error: 'bulk purchase flow did not activate', closeTab: true };
+    }
+    if (productType === 'store' && hasStoreConfirmationSectionForBuyout()) {
+      return {
+        success: true,
+        storeConfirmationRequired: true,
+        stage: 'buyout-store-confirmation-required'
+      };
     }
   }
 
@@ -2361,7 +2378,7 @@ getTaskData().then(taskData => {
     (!pageProductData.auctionId || pageProductData.auctionId === taskData.auctionId);
 
   if (shouldExecuteBid) {
-    executeBidV3(taskData.maxPrice, { taskId: taskData.taskId, bidMode: taskData.bidMode, strategy: taskData.strategy, userMaxPrice: taskData.userMaxPrice, currentPrice: taskData.currentPrice, taxType: taskData.taxType, multiBidIncrement: taskData.multiBidIncrement })
+    executeBidV3(taskData.maxPrice, { taskId: taskData.taskId, bidMode: taskData.bidMode, productType: taskData.productType, strategy: taskData.strategy, userMaxPrice: taskData.userMaxPrice, currentPrice: taskData.currentPrice, taxType: taskData.taxType, multiBidIncrement: taskData.multiBidIncrement })
       .then(result => {
         chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, result });
       })
@@ -2494,7 +2511,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  executeBidV3(msg.maxPrice, { taskId: msg.taskId, bidMode: msg.bidMode, strategy: msg.strategy, userMaxPrice: msg.userMaxPrice, currentPrice: msg.currentPrice, taxType: msg.taxType, multiBidIncrement: msg.multiBidIncrement })
+  executeBidV3(msg.maxPrice, { taskId: msg.taskId, bidMode: msg.bidMode, productType: msg.productType, strategy: msg.strategy, userMaxPrice: msg.userMaxPrice, currentPrice: msg.currentPrice, taxType: msg.taxType, multiBidIncrement: msg.multiBidIncrement })
     .then(result => sendResponse(result))
     .catch(err => sendResponse({ success: false, error: err.message }));
   return true;
