@@ -313,6 +313,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-05 确认收货 cancel_check 等待状态文案渲染
+
+确认收货流程中，`pending_payment` / `pending_settlement` 订单会作为 `cancel_check` 打开 Yahoo 交易页，同时检查取消状态和已付款/已发货状态。Yahoo 新版交易页可能在 tab `complete` 后才异步渲染强状态文案，原逻辑只读一次正文，可能先读到普通占位/非状态文案后直接跳过，导致后面出现的正确状态不再判断。
+
+修复：`cancel_check` 打开交易页后，最多等待 8 秒、每 500ms 重新读取页面正文；等待目标不是某几段状态文案本身，而是交易页业务区域已渲染，例如 `取引ナビ` 的 `購入 / お支払い / 発送連絡` 步骤和 `取引情報` 等主体内容已经出现。页面渲染完成后再判断取消文案或以下任一已付款/已发货文案：`ご購入ありがとうございます。` + `商品の発送連絡をお待ちください。`、`出品者に支払い完了の連絡をしました。` + `商品の発送連絡をお待ちください。`、`商品が発送されました。` + `到着までお待ちください。`、`出品者から商品発送の連絡がありました。` + `到着したら、受け取り連絡をしてください。`。命中已付款/已发货时仍只把 `pending_payment` / `pending_settlement` 推进到 `pending_shipment`；其他已渲染状态不更新状态，直接跳过本次 `cancel_check`。
+
+验证：
+
+```powershell
+node src/server/routes/plugin.test.js
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 本次确认收货新增回归已在后续失败前执行通过；当前完整测试会停在既有/其他路径 `testBuyoutStoreConfirmationCompletesBeforeFinalPurchase`。
+
 ### 2026-07-05 商城即决确认事项复用付款流程
 
 商城即决商品在 `buy.auctions.yahoo.co.jp/order/review` 页面出现 `ストアからの確認事項` 时，原即决出价流程没有处理确认事项，可能停在 review/change/store-options 页面直到任务响应超时。现在仅当任务同时满足 `bid_mode=buyout` 且 `product_type=store` 时，`content.js` 才会在即决路径识别 `#cartopt` 的 `ストアからの確認事項` + `変更` 并返回 `buyout-store-confirmation-required`；`background.js` 再次校验商城即决边界后，复用付款流程已有的 `completeStoreConfirmationItems()`，点击 `変更`、等待编辑页、JS 勾选所有确认框、点击 `変更する` 回到 review 页后，再继续原来的即决确认/购买完成判断。普通出价、普通即决和订单付款工作流不进入该新增分支。

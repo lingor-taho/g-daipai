@@ -3817,6 +3817,130 @@ async function testRunConfirmReceiptJobsMarksPaidCancelCheckOrderPendingShipment
   assert.equal(statusCalls[0].orderId, 43);
 }
 
+async function testRunConfirmReceiptJobsWaitsForPaidCancelCheckTextAfterTabComplete() {
+  const statusCalls = [];
+  let stateReads = 0;
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 36, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562222', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562222', status: 'complete' }; },
+      async query() { return [{ id: 36, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562222', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        stateReads += 1;
+        const rendered = stateReads >= 3;
+        return [{
+          result: {
+            success: true,
+            snapshot: {
+              bodyText: rendered
+                ? '\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002'
+                : '\u53d6\u5f15\u30ca\u30d3',
+              controls: []
+            }
+          }
+        }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 44,
+                productId: 'm1235562222',
+                productType: 'store',
+                orderStatus: 'pending_payment',
+                jobType: 'cancel_check',
+                transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562222',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].status, 'pending_shipment');
+  assert.equal(statusCalls[0].orderId, 44);
+  assert.equal(stateReads, 3);
+}
+
+async function testRunConfirmReceiptJobsStopsWaitingAfterOtherCancelCheckStatusRenders() {
+  const statusCalls = [];
+  let stateReads = 0;
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 37, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562223', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562223', status: 'complete' }; },
+      async query() { return [{ id: 37, windowId: 5, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562223', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        stateReads += 1;
+        const rendered = stateReads >= 3;
+        return [{
+          result: {
+            success: true,
+            snapshot: {
+              bodyText: rendered
+                ? '\u53d6\u5f15\u30ca\u30d3 \u8cfc\u5165 \u304a\u652f\u6255\u3044 \u767a\u9001\u9023\u7d61 \u53d6\u5f15\u60c5\u5831 \u652f\u6255\u3044\u624b\u7d9a\u304d\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002'
+                : '\u53d6\u5f15\u30ca\u30d3',
+              controls: []
+            }
+          }
+        }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 45,
+                productId: 'm1235562223',
+                productType: 'store',
+                orderStatus: 'pending_payment',
+                jobType: 'cancel_check',
+                transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=m1235562223',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(statusCalls.length, 0);
+  assert.equal(stateReads, 3);
+}
+
 async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
   const calls = [];
   const actions = [];
@@ -8733,6 +8857,8 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunConfirmReceiptJobsMarksPaidCancelCheckOrderPendingShipment();
+  await testRunConfirmReceiptJobsWaitsForPaidCancelCheckTextAfterTabComplete();
+  await testRunConfirmReceiptJobsStopsWaitingAfterOtherCancelCheckStatusRenders();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
   await testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugger();
   await testRunPaymentJobsWaitsForNormalShippingOptionsAfterChangeClick();
