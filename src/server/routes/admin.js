@@ -3107,7 +3107,7 @@ async function refreshProductShippingFee(database, service, productId) {
   await upsertProductSnapshot(database, {
     ...buildFetchedProductSnapshot(normalizedProductId, productData),
     shipping_fee_text: shippingFeeText
-  }, { source: 'fetch' });
+  }, { source: 'admin_refresh', overwriteProductTitle: true });
   return {
     productId: normalizedProductId,
     success: true,
@@ -3135,7 +3135,7 @@ async function refreshProductType(database, service, productId) {
   await upsertProductSnapshot(database, {
     ...buildFetchedProductSnapshot(normalizedProductId, productData),
     product_type: productType
-  }, { source: 'fetch' });
+  }, { source: 'admin_refresh', overwriteProductTitle: true });
   return {
     productId: normalizedProductId,
     success: true,

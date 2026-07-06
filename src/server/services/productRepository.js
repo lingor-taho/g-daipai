@@ -81,7 +81,7 @@ function backfillProductsFromExistingData(database) {
      WHERE t.product_id IS NOT NULL AND t.product_id <> ''
      ON CONFLICT(product_id) DO UPDATE SET
        product_url = COALESCE(excluded.product_url, products.product_url),
-       product_title = COALESCE(excluded.product_title, products.product_title),
+       product_title = COALESCE(NULLIF(products.product_title, ''), excluded.product_title),
        product_image_url = COALESCE(excluded.product_image_url, products.product_image_url),
        current_price = COALESCE(excluded.current_price, products.current_price),
        buyout_price = COALESCE(excluded.buyout_price, products.buyout_price),
@@ -112,6 +112,9 @@ function upsertProductSnapshot(database, input = {}, options = {}) {
   const snapshot = normalizeProductSnapshot(input);
   if (!snapshot) return { rows: [], rowCount: 0, skipped: true };
   const source = String(options.source || '').trim();
+  const productTitleUpdate = options.overwriteProductTitle
+    ? 'product_title = COALESCE(excluded.product_title, products.product_title)'
+    : "product_title = COALESCE(NULLIF(products.product_title, ''), excluded.product_title)";
   return database.query(
     `INSERT INTO products (
        product_id,
@@ -139,7 +142,7 @@ function upsertProductSnapshot(database, input = {}, options = {}) {
      )
      ON CONFLICT(product_id) DO UPDATE SET
        product_url = COALESCE(excluded.product_url, products.product_url),
-       product_title = COALESCE(excluded.product_title, products.product_title),
+       ${productTitleUpdate},
        product_image_url = COALESCE(excluded.product_image_url, products.product_image_url),
        current_price = COALESCE(excluded.current_price, products.current_price),
        buyout_price = COALESCE(excluded.buyout_price, products.buyout_price),

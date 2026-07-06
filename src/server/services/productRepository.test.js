@@ -95,6 +95,40 @@ async function testUpsertProductSnapshotPreservesExistingShippingAndMarksFetchSo
   assert.equal(calls[0].params.includes('fetch'), true);
 }
 
+async function testUpsertProductSnapshotPreservesExistingProductTitle() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await upsertProductSnapshot(fakeDb, {
+    product_id: 'P1235429705',
+    product_title: 'E02-8210'
+  }, { source: 'fetch' });
+
+  assert.match(calls[0].sql, /product_title = COALESCE\(NULLIF\(products\.product_title, ''\), excluded\.product_title\)/);
+}
+
+async function testUpsertProductSnapshotCanOverwriteProductTitleForManualRefresh() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await upsertProductSnapshot(fakeDb, {
+    product_id: 'P1235429705',
+    product_title: 'Full refreshed title'
+  }, { source: 'admin_refresh', overwriteProductTitle: true });
+
+  assert.match(calls[0].sql, /product_title = COALESCE\(excluded\.product_title, products\.product_title\)/);
+}
+
 async function testUpsertProductSnapshotDoesNotDefaultMissingTypeFields() {
   const calls = [];
   const fakeDb = {
@@ -121,6 +155,8 @@ Promise.all([
   testBackfillProductsReadsTasksAndBiddingItemsOnly(),
   testBackfillOrderProductIdsUsesTaskRelationOnly(),
   testUpsertProductSnapshotPreservesExistingShippingAndMarksFetchSource(),
+  testUpsertProductSnapshotPreservesExistingProductTitle(),
+  testUpsertProductSnapshotCanOverwriteProductTitleForManualRefresh(),
   testUpsertProductSnapshotDoesNotDefaultMissingTypeFields()
 ]).then(() => {
   console.log('product repository tests passed');

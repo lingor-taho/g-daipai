@@ -1129,7 +1129,9 @@ async function testRefreshProductShippingFeeWritesProductsOnly() {
   assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), false);
   const productInsert = calls.find(call => call.type === 'query' && /INSERT INTO products/.test(call.sql));
   assert.ok(productInsert);
+  assert.match(productInsert.sql, /product_title = COALESCE\(excluded\.product_title, products\.product_title\)/);
   assert.equal(productInsert.params[0], 'a123456789');
+  assert.equal(productInsert.params[2], 'product title');
   assert.equal(productInsert.params[8], 'normal');
   assert.equal(productInsert.params[9], '送料 880円');
 }
@@ -1170,6 +1172,7 @@ async function testRefreshProductTypeWritesProductsOnly() {
   assert.equal(calls.some(call => call.type === 'query' && /UPDATE tasks/.test(call.sql)), false);
   const productInsert = calls.find(call => call.type === 'query' && /INSERT INTO products/.test(call.sql));
   assert.ok(productInsert);
+  assert.match(productInsert.sql, /product_title = COALESCE\(excluded\.product_title, products\.product_title\)/);
   assert.equal(productInsert.params[0], 's123456789');
   assert.equal(productInsert.params[7], 'tax_included');
   assert.equal(productInsert.params[8], 'store');
