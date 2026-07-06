@@ -313,6 +313,22 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-06 确认收货完成文案兼容
+
+生产商品 `t1235313146` 确认收货失败，后台提示 `receipt completion text not found`。排查确认订单仍是 `pending_receipt`，商品类型为普通 `normal`，交易 URL、物流单号和前序付款/扫描状态正常；失败点在插件点击 `受け取り連絡` 后只等待 `すべての取引が完了しました` 这一种完成文案。Yahoo 完成页还可能只展示 `出品者に受け取り連絡をしました。`、`受け取り連絡が完了しました` 等明确完成文案，原判定过窄会导致实际已完成但插件未识别。
+
+修复：确认收货完成状态新增 `出品者に受け取り連絡をしました`、`受取連絡が完了しました`、`全ての取引が完了しました` 等明确完成文案识别；不会把待发货/待收货提示文案当完成。普通确认收货路径打开交易页后也改为先等待交易页主体或收货控件渲染完成，再检查取消/完成状态和执行勾选、点击，避免 tab `complete` 后页面内容仍在异步渲染时过早判断。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增确认收货回归，后续仍停在既有 `testBuyoutStoreConfirmationCompletesBeforeFinalPurchase`。
+
 ### 2026-07-06 用户端前台汇率独立配置
 
 用户端提交页人民币/日元换算汇率现在独立于后台订单结算汇率。前台汇率只用于用户端展示和人民币输入换算，最终提交给任务/插件的仍是日元；它不参与订单结算、应付款、财务费用或特殊用户结算汇率。

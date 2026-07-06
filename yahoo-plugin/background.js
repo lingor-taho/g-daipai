@@ -3268,6 +3268,16 @@ function isYahooTransactionCancelledText(text = '') {
     /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
 }
 
+function isYahooConfirmReceiptCompleteText(text = '') {
+  const source = String(text || '');
+  return /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u5168\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u51fa\u54c1\u8005\u306b\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u51fa\u54c1\u8005\u306b\u53d7\u53d6\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u53d7\u3051\u53d6\u308a\u9023\u7d61\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u53d7\u53d6\u9023\u7d61\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(source);
+}
+
 function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   const text = String(snapshot.bodyText || '').replace(/\s+/g, ' ').trim();
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
@@ -3297,7 +3307,7 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
     textSample: text.slice(0, 500),
     cancelled,
     paidOrShipped,
-    complete: /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text),
+    complete: isYahooConfirmReceiptCompleteText(text),
     rendered: transactionNavRendered && transactionDetailRendered,
     hasReceiptCheckbox: /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(text) || Boolean(snapshot.hasReceiptCheckbox),
     hasReceiptCheckboxChecked: Boolean(snapshot.hasReceiptCheckboxChecked),
@@ -3367,7 +3377,7 @@ async function getConfirmReceiptPageState(tabId) {
   return buildConfirmReceiptPageStateFromSnapshot(result.snapshot || {});
 }
 
-async function waitForConfirmReceiptCancelCheckState(
+async function waitForConfirmReceiptRenderedState(
   tabId,
   timeoutMs = CONFIRM_RECEIPT_CANCEL_CHECK_RENDER_WAIT_MS,
   pollMs = CONFIRM_RECEIPT_CANCEL_CHECK_POLL_MS
@@ -3389,6 +3399,10 @@ async function waitForConfirmReceiptCancelCheckState(
     if (attempt < attempts - 1) await sleep(pollMs);
   }
   return latest;
+}
+
+async function waitForConfirmReceiptCancelCheckState(tabId, timeoutMs, pollMs) {
+  return waitForConfirmReceiptRenderedState(tabId, timeoutMs, pollMs);
 }
 
 async function clickConfirmReceiptCheckbox(tabId) {
@@ -6148,7 +6162,7 @@ async function executeConfirmReceiptJob(job) {
   const beforeTabIds = await getTabIds();
   try {
     tab = await openTransactionPage(job, beforeTabIds);
-    let state = await getConfirmReceiptPageState(tab.id);
+    let state = await waitForConfirmReceiptRenderedState(tab.id);
     if (state?.cancelled) {
       await updateConfirmReceiptStatus({
         orderId: job.orderId,

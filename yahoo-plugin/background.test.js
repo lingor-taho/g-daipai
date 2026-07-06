@@ -3606,6 +3606,92 @@ async function testRunConfirmReceiptJobsWaitsForEnabledReceiveButton() {
   assert.equal(sentDebuggerCommands.some(item => item.command === 'Input.dispatchMouseEvent'), true);
 }
 
+async function testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking() {
+  const statusCalls = [];
+  let scriptCall = 0;
+  const snapshots = [
+    {
+      bodyText: '',
+      controls: [],
+      hasReceiptCheckbox: false,
+      hasReceiptCheckboxChecked: false,
+      hasReceiptSubmitButton: false,
+      receiptSubmitButtonDisabled: false
+    },
+    {
+      bodyText: '\u53d6\u5f15\u30ca\u30d3 \u53d6\u5f15\u60c5\u5831 \u8cfc\u5165 \u304a\u652f\u6255\u3044 \u767a\u9001\u9023\u7d61 \u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f\u3002 \u53d7\u3051\u53d6\u308a\u9023\u7d61',
+      controls: ['\u53d7\u3051\u53d6\u308a\u9023\u7d61'],
+      hasReceiptCheckbox: true,
+      hasReceiptCheckboxChecked: false,
+      hasReceiptSubmitButton: false,
+      receiptSubmitButtonDisabled: true
+    },
+    {
+      bodyText: '\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f\u3002 \u53d7\u3051\u53d6\u308a\u9023\u7d61',
+      controls: ['\u53d7\u3051\u53d6\u308a\u9023\u7d61'],
+      hasReceiptCheckbox: true,
+      hasReceiptCheckboxChecked: true,
+      hasReceiptSubmitButton: true,
+      receiptSubmitButtonDisabled: false
+    },
+    {
+      bodyText: '\u51fa\u54c1\u8005\u306b\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002',
+      controls: [],
+      hasReceiptCheckbox: false,
+      hasReceiptCheckboxChecked: false,
+      hasReceiptSubmitButton: false,
+      receiptSubmitButtonDisabled: false
+    }
+  ];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 132, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }; },
+      async query() { return [{ id: 132, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/buyer/top', status: 'complete' }]; },
+      async update(id) { return { id, windowId: 5, status: 'complete' }; }
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        scriptCall += 1;
+        if (scriptCall === 3) return [{ result: { success: true } }];
+        if (scriptCall === 5) return [{ result: { success: true, method: 'click', text: '\u53d7\u3051\u53d6\u308a\u9023\u7d61' } }];
+        const snapshot = snapshots.shift();
+        return [{ result: { success: true, snapshot } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 132,
+                productId: 't1235313146',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(statusCalls[0].status, 'success');
+  assert.equal(statusCalls[0].productId, 't1235313146');
+}
+
 function testConfirmReceiptPageStateDetectsWinnerDeletedCancellation() {
   const api = loadBackgroundForTest();
 
@@ -3640,6 +3726,29 @@ function testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText() {
     assert.equal(state.paidOrShipped, true);
     assert.equal(state.cancelled, false);
   }
+}
+
+function testConfirmReceiptPageStateDetectsReceiptCompletionText() {
+  const api = loadBackgroundForTest();
+
+  const state = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: [
+      '\u53d6\u5f15\u30ca\u30d3',
+      '\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f',
+      '\u51fa\u54c1\u8005\u306b\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002',
+      '\u51fa\u54c1\u8005\u3092\u8a55\u4fa1'
+    ].join('\n'),
+    controls: ['\u51fa\u54c1\u8005\u3092\u8a55\u4fa1']
+  });
+
+  assert.equal(state.complete, true);
+
+  const receivedNoticeState = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: '\u51fa\u54c1\u8005\u306b\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002\n\u51fa\u54c1\u8005\u3092\u8a55\u4fa1',
+    controls: ['\u51fa\u54c1\u8005\u3092\u8a55\u4fa1']
+  });
+
+  assert.equal(receivedNoticeState.complete, true);
 }
 
 async function testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled() {
@@ -8852,8 +8961,10 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();
   await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
+  await testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking();
   testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();
   testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText();
+  testConfirmReceiptPageStateDetectsReceiptCompletionText();
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunConfirmReceiptJobsMarksPaidCancelCheckOrderPendingShipment();
