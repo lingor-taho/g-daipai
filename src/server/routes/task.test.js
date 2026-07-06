@@ -32,6 +32,7 @@ const {
   getClientSiteConfig
 } = require('./task');
 const {
+  calculateRawWebsiteRate,
   calculateWebsiteRate,
   clearWebsiteRateCache,
   getWebsiteRate,
@@ -569,17 +570,32 @@ function testBocJpyCashSellRateParsing() {
 function testWebsiteRateCalculationRoundsToFourDecimals() {
   assert.equal(calculateWebsiteRate(4.2518), 0.0445);
   assert.equal(calculateWebsiteRate(4.2599), 0.0446);
+  assert.equal(calculateRawWebsiteRate(4.2518), 0.0425);
+  assert.equal(calculateWebsiteRate(4.2518, 0.001, -0.0005), 0.0430);
 }
 
 function testWebsiteRateCacheValidity() {
-  assert.equal(isWebsiteRateCacheValid({ rate: 0.0445, sourceRate: 4.2518, expiresAtMs: 2000 }, 1000), true);
-  assert.equal(isWebsiteRateCacheValid({ rate: 0.0445, sourceRate: 4.2518, expiresAtMs: 1000 }, 1000), false);
-  assert.equal(isWebsiteRateCacheValid({ rate: 0, sourceRate: 4.2518, expiresAtMs: 2000 }, 1000), false);
+  assert.equal(isWebsiteRateCacheValid({ sourceRate: 4.2518, expiresAtMs: 2000 }, 1000), true);
+  assert.equal(isWebsiteRateCacheValid({ sourceRate: 4.2518, expiresAtMs: 1000 }, 1000), false);
+  assert.equal(isWebsiteRateCacheValid({ sourceRate: 0, expiresAtMs: 2000 }, 1000), false);
 }
 
 async function testWebsiteRateProviderUsesCacheUntilExpiry() {
   clearWebsiteRateCache();
   let calls = 0;
+  const configRows = new Map([
+    ['client_rate_adjustment', { value: '0.003' }]
+  ]);
+  const userRows = new Map([
+    [7, { rate_adjustment: '-0.001' }]
+  ]);
+  const database = {
+    async getOne(sql, params = []) {
+      if (/FROM config/.test(sql)) return configRows.get('client_rate_adjustment') || null;
+      if (/FROM user_client_rate_overrides/.test(sql)) return userRows.get(Number(params[0])) || null;
+      return null;
+    }
+  };
   const httpClient = {
     async get() {
       calls += 1;
@@ -593,13 +609,20 @@ async function testWebsiteRateProviderUsesCacheUntilExpiry() {
     }
   };
 
-  const first = await getWebsiteRate({ nowMs: 1000, httpClient });
-  const second = await getWebsiteRate({ nowMs: 2000, httpClient });
-  const third = await getWebsiteRate({ nowMs: 1000 + (3 * 60 * 60 * 1000) + 1, httpClient });
+  const first = await getWebsiteRate({ nowMs: 1000, httpClient, database, userId: 7 });
+  const second = await getWebsiteRate({ nowMs: 2000, httpClient, database, userId: 7 });
+  const defaultUser = await getWebsiteRate({ nowMs: 2500, httpClient, database, userId: 8 });
+  const third = await getWebsiteRate({ nowMs: 1000 + (3 * 60 * 60 * 1000) + 1, httpClient, database, userId: 7 });
 
+  assert.equal(first.rawRate, 0.0425);
+  assert.equal(first.baseAdjustment, 0.003);
+  assert.equal(first.baseRate, 0.0455);
+  assert.equal(first.userAdjustment, -0.001);
   assert.equal(first.rate, 0.0445);
   assert.equal(first.cacheHit, false);
   assert.equal(second.cacheHit, true);
+  assert.equal(defaultUser.rate, 0.0455);
+  assert.equal(defaultUser.hasUserOverride, false);
   assert.equal(third.cacheHit, false);
   assert.equal(calls, 2);
   clearWebsiteRateCache();

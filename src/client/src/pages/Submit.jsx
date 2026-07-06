@@ -81,9 +81,13 @@ function getDefaultMultiBidIncrement(maxPrice) {
   return getMinMultiBidIncrement(maxPrice);
 }
 
+function getWebsiteRateCacheKey() {
+  return `${WEBSITE_RATE_CACHE_KEY}:${localStorage.getItem('actingUserId') || 'self'}`;
+}
+
 function readWebsiteRateCache(nowMs = Date.now()) {
   try {
-    const parsed = JSON.parse(localStorage.getItem(WEBSITE_RATE_CACHE_KEY) || 'null');
+    const parsed = JSON.parse(localStorage.getItem(getWebsiteRateCacheKey()) || 'null');
     if (!parsed || Number(parsed.rate || 0) <= 0 || Number(parsed.expiresAtMs || 0) <= nowMs) return null;
     return parsed;
   } catch (_) {
@@ -97,10 +101,12 @@ function writeWebsiteRateCache(data, nowMs = Date.now()) {
   const cached = {
     rate,
     sourceRate: Number(data?.sourceRate || 0) || null,
+    baseRate: Number(data?.baseRate || 0) || null,
+    userAdjustment: data?.userAdjustment === null ? null : (Number(data?.userAdjustment || 0) || 0),
     fetchedAt: data?.fetchedAt || new Date(nowMs).toISOString(),
     expiresAtMs: nowMs + WEBSITE_RATE_CACHE_TTL_MS
   };
-  localStorage.setItem(WEBSITE_RATE_CACHE_KEY, JSON.stringify(cached));
+  localStorage.setItem(getWebsiteRateCacheKey(), JSON.stringify(cached));
   return cached;
 }
 
@@ -131,6 +137,7 @@ export default function Submit() {
   const [websiteRate, setWebsiteRate] = useState(null);
   const [websiteRateLoading, setWebsiteRateLoading] = useState(false);
   const [websiteRateError, setWebsiteRateError] = useState('');
+  const [websiteRateReloadKey, setWebsiteRateReloadKey] = useState(0);
   const [lastFetchedUrl, setLastFetchedUrl] = useState('');
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [multiBidConfig, setMultiBidConfig] = useState({
@@ -162,7 +169,7 @@ export default function Submit() {
       return;
     }
     setWebsiteRateLoading(true);
-    runDeduped('Submit:getWebsiteRate', getWebsiteRate)
+    runDeduped(`Submit:getWebsiteRate:${getWebsiteRateCacheKey()}`, getWebsiteRate)
       .then(res => {
         const nextRate = writeWebsiteRateCache(res.data);
         if (nextRate) {
@@ -178,7 +185,7 @@ export default function Submit() {
       .finally(() => {
         setWebsiteRateLoading(false);
       });
-  }, []);
+  }, [websiteRateReloadKey]);
 
   useEffect(() => {
     const prefillUrl = String(searchParams.get('url') || '').trim();
@@ -199,6 +206,9 @@ export default function Submit() {
       setBuyoutSelected(false);
       setStoreBidPriceMode('tax_before');
       setBidCurrency('jpy');
+      setWebsiteRate(null);
+      setWebsiteRateError('');
+      setWebsiteRateReloadKey(key => key + 1);
       setLastFetchedUrl('');
       setTaskListVersion(version => version + 1);
     }

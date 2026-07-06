@@ -43,6 +43,11 @@ const {
   runWonDateCleanup
 } = require('../services/forceDateCleanup');
 const {
+  DEFAULT_CLIENT_RATE_ADJUSTMENT,
+  getWebsiteRate,
+  normalizeRateAdjustment
+} = require('../services/websiteRate');
+const {
   getOrderStatusAuditRows,
   writeOrderStatusAuditLogs,
   backfillMissingOrderStatusAuditLogs
@@ -2026,6 +2031,98 @@ router.put('/finance-config', async (req, res) => {
   res.json({ success: true, ...(hasRate ? { rate } : {}), bankFeeJpy, handlingFeeCny, largeAmountFeeCny });
 });
 
+async function getClientRateSettings() {
+  return getWebsiteRate({ database: db });
+}
+
+router.get('/client-rate-settings', async (req, res) => {
+  try {
+    res.json(await getClientRateSettings());
+  } catch (error) {
+    res.status(503).json({ error: error.message || 'failed to fetch client rate settings' });
+  }
+});
+
+router.put('/client-rate-settings', async (req, res) => {
+  const adjustment = normalizeRateAdjustment(req.body?.baseAdjustment ?? req.body?.rateAdjustment, DEFAULT_CLIENT_RATE_ADJUSTMENT);
+  await db.query(
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('client_rate_adjustment', ?, CURRENT_TIMESTAMP)`,
+    [String(adjustment)]
+  );
+  try {
+    res.json(await getClientRateSettings());
+  } catch (error) {
+    res.json({ success: true, baseAdjustment: adjustment });
+  }
+});
+
+router.get('/user-client-rate-overrides', async (req, res) => {
+  const items = await db.getAll(
+    `SELECT ucro.*, u.username
+     FROM user_client_rate_overrides ucro
+     INNER JOIN users u ON u.id = ucro.user_id
+     WHERE u.role = 'user'
+     ORDER BY u.username ASC`
+  );
+  res.json({ items });
+});
+
+async function saveUserClientRateOverride(body = {}) {
+  const id = body.id ? Number(body.id) : null;
+  const userId = Number(body.userId ?? body.user_id);
+  const rateAdjustment = normalizeRateAdjustment(body.rateAdjustment ?? body.rate_adjustment, 0);
+
+  if (!Number.isFinite(userId) || userId <= 0) {
+    const error = new Error('valid userId is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (id) {
+    await db.query(
+      `UPDATE user_client_rate_overrides
+       SET user_id = ?, rate_adjustment = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [userId, rateAdjustment, id]
+    );
+    return { id };
+  }
+
+  await db.query(
+    `INSERT INTO user_client_rate_overrides (user_id, rate_adjustment)
+     VALUES (?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       rate_adjustment = excluded.rate_adjustment,
+       updated_at = CURRENT_TIMESTAMP`,
+    [userId, rateAdjustment]
+  );
+  const row = await db.getOne('SELECT id FROM user_client_rate_overrides WHERE user_id = ?', [userId]);
+  return { id: row?.id };
+}
+
+router.post('/user-client-rate-overrides', async (req, res) => {
+  try {
+    const result = await saveUserClientRateOverride(req.body);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'save failed' });
+  }
+});
+
+router.put('/user-client-rate-overrides/:id', async (req, res) => {
+  try {
+    const result = await saveUserClientRateOverride({ ...req.body, id: req.params.id });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'save failed' });
+  }
+});
+
+router.delete('/user-client-rate-overrides/:id', async (req, res) => {
+  await db.query('DELETE FROM user_client_rate_overrides WHERE id = ?', [req.params.id]);
+  res.json({ success: true });
+});
+
 router.get('/user-finance-overrides', async (req, res) => {
   const items = await db.getAll(
     `SELECT ufo.*, u.username
@@ -3510,6 +3607,7 @@ router.get('/logs', async (req, res) => {
 
 module.exports = router;
 module.exports.applyUserFinanceConfig = applyUserFinanceConfig;
+module.exports.saveUserClientRateOverride = saveUserClientRateOverride;
 module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminTasksListQuery = buildAdminTasksListQuery;
 module.exports.buildAdminPendingTasksQuery = buildAdminPendingTasksQuery;

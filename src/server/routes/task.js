@@ -612,12 +612,17 @@ router.get('/manual-verification-alert', async (req, res) => {
 
 router.get('/website-rate', async (req, res) => {
   try {
-    const rate = await getWebsiteRate();
+    const rate = await getWebsiteRate({ userId: req.actingUser?.id });
     res.json({
       success: true,
       rate: rate.rate,
       sourceRate: rate.sourceRate,
       sourceName: rate.sourceName,
+      rawRate: rate.rawRate,
+      baseAdjustment: rate.baseAdjustment,
+      baseRate: rate.baseRate,
+      userAdjustment: rate.userAdjustment,
+      hasUserOverride: rate.hasUserOverride,
       fetchedAt: rate.fetchedAt,
       expiresAt: rate.expiresAt,
       cacheHit: rate.cacheHit

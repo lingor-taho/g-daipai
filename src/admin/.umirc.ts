@@ -27,6 +27,7 @@ export default {
         { path: '/product-type-refresh', redirect: '/data-batch' },
         { path: '/orders-resync', redirect: '/data-batch' },
         { path: '/special-user-settings', component: '@/SpecialUserSettings' },
+        { path: '/client-rate-settings', component: '@/ClientRateSettings' },
         { path: '/orders', component: '@/Orders' },
         { path: '/online-users', component: '@/OnlineUsers' },
       ],
