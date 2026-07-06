@@ -317,13 +317,14 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 用户端提交页人民币/日元换算汇率现在独立于后台订单结算汇率。前台汇率只用于用户端展示和人民币输入换算，最终提交给任务/插件的仍是日元；它不参与订单结算、应付款、财务费用或特殊用户结算汇率。
 
-后台“特殊用户设置”菜单下新增“用户端汇率设置”子页面：基准汇率按 `BOC 日元现钞卖出价 / 100 + 全局调节` 计算，默认全局调节保持原先 `+0.002`；可为单个用户再设置用户调节，最终用户端汇率为 `基准汇率 + 用户调节`。没有单独设置的用户使用基准汇率。服务端只缓存 BOC 原始汇率，最终汇率按当前代操作用户动态计算；前台 localStorage 汇率缓存也按 acting user 隔离。
+后台“特殊用户设置”菜单进入后以分页面展示“特殊用户设置”和“用户端汇率设置”。用户端汇率基准汇率按 `BOC 日元现钞卖出价 / 100 + 全局调节` 计算，默认全局调节保持原先 `+0.002`；可为单个用户再设置用户调节，最终用户端汇率为 `基准汇率 + 用户调节`。没有单独设置的用户使用基准汇率。服务端只缓存 BOC 原始汇率，最终汇率按当前代操作用户动态计算；前台 localStorage 汇率缓存也按 acting user 隔离。
 
 验证：
 
 ```powershell
 node src/server/routes/task.test.js
 node src/admin/src/AdminLayout.display.test.js
+node src/admin/src/SpecialUserSettings.display.test.js
 node src/admin/src/ClientRateSettings.display.test.js
 node --check src/server/services/websiteRate.js
 node --check src/server/routes/task.js

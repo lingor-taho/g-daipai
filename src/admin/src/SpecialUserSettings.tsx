@@ -1,8 +1,9 @@
 import { ProTable } from '@ant-design/pro-components';
 import { useEffect, useState } from 'react';
-import { Button, Form, InputNumber, Modal, Select, Space, Typography, message } from 'antd';
+import { Button, Form, InputNumber, Modal, Select, Space, Tabs, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
 import FinanceConfig from './FinanceConfig';
+import ClientRateSettingsPage from './ClientRateSettings';
 
 async function saveOverride(values: any, id?: number) {
   const url = id ? `/api/admin/user-finance-overrides/${id}` : '/api/admin/user-finance-overrides';
@@ -23,7 +24,7 @@ function nullableNumber(value: unknown) {
   return value === undefined || value === null || value === '' ? null : value;
 }
 
-export default function SpecialUserSettingsPage() {
+function FinanceOverrideSettingsPage() {
   const [form] = Form.useForm();
   const [users, setUsers] = useState<any[]>([]);
   const [editing, setEditing] = useState<any>(null);
@@ -165,5 +166,26 @@ export default function SpecialUserSettingsPage() {
         </Form>
       </Modal>
     </Space>
+  );
+}
+
+export default function SpecialUserSettingsPage() {
+  return (
+    <Tabs
+      className="admin-data-batch-tabs"
+      defaultActiveKey="finance"
+      items={[
+        {
+          key: 'finance',
+          label: '特殊用户设置',
+          children: <FinanceOverrideSettingsPage />
+        },
+        {
+          key: 'clientRate',
+          label: '用户端汇率设置',
+          children: <ClientRateSettingsPage />
+        }
+      ]}
+    />
   );
 }

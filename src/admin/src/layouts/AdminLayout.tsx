@@ -15,16 +15,7 @@ const menuItemsConfig = [
   { key: '/data-cleanup', fullLabel: '清理数据', shortLabel: '清', mobileLabel: '清理' },
   { key: '/data-batch', fullLabel: '数据批处理', shortLabel: '批', mobileLabel: '批量' },
   { key: '/manual-order-import', fullLabel: '导入订单', shortLabel: '导', mobileLabel: '导入' },
-  {
-    key: '/special-user-settings-group',
-    fullLabel: '特殊用户设置',
-    shortLabel: '特',
-    mobileLabel: '特殊',
-    children: [
-      { key: '/special-user-settings', fullLabel: '特殊用户设置', shortLabel: '特', mobileLabel: '特殊' },
-      { key: '/client-rate-settings', fullLabel: '用户端汇率设置', shortLabel: '汇', mobileLabel: '汇率' }
-    ]
-  },
+  { key: '/special-user-settings', fullLabel: '特殊用户设置', shortLabel: '特', mobileLabel: '特殊' },
   { key: '/accounts', fullLabel: '账号管理', shortLabel: '账', mobileLabel: '账号' }
 ];
 
@@ -36,35 +27,6 @@ const orderedMenuItemsConfig = [
   ...menuItemsConfig.filter(item => item.key !== '/reports'),
   ...menuItemsConfig.filter(item => item.key === '/reports')
 ];
-
-function flattenMenuItems(items: any[]): any[] {
-  return items.flatMap(item => item.children ? flattenMenuItems(item.children) : [item]);
-}
-
-function getMenuItemTarget(item: any) {
-  return item.children?.[0]?.key || item.key;
-}
-
-function itemContainsSelectedKey(item: any, selectedKey: string) {
-  if (item.key === selectedKey) return true;
-  return Boolean(item.children?.some((child: any) => itemContainsSelectedKey(child, selectedKey)));
-}
-
-function buildAdminMenuItems(items: any[], collapsed: boolean): any[] {
-  return items.map(item => {
-    if (item.children?.length) {
-      return {
-        key: item.key,
-        label: collapsed ? item.shortLabel : item.fullLabel,
-        children: buildAdminMenuItems(item.children, false)
-      };
-    }
-    return {
-      key: item.key,
-      label: <Link to={item.key}>{collapsed ? item.shortLabel : item.fullLabel}</Link>
-    };
-  });
-}
 
 function renderPaymentAlertMessage(messageText: string) {
   const text = String(messageText || '');
@@ -99,13 +61,9 @@ function renderPaymentAlertMessage(messageText: string) {
 export default function AdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const flatMenuItemsConfig = flattenMenuItems(orderedMenuItemsConfig);
-  const selectedKey = flatMenuItemsConfig
+  const selectedKey = orderedMenuItemsConfig
     .filter(item => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))
     .sort((a, b) => b.key.length - a.key.length)[0]?.key || '/tasks';
-  const openMenuKeys = orderedMenuItemsConfig
-    .filter(item => item.children?.some((child: any) => itemContainsSelectedKey(child, selectedKey)))
-    .map(item => item.key);
   const username = localStorage.getItem('username') || 'admin';
   const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
   const [paymentAlert, setPaymentAlert] = useState('');
@@ -146,7 +104,10 @@ export default function AdminLayout() {
   }
 
   // 根据折叠状态生成菜单项
-  const menuItems = buildAdminMenuItems(orderedMenuItemsConfig, collapsed);
+  const menuItems = orderedMenuItemsConfig.map(item => ({
+    key: item.key,
+    label: <Link to={item.key}>{collapsed ? item.shortLabel : item.fullLabel}</Link>
+  }));
 
   useEffect(() => {
     let active = true;
@@ -353,7 +314,6 @@ export default function AdminLayout() {
             <Menu
               mode="inline"
               selectedKeys={[selectedKey]}
-              defaultOpenKeys={openMenuKeys}
               items={menuItems}
               style={{
                 height: '100%',
@@ -468,11 +428,11 @@ export default function AdminLayout() {
       {isMobile ? (
         <nav className="admin-bottom-nav">
           {orderedMenuItemsConfig.map(item => {
-            const active = itemContainsSelectedKey(item, selectedKey);
+            const active = item.key === selectedKey;
             return (
               <Link
                 key={item.key}
-                to={getMenuItemTarget(item)}
+                to={item.key}
                 className={`admin-bottom-nav-link${active ? ' admin-bottom-nav-link-active' : ''}`}
               >
                 <span className="admin-bottom-nav-full">{item.mobileLabel}</span>
