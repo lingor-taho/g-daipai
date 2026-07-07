@@ -2011,12 +2011,19 @@ const SHIPMENT_LABELS = [
   '\u6ce8\u6587\u756a\u53f7'
 ];
 
+function buildFlexibleLabelPattern(label) {
+  return String(label || '')
+    .split('')
+    .map(char => char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s*');
+}
+
 function valueAfterLabel(text, labels) {
   const source = String(text || '');
   for (const label of labels) {
-    const index = source.indexOf(label);
-    if (index < 0) continue;
-    let value = source.slice(index + label.length).replace(/^\s*[:\uff1a]?\s*/, '');
+    const match = source.match(new RegExp(buildFlexibleLabelPattern(label)));
+    if (!match || match.index === undefined) continue;
+    let value = source.slice(match.index + match[0].length).replace(/^\s*[:\uff1a]?\s*/, '');
     let stopAt = value.length;
     for (const stopLabel of SHIPMENT_LABELS) {
       const stopIndex = value.indexOf(stopLabel);
@@ -2224,6 +2231,12 @@ function hasShipmentDetailsRendered(text = '') {
   return /(?:\u304a\u5c4a\u3051\u60c5\u5831|\u914d\u9001\u60c5\u5831|\u914d\u9001\u72b6\u6cc1|\u914d\u9001\u65b9\u6cd5|\u914d\u9001\u696d\u8005|\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7|\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8)/.test(String(text || ''));
 }
 
+function hasNormalShipmentDetailsRendered(source = '', deliveryInfoText = '', messageText = null) {
+  if (messageText !== null) return true;
+  const scopedText = String(deliveryInfoText || '');
+  return /(?:\u304a\u5c4a\u3051\u60c5\u5831|\u914d\u9001\u72b6\u6cc1|\u4f1d\u7968\s*\u756a\u53f7|\u8ffd\u8de1\s*\u756a\u53f7(?!\u6709)|\u304a\u554f\u3044\u5408\u308f\u305b\s*\u756a\u53f7)/.test(scopedText);
+}
+
 function getCurrentAuctionId() {
   const href = String(window.location?.href || '');
   const match = href.match(/[?&](?:aid|auctionId)=([a-zA-Z]?\d{8,10})\b/i) ||
@@ -2336,7 +2349,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const messageTrackingNumber = messageText
       ? extractTrackingNumberFromText(messageText, { textOnly: true })
       : '';
-    const shipmentDetailsRendered = Boolean(deliveryInfoText || messageText !== null || hasShipmentDetailsRendered(source));
+    const shipmentDetailsRendered = hasNormalShipmentDetailsRendered(source, deliveryInfoText, messageText);
     const labeledSourceTrackingNumber = (!deliveryTrackingNumber && !messageTrackingNumber && messageText === null)
       ? extractTrackingNumberFromText(source, { includeUnlabeled: false })
       : '';

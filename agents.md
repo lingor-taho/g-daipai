@@ -317,7 +317,7 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 生产商品 `h1035084506` 已有 `お問い合わせ番号 646560590686`，但订单 `389` 在 `2026-07-06 17:18:19` 扫描时写入了出品者情报中的姓名作为 `tracking_number`，并推进到 `pending_receipt`。排查确认不是后台展示问题：`/api/debug/product/h1035084506` 的订单日志显示 `scan_pending_shipment_shipped` 写入了姓名形态的 trackingNumber；根因是 `content.js` 在未提取到真实单号时会返回 `trackingFallback=seller_info_name/seller_name/store_info_name`，而 `background.js` 的待发货扫描等待逻辑把任何 `type=shipped` 都当作渲染完成，导致页面异步渲染未完全出现单号区域时过早提交 fallback。
 
-修复：待发货扫描结果新增 `shipmentDetailsRendered` 渲染完成信号。带 `trackingFallback` 且配送/消息区域尚未渲染完成的 `shipped` 结果不再视为完成，继续轮询等待真实单号；配送/消息区域已渲染完成后仍没有真实单号时，保留原逻辑允许使用出品者情报/店铺名 fallback。新增普通商品先读到未渲染 fallback、后读到真实单号，以及渲染完成后 fallback 可提交的回归。
+修复：待发货扫描结果新增 `shipmentDetailsRendered` 渲染完成信号。带 `trackingFallback` 且配送/消息区域尚未渲染完成的 `shipped` 结果不再视为完成，继续轮询等待真实单号；配送/消息区域已渲染完成后仍没有真实单号时，保留原逻辑允许使用出品者情报/店铺名 fallback。后续复查确认只出现 `配送方法` 不能代表单号区域完成，且 `h1035084506` 商品标题里的 `追跡番号有` 会污染全页文本判断；普通交易页 fallback 的渲染完成信号改为只看配送信息片段里的 `お届け情報`、`配送状況`、`伝票番号`、非标题语义的 `追跡番号`、`お問い合わせ番号` 或消息列表。同时 `お問い合わせ<br>番号` 这类换行标签在 text-only 路径中现在可识别。新增普通商品先读到未渲染 fallback、后读到真实单号，渲染完成后 fallback 可提交，只有配送方式不算完成，商品标题 `追跡番号有` 不算完成，以及换行 `お問い合わせ 番号` 标签提取的回归。
 
 验证：
 
