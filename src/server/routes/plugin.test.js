@@ -1574,6 +1574,36 @@ async function testUpdateScanStatusDropsTrackingUrlLabelAsShippingCompany() {
   assert.equal(statusUpdate.params[2], '193398193940');
 }
 
+async function testUpdateScanStatusStripsShippingMethodLabelFromCompany() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      return [{ order_id: 33, order_status: ORDER_STATUS_PENDING_SHIPMENT }];
+    },
+    async getOne(sql, params) {
+      calls.push({ sql, params });
+      return null;
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: /UPDATE orders/.test(sql) ? 1 : 0 };
+    }
+  };
+
+  const result = await updateScanStatus({
+    orderId: 33,
+    shipped: true,
+    shippingCompany: '\u914d\u9001\u65b9\u6cd5 \u3086\u3046\u30d1\u30c3\u30af',
+    trackingNumber: '193398193940'
+  }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql) && /shipping_company/.test(call.sql));
+  assert.equal(statusUpdate.params[1], '\u3086\u3046\u30d1\u30c3\u30af');
+  assert.equal(statusUpdate.params[2], '193398193940');
+}
+
 async function testUpdateScanStatusRefreshesTrackingForRescanOrder() {
   const calls = [];
   const fakeDb = {
@@ -2641,6 +2671,7 @@ Promise.all([
   testGetScanJobsReturnsTrackingRescanAsPendingShipment(),
   testUpdateScanStatusMarksPendingShipmentAsShipped(),
   testUpdateScanStatusDropsTrackingUrlLabelAsShippingCompany(),
+  testUpdateScanStatusStripsShippingMethodLabelFromCompany(),
   testUpdateScanStatusRefreshesTrackingForRescanOrder(),
   Promise.resolve().then(testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable),
   Promise.resolve().then(testBuildDaipaiSheetRowAppendsOrderRemarkAfterTrackingNumber),

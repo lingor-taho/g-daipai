@@ -317,7 +317,7 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 生产商品 `v1235406927` 扫描物流时单号已正确提取为 `193398193940`，订单也推进到 `pending_receipt`，但 `shipping_company` 被写成了 `お荷物検索URL：`。这类值不是配送公司，而是 Yahoo 页面中的物流查询 URL 标签，不能写入系统和 Google Sheet。
 
-修复：普通商品已发货扫描时，`shippingCompany` 只从 `.acMdPaymentInfo` 的 `お届け情報` 表格中读取 `配送方法`，不再从全文或页面其他区域提取配送方式，避免把 `お荷物検索URL` 等标签当作物流公司。该区域可能异步渲染；如果 `.acMdPaymentInfo` 的 `お届け情報` 尚未出现，content script 返回 `shipmentDetailsRendered=false`，background 不回写扫描结果并继续等待。服务端 `/api/plugin/scan/status` 仍保留入库前清洗，防止异常 payload 污染 `orders.shipping_company`。已有订单 `v1235406927` 的单号正确，但历史 `shipping_company` 需要重扫或手动修正才会更新。
+修复：普通商品已发货扫描时，`shippingCompany` 只从 `.acMdPaymentInfo` 的 `お届け情報` 表格中读取 `配送方法`，不再从全文或页面其他区域提取配送方式，避免把 `お荷物検索URL` 等标签当作物流公司。该区域可能异步渲染；如果 `.acMdPaymentInfo` 的 `お届け情報` 尚未出现，content script 返回 `shipmentDetailsRendered=false`，background 不回写扫描结果并继续等待。服务端 `/api/plugin/scan/status` 仍保留入库前清洗，防止异常 payload 污染 `orders.shipping_company`；同时清掉异常 payload 里残留的 `配送方法` / `配送業者` 前缀，例如 `配送方法 ゆうパック` 入库为 `ゆうパック`。已有订单 `v1235406927` 的单号正确，但历史 `shipping_company` 需要重扫或手动修正才会更新。
 
 验证：
 

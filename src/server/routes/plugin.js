@@ -1432,6 +1432,7 @@ function normalizePlainText(value, maxLength = 128) {
 
 function normalizeShippingCompany(value, maxLength = 128) {
   return normalizePlainText(value, maxLength)
+    .replace(/^(?:配送方法|配送業者)\s*[:：]?\s*/, '')
     .replace(/お荷物検索URL[\s\S]*$/, '')
     .replace(/https?:\/\/\S+[\s\S]*$/, '')
     .replace(/お問い合わせ番号[\s\S]*$/, '')
