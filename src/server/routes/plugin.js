@@ -2798,7 +2798,6 @@ async function updatePaymentStatus(payload = {}, database = db) {
         ORDER_STATUS_PENDING_RECEIPT
       ]
     );
-    await savePaymentConfigValue(database, 'payment_requested', '0');
     if (result.rowCount) {
       await savePaymentConfigValue(database, 'payment_alert_message', '');
       await writeOrderStatusAuditLogs(database, beforeRows, {

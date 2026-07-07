@@ -2510,6 +2510,11 @@ async function testUpdatePaymentStatusMarksCancelled() {
   assert.ok(statusUpdate);
   assert.equal(statusUpdate.params[0], ORDER_STATUS_CANCELLED);
   assert.equal(statusUpdate.params[1], 8);
+  assert.equal(calls.some(call =>
+    /INSERT OR REPLACE INTO config/.test(call.sql) &&
+    call.params[0] === 'payment_requested' &&
+    call.params[1] === '0'
+  ), false);
 }
 
 async function testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating() {
