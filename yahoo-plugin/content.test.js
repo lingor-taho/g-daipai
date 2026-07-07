@@ -156,6 +156,26 @@ function createPaymentInfoRows(rows = []) {
   };
 }
 
+function createStoreShippingInfoSection(rows = []) {
+  const rowElements = rows.map(([label, value]) => ({
+    textContent: `${label} ${value}`,
+    innerText: `${label} ${value}`,
+    querySelector(selector) {
+      if (selector === 'dt') return { textContent: label, innerText: label };
+      if (selector === 'dd') return { textContent: value, innerText: value };
+      return null;
+    }
+  }));
+  return {
+    textContent: ['配送情報', ...rowElements.map(row => row.textContent)].join('\n'),
+    innerText: ['配送情報', ...rowElements.map(row => row.innerText)].join('\n'),
+    querySelectorAll(selector) {
+      if (selector === 'dl') return rowElements;
+      return [];
+    }
+  };
+}
+
 function createTestAnchor(text, href) {
   return {
     ...createTestElement(text),
@@ -3219,19 +3239,66 @@ function testExtractPendingShipmentScanResultDetectsNormalPending() {
 }
 
 function testExtractPendingShipmentScanResultDetectsStoreShipped() {
-  const api = loadContentForTest('\u51fa\u54c1\u8005\uff1a LOLOMA\uff089986\uff09\n\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u696d\u8005\uff1a \u65e5\u672c\u90f5\u4fbf\n\u4f1d\u7968\u756a\u53f7\uff1a 628620458093');
+  const shippingInfo = createStoreShippingInfoSection([
+    ['\u914d\u9001\u696d\u8005', '\u65e5\u672c\u90f5\u4fbf']
+  ]);
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\uff1a LOLOMA\uff089986\uff09\n\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002\n\u914d\u9001\u696d\u8005\uff1a \u65e5\u672c\u90f5\u4fbf\n\u4f1d\u7968\u756a\u53f7\uff1a 628620458093',
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'section') return [shippingInfo];
+        return [];
+      }
+    }
+  );
   const result = api.extractPendingShipmentScanResult();
   assert.equal(result.type, 'shipped');
   assert.equal(result.shippingCompany, '\u65e5\u672c\u90f5\u4fbf');
   assert.equal(result.trackingNumber, '628620458093');
 }
 
+function testExtractPendingShipmentScanResultStoreUsesShippingInfoSectionOnly() {
+  const shippingInfo = createStoreShippingInfoSection([
+    ['\u914d\u9001\u696d\u8005', '\u65e5\u672c\u90f5\u4fbf'],
+    ['\u914d\u9001\u5e0c\u671b\u65e5', '\u6307\u5b9a\u306a\u3057'],
+    ['\u4f1d\u7968\u756a\u53f7', '1934-3749-1461']
+  ]);
+  const api = loadContentForTest(
+    [
+      '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002',
+      '\u914d\u9001\u696d\u8005 \uff1a \u304a\u8377\u7269\u691c\u7d22URL\uff1a',
+      '\u4f1d\u7968\u756a\u53f7 \uff1a 1934-3749-1461'
+    ].join('\n'),
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'section') return [shippingInfo];
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u304a\u8377\u7269\u691c\u7d22URL\uff1a' },
+          { textContent: '\u4f1d\u7968\u756a\u53f7 \uff1a 08096096438' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u65e5\u672c\u90f5\u4fbf');
+  assert.equal(result.trackingNumber, '193437491461');
+  assert.equal(result.shipmentDetailsRendered, true);
+}
+
 function testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields() {
+  const shippingInfo = createStoreShippingInfoSection([
+    ['\u914d\u9001\u696d\u8005', '\u65e5\u672c\u90f5\u4fbf']
+  ]);
   const api = loadContentForTest(
     '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
     '/order/status',
     {
       querySelectorAll(selector) {
+        if (selector === 'section') return [shippingInfo];
         if (selector !== 'tr, dl, div, li, p') return [];
         return [
           { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u65e5\u672c\u90f5\u4fbf' },
@@ -3248,6 +3315,9 @@ function testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields() 
 }
 
 function testExtractPendingShipmentScanResultExtractsSagawaStoreShipmentFromTradeInfo() {
+  const shippingInfo = createStoreShippingInfoSection([
+    ['\u914d\u9001\u696d\u8005', '\u4f50\u5ddd\u6025\u4fbf']
+  ]);
   const api = loadContentForTest(
     [
       '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002',
@@ -3266,6 +3336,7 @@ function testExtractPendingShipmentScanResultExtractsSagawaStoreShipmentFromTrad
     '/seller/top',
     {
       querySelectorAll(selector) {
+        if (selector === 'section') return [shippingInfo];
         if (selector !== 'tr, dl, div, li, p') return [];
         return [
           { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u4f50\u5ddd\u6025\u4fbf' },
@@ -3300,7 +3371,7 @@ function testExtractPendingShipmentScanResultFallsBackToStoreInfoName() {
   );
   const result = api.extractPendingShipmentScanResult();
   assert.equal(result.type, 'shipped');
-  assert.equal(result.shippingCompany, '\u65e5\u672c\u90f5\u4fbf');
+  assert.equal(result.shippingCompany, '');
   assert.equal(result.trackingNumber, '\u30ed\u30ed\u30de\u5546\u4e8b');
   assert.equal(result.trackingFallback, 'store_info_name');
 }
@@ -3468,11 +3539,15 @@ function testExtractPendingShipmentScanResultIgnoresLeadingZeroTenDigitPhoneNumb
 }
 
 function testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber() {
+  const shippingInfo = createStoreShippingInfoSection([
+    ['\u914d\u9001\u696d\u8005', '\u30e4\u30de\u30c8\u904b\u8f38']
+  ]);
   const api = loadContentForTest(
     '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
     '/order/status',
     {
       querySelectorAll(selector) {
+        if (selector === 'section') return [shippingInfo];
         if (selector !== 'tr, dl, div, li, p') return [];
         return [
           { textContent: '\u914d\u9001\u696d\u8005 \uff1a \u30e4\u30de\u30c8\u904b\u8f38' },
@@ -4172,6 +4247,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsStoreShipped();
+  testExtractPendingShipmentScanResultStoreUsesShippingInfoSectionOnly();
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();
   testExtractPendingShipmentScanResultExtractsSagawaStoreShipmentFromTradeInfo();
   testExtractPendingShipmentScanResultFallsBackToStoreInfoName();

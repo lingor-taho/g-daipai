@@ -2354,6 +2354,22 @@ function extractNormalShippingCompanyFromPaymentInfo() {
   return '';
 }
 
+function extractStoreShippingCompanyFromShippingInfo() {
+  const sections = Array.from(document.querySelectorAll('section') || []);
+  for (const section of sections) {
+    const sectionText = getRenderedText(section);
+    if (!/\u914d\u9001\u60c5\u5831/.test(sectionText)) continue;
+    const rows = Array.from(section.querySelectorAll?.('dl') || []);
+    for (const row of rows) {
+      const label = getRenderedText(row.querySelector?.('dt'));
+      if (!/\u914d\u9001\u696d\u8005/.test(label)) continue;
+      const value = normalizeTextValue(getRenderedText(row.querySelector?.('dd')));
+      if (value) return value;
+    }
+  }
+  return '';
+}
+
 function getNormalPaymentInfoRoot() {
   const roots = Array.from(document.querySelectorAll('.acMdPaymentInfo') || []);
   return roots.find(root => /\u304a\u5c4a\u3051\u60c5\u5831/.test(getRenderedText(root))) || null;
@@ -2388,7 +2404,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const shipmentDetailsRendered = Boolean(extractShippingCompany(source) || hasShipmentDetailsRendered(source));
     return {
       type: 'shipped',
-      shippingCompany: extractShippingCompany(source),
+      shippingCompany: extractStoreShippingCompanyFromShippingInfo(),
       trackingNumber: trackingNumber || storeInfoName || sellerName,
       shipmentDetailsRendered,
       trackingFallback: trackingNumber
