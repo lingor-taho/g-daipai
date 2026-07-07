@@ -2220,6 +2220,10 @@ function getNormalDeliveryInfoText(text = '') {
   return section;
 }
 
+function hasShipmentDetailsRendered(text = '') {
+  return /(?:\u304a\u5c4a\u3051\u60c5\u5831|\u914d\u9001\u60c5\u5831|\u914d\u9001\u72b6\u6cc1|\u914d\u9001\u65b9\u6cd5|\u914d\u9001\u696d\u8005|\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7|\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8)/.test(String(text || ''));
+}
+
 function getCurrentAuctionId() {
   const href = String(window.location?.href || '');
   const match = href.match(/[?&](?:aid|auctionId)=([a-zA-Z]?\d{8,10})\b/i) ||
@@ -2309,10 +2313,12 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const trackingNumber = extractTrackingNumberFromText(source, { includeUnlabeled: false });
     const storeInfoName = extractStoreInfoName(source);
     const sellerName = extractSellerName(source);
+    const shipmentDetailsRendered = Boolean(extractShippingCompany(source) || hasShipmentDetailsRendered(source));
     return {
       type: 'shipped',
       shippingCompany: extractShippingCompany(source),
       trackingNumber: trackingNumber || storeInfoName || sellerName,
+      shipmentDetailsRendered,
       trackingFallback: trackingNumber
         ? ''
         : (storeInfoName ? 'store_info_name' : (sellerName ? 'seller_name' : ''))
@@ -2330,6 +2336,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const messageTrackingNumber = messageText
       ? extractTrackingNumberFromText(messageText, { textOnly: true })
       : '';
+    const shipmentDetailsRendered = Boolean(deliveryInfoText || messageText !== null || hasShipmentDetailsRendered(source));
     const labeledSourceTrackingNumber = (!deliveryTrackingNumber && !messageTrackingNumber && messageText === null)
       ? extractTrackingNumberFromText(source, { includeUnlabeled: false })
       : '';
@@ -2340,6 +2347,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
       type: 'shipped',
       shippingCompany: extractShippingCompany(source),
       trackingNumber: trackingNumber || sellerInfoName || sellerName,
+      shipmentDetailsRendered,
       trackingFallback: trackingNumber
         ? ''
         : (sellerInfoName ? 'seller_info_name' : (sellerName ? 'seller_name' : ''))

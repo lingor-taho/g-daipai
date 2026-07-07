@@ -313,6 +313,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-07 扫描单号避免出品者情报 fallback 误写
+
+生产商品 `h1035084506` 已有 `お問い合わせ番号 646560590686`，但订单 `389` 在 `2026-07-06 17:18:19` 扫描时写入了出品者情报中的姓名作为 `tracking_number`，并推进到 `pending_receipt`。排查确认不是后台展示问题：`/api/debug/product/h1035084506` 的订单日志显示 `scan_pending_shipment_shipped` 写入了姓名形态的 trackingNumber；根因是 `content.js` 在未提取到真实单号时会返回 `trackingFallback=seller_info_name/seller_name/store_info_name`，而 `background.js` 的待发货扫描等待逻辑把任何 `type=shipped` 都当作渲染完成，导致页面异步渲染未完全出现单号区域时过早提交 fallback。
+
+修复：待发货扫描结果新增 `shipmentDetailsRendered` 渲染完成信号。带 `trackingFallback` 且配送/消息区域尚未渲染完成的 `shipped` 结果不再视为完成，继续轮询等待真实单号；配送/消息区域已渲染完成后仍没有真实单号时，保留原逻辑允许使用出品者情报/店铺名 fallback。新增普通商品先读到未渲染 fallback、后读到真实单号，以及渲染完成后 fallback 可提交的回归。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 本次新增扫描回归已在后续失败前执行通过；当前完整测试仍会在既有 `testBuyoutStoreConfirmationCompletesBeforeFinalPurchase` 失败。
+
 ### 2026-07-07 普通落札者负担交易确认页等待
 
 生产商品 `f1235464179` 交易开始报 `bundle confirm next page did not appear`。排查确认商品本身是普通 `normal`、运费 `落札者負担`，不是同捆；错误文案中的 `bundle` 来自普通交易和同捆流程复用的按钮点击工具，不代表业务上进入了同捆。失败点在普通交易 `buyer/preview` 最后点击 `確定する` 后，Yahoo 页面仍处于异步渲染/处理中，原来最终 `confirm` 只等待 5 秒，可能过早判定下一状态没有出现。

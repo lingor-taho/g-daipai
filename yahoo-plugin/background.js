@@ -5641,6 +5641,7 @@ function buildScanStatusPayload(job) {
       };
     }
     if (result.type === 'shipped') {
+      if (result.trackingFallback && result.shipmentDetailsRendered === false) return null;
       return {
         orderId: job.orderId,
         shipped: true,
@@ -5730,7 +5731,10 @@ async function readPendingShipmentScanResult(tab) {
 }
 
 function isRenderedPendingShipmentScanResult(result = {}, job = {}) {
-  if (result.type === 'shipped' || result.type === 'cancelled') return true;
+  if (result.type === 'shipped') {
+    return !result.trackingFallback || result.shipmentDetailsRendered !== false;
+  }
+  if (result.type === 'cancelled') return true;
   if (result.type !== 'pending_shipment') return false;
   return job.productType !== 'store';
 }
