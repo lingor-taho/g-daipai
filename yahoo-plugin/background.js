@@ -5641,7 +5641,7 @@ function buildScanStatusPayload(job) {
       };
     }
     if (result.type === 'shipped') {
-      if (result.trackingFallback && result.shipmentDetailsRendered === false) return null;
+      if (result.shipmentDetailsRendered === false) return null;
       return {
         orderId: job.orderId,
         shipped: true,

@@ -313,6 +313,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-07 普通商品物流公司限定在お届け情報表格
+
+生产商品 `v1235406927` 扫描物流时单号已正确提取为 `193398193940`，订单也推进到 `pending_receipt`，但 `shipping_company` 被写成了 `お荷物検索URL：`。这类值不是配送公司，而是 Yahoo 页面中的物流查询 URL 标签，不能写入系统和 Google Sheet。
+
+修复：普通商品已发货扫描时，`shippingCompany` 只从 `.acMdPaymentInfo` 的 `お届け情報` 表格中读取 `配送方法`，不再从全文或页面其他区域提取配送方式，避免把 `お荷物検索URL` 等标签当作物流公司。该区域可能异步渲染；如果 `.acMdPaymentInfo` 的 `お届け情報` 尚未出现，content script 返回 `shipmentDetailsRendered=false`，background 不回写扫描结果并继续等待。服务端 `/api/plugin/scan/status` 仍保留入库前清洗，防止异常 payload 污染 `orders.shipping_company`。已有订单 `v1235406927` 的单号正确，但历史 `shipping_company` 需要重扫或手动修正才会更新。
+
+验证：
+
+```powershell
+node yahoo-plugin/content.test.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node src/server/routes/plugin.test.js
+node --check src/server/routes/plugin.js
+```
+
 ### 2026-07-07 扫描单号避免出品者情报 fallback 误写
 
 生产商品 `h1035084506` 已有 `お問い合わせ番号 646560590686`，但订单 `389` 在 `2026-07-06 17:18:19` 扫描时写入了出品者情报中的姓名作为 `tracking_number`，并推进到 `pending_receipt`。排查确认不是后台展示问题：`/api/debug/product/h1035084506` 的订单日志显示 `scan_pending_shipment_shipped` 写入了姓名形态的 trackingNumber；根因是 `content.js` 在未提取到真实单号时会返回 `trackingFallback=seller_info_name/seller_name/store_info_name`，而 `background.js` 的待发货扫描等待逻辑把任何 `type=shipped` 都当作渲染完成，导致页面异步渲染未完全出现单号区域时过早提交 fallback。

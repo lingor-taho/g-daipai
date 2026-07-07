@@ -1430,6 +1430,14 @@ function normalizePlainText(value, maxLength = 128) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function normalizeShippingCompany(value, maxLength = 128) {
+  return normalizePlainText(value, maxLength)
+    .replace(/お荷物検索URL[\s\S]*$/, '')
+    .replace(/https?:\/\/\S+[\s\S]*$/, '')
+    .replace(/お問い合わせ番号[\s\S]*$/, '')
+    .trim();
+}
+
 function normalizeDiagnosticText(value, maxLength = 2000) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
@@ -2199,7 +2207,7 @@ async function updateScanStatus(payload = {}, database = db) {
     return { updated: result.rowCount || 0, cancelled: true };
   }
   if (payload.shipped === true) {
-    const shippingCompany = normalizePlainText(payload.shippingCompany);
+    const shippingCompany = normalizeShippingCompany(payload.shippingCompany);
     const trackingNumber = normalizePlainText(payload.trackingNumber);
     const trackingRescanRequested = payload.trackingRescanRequested === true;
     if (!trackingNumber) {

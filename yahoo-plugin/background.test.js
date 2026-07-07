@@ -1352,6 +1352,22 @@ function testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan() {
   assert.equal(payload, null);
 }
 
+function testBuildScanStatusPayloadWaitsForShipmentDetailsRender() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 12,
+    orderStatus: 'pending_shipment',
+    result: {
+      type: 'shipped',
+      shippingCompany: '',
+      trackingNumber: '193398193940',
+      shipmentDetailsRendered: false
+    }
+  });
+
+  assert.equal(payload, null);
+}
+
 function testBuildScanStatusPayloadHandlesBundleShippingFee() {
   const api = loadBackgroundForTest();
   const payload = api.buildScanStatusPayload({
@@ -9082,6 +9098,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
   testBuildScanStatusPayloadSkipsPendingShipping();
   testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan();
+  testBuildScanStatusPayloadWaitsForShipmentDetailsRender();
   testBuildScanStatusPayloadHandlesBundleShippingFee();
   testBuildScanStatusPayloadHandlesBundleRejected();
   testBuildScanStatusPayloadReportsBundleNoProgress();

@@ -2334,6 +2334,45 @@ function extractShippingCompany(text = getBodyText()) {
   return '';
 }
 
+function cleanShippingCompanyText(value = '') {
+  return normalizeTextValue(String(value || '')
+    .replace(/[\uff1a:]\s*\u9001\u6599[\s\S]*$/, '')
+    .replace(/\s*\u9001\u6599[\s\S]*$/, '')
+    .replace(/[\uff08(][\s\S]*$/, ''));
+}
+
+function extractNormalShippingCompanyFromPaymentInfo() {
+  const root = getNormalPaymentInfoRoot();
+  if (!root) return '';
+  const rows = Array.from(root.querySelectorAll?.('tr') || []);
+  for (const row of rows) {
+    const label = getRenderedText(row.querySelector?.('th'));
+    if (!/\u914d\u9001\u65b9\u6cd5/.test(label)) continue;
+    const value = cleanShippingCompanyText(getRenderedText(row.querySelector?.('td')));
+    if (value) return value;
+  }
+  return '';
+}
+
+function getNormalPaymentInfoRoot() {
+  const roots = Array.from(document.querySelectorAll('.acMdPaymentInfo') || []);
+  return roots.find(root => /\u304a\u5c4a\u3051\u60c5\u5831/.test(getRenderedText(root))) || null;
+}
+
+function getNormalPaymentInfoText() {
+  const root = getNormalPaymentInfoRoot();
+  if (!root) return '';
+  const rows = Array.from(root.querySelectorAll?.('tr') || []);
+  const rowTexts = [];
+  for (const row of rows) {
+    const label = getRenderedText(row.querySelector?.('th'));
+    const value = getRenderedText(row.querySelector?.('td'));
+    const rowText = `${label} ${value}`.trim();
+    if (rowText) rowTexts.push(rowText);
+  }
+  return rowTexts.length ? rowTexts.join('\n') : getRenderedText(root);
+}
+
 function extractPendingShipmentScanResult(text = getBodyText()) {
   const source = String(text || '');
   if (/\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source)) {
@@ -2361,7 +2400,8 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     if (hasUnregisteredTrackingNumber(source)) {
       return { type: 'pending_shipment' };
     }
-    const deliveryInfoText = getNormalDeliveryInfoText(source);
+    const paymentInfoText = getNormalPaymentInfoText();
+    const deliveryInfoText = paymentInfoText || getNormalDeliveryInfoText(source);
     const deliveryTrackingNumber = deliveryInfoText
       ? extractTrackingNumberFromText(deliveryInfoText, { textOnly: true, includeUnlabeled: false })
       : '';
@@ -2369,7 +2409,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const messageTrackingNumber = messageText
       ? extractTrackingNumberFromText(messageText, { textOnly: true })
       : '';
-    const shipmentDetailsRendered = hasNormalShipmentDetailsRendered(source, deliveryInfoText, messageText);
+    const shipmentDetailsRendered = Boolean(paymentInfoText);
     const labeledSourceTrackingNumber = (!deliveryTrackingNumber && !messageTrackingNumber && messageText === null)
       ? extractTrackingNumberFromText(source, { includeUnlabeled: false })
       : '';
@@ -2378,7 +2418,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const sellerName = extractSellerName(source);
     return {
       type: 'shipped',
-      shippingCompany: extractShippingCompany(source),
+      shippingCompany: extractNormalShippingCompanyFromPaymentInfo(),
       trackingNumber: trackingNumber || sellerInfoName || sellerName,
       shipmentDetailsRendered,
       trackingFallback: trackingNumber
