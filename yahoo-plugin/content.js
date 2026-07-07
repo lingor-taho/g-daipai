@@ -2019,20 +2019,29 @@ function buildFlexibleLabelPattern(label) {
 }
 
 function valueAfterLabel(text, labels) {
+  return valuesAfterLabels(text, labels)[0] || '';
+}
+
+function valuesAfterLabels(text, labels) {
   const source = String(text || '');
+  const values = [];
   for (const label of labels) {
-    const match = source.match(new RegExp(buildFlexibleLabelPattern(label)));
-    if (!match || match.index === undefined) continue;
-    let value = source.slice(match.index + match[0].length).replace(/^\s*[:\uff1a]?\s*/, '');
-    let stopAt = value.length;
-    for (const stopLabel of SHIPMENT_LABELS) {
-      const stopIndex = value.indexOf(stopLabel);
-      if (stopIndex > 0 && stopIndex < stopAt) stopAt = stopIndex;
+    const pattern = new RegExp(buildFlexibleLabelPattern(label), 'g');
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      let value = source.slice(match.index + match[0].length).replace(/^\s*[:\uff1a]?\s*/, '');
+      let stopAt = value.length;
+      for (const stopLabel of SHIPMENT_LABELS) {
+        const stopIndex = value.indexOf(stopLabel);
+        if (stopIndex > 0 && stopIndex < stopAt) stopAt = stopIndex;
+      }
+      value = value.slice(0, stopAt).split(/[\n\r]/)[0];
+      const normalized = normalizeTextValue(value);
+      if (normalized) values.push(normalized);
+      if (match[0].length === 0) pattern.lastIndex += 1;
     }
-    value = value.slice(0, stopAt).split(/[\n\r]/)[0];
-    return normalizeTextValue(value);
   }
-  return '';
+  return values;
 }
 
 function extractLabeledValue(labels, text = getBodyText()) {
@@ -2047,7 +2056,7 @@ function extractLabeledValue(labels, text = getBodyText()) {
 
 function extractSellerName(text = getBodyText()) {
   const source = String(text || '');
-  const match = source.match(/\u51fa\u54c1\u8005\s*[:\uff1a]?\s*([^\n\r\uff1a]+)/);
+  const match = source.match(/\u51fa\u54c1\u8005\s*[:\uff1a]\s*([^\n\r\uff1a]+)/);
   return normalizeTextValue(String(match?.[1] || '').replace(/[\uff08(][\s\S]*$/, ''));
 }
 
@@ -2197,6 +2206,10 @@ function getRenderedText(element) {
   return String(element.textContent || '').trim();
 }
 
+function hasStandaloneShipmentLabel(text = '') {
+  return /(?:\u914d\u9001\u65b9\u6cd5|\u914d\u9001\u696d\u8005|\u4f1d\u7968\s*\u756a\u53f7|\u8ffd\u8de1\s*\u756a\u53f7(?!\u6709)|\u304a\u554f\u3044\u5408\u308f\u305b\s*\u756a\u53f7)/.test(String(text || ''));
+}
+
 function getNormalDeliveryInfoText(text = '') {
   const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
   const deliveryRows = [];
@@ -2207,7 +2220,7 @@ function getNormalDeliveryInfoText(text = '') {
     if (/\u304a\u5c4a\u3051\u60c5\u5831/.test(rowText)) {
       inDeliveryInfo = true;
     }
-    if (inDeliveryInfo || /(?:\u914d\u9001\u65b9\u6cd5|\u914d\u9001\u696d\u8005|\u4f1d\u7968\u756a\u53f7|\u8ffd\u8de1\u756a\u53f7|\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7)/.test(rowText)) {
+    if (inDeliveryInfo || hasStandaloneShipmentLabel(rowText)) {
       deliveryRows.push(rowText);
     }
     if (inDeliveryInfo && /(?:\u53d6\u5f15\u60c5\u5831|\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8|\u4f55\u304b\u304a\u56f0\u308a)/.test(rowText)) {
@@ -2267,11 +2280,18 @@ function extractTrackingNumberFromText(text = getBodyText(), options = {}) {
   const includeUnlabeled = options.includeUnlabeled !== false;
   const auctionId = options.auctionId || getCurrentAuctionId();
   const trackingLabels = ['\u4f1d\u7968\u756a\u53f7', '\u8ffd\u8de1\u756a\u53f7', '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7', '\u304a\u5c4a\u3051\u756a\u53f7'];
-  const labeledTrackingNumber = options.textOnly
-    ? valueAfterLabel(text, trackingLabels)
-    : extractLabeledValue(trackingLabels, text);
-  if (labeledTrackingNumber) {
-    const labeledMatches = labeledTrackingNumber.match(/(?:\d[\s-]*){10,12}/g) || [];
+  const labeledValues = [];
+  if (options.textOnly) {
+    labeledValues.push(...valuesAfterLabels(text, trackingLabels));
+  } else {
+    const elements = Array.from(document.querySelectorAll('tr, dl, div, li, p') || []);
+    for (const element of elements) {
+      labeledValues.push(...valuesAfterLabels(element?.textContent || '', trackingLabels));
+    }
+    labeledValues.push(...valuesAfterLabels(text, trackingLabels));
+  }
+  for (const labeledValue of labeledValues) {
+    const labeledMatches = String(labeledValue || '').match(/(?:\d[\s-]*){10,12}/g) || [];
     for (const candidate of labeledMatches) {
       const digits = normalizeTrackingNumberCandidate(candidate, { auctionId });
       if (digits) return digits;

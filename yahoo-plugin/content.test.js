@@ -3408,6 +3408,28 @@ function testExtractPendingShipmentScanResultIgnoresTrackingTextInProductTitleFo
   assert.equal(result.shipmentDetailsRendered, false);
 }
 
+function testExtractPendingShipmentScanResultDoesNotUseShipmentNoticeAsSellerNameFallback() {
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { textContent: '\u304a\u5c4a\u3051\u60c5\u5831' },
+          { textContent: '\u914d\u9001\u72b6\u6cc1 \uff1a \u8377\u7269\u53d7\u4ed8' },
+          { textContent: '\u914d\u9001\u65b9\u6cd5 \uff1a \u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, '');
+  assert.equal(result.trackingFallback, '');
+  assert.equal(result.shipmentDetailsRendered, true);
+}
+
 function testExtractPendingShipmentScanResultIgnoresLeadingZeroTenDigitPhoneNumberAsTracking() {
   const api = loadContentForTest(
     '\u51fa\u54c1\u8005\uff1a asua\uff089986\uff09\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8 0123456789',
@@ -3811,6 +3833,29 @@ function testExtractPendingShipmentScanResultExtractsInquiryNumberWithLineBreakL
   assert.equal(result.shipmentDetailsRendered, true);
 }
 
+function testExtractPendingShipmentScanResultSkipsTitleTrackingLabelAndFindsLaterInquiryNumber() {
+  const api = loadContentForTest(
+    '\u3010\u9001\u6599\u8fbc\u30fb\u8ffd\u8de1\u756a\u53f7\u6709\u3011 \u5929\u8987\u5149\u8292\u8a18 \u30d7\u30ea\u30f3\u30b9 \u30aa\u30d6 \u30b7\u30f3\n\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f\u3002\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector !== 'tr, dl, div, li, p') return [];
+        return [
+          { innerText: '\u3010\u9001\u6599\u8fbc\u30fb\u8ffd\u8de1\u756a\u53f7\u6709\u3011 \u5929\u8987\u5149\u8292\u8a18 \u30d7\u30ea\u30f3\u30b9 \u30aa\u30d6 \u30b7\u30f3', textContent: '\u3010\u9001\u6599\u8fbc\u30fb\u8ffd\u8de1\u756a\u53f7\u6709\u3011 \u5929\u8987\u5149\u8292\u8a18 \u30d7\u30ea\u30f3\u30b9 \u30aa\u30d6 \u30b7\u30f3' },
+          { innerText: '\u304a\u5c4a\u3051\u60c5\u5831', textContent: '\u304a\u5c4a\u3051\u60c5\u5831' },
+          { innerText: '\u914d\u9001\u72b6\u6cc1\n\u8377\u7269\u53d7\u4ed8', textContent: '\u914d\u9001\u72b6\u6cc1\u8377\u7269\u53d7\u4ed8' },
+          { innerText: '\u914d\u9001\u65b9\u6cd5\n\u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8', textContent: '\u914d\u9001\u65b9\u6cd5\u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8' },
+          { innerText: '\u304a\u554f\u3044\u5408\u308f\u305b\n\u756a\u53f7\n646560590686\uff08\u5916\u90e8\u30b5\u30a4\u30c8\uff09', textContent: '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7646560590686\uff08\u5916\u90e8\u30b5\u30a4\u30c8\uff09' }
+        ];
+      }
+    }
+  );
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.trackingNumber, '646560590686');
+  assert.equal(result.trackingFallback, '');
+}
+
 function testExtractTrackingNumberFromTextAcceptsLineBreakInsideInquiryLabel() {
   const api = loadContentForTest('', '/buyer/top');
   const text = '\u304a\u554f\u3044\u5408\u308f\u305b\n\u756a\u53f7\n646560590686\uff08\u5916\u90e8\u30b5\u30a4\u30c8\uff09';
@@ -4045,6 +4090,7 @@ async function run() {
   testExtractPendingShipmentScanResultIgnoresLeadingZeroPhoneNumberAsTracking();
   testExtractPendingShipmentScanResultDoesNotTreatShippingMethodOnlyAsRenderedFallback();
   testExtractPendingShipmentScanResultIgnoresTrackingTextInProductTitleForRenderReadiness();
+  testExtractPendingShipmentScanResultDoesNotUseShipmentNoticeAsSellerNameFallback();
   testExtractPendingShipmentScanResultIgnoresLeadingZeroTenDigitPhoneNumberAsTracking();
   testExtractPendingShipmentScanResultTrimsTrackingFieldToFirstNumber();
   testExtractPendingShipmentScanResultDetectsNormalShipped();
@@ -4060,6 +4106,7 @@ async function run() {
   testExtractPendingShipmentScanResultUsesOnlyMessageBodyTextInMessageList();
   testExtractPendingShipmentScanResultExtractsInquiryNumberLabel();
   testExtractPendingShipmentScanResultExtractsInquiryNumberWithLineBreakLabel();
+  testExtractPendingShipmentScanResultSkipsTitleTrackingLabelAndFindsLaterInquiryNumber();
   testExtractTrackingNumberFromTextAcceptsLineBreakInsideInquiryLabel();
   testExtractPendingShipmentScanResultFindsHyphenatedTrackingInMessages();
   testExtractPendingShipmentScanResultTreatsUnregisteredTrackingAsPending();
