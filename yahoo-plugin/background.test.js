@@ -770,6 +770,68 @@ async function testNormalBundleStartAcceptsTransactionInfoInputPage() {
   assert.deepEqual(clickedActions, ['close', 'start', 'input', 'decide', 'confirm']);
 }
 
+async function testBidderPaysShippingConfirmWaitsForPreviewRender() {
+  let nowMs = 0;
+  class FakeDate extends Date {
+    static now() {
+      nowMs += 1000;
+      return nowMs;
+    }
+  }
+  let phase = 'decide';
+  let confirmStateChecks = 0;
+  const api = loadBackgroundForTest({
+    Date: FakeDate,
+    tabs: {
+      async query() {
+        return [{ id: 22, url: 'https://contact.auctions.yahoo.co.jp/buyer/preview?aid=f1235464179', status: 'complete' }];
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/preview?aid=f1235464179', status: 'complete', windowId: 1 };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 22);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          if (message.action === 'decide' && phase === 'decide') {
+            phase = 'confirm';
+            return { success: true };
+          }
+          if (message.action === 'confirm' && phase === 'confirm') {
+            phase = 'waiting';
+            return { success: true };
+          }
+          return { success: true };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          if (phase === 'waiting') confirmStateChecks += 1;
+          return {
+            success: true,
+            state: {
+              canDecide: phase === 'decide',
+              canConfirm: phase === 'confirm',
+              waitingShipping: phase === 'waiting' && confirmStateChecks >= 12,
+              complete: false,
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/preview?aid=f1235464179'
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    }
+  });
+
+  const result = await api.completeBidderPaysShippingTransaction({ id: 22 });
+
+  assert.equal(result.success, true);
+  assert.equal(confirmStateChecks >= 12, true);
+}
+
 async function testOpenTransactionPageContinuesWhenBundleActionReadyBeforeTabComplete() {
   const listeners = [];
   const messages = [];
@@ -8897,6 +8959,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testManualPinUsesRealKeyboardBeforeInsertTextFallback();
   await testManualPinFallsBackToInsertTextWhenRealKeyboardFails();
   await testBidderPaysShippingTransactionClicksDecideAndConfirm();
+  await testBidderPaysShippingConfirmWaitsForPreviewRender();
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
   testBuildScanStatusPayloadSkipsPendingShipping();

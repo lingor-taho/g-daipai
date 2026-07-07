@@ -5272,6 +5272,11 @@ async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, t
   throw new Error('bundle next page did not appear');
 }
 
+function getBundleActionWaitTimeoutMs(action) {
+  if (action === 'start' || action === 'confirm') return 15000;
+  return 5000;
+}
+
 async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null) {
   console.log(`[Yahoo Bid] clickBundleActionAndFollowTab: action=${action}, tabId=${tab.id}`);
 
@@ -5325,8 +5330,9 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
     : state => state.complete);
 
   let nextTab = null;
+  const waitTimeoutMs = getBundleActionWaitTimeoutMs(action);
   try {
-    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, action === 'start' ? 15000 : 5000);
+    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, waitTimeoutMs);
   } catch (e) {
     if (!nextTab && !usedContentScriptClick) {
       console.warn('[Yahoo Bid] MAIN world click did not reach next bundle state, trying content script click:', e.message || e);
@@ -5337,7 +5343,7 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
       console.log('[Yahoo Bid] Content script fallback click result:', contentClickResult);
       if (contentClickResult?.success) {
         try {
-          nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, action === 'start' ? 10000 : 5000);
+          nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, waitTimeoutMs);
         } catch (contentWaitError) {
           e = contentWaitError;
         }

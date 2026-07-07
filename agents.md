@@ -313,6 +313,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-07 普通落札者负担交易确认页等待
+
+生产商品 `f1235464179` 交易开始报 `bundle confirm next page did not appear`。排查确认商品本身是普通 `normal`、运费 `落札者負担`，不是同捆；错误文案中的 `bundle` 来自普通交易和同捆流程复用的按钮点击工具，不代表业务上进入了同捆。失败点在普通交易 `buyer/preview` 最后点击 `確定する` 后，Yahoo 页面仍处于异步渲染/处理中，原来最终 `confirm` 只等待 5 秒，可能过早判定下一状态没有出现。
+
+修复：交易按钮工具的 `confirm` 动作等待窗口从 5 秒延长到 15 秒，与 `start` 的长等待一致；其他中间动作仍保持 5 秒，避免扩大普通步骤等待。新增普通 `落札者負担` 预览页渲染延迟回归。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 本次新增普通确认页等待回归已在后续失败前执行通过；当前完整测试仍会在既有 `testBuyoutStoreConfirmationCompletesBeforeFinalPurchase` 失败。
+
 ### 2026-07-06 确认收货完成文案兼容
 
 生产商品 `t1235313146` 确认收货失败，后台提示 `receipt completion text not found`。排查确认订单仍是 `pending_receipt`，商品类型为普通 `normal`，交易 URL、物流单号和前序付款/扫描状态正常；失败点在插件点击 `受け取り連絡` 后只等待 `すべての取引が完了しました` 这一种完成文案。Yahoo 完成页还可能只展示 `出品者に受け取り連絡をしました。`、`受け取り連絡が完了しました` 等明确完成文案，原判定过窄会导致实际已完成但插件未识别。
