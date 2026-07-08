@@ -346,11 +346,8 @@ function rowMatchesAnyBackgroundColor(rowData = {}, targetHex = '') {
 
 async function findRowsByProductIdWithAnyColor(productId, targetHex) {
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', matched: false, rows: [] };
-  const { spreadsheetId, sheetName } = getSheetConfig();
-  const range = `${sheetName}!A:K`;
-  const data = await googleRequest(
-    `${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(startRow,rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat/backgroundColor,effectiveFormat/backgroundColor))))`
-  );
+  const path = buildFindRowsByProductIdWithAnyColorPath(getSheetConfig());
+  const data = await googleRequest(path);
   const matches = [];
   for (const sheet of data.sheets || []) {
     for (const grid of sheet.data || []) {
@@ -364,6 +361,13 @@ async function findRowsByProductIdWithAnyColor(productId, targetHex) {
     }
   }
   return { matched: matches.length > 0, rows: matches };
+}
+
+function buildFindRowsByProductIdWithAnyColorPath(config = {}) {
+  const spreadsheetId = config.spreadsheetId || '';
+  const sheetName = config.sheetName || DEFAULT_SHEET_NAME;
+  const range = `${sheetName}!C:C`;
+  return `${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(startRow,rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat/backgroundColor,effectiveFormat/backgroundColor))))`;
 }
 
 async function findRowsByProductId(productId) {
@@ -535,6 +539,7 @@ module.exports = {
   applyGoogleSheetsConfigFromDb,
   applySheetBaseStyle,
   buildEnsureRemarkColumnRequest,
+  buildFindRowsByProductIdWithAnyColorPath,
   buildAppendRowsFormatRequest,
   ensureRemarkColumn,
   ensureHeaderRow,

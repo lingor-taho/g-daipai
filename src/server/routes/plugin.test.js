@@ -2394,6 +2394,45 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
   assert.equal(result.jobs[2].orderStatus, ORDER_STATUS_PENDING_SETTLEMENT);
 }
 
+async function testGetConfirmReceiptJobsRetriesSheetMatchOnceBeforeSkipping() {
+  let attempts = 0;
+  const delays = [];
+  const fakeDb = {
+    async getAll(sql) {
+      if (/FROM config/.test(sql)) return [{ key: 'confirm_receipt_color', value: '#ff00ff' }];
+      return [
+        {
+          order_id: 51,
+          order_status: ORDER_STATUS_PENDING_RECEIPT,
+          transaction_url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=e1232797856',
+          bundle_group_id: '',
+          product_id: 'e1232797856',
+          product_url: 'https://auctions.yahoo.co.jp/jp/auction/e1232797856',
+          product_title: 'receipt item',
+          product_type: 'normal'
+        }
+      ];
+    }
+  };
+
+  const result = await getConfirmReceiptJobs(fakeDb, {
+    retryDelayMs: 2000,
+    async sleep(ms) {
+      delays.push(ms);
+    },
+    async findRowsByProductIdWithAnyColor(productId) {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary google read failed');
+      return { matched: productId === 'e1232797856', rows: [{ rowNumber: 38 }] };
+    }
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [2000]);
+  assert.equal(result.jobs.length, 1);
+  assert.equal(result.jobs[0].productId, 'e1232797856');
+}
+
 async function testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled() {
   const calls = [];
   const fakeDb = {
@@ -2695,6 +2734,7 @@ Promise.all([
   testEnsureScheduledConfirmReceiptRequestSetsFlagAtDefault1801(),
   testCompleteConfirmReceiptIncrementsScanCounter(),
   testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCancelChecks(),
+  testGetConfirmReceiptJobsRetriesSheetMatchOnceBeforeSkipping(),
   testUpdateConfirmReceiptStatusCompletesBundleGroup(),
   testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled(),
   testUpdateConfirmReceiptStatusMarksPaidCancelCheckOrderPendingShipment(),

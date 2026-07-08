@@ -2447,13 +2447,25 @@ function normalizeReceiptColorConfig(value, fallback = DEFAULT_CONFIRM_RECEIPT_C
   return /^#[0-9a-f]{6}$/.test(hex) ? hex : fallback;
 }
 
+function waitMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
 async function isConfirmReceiptSheetColorMatched(productId, colorHex, options = {}) {
   const targetProductId = String(productId || '').trim();
   if (!targetProductId) return false;
   if (!options.findRowsByProductIdWithAnyColor) await applyGoogleSheetsConfigFromDb(db);
   const resolver = options.findRowsByProductIdWithAnyColor || findRowsByProductIdWithAnyColor;
   if (typeof resolver !== 'function') return false;
-  const result = await resolver(targetProductId, colorHex);
+  const sleepFn = typeof options.sleep === 'function' ? options.sleep : waitMs;
+  const retryDelayMs = Number.isFinite(Number(options.retryDelayMs)) ? Number(options.retryDelayMs) : 2000;
+  let result;
+  try {
+    result = await resolver(targetProductId, colorHex);
+  } catch (error) {
+    if (retryDelayMs > 0) await sleepFn(retryDelayMs);
+    result = await resolver(targetProductId, colorHex);
+  }
   return Boolean(result?.matched || (Array.isArray(result?.rows) && result.rows.length));
 }
 

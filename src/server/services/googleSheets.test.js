@@ -5,6 +5,7 @@ const {
   applyGoogleSheetsConfigFromDb,
   buildEnsureRemarkColumnRequest,
   buildAppendRowsFormatRequest,
+  buildFindRowsByProductIdWithAnyColorPath,
   extractSpreadsheetId,
   getGoogleSheetsCredentialPath,
   getSheetConfig,
@@ -158,12 +159,24 @@ function testAppendRowFormatUsesWhiteBackgroundByDefault() {
   assert.match(request.repeatCell.fields, /userEnteredFormat\.textFormat\.foregroundColor/);
 }
 
+function testFindRowsByProductIdWithAnyColorPathReadsOnlyColumnC() {
+  const path = buildFindRowsByProductIdWithAnyColorPath({
+    spreadsheetId: 'sheet-id',
+    sheetName: '-Ygao-'
+  });
+
+  assert.match(path, /ranges=-Ygao-!C%3AC/);
+  assert.doesNotMatch(path, /A%3AK/);
+  assert.match(path, /backgroundColor/);
+}
+
 async function run() {
   testCredentialPathUsesGoogleApplicationCredentials();
   testCredentialPathIsEmptyWithoutFileEnv();
   testExtractSpreadsheetIdFromUrl();
   testAppendRowFormatSetsBlackText();
   testAppendRowFormatUsesWhiteBackgroundByDefault();
+  testFindRowsByProductIdWithAnyColorPathReadsOnlyColumnC();
   testBuildEnsureRemarkColumnRequestInsertsKColumn();
   await testApplyConfigFromDbOverridesEnv();
   await testMojibakeSheetNameFallsBackToDefault();
