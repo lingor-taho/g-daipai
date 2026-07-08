@@ -46,7 +46,7 @@ Yahoo Auction
 - 本地工作区：`D:\www\g-daipai`
 - 生产目录通常为：`C:\www\g-daipai`
 - API：`http://localhost:3034`
-- 用户端 Vite dev：`http://localhost:3035`
+- 用户端静态服务：`http://localhost:3035`
 - Chrome 扩展目录：`yahoo-plugin/`
 
 ---
@@ -279,6 +279,7 @@ PIN/验证码暂停只影响订单工作流，不应阻塞出价并行池和 A/B
 ## 生产注意事项
 
 - 生产 Chrome 扩展更新后，需要在服务器 Chrome 中手动 reload。
+- 用户端生产服务不要用 Vite dev server 对公网提供访问。生产启动应使用 `start.bat` 构建 `src/client/dist` 后由 `scripts/serve-client-dist.js` 服务静态文件，并继续将 `/api` 代理到 `http://localhost:3034`。
 - `Failed to fetch` 通常表示插件访问不到 `http://127.0.0.1:3034` 或 `http://localhost:3034`，优先检查 API watcher/server 是否运行。
 - Chrome MV3 的 `No SW` 是 service worker 生命周期噪声，现已做精确抑制，不应和业务失败混淆。
 - 不要用宽泛 tab cleanup 关闭 `auctions.yahoo.co.jp/jp/auction/...` 商品页，否则可能误关并行出价 tab。
@@ -312,6 +313,22 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-08 用户端生产服务不再使用 Vite dev
+
+生产用户端偶发黑色错误 overlay，页面显示 `URI malformed`，栈指向 `C:/www/g-daipai/src/client/node_modules/vite/.../viteTransformMiddleware`。复现确认生产 `http://43.165.177.49:3035` 对外运行的是 Vite dev server，访问 `/%`、`/%E0%A4%A`、`/foo%ZZbar` 这类非法百分号编码路径会触发 Vite 内部 `decodeURI(req.url)` 抛错，并把开发错误页/overlay 暴露给用户。
+
+修复：新增 `scripts/serve-client-dist.js`，用于生产服务 `src/client/dist` 静态构建产物；该服务先识别 malformed URL，页面导航类 GET/HEAD 请求回退到 SPA 首页，静态资源/API 这类非页面请求才返回普通 400，不再触发 Vite overlay。服务继续把 `/api` 代理到 `http://localhost:3034`，并做 SPA fallback。`start.bat` 已改为启动时先 `npm run build --prefix src/client`，再用静态服务占用原 `3035` 端口，不再执行 `npm run dev -- --host 0.0.0.0`。生产更新后需要重新运行 `start.bat`，确认 `http://43.165.177.49:3035/` 返回的 HTML 不再包含 `/@vite/client` 或 React Refresh。
+
+验证：
+
+```powershell
+node scripts/serve-client-dist.test.js
+node --check scripts/serve-client-dist.js
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-07-07 普通商品物流公司限定在お届け情報表格
 

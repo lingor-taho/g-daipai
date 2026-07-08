@@ -29,8 +29,15 @@ type nul > "%ROOT%\server-start.log"
 type nul > "%ROOT%\server-start.err.log"
 start "g-daipai-api-watch" /b cmd /c ""%ROOT%\scripts\api-watch.bat" "%ROOT%""
 
-echo [3/4] Start Client: http://localhost:3035
-start "g-daipai-client" /b cmd /c "cd /d %CLIENT_DIR% && npm run dev -- --host 0.0.0.0 <NUL > %ROOT%\client-start.log 2>&1"
+echo [3/4] Build and start Client: http://localhost:3035
+type nul > "%ROOT%\client-build.log"
+type nul > "%ROOT%\client-start.log"
+call npm run build --prefix "%CLIENT_DIR%" > "%ROOT%\client-build.log" 2>&1
+if errorlevel 1 (
+  echo Client build failed. Trying to serve the existing dist directory.
+  echo Check %ROOT%\client-build.log
+)
+start "g-daipai-client" /b cmd /c "cd /d %ROOT% && node scripts\serve-client-dist.js <NUL > %ROOT%\client-start.log 2>&1"
 
 echo [4/4] Start Admin Report: http://localhost:8000/#/login
 start "g-daipai-admin" /b cmd /c "cd /d %ADMIN_DIR% && npm start <NUL > %ROOT%\admin-start.log 2>&1"
