@@ -211,6 +211,51 @@ function testYahooTradeMessageSelectorsCoverNormalAndStorePages() {
   assert.match(api.getYahooTradeMessageSendScript('hello'), /textarea/);
 }
 
+function testYahooTradeMessageExtractionSkipsStoreLegalLinks() {
+  const api = loadBackgroundForTest();
+  const createElement = ({ outerHTML, text = '', selectors = {} }) => ({
+    outerHTML,
+    innerText: text,
+    textContent: text,
+    querySelector(selector) {
+      return selectors[selector] || null;
+    }
+  });
+  const legalLinks = createElement({
+    outerHTML: '<ul class="sc-c46fd2ce-0"><li>特定商取引法の表示</li><li>ストア出店について</li></ul>',
+    text: '特定商取引法の表示 ストア出店について'
+  });
+  const messageList = createElement({
+    outerHTML: '<ul class="sc-c46fd2ce-0"><dl><dt><span>ストア</span></dt><div><dd>落札いただいたお品物の確保を致しました。</dd><dd><time>7月9日 11:47</time></dd></div></dl></ul>',
+    text: 'ストア 落札いただいたお品物の確保を致しました。 7月9日 11:47',
+    selectors: {
+      dl: {},
+      dd: {},
+      time: {}
+    }
+  });
+  const document = {
+    querySelector(selector) {
+      if (selector === '#messagelist') return null;
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return legalLinks;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return [legalLinks, messageList];
+      if (selector === 'section ul') return [];
+      if (selector === 'ul, .acMdMsgForm, [id*="message"], [class*="Msg"]') return [];
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'store');
+  assert.equal(result.messageHtml, messageList.outerHTML);
+  assert.doesNotMatch(result.messageHtml, /特定商取引法/);
+}
+
 function testSendYahooMessageJobDoesNotAutoFetchAfterSend() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
@@ -9326,6 +9371,7 @@ async function run() {
   testPendingFinalRetryDelayIsShortForDirectBid();
 testNoServiceWorkerLifecycleErrorDetection();
 testYahooTradeMessageSelectorsCoverNormalAndStorePages();
+testYahooTradeMessageExtractionSkipsStoreLegalLinks();
 testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();

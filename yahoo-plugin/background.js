@@ -981,7 +981,7 @@ async function updateYahooMessageStatus(payload) {
   });
 }
 
-function getYahooTradeMessageExtractScript() {
+function getYahooTradeMessageExtractScriptLegacy() {
   return `(() => {
     const normal = document.querySelector('#messagelist');
     if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
@@ -992,6 +992,35 @@ function getYahooTradeMessageExtractScript() {
     if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
     return { success: false, error: 'message list not found' };
   })()`;
+}
+
+function extractYahooTradeMessageFromPage() {
+  const normal = document.querySelector('#messagelist');
+  if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const isStoreMessageList = node => {
+    if (!node || typeof node.querySelector !== 'function') return false;
+    if (!node.querySelector('dl') || !node.querySelector('dd')) return false;
+    const text = normalize(node.innerText || node.textContent || '');
+    return Boolean(node.querySelector('time')) ||
+      /ストア|出品者|落札者|あなた|取引|メッセージ|落札|購入/.test(text);
+  };
+  const storeCandidates = [];
+  for (const selector of ['ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]', 'section ul']) {
+    for (const node of Array.from(document.querySelectorAll(selector) || [])) {
+      if (!storeCandidates.includes(node)) storeCandidates.push(node);
+    }
+  }
+  const store = storeCandidates.find(isStoreMessageList);
+  if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
+  const fallback = [...document.querySelectorAll('ul, .acMdMsgForm, [id*="message"], [class*="Msg"]')]
+    .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
+  if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
+  return { success: false, error: 'message list not found' };
+}
+
+function getYahooTradeMessageExtractScript() {
+  return `(${extractYahooTradeMessageFromPage.toString()})()`;
 }
 
 function getYahooTradeMessageSendScript(messageText) {
@@ -1021,7 +1050,7 @@ function getYahooTradeMessageSendScript(messageText) {
   })()`;
 }
 
-async function extractYahooTradeMessages(tabId) {
+async function extractYahooTradeMessagesLegacy(tabId) {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -1035,6 +1064,15 @@ async function extractYahooTradeMessages(tabId) {
       if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
       return { success: false, error: 'message list not found' };
     }
+  });
+  return injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
+}
+
+async function extractYahooTradeMessages(tabId) {
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: extractYahooTradeMessageFromPage
   });
   return injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
 }
