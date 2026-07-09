@@ -981,19 +981,6 @@ async function updateYahooMessageStatus(payload) {
   });
 }
 
-function getYahooTradeMessageExtractScriptLegacy() {
-  return `(() => {
-    const normal = document.querySelector('#messagelist');
-    if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
-    const store = document.querySelector('ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]');
-    if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
-    const fallback = [...document.querySelectorAll('ul, .acMdMsgForm, [id*="message"], [class*="Msg"]')]
-      .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
-    if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
-    return { success: false, error: 'message list not found' };
-  })()`;
-}
-
 function extractYahooTradeMessageFromPage() {
   const normal = document.querySelector('#messagelist');
   if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
@@ -1013,7 +1000,7 @@ function extractYahooTradeMessageFromPage() {
   }
   const store = storeCandidates.find(isStoreMessageList);
   if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
-  const fallback = [...document.querySelectorAll('ul, .acMdMsgForm, [id*="message"], [class*="Msg"]')]
+  const fallback = [...document.querySelectorAll('.acMdMsgForm, [id*="message"], [class*="Msg"]')]
     .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
   if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
   return { success: false, error: 'message list not found' };
@@ -1048,24 +1035,6 @@ function getYahooTradeMessageSendScript(messageText) {
     button.click();
     return { success: true };
   })()`;
-}
-
-async function extractYahooTradeMessagesLegacy(tabId) {
-  const injectionResult = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: () => {
-      const normal = document.querySelector('#messagelist');
-      if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
-      const store = document.querySelector('ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]');
-      if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
-      const fallback = [...document.querySelectorAll('ul, .acMdMsgForm, [id*="message"], [class*="Msg"]')]
-        .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
-      if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
-      return { success: false, error: 'message list not found' };
-    }
-  });
-  return injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
 }
 
 async function extractYahooTradeMessages(tabId) {

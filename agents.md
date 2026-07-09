@@ -336,7 +336,7 @@ git diff --check
 
 商城新版交易页消息区使用 `ul.sc-c46fd2ce-0` 包裹 `dl/dt/dd/time` 消息节点。部分页面其他位置也可能出现相同 class 的链接列表，例如“特定商取引法の表示 / ストア出店について”，旧消息抓取只取第一个 `ul.sc-c46fd2ce-0`，可能把法律链接当作聊天记录入库。
 
-修复：插件消息抓取不再只按 class 取第一个 `ul`，而是遍历候选 `ul.sc-c46fd2ce-0` 和 `section ul`，必须同时包含 `dl` 和 `dd`，并带 `time` 或消息语义文本，才作为商城消息列表。普通商品 `#messagelist` 逻辑保持不变。实测附件页面 `o1235669264` 只有一个 `sc-c46fd2ce-0` 候选，且包含 `dl/dd/time`，不会抓到页脚法律链接。
+修复：插件消息抓取不再只按 class 取第一个 `ul`，而是遍历候选 `ul.sc-c46fd2ce-0` 和 `section ul`，必须同时包含 `dl` 和 `dd`，并带 `time` 或消息语义文本，才作为商城消息列表。普通商品 `#messagelist` 逻辑保持不变。后续复查确认宽泛 fallback 中保留裸 `ul` 仍可能在商城消息未命中时把法律链接保存为消息，因此 fallback 已移除裸 `ul`，只保留旧兼容的 `.acMdMsgForm` / message class/id 容器。实测附件页面 `o1235669264` 和禁发消息页面 `m1236007410` 都只有有效商城消息候选，且包含 `dl/dd/time`，不会抓到法律链接。
 
 验证：
 ```powershell

@@ -256,6 +256,69 @@ function testYahooTradeMessageExtractionSkipsStoreLegalLinks() {
   assert.doesNotMatch(result.messageHtml, /特定商取引法/);
 }
 
+function testYahooTradeMessageExtractionDoesNotFallbackToStoreLegalLinks() {
+  const api = loadBackgroundForTest();
+  const legalLinks = {
+    outerHTML: '<ul><li>\u7279\u5b9a\u5546\u53d6\u5f15\u6cd5\u306e\u8868\u793a</li><li>\u30b9\u30c8\u30a2\u51fa\u5e97\u306b\u3064\u3044\u3066</li></ul>',
+    innerText: '\u7279\u5b9a\u5546\u53d6\u5f15\u6cd5\u306e\u8868\u793a \u30b9\u30c8\u30a2\u51fa\u5e97\u306b\u3064\u3044\u3066',
+    textContent: '\u7279\u5b9a\u5546\u53d6\u5f15\u6cd5\u306e\u8868\u793a \u30b9\u30c8\u30a2\u51fa\u5e97\u306b\u3064\u3044\u3066',
+    querySelector() {
+      return null;
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#messagelist') return null;
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return legalLinks;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return [legalLinks];
+      if (selector === 'section ul') return [];
+      if (selector === 'ul, .acMdMsgForm, [id*="message"], [class*="Msg"]') return [legalLinks];
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, 'message list not found');
+}
+
+function testYahooTradeMessageExtractionReadsStoreDisabledPostingThread() {
+  const api = loadBackgroundForTest();
+  const messageList = {
+    outerHTML: '<ul class="sc-c46fd2ce-0"><dl><dt><span>\u3042\u306a\u305f</span></dt><div><dd>\u30ad\u30e3\u30f3\u30bb\u30eb\u304a\u9858\u3044\u81f4\u3057\u307e\u3059</dd><dd><time>6\u670819\u65e5 22:38</time></dd></div></dl><dl><dt><span>\u30b9\u30c8\u30a2</span></dt><div><dd>\u3054\u6ce8\u6587\u5c65\u6b74\u306f\u3054\u3056\u3044\u307e\u305b\u3093</dd><dd><time>6\u670822\u65e5 09:10</time></dd></div></dl></ul>',
+    innerText: '\u3042\u306a\u305f \u30ad\u30e3\u30f3\u30bb\u30eb\u304a\u9858\u3044\u81f4\u3057\u307e\u3059 6\u670819\u65e5 22:38 \u30b9\u30c8\u30a2 \u3054\u6ce8\u6587\u5c65\u6b74\u306f\u3054\u3056\u3044\u307e\u305b\u3093 6\u670822\u65e5 09:10',
+    textContent: '\u3042\u306a\u305f \u30ad\u30e3\u30f3\u30bb\u30eb\u304a\u9858\u3044\u81f4\u3057\u307e\u3059 6\u670819\u65e5 22:38 \u30b9\u30c8\u30a2 \u3054\u6ce8\u6587\u5c65\u6b74\u306f\u3054\u3056\u3044\u307e\u305b\u3093 6\u670822\u65e5 09:10',
+    querySelector(selector) {
+      if (selector === 'dl' || selector === 'dd' || selector === 'time') return {};
+      return null;
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#messagelist') return null;
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return messageList;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return [messageList];
+      if (selector === 'section ul') return [messageList];
+      if (selector === '.acMdMsgForm, [id*="message"], [class*="Msg"]') return [];
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'store');
+  assert.match(result.messageHtml, /\u30ad\u30e3\u30f3\u30bb\u30eb\u304a\u9858\u3044\u81f4\u3057\u307e\u3059/);
+  assert.match(result.messageHtml, /\u3054\u6ce8\u6587\u5c65\u6b74\u306f\u3054\u3056\u3044\u307e\u305b\u3093/);
+}
+
 function testSendYahooMessageJobDoesNotAutoFetchAfterSend() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
@@ -9372,6 +9435,8 @@ async function run() {
 testNoServiceWorkerLifecycleErrorDetection();
 testYahooTradeMessageSelectorsCoverNormalAndStorePages();
 testYahooTradeMessageExtractionSkipsStoreLegalLinks();
+testYahooTradeMessageExtractionDoesNotFallbackToStoreLegalLinks();
+testYahooTradeMessageExtractionReadsStoreDisabledPostingThread();
 testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
