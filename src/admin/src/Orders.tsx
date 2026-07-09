@@ -172,22 +172,22 @@ const noWrapCell = {
 };
 
 function canAutoSettle(item: any) {
-  if (item?.order_status === 'pending_settlement') {
-    return Boolean(item?.can_settle);
-  }
   return Boolean(
     item?.can_settle &&
-    !item?.settled_at &&
-    (item?.order_status === 'pending_payment' || item?.order_status === 'bundle_completed' || item?.order_status === 'pending_shipment')
+    (item?.order_status === 'pending_payment' ||
+      item?.order_status === 'bundle_completed' ||
+      item?.order_status === 'pending_shipment' ||
+      item?.order_status === 'pending_settlement')
   );
 }
 
 function canRequestPayment(item: any) {
   return Boolean(
-    item?.order_status === 'pending_settlement' &&
+    item?.settled_at &&
     item?.payable_cny !== null &&
     item?.payable_cny !== undefined &&
-    item?.payable_cny !== ''
+    item?.payable_cny !== '' &&
+    (item?.order_status === 'pending_payment' || item?.order_status === 'bundle_completed' || item?.order_status === 'pending_settlement')
   );
 }
 
@@ -321,6 +321,34 @@ export default function OrdersPage() {
       .filter(Boolean);
   }
 
+  function markSelectedRowsSettled(results: any[]) {
+    const successfulResults = (results || []).filter(result => result?.success && result?.orderId);
+    if (!successfulResults.length) return;
+    const settledByOrderId = new Map(successfulResults.map(result => [String(result.orderId), result]));
+    const applySettlement = (row: any) => {
+      const result = row?.id !== undefined && row?.id !== null ? settledByOrderId.get(String(row.id)) : null;
+      if (!result) return row;
+      return {
+        ...row,
+        payable_cny: result.payableCny,
+        settled_at: row?.settled_at || new Date().toISOString()
+      };
+    };
+    setSelectedRowsMap(prev => {
+      const next = { ...prev };
+      for (const [orderId, result] of settledByOrderId.entries()) {
+        const prevRow = next[orderId] || { id: result.orderId };
+        next[orderId] = {
+          ...prevRow,
+          payable_cny: result.payableCny,
+          settled_at: prevRow?.settled_at || new Date().toISOString()
+        };
+      }
+      return next;
+    });
+    setCurrentRows(prev => prev.map(applySettlement));
+  }
+
   async function maybeAutoSelectSameUserWonDateRange(record: any) {
     if (firstRangeSelectDone || !record?.user_id) return;
     setFirstRangeSelectDone(true);
@@ -368,6 +396,7 @@ export default function OrdersPage() {
       } else {
         message.success(`结算完成 ${data.settled || selectedRowKeys.length} 条`);
       }
+      markSelectedRowsSettled(data.results || []);
       setReloadKey(key => key + 1);
     } catch (e: any) {
       message.error(e.message || '结算失败');
@@ -387,7 +416,7 @@ export default function OrdersPage() {
       return;
     }
     if (selectedRows.some(item => !canRequestPayment(item))) {
-      message.error('只能选择待结算且应付款不为空的订单');
+      message.error('只能选择已结算且应付款不为空的待支付、同捆完了或待结算订单');
       return;
     }
     setPaymentSubmitting(true);

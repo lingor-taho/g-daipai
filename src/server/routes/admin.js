@@ -1717,12 +1717,6 @@ function applyUserFinanceConfig(baseConfig = {}, userConfig = null) {
   };
 }
 
-function resolveSettlementOrderStatus(currentStatus) {
-  return currentStatus === ORDER_STATUS_BUNDLE_COMPLETED || currentStatus === ORDER_STATUS_PENDING_SHIPMENT
-    ? currentStatus
-    : ORDER_STATUS_PENDING_SETTLEMENT;
-}
-
 function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
   const effectiveShippingFeeText = getEffectiveShippingFeeText(order);
   if (!canSettleOrderShippingFee(order)) {
@@ -1749,6 +1743,34 @@ function buildOrderSettlement({ order, baseConfig, userFinanceOverride }) {
     rateAdjustment: effectiveConfig.rateAdjustment,
     hasUserFinanceOverride: effectiveConfig.hasUserFinanceOverride,
     payableCny: payable.payableCny
+  };
+}
+
+function buildOrderSettlementUpdateQuery(orderId, settlement) {
+  return {
+    sql: `UPDATE orders
+         SET jpy_to_cny_rate = ?,
+             bank_fee_jpy = ?,
+             handling_fee_cny = ?,
+             large_amount_fee_cny = ?,
+             large_amount_fee_applied = ?,
+             tax_included_final_price = ?,
+             has_user_finance_override = ?,
+             total_amount_cny = ?,
+             settled_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+    params: [
+      settlement.jpyToCnyRate,
+      settlement.bankFeeJpy,
+      settlement.handlingFeeCny,
+      settlement.largeAmountFeeCny,
+      settlement.largeAmountFeeApplied ? 1 : 0,
+      settlement.taxIncludedFinalPrice,
+      settlement.hasUserFinanceOverride ? 1 : 0,
+      settlement.payableCny,
+      orderId
+    ]
   };
 }
 
@@ -1926,44 +1948,8 @@ router.post('/orders/settle', async (req, res) => {
           large_amount_fee_cny: order.user_large_amount_fee_cny
         }
       });
-      const nextOrderStatus = resolveSettlementOrderStatus(order.order_status);
-      const beforeRows = await getOrderStatusAuditRows(db, [orderId]);
-
-      await db.query(
-        `UPDATE orders
-         SET jpy_to_cny_rate = ?,
-             bank_fee_jpy = ?,
-             handling_fee_cny = ?,
-             large_amount_fee_cny = ?,
-             large_amount_fee_applied = ?,
-             tax_included_final_price = ?,
-             has_user_finance_override = ?,
-             total_amount_cny = ?,
-             order_status = ?,
-             settled_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [
-          settlement.jpyToCnyRate,
-          settlement.bankFeeJpy,
-          settlement.handlingFeeCny,
-          settlement.largeAmountFeeCny,
-          settlement.largeAmountFeeApplied ? 1 : 0,
-          settlement.taxIncludedFinalPrice,
-          settlement.hasUserFinanceOverride ? 1 : 0,
-          settlement.payableCny,
-          nextOrderStatus,
-          orderId
-        ]
-      );
-      await writeOrderStatusAuditLogs(db, beforeRows, {
-        status: nextOrderStatus,
-        source: 'admin_settle',
-        metadata: {
-          rate,
-          payableCny: settlement.payableCny
-        }
-      }).catch(() => null);
+      const updateQuery = buildOrderSettlementUpdateQuery(orderId, settlement);
+      await db.query(updateQuery.sql, updateQuery.params);
 
       results.push({ orderId, success: true, payableCny: settlement.payableCny });
     } catch (error) {
@@ -2493,9 +2479,16 @@ async function requestPayment(database = db, orderIds = []) {
      SET order_status = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id IN (${placeholders})
-       AND order_status = ?
+       AND order_status IN (?,?,?)
+       AND settled_at IS NOT NULL
        AND total_amount_cny IS NOT NULL`,
-    [ORDER_STATUS_PENDING_SETTLEMENT, ...ids, ORDER_STATUS_PENDING_SETTLEMENT]
+    [
+      ORDER_STATUS_PENDING_SETTLEMENT,
+      ...ids,
+      ORDER_STATUS_PENDING_PAYMENT,
+      ORDER_STATUS_BUNDLE_COMPLETED,
+      ORDER_STATUS_PENDING_SETTLEMENT
+    ]
   );
   if ((result.rowCount || 0) > 0) {
     await saveConfigValue(database, 'payment_requested', '1');
@@ -3630,6 +3623,7 @@ module.exports.buildBidFailureReportQueries = buildBidFailureReportQueries;
 module.exports.buildRecentTaskFailureUserReportQuery = buildRecentTaskFailureUserReportQuery;
 module.exports.buildAdminMessagesListQuery = buildAdminMessagesListQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
+module.exports.buildOrderSettlementUpdateQuery = buildOrderSettlementUpdateQuery;
 module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.updateOrderRemark = updateOrderRemark;
 module.exports.calculateOrderPayable = calculateOrderPayable;
@@ -3640,7 +3634,6 @@ module.exports.ORDER_STATUS_PENDING_PAYMENT = ORDER_STATUS_PENDING_PAYMENT;
 module.exports.ORDER_STATUS_BUNDLE_COMPLETED = ORDER_STATUS_BUNDLE_COMPLETED;
 module.exports.ORDER_STATUS_PENDING_SHIPMENT = ORDER_STATUS_PENDING_SHIPMENT;
 module.exports.getEffectiveShippingFeeText = getEffectiveShippingFeeText;
-module.exports.resolveSettlementOrderStatus = resolveSettlementOrderStatus;
 module.exports.normalizeOrderStatusRefreshTarget = normalizeOrderStatusRefreshTarget;
 module.exports.normalizeProductType = normalizeProductType;
 module.exports.refreshProductShippingFee = refreshProductShippingFee;

@@ -23,12 +23,13 @@ const {
   buildRecentTaskFailureUserReportQuery,
   buildAdminMessagesListQuery,
   buildOrderSettlementSelectQuery,
+  buildOrderSettlementUpdateQuery,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
   updateOrderRemark,
-  resolveSettlementOrderStatus,
   ORDER_STATUS_PENDING_SETTLEMENT,
   ORDER_STATUS_COMPLETED,
+  ORDER_STATUS_PENDING_PAYMENT,
   normalizeProductType,
   parseShippingFeeToNumber,
   createManualOrderImportBatch,
@@ -404,13 +405,6 @@ function testBuildOrderSettlementPrefersBundleShippingFee() {
   assert.equal(result.payableCny, 540);
 }
 
-function testResolveSettlementStatusKeepsBundleCompleted() {
-  assert.equal(resolveSettlementOrderStatus('pending_payment'), 'pending_settlement');
-  assert.equal(resolveSettlementOrderStatus('pending_settlement'), 'pending_settlement');
-  assert.equal(resolveSettlementOrderStatus('bundle_completed'), 'bundle_completed');
-  assert.equal(resolveSettlementOrderStatus('pending_shipment'), 'pending_shipment');
-}
-
 function testNormalizeProductTypeForBatchRefresh() {
   assert.equal(normalizeProductType('normal'), 'normal');
   assert.equal(normalizeProductType('store'), 'store');
@@ -601,6 +595,34 @@ function testOrderSettlementSelectQueryUsesProductsOnly() {
   assert.match(query.sql, /COALESCE\(p\.product_type, CASE WHEN COALESCE\(p\.tax_type, 'tax_zero'\) = 'tax_included' THEN 'store' ELSE 'normal' END\) AS product_type/);
   assert.doesNotMatch(query.sql, /t\.(shipping_fee_text|tax_type|product_type)/);
   assert.deepEqual(query.params, [123]);
+}
+
+function testOrderSettlementUpdateDoesNotChangeOrderStatus() {
+  const query = buildOrderSettlementUpdateQuery(123, {
+    jpyToCnyRate: 0.0523,
+    bankFeeJpy: 500,
+    handlingFeeCny: 15,
+    largeAmountFeeCny: 20,
+    largeAmountFeeApplied: true,
+    taxIncludedFinalPrice: 11000,
+    hasUserFinanceOverride: false,
+    payableCny: 631
+  });
+
+  assert.match(query.sql, /UPDATE orders/);
+  assert.doesNotMatch(query.sql, /order_status\s*=/);
+  assert.match(query.sql, /settled_at = CURRENT_TIMESTAMP/);
+  assert.deepEqual(query.params, [
+    0.0523,
+    500,
+    15,
+    20,
+    1,
+    11000,
+    0,
+    631,
+    123
+  ]);
 }
 
 function testAdminLogsQueryUsesProductTitleFallback() {
@@ -802,7 +824,15 @@ async function testRequestPaymentSetsFlag() {
 
   assert.equal(result.requested, 1);
   assert.match(queries[0].sql, /order_status = \?/);
+  assert.match(queries[0].sql, /order_status IN \(\?,\?,\?\)/);
+  assert.match(queries[0].sql, /settled_at IS NOT NULL/);
   assert.equal(queries[0].params[0], 'pending_settlement');
+  assert.deepEqual(queries[0].params.slice(-3), [
+    ORDER_STATUS_PENDING_PAYMENT,
+    ORDER_STATUS_BUNDLE_COMPLETED,
+    ORDER_STATUS_PENDING_SETTLEMENT
+  ]);
+  assert.equal(queries[0].params.includes(ORDER_STATUS_PENDING_SHIPMENT), false);
   assert.match(queries[1].sql, /payment_requested/);
   assert.equal(queries[1].params[0], '1');
 }
@@ -1187,7 +1217,6 @@ testStoreTaxIncludedThresholdUsesTaxIncludedPrice();
 testSpecialUserConfigOverridesOnlyConfiguredValues();
 testBuildOrderSettlementUsesSubmittedRateAndOverrides();
 testBuildOrderSettlementPrefersBundleShippingFee();
-testResolveSettlementStatusKeepsBundleCompleted();
 testNormalizeProductTypeForBatchRefresh();
 testAdminTasksListQueryUsesProductsOnly();
 testAdminPendingTasksQueryUsesProductsOnly();
@@ -1198,6 +1227,7 @@ testOrderStatusDebugOrdersQueryUsesProductsOnly();
 testOrderStatusDebugTasksQueryUsesProductsOnly();
 testProductDebugQueriesExposeTaskErrorsAndRelatedLogs();
 testOrderSettlementSelectQueryUsesProductsOnly();
+testOrderSettlementUpdateDoesNotChangeOrderStatus();
 testAdminLogsQueryUsesProductTitleFallback();
 testMapAdminOrderListItemUsesEffectiveBundleShipping();
 testMapAdminOrderListItemAllowsStoreBidderPaysShipping();

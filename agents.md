@@ -314,6 +314,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-09 订单结算和付款队列拆分
+
+后台订单管理的“结算”和“支付”现在拆成两个明确步骤。点击“结算”只按当前公式写入汇率、手续费、含税成交价、应付款和 `settled_at`，不再修改 `orders.order_status`，因此不会因为批量结算就把订单自动送进插件付款队列。
+
+点击“支付”时，只把本次勾选且已经结算、有应付款的 `pending_payment`、`bundle_completed` 或既有 `pending_settlement` 订单改为 `pending_settlement`，并设置 `payment_requested=1`。`pending_shipment` 不会被重新提交付款。插件付款任务仍只读取 `pending_settlement + total_amount_cny` 的订单；因此 `pending_settlement` 现在表示“已明确提交到付款队列”。
+
+前端边界：状态不变后，已结算的 `pending_payment`、`bundle_completed`、`pending_shipment`、`pending_settlement` 订单仍允许重新结算，方便汇率或费用输错后重算。结算成功后会同步刷新已选行缓存里的 `settled_at` 和 `payable_cny`，避免跨页自动选中的订单在马上点击“支付”时仍使用结算前缓存而误判未结算。
+
+验证：
+```powershell
+node src/server/routes/admin.orders.test.js
+node src/admin/src/Orders.display.test.js
+node --check src/server/routes/admin.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-09 出价超时失败前只重试一次
 
 商品任务出价偶发超时或出价确认阶段超时失败时，插件现在不会立刻把任务回写为 `failed`。首次命中 timeout 型出价失败时，会先关闭当前出价 tab，再重新打开商品页把同一个任务重新执行一次；重试时沿用已领取任务，不重新占用出价池槽位。第二次如果仍然超时，或出现其他非可重试问题，则继续按原逻辑记录 diagnostics 并回写 `failed`。
