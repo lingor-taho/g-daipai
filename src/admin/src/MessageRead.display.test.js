@@ -58,9 +58,18 @@ assert.equal(
   'MessageRead should let stuck message processing rows become clickable after 30 seconds'
 );
 
+assert.equal(
+  source.includes('function shouldShowMessageFetchError') &&
+    source.includes('row.fetch_requested_at') &&
+    source.includes('row.fetch_started_at') &&
+    source.includes('row.message_updated_at'),
+  true,
+  'MessageRead should only show fetch errors for rows with an actual fetch attempt'
+);
+
 {
   const messageTimeColumnIndex = source.indexOf("dataIndex: 'message_updated_at'");
-  const failedStatusIndex = source.indexOf("row.fetch_status === 'failed'", messageTimeColumnIndex);
+  const failedStatusIndex = source.indexOf('shouldShowMessageFetchError(row)', messageTimeColumnIndex);
   const oldMessageTimeIndex = source.indexOf('value ? (', messageTimeColumnIndex);
   assert.equal(
     failedStatusIndex > messageTimeColumnIndex && failedStatusIndex < oldMessageTimeIndex,

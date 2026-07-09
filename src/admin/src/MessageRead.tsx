@@ -55,6 +55,11 @@ function isMessageFetchInProgress(row: any, updatingOrderId: number | null) {
   return Date.now() - startedAt.getTime() <= MESSAGE_PROCESSING_TIMEOUT_MS;
 }
 
+function shouldShowMessageFetchError(row: any) {
+  if (row.fetch_status !== 'failed') return false;
+  return Boolean(row.fetch_requested_at || row.fetch_started_at || row.message_updated_at);
+}
+
 function sanitizeTradeHtml(html: string) {
   return String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -249,9 +254,11 @@ export default function MessageReadPage() {
             dataIndex: 'message_updated_at',
             width: 180,
             render: (value, row: any) => row.fetch_status === 'failed' ? (
+              shouldShowMessageFetchError(row) ? (
               <Space direction="vertical" size={0}>
                 <Typography.Text type="danger">{row.fetch_error || '抓取失败'}</Typography.Text>
               </Space>
+              ) : '-'
             ) : value ? (
               <Button type="link" style={{ padding: 0 }} onClick={() => setSelected(row)}>{formatDateTime(value)}</Button>
             ) : row.fetch_status === 'failed' ? <Typography.Text type="danger">{row.fetch_error || '抓取失败'}</Typography.Text> : '-'

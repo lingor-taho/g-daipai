@@ -320,6 +320,8 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 修复：商城消息提取在未找到 `dl/dd/time` 消息列表时，会继续识别同一 `section` 下的 `textarea` 和 `#msg button`，返回空消息占位并写入最新更新时间，后台弹窗仍显示发送输入框。插件打开交易页后提取消息增加短轮询，最多等待 8 秒，避免商城消息区异步渲染慢时过早写入 `message list not found`。法律链接列表仍不会作为聊天内容保存。
 
+后台显示规则：没有发起过消息抓取的订单，时间列保持 `-`，即使历史脏数据里残留 `fetch_status='failed'` 和 `fetch_error`，也不显示 `message list not found`；只有存在 `fetch_requested_at`、`fetch_started_at` 或消息更新时间的真实抓取记录，才显示抓取失败信息。
+
 验证：
 ```powershell
 node --check yahoo-plugin/background.js
@@ -327,6 +329,7 @@ node --check yahoo-plugin/background.test.js
 node yahoo-plugin/background.test.js
 node src/server/routes/admin.orders.test.js
 node src/admin/src/MessageRead.display.test.js
+npm run build --prefix src/admin
 node scripts/encoding-guard.js
 git diff --check
 ```
