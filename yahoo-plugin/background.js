@@ -635,6 +635,15 @@ function buildBidError(result, fallbackMessage) {
   return error;
 }
 
+function isRetryableBidTimeoutFailure(error, context = {}) {
+  const message = [
+    error?.message,
+    error?.bidResult?.error,
+    context.timedOut ? 'timeout' : ''
+  ].filter(Boolean).join(' ');
+  return /timeout/i.test(message);
+}
+
 async function postBidFailureDiagnostic(task, error, context = {}) {
   const bidResult = error?.bidResult || {};
   const contextDiagnostics = context.diagnostics || '';
@@ -6587,6 +6596,17 @@ async function executeBidTask(task, options = {}) {
         ...options,
         alreadyClaimed: true,
         tabRetryAttempted: true,
+        preserveActiveRun: true
+      });
+    }
+    if (isRetryableBidTimeoutFailure(e, { timedOut: taskTimedOut }) && !options.timeoutRetryAttempted) {
+      console.warn('[Yahoo Bid] Retrying task once after bid timeout failure:', task.id, e.message || e);
+      if (taskTab?.id) await closeTaskTab(taskTab.id).catch(() => {});
+      await sleep(1000);
+      return await executeBidTask(task, {
+        ...options,
+        alreadyClaimed: true,
+        timeoutRetryAttempted: true,
         preserveActiveRun: true
       });
     }

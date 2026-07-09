@@ -314,6 +314,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-09 出价超时失败前只重试一次
+
+商品任务出价偶发超时或出价确认阶段超时失败时，插件现在不会立刻把任务回写为 `failed`。首次命中 timeout 型出价失败时，会先关闭当前出价 tab，再重新打开商品页把同一个任务重新执行一次；重试时沿用已领取任务，不重新占用出价池槽位。第二次如果仍然超时，或出现其他非可重试问题，则继续按原逻辑记录 diagnostics 并回写 `failed`。
+
+边界：只对 timeout 型出价失败触发一次重试；价格超过上限、已结束、普通业务失败等不扩大重试范围。已有 transient server tab error 的一次重试逻辑保持不变。
+
+验证：
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增的两条出价超时重试回归，后续仍停在既有 `testBuyoutMessageChannelClosedOnThankYouStaysBidding` 失败。
+
 ### 2026-07-09 确认收货/交易开始/待发货扫描改用主状态区
 
 生产商品 `q1235534082` 的 Yahoo 商城交易页主状态仍是 `落札おめでとうございます。購入手続きを行ってください。`，但卖家消息里包含“期限后会落札者削除/取引はできません”一类说明文字，确认收货 `cancel_check` 曾从 `pending_payment` 误推进到 `cancelled`。同类全文关键词风险也存在于交易开始状态判断和待发货扫描。

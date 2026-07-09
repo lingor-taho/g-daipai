@@ -8251,7 +8251,7 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
             endTime: '2026-07-05T18:59:00+09:00'
           };
         }
-        if (msg.type === 'EXECUTE_BID') {
+        if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
           bidMessages.push(msg);
           if (bidMessages.length === 1) {
             return {
@@ -8432,10 +8432,10 @@ async function testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComple
           return {
             auctionId: 'w1233744381',
             currentPrice: 19313,
-            endTime: '2026-06-28T23:05:11+09:00'
+            endTime: '2026-12-28T23:05:11+09:00'
           };
         }
-        if (msg.type === 'EXECUTE_BID') {
+        if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
           return { success: true, bidPrice: 20001 };
         }
         return { success: true };
@@ -8456,7 +8456,7 @@ async function testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComple
     strategy: 'direct',
     bid_mode: 'bid',
     tax_type: 'tax_zero',
-    end_time: '2026-06-28T23:05:11+09:00'
+    end_time: '2026-12-28T23:05:11+09:00'
   }, { alreadyClaimed: true });
 
   assert.equal(onUpdatedListenerRegistered, false);
@@ -8510,7 +8510,7 @@ async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
             endTime: '2026-07-08T12:19:38+09:00'
           };
         }
-        if (msg.type === 'EXECUTE_BID') {
+        if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
           executeBidMessages += 1;
           throw new Error('The page keeping the extension port is moved into back/forward cache, so the message channel is closed.');
         }
@@ -8635,6 +8635,194 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoading
   assert.match(diagnostic.diagnostics, /body=入札する 現在 19,313円/);
 }
 
+async function testExecuteBidTaskRetriesTimeoutFailureBeforeStatusFailed() {
+  const calls = [];
+  const removedTabs = [];
+  let createCount = 0;
+  let executeBidCalls = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    sleep: async () => {},
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/diagnostics')) {
+        calls.push({ type: 'diagnostic', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/908/status')) {
+        calls.push({ type: 'status', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/908/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        createCount += 1;
+        return { id: 980 + createCount, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381' };
+      },
+      async get(id) {
+        return {
+          id,
+          status: 'complete',
+          active: true,
+          windowId: 3,
+          title: 'Yahoo Auction',
+          url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381'
+        };
+      },
+      async sendMessage(_id, msg) {
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'w1233744381',
+            currentPrice: 19313,
+            endTime: '2026-12-28T23:05:11+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
+          executeBidCalls += 1;
+          if (executeBidCalls === 1) {
+            return { success: false, error: 'bid result confirmation timeout', closeTab: true };
+          }
+          return { success: true, bidPrice: 20001 };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removedTabs.push(id);
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{
+          result: {
+            title: 'Yahoo Auction page',
+            url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+            bodyText: 'confirm bid page'
+          }
+        }];
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 908,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+    current_price: 19313,
+    max_price: 20001,
+    user_max_price: 20001,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_zero',
+    end_time: '2026-12-28T23:05:11+09:00'
+  }, { alreadyClaimed: true });
+
+  const statuses = calls.filter(call => call.type === 'status').map(call => call.body.status);
+  assert.equal(createCount, 2);
+  assert.equal(executeBidCalls, 2);
+  assert.deepEqual(removedTabs, [981, 982]);
+  assert.equal(statuses.includes('failed'), false);
+  assert.equal(statuses.includes('bidding'), true);
+  assert.equal(calls.some(call => call.type === 'diagnostic'), false);
+}
+
+async function testExecuteBidTaskMarksFailedWhenTimeoutRetryAlsoFails() {
+  const calls = [];
+  const removedTabs = [];
+  let createCount = 0;
+  let executeBidCalls = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn, ms) {
+      if (ms >= 30000) return 1;
+      return setTimeout(fn, 0);
+    },
+    sleep: async () => {},
+    fetch: async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/api/plugin/diagnostics')) {
+        calls.push({ type: 'diagnostic', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/909/status')) {
+        calls.push({ type: 'status', body: JSON.parse(options.body || '{}') });
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      if (value.includes('/api/plugin/task/909/snapshot')) {
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create() {
+        createCount += 1;
+        return { id: 990 + createCount, status: 'complete', url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381' };
+      },
+      async get(id) {
+        return {
+          id,
+          status: 'complete',
+          active: true,
+          windowId: 3,
+          title: 'Yahoo Auction',
+          url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381'
+        };
+      },
+      async sendMessage(_id, msg) {
+        if (msg.type === 'GET_PRODUCT_SNAPSHOT') {
+          return {
+            auctionId: 'w1233744381',
+            currentPrice: 19313,
+            endTime: '2026-12-28T23:05:11+09:00'
+          };
+        }
+        if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
+          executeBidCalls += 1;
+          return { success: false, error: 'bid result confirmation timeout', closeTab: true };
+        }
+        return { success: true };
+      },
+      async remove(id) {
+        removedTabs.push(id);
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{
+          result: {
+            title: 'Yahoo Auction page',
+            url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+            bodyText: 'confirm bid page'
+          }
+        }];
+      }
+    }
+  });
+
+  await api.executeBidTask({
+    id: 909,
+    product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
+    current_price: 19313,
+    max_price: 20001,
+    user_max_price: 20001,
+    strategy: 'direct',
+    bid_mode: 'bid',
+    tax_type: 'tax_zero',
+    end_time: '2026-12-28T23:05:11+09:00'
+  }, { alreadyClaimed: true });
+
+  const statuses = calls.filter(call => call.type === 'status').map(call => call.body.status);
+  assert.equal(createCount, 2);
+  assert.equal(executeBidCalls, 2);
+  assert.deepEqual(removedTabs, [991, 992]);
+  assert.equal(statuses.includes('failed'), true);
+  assert.equal(calls.some(call => call.type === 'diagnostic'), true);
+}
+
 async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTabFailure() {
   const calls = [];
   let removed = false;
@@ -8682,7 +8870,7 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTab
           };
         }
         if (msg.type === 'EXECUTE_BID') {
-          return { success: false, error: 'bid result confirmation timeout', closeTab: true };
+          return { success: false, error: 'bid result confirmation failed', closeTab: true };
         }
         return { success: true };
       },
@@ -9293,6 +9481,8 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();
   await testFailedBidDoesNotImmediatelySyncWonPage();
+  await testExecuteBidTaskRetriesTimeoutFailureBeforeStatusFailed();
+  await testExecuteBidTaskMarksFailedWhenTimeoutRetryAlsoFails();
   await testBuyoutMessageChannelClosedOnThankYouStaysBidding();
   await testBuyoutStoreConfirmationCompletesBeforeFinalPurchase();
   await testExecuteBidTaskRetriesTransientServerTabErrorOnce();
