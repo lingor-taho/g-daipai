@@ -824,14 +824,14 @@ async function testRequestPaymentSetsFlag() {
 
   assert.equal(result.requested, 1);
   assert.match(queries[0].sql, /order_status = \?/);
-  assert.match(queries[0].sql, /order_status IN \(\?,\?,\?\)/);
+  assert.match(queries[0].sql, /order_status IN \(\?,\?\)/);
   assert.match(queries[0].sql, /settled_at IS NOT NULL/);
   assert.equal(queries[0].params[0], 'pending_settlement');
-  assert.deepEqual(queries[0].params.slice(-3), [
+  assert.deepEqual(queries[0].params.slice(-2), [
     ORDER_STATUS_PENDING_PAYMENT,
-    ORDER_STATUS_BUNDLE_COMPLETED,
     ORDER_STATUS_PENDING_SETTLEMENT
   ]);
+  assert.equal(queries[0].params.includes(ORDER_STATUS_BUNDLE_COMPLETED), false);
   assert.equal(queries[0].params.includes(ORDER_STATUS_PENDING_SHIPMENT), false);
   assert.match(queries[1].sql, /payment_requested/);
   assert.equal(queries[1].params[0], '1');

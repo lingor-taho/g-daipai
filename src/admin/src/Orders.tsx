@@ -187,7 +187,7 @@ function canRequestPayment(item: any) {
     item?.payable_cny !== null &&
     item?.payable_cny !== undefined &&
     item?.payable_cny !== '' &&
-    (item?.order_status === 'pending_payment' || item?.order_status === 'bundle_completed' || item?.order_status === 'pending_settlement')
+    (item?.order_status === 'pending_payment' || item?.order_status === 'pending_settlement')
   );
 }
 
@@ -416,7 +416,7 @@ export default function OrdersPage() {
       return;
     }
     if (selectedRows.some(item => !canRequestPayment(item))) {
-      message.error('只能选择已结算且应付款不为空的待支付、同捆完了或待结算订单');
+      message.error('只能选择已结算且应付款不为空的待支付或待结算订单');
       return;
     }
     setPaymentSubmitting(true);

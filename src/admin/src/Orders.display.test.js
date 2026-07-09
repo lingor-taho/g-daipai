@@ -41,9 +41,15 @@ assert.equal(
 );
 
 assert.equal(
-  /function canRequestPayment\(item: any\) \{[\s\S]*item\?\.settled_at[\s\S]*item\?\.order_status === 'pending_payment'[\s\S]*item\?\.order_status === 'bundle_completed'[\s\S]*item\?\.order_status === 'pending_settlement'[\s\S]*\}/.test(source),
+  /function canRequestPayment\(item: any\) \{[\s\S]*item\?\.settled_at[\s\S]*item\?\.order_status === 'pending_payment'[\s\S]*item\?\.order_status === 'pending_settlement'[\s\S]*\}/.test(source),
   true,
   'Admin Orders payment request should allow selected settled payable orders before they enter pending_settlement'
+);
+
+assert.equal(
+  /function canRequestPayment\(item: any\) \{[\s\S]*bundle_completed[\s\S]*\}/.test(source),
+  false,
+  'Admin Orders payment request should not submit bundle_completed child orders as separate payment jobs'
 );
 
 assert.equal(
@@ -53,7 +59,7 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('\u53ea\u80fd\u9009\u62e9\u5df2\u7ed3\u7b97\u4e14\u5e94\u4ed8\u6b3e\u4e0d\u4e3a\u7a7a\u7684\u5f85\u652f\u4ed8\u3001\u540c\u6346\u5b8c\u4e86\u6216\u5f85\u7ed3\u7b97\u8ba2\u5355'),
+  source.includes('\u53ea\u80fd\u9009\u62e9\u5df2\u7ed3\u7b97\u4e14\u5e94\u4ed8\u6b3e\u4e0d\u4e3a\u7a7a\u7684\u5f85\u652f\u4ed8\u6216\u5f85\u7ed3\u7b97\u8ba2\u5355'),
   true,
   'Admin Orders payment validation message should explain the new eligible statuses'
 );

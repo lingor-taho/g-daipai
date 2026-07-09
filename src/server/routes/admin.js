@@ -2479,14 +2479,13 @@ async function requestPayment(database = db, orderIds = []) {
      SET order_status = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id IN (${placeholders})
-       AND order_status IN (?,?,?)
+       AND order_status IN (?,?)
        AND settled_at IS NOT NULL
        AND total_amount_cny IS NOT NULL`,
     [
       ORDER_STATUS_PENDING_SETTLEMENT,
       ...ids,
       ORDER_STATUS_PENDING_PAYMENT,
-      ORDER_STATUS_BUNDLE_COMPLETED,
       ORDER_STATUS_PENDING_SETTLEMENT
     ]
   );

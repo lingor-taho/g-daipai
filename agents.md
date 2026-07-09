@@ -318,7 +318,7 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 后台订单管理的“结算”和“支付”现在拆成两个明确步骤。点击“结算”只按当前公式写入汇率、手续费、含税成交价、应付款和 `settled_at`，不再修改 `orders.order_status`，因此不会因为批量结算就把订单自动送进插件付款队列。
 
-点击“支付”时，只把本次勾选且已经结算、有应付款的 `pending_payment`、`bundle_completed` 或既有 `pending_settlement` 订单改为 `pending_settlement`，并设置 `payment_requested=1`。`pending_shipment` 不会被重新提交付款。插件付款任务仍只读取 `pending_settlement + total_amount_cny` 的订单；因此 `pending_settlement` 现在表示“已明确提交到付款队列”。
+点击“支付”时，只把本次勾选且已经结算、有应付款的 `pending_payment` 或既有 `pending_settlement` 订单改为 `pending_settlement`，并设置 `payment_requested=1`。`bundle_completed` 子商品和 `pending_shipment` 不会被重新提交付款；同捆子商品保持 `bundle_completed`，由插件付款 job 作为同组金额汇总的一部分计入主商品付款，避免生成重复付款任务。插件付款任务仍只读取 `pending_settlement + total_amount_cny` 的订单；因此 `pending_settlement` 现在表示“已明确提交到付款队列”。
 
 前端边界：状态不变后，已结算的 `pending_payment`、`bundle_completed`、`pending_shipment`、`pending_settlement` 订单仍允许重新结算，方便汇率或费用输错后重算。结算成功后会同步刷新已选行缓存里的 `settled_at` 和 `payable_cny`，避免跨页自动选中的订单在马上点击“支付”时仍使用结算前缓存而误判未结算。
 
