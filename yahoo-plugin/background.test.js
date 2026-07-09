@@ -319,6 +319,71 @@ function testYahooTradeMessageExtractionReadsStoreDisabledPostingThread() {
   assert.match(result.messageHtml, /\u3054\u6ce8\u6587\u5c65\u6b74\u306f\u3054\u3056\u3044\u307e\u305b\u3093/);
 }
 
+function testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages() {
+  const api = loadBackgroundForTest();
+  const form = {
+    outerHTML: '<div class="sc-75efff8a-0"><textarea placeholder="message"></textarea><div id="msg"><button type="submit">send</button></div></div>',
+    innerText: 'send',
+    textContent: 'send',
+    querySelector(selector) {
+      if (selector === 'textarea') return {};
+      if (selector === '#msg button, button[type="submit"]') return {};
+      return null;
+    }
+  };
+  const section = {
+    outerHTML: '<section><p>store message area</p>' + form.outerHTML + '</section>',
+    innerText: 'store message area send',
+    textContent: 'store message area send',
+    querySelector(selector) {
+      if (selector === 'textarea') return {};
+      if (selector === '#msg button, button[type="submit"]') return {};
+      return null;
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#messagelist') return null;
+      if (selector === 'section textarea') return {};
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return [];
+      if (selector === 'section ul') return [];
+      if (selector === 'section') return [section];
+      if (selector === '.acMdMsgForm, [id*="message"], [class*="Msg"]') return [];
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'store-empty');
+  assert.match(result.messageHtml, /data-gdaipai-message-empty/);
+}
+
+async function testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender() {
+  let calls = 0;
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript() {
+        calls += 1;
+        if (calls === 1) {
+          return [{ result: { success: false, error: 'message list not found' } }];
+        }
+        return [{ result: { success: true, messageHtml: '<ul class="sc-c46fd2ce-0"><dl><dd>rendered</dd></dl></ul>', pageType: 'store' } }];
+      }
+    }
+  });
+
+  const result = await api.extractYahooTradeMessages(1);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'store');
+  assert.equal(calls, 2);
+}
+
 function testSendYahooMessageJobDoesNotAutoFetchAfterSend() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
@@ -9437,6 +9502,8 @@ testYahooTradeMessageSelectorsCoverNormalAndStorePages();
 testYahooTradeMessageExtractionSkipsStoreLegalLinks();
 testYahooTradeMessageExtractionDoesNotFallbackToStoreLegalLinks();
 testYahooTradeMessageExtractionReadsStoreDisabledPostingThread();
+testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages();
+await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();
 testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();

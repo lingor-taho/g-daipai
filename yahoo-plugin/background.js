@@ -12,6 +12,8 @@ const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const MESSAGE_JOB_TIMEOUT_MS = 30000;
+const MESSAGE_EXTRACT_RENDER_WAIT_MS = 8000;
+const MESSAGE_EXTRACT_POLL_MS = 500;
 const BIDDING_SYNC_MAX_PAGES = 50;
 const PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS = 8000;
 const PENDING_SHIPMENT_SCAN_POLL_MS = 500;
@@ -1000,6 +1002,19 @@ function extractYahooTradeMessageFromPage() {
   }
   const store = storeCandidates.find(isStoreMessageList);
   if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
+  const storeMessageForm = Array.from(document.querySelectorAll('section') || [])
+    .find(node => {
+      if (!node || typeof node.querySelector !== 'function') return false;
+      return Boolean(node.querySelector('textarea')) &&
+        Boolean(node.querySelector('#msg button, button[type="submit"]'));
+    });
+  if (storeMessageForm) {
+    return {
+      success: true,
+      messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
+      pageType: 'store-empty'
+    };
+  }
   const fallback = [...document.querySelectorAll('.acMdMsgForm, [id*="message"], [class*="Msg"]')]
     .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
   if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
@@ -1038,12 +1053,20 @@ function getYahooTradeMessageSendScript(messageText) {
 }
 
 async function extractYahooTradeMessages(tabId) {
-  const injectionResult = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: extractYahooTradeMessageFromPage
-  });
-  return injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
+  const startedAt = Date.now();
+  let lastResult = { success: false, error: 'message extraction returned no result' };
+  while (Date.now() - startedAt <= MESSAGE_EXTRACT_RENDER_WAIT_MS) {
+    const injectionResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: extractYahooTradeMessageFromPage
+    });
+    lastResult = injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
+    if (lastResult?.success) return lastResult;
+    if (lastResult?.error !== 'message list not found') return lastResult;
+    await sleep(MESSAGE_EXTRACT_POLL_MS);
+  }
+  return lastResult;
 }
 
 async function sendYahooTradeMessage(tabId, messageText) {

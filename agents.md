@@ -314,6 +314,25 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-09 商城消息无记录也可打开聊天框
+
+商城交易页消息读取逻辑与普通商品保持同一业务语义：普通商品按 `#messagelist`，商城商品按新版 `section / ul.sc-c46fd2ce-0 / dl / dd / time / textarea` 结构读取。只要 Yahoo 页面存在交易消息/发送区域，就应视为抓取成功，后台时间可点击，弹窗内可继续输入并发送消息；不能因为当前没有历史聊天 `dl` 就返回 `message list not found`。
+
+修复：商城消息提取在未找到 `dl/dd/time` 消息列表时，会继续识别同一 `section` 下的 `textarea` 和 `#msg button`，返回空消息占位并写入最新更新时间，后台弹窗仍显示发送输入框。插件打开交易页后提取消息增加短轮询，最多等待 8 秒，避免商城消息区异步渲染慢时过早写入 `message list not found`。法律链接列表仍不会作为聊天内容保存。
+
+验证：
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node src/server/routes/admin.orders.test.js
+node src/admin/src/MessageRead.display.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增的商城消息空记录和异步渲染回归，后续仍停在既有 `testBuyoutMessageChannelClosedOnThankYouStaysBidding` 失败。
+
 ### 2026-07-09 消息重新抓取不再沿用旧记录
 
 后台消息读取页点击“消息更新”后，线上 `/api/plugin/yahoo-messages/jobs` 和 `/api/plugin/idle-action/next` 均显示当前没有 pending 消息任务；结合代码确认，旧逻辑存在两个问题：一是提交抓取任务时要求 `tasks.status='success'`，但消息列表本身按订单展示，部分已有订单可能因任务状态不是 `success` 而无法排队；二是已有 `message_html` 的订单即使后续抓取失败，前端仍优先显示旧 `message_updated_at`，让用户看到旧时间并误以为没有执行。
