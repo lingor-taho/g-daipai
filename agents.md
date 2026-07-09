@@ -318,9 +318,11 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 商城交易页消息读取逻辑与普通商品保持同一业务语义：普通商品按 `#messagelist`，商城商品按新版 `section / ul.sc-c46fd2ce-0 / dl / dd / time / textarea` 结构读取。只要 Yahoo 页面存在交易消息/发送区域，就应视为抓取成功，后台时间可点击，弹窗内可继续输入并发送消息；不能因为当前没有历史聊天 `dl` 就返回 `message list not found`。
 
-修复：商城消息提取在未找到 `dl/dd/time` 消息列表时，会继续识别同一 `section` 下的 `textarea` 和 `#msg button`，返回空消息占位并写入最新更新时间，后台弹窗仍显示发送输入框。插件打开交易页后提取消息增加短轮询，最多等待 8 秒，避免商城消息区异步渲染慢时过早写入 `message list not found`。法律链接列表仍不会作为聊天内容保存。
+修复：商城消息提取在未找到 `dl/dd/time` 消息列表时，会继续识别消息区的 `textarea` 和 `#msg button`，返回空消息占位并写入最新更新时间，后台弹窗仍显示发送输入框。提取边界必须限定在 Yahoo 页面 `メッセージ` 下方的聊天/发送区域，不能把上方 `取引情報`、`配送情報`、`購入日時`、`注文番号` 等交易信息容器当作消息内容保存。插件打开交易页后提取消息增加短轮询，最多等待 8 秒，避免商城消息区异步渲染慢时过早写入 `message list not found`。法律链接列表仍不会作为聊天内容保存。
 
-后台显示规则：没有发起过消息抓取的订单，时间列保持 `-`，即使历史脏数据里残留 `fetch_status='failed'` 和 `fetch_error`，也不显示 `message list not found`；只有存在 `fetch_requested_at`、`fetch_started_at` 或消息更新时间的真实抓取记录，才显示抓取失败信息。
+发送边界：普通商品仍按原 `#messagelist`、`#textarea`、`#submitButton` 路径处理；商城商品检测到 `#msg button` 后，只在该按钮附近的消息表单内查找 `textarea`，把后台弹窗输入框内容填入 Yahoo 的 `メッセージを入力してください。` 输入框后点击同一消息表单的 `送信`，避免误填页面其他输入框。
+
+后台显示规则：消息抓取只能由“消息更新”按钮或发送消息动作显式触发，消息列表查询本身不得创建 pending 任务。没有发起过消息抓取的订单，时间列保持 `-`，即使历史脏数据里残留 `fetch_status='failed'` 和 `fetch_error`，服务端也不再把 failed/error 返回给前端；只有存在 `fetch_requested_at`、`fetch_started_at`、消息更新时间或消息内容的真实抓取/消息记录，才显示抓取失败信息。
 
 验证：
 ```powershell

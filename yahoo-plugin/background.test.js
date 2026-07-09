@@ -85,6 +85,11 @@ function loadBackgroundForTest(overrides = {}) {
       }
     }
   };
+  if ('document' in overrides) sandbox.document = overrides.document;
+  if ('InputEvent' in overrides) sandbox.InputEvent = overrides.InputEvent;
+  if ('PointerEvent' in overrides) sandbox.PointerEvent = overrides.PointerEvent;
+  if ('MouseEvent' in overrides) sandbox.MouseEvent = overrides.MouseEvent;
+  if ('Event' in overrides) sandbox.Event = overrides.Event;
   vm.runInNewContext(code, sandbox);
   return sandbox.globalThis.__G_DAIPAI_BACKGROUND_TEST__;
 }
@@ -351,6 +356,7 @@ function testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages() {
       if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return [];
       if (selector === 'section ul') return [];
       if (selector === 'section') return [section];
+      if (selector === 'section, .acMdMsgForm, [id*="message"], [class*="Msg"]') return [section];
       if (selector === '.acMdMsgForm, [id*="message"], [class*="Msg"]') return [];
       return [];
     }
@@ -361,6 +367,178 @@ function testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages() {
   assert.equal(result.success, true);
   assert.equal(result.pageType, 'store-empty');
   assert.match(result.messageHtml, /data-gdaipai-message-empty/);
+}
+
+function testYahooTradeMessageExtractionDoesNotReturnTransactionInfoForStoreEmptyForm() {
+  const api = loadBackgroundForTest();
+  const wrongMessageContainer = {
+    outerHTML: '<div class="acMdMsgForm"><section><h2>transaction</h2><dl><dt>order</dt><dd>otakara-reuse-10046903</dd></dl><h2>message</h2><textarea></textarea><div id="msg"><button type="submit">send</button></div></section></div>',
+    innerText: '\u53d6\u5f15\u60c5\u5831 \u8cfc\u5165\u65e5\u6642 \u6ce8\u6587\u756a\u53f7 otakara-reuse-10046903 \u30e1\u30c3\u30bb\u30fc\u30b8 \u9001\u4fe1',
+    textContent: '\u53d6\u5f15\u60c5\u5831 \u8cfc\u5165\u65e5\u6642 \u6ce8\u6587\u756a\u53f7 otakara-reuse-10046903 \u30e1\u30c3\u30bb\u30fc\u30b8 \u9001\u4fe1',
+    querySelector(selector) {
+      if (selector === 'textarea') return {};
+      if (selector === '#msg button, button[type="submit"]') return {};
+      return null;
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#messagelist') return null;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"]') return [];
+      if (selector === 'section ul') return [];
+      if (selector === 'section') return [];
+      if (selector === 'section, .acMdMsgForm, [id*="message"], [class*="Msg"]') return [wrongMessageContainer];
+      if (selector === '.acMdMsgForm, [id*="message"], [class*="Msg"]') return [wrongMessageContainer];
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'store-empty');
+  assert.match(result.messageHtml, /data-gdaipai-message-empty/);
+  assert.doesNotMatch(result.messageHtml, /otakara-reuse-10046903/);
+  assert.doesNotMatch(result.messageHtml, /\u8cfc\u5165\u65e5\u6642|\u6ce8\u6587\u756a\u53f7/);
+}
+
+function testYahooTradeMessageSendScopesStoreTextareaToMsgForm() {
+  const api = loadBackgroundForTest();
+  const events = [];
+  const createTextarea = name => ({
+    name,
+    value: '',
+    focus() { events.push(`${name}:focus`); },
+    dispatchEvent(event) { events.push(`${name}:${event.type}`); }
+  });
+  const wrongTextarea = createTextarea('wrong');
+  const storeTextarea = createTextarea('store');
+  const formContainer = {
+    querySelector(selector) {
+      if (selector === 'textarea') return storeTextarea;
+      return null;
+    },
+    parentElement: null
+  };
+  const msgContainer = {
+    querySelector() { return null; },
+    parentElement: formContainer
+  };
+  const storeButton = {
+    disabled: false,
+    parentElement: msgContainer,
+    value: '',
+    innerText: '\u9001\u4fe1',
+    textContent: '\u9001\u4fe1',
+    dispatchEvent(event) { events.push(`button:${event.type}`); },
+    click() { events.push('button:click'); }
+  };
+  const document = {
+    body: {},
+    querySelector(selector) {
+      if (selector === '#textarea') return wrongTextarea;
+      if (selector === '#submitButton') return null;
+      if (selector === '#msg button[type="submit"], #msg button') return storeButton;
+      if (selector === 'textarea[placeholder*="メッセージ"]') return storeTextarea;
+      if (selector === 'textarea') return wrongTextarea;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'button, input[type="submit"], input[type="button"]') return [storeButton];
+      return [];
+    }
+  };
+  function FakeEvent(type, options = {}) {
+    this.type = type;
+    Object.assign(this, options);
+  }
+
+  const result = Function(
+    'document',
+    'InputEvent',
+    'PointerEvent',
+    'MouseEvent',
+    'Event',
+    `return ${api.getYahooTradeMessageSendScript('hello')};`
+  )(document, FakeEvent, FakeEvent, FakeEvent, FakeEvent);
+
+  assert.equal(result.success, true);
+  assert.equal(wrongTextarea.value, '');
+  assert.equal(storeTextarea.value, 'hello');
+  assert.ok(events.includes('button:click'));
+}
+
+async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
+  const events = [];
+  const createTextarea = name => ({
+    name,
+    value: '',
+    focus() { events.push(`${name}:focus`); },
+    dispatchEvent(event) { events.push(`${name}:${event.type}`); }
+  });
+  const wrongTextarea = createTextarea('wrong');
+  const storeTextarea = createTextarea('store');
+  const formContainer = {
+    querySelector(selector) {
+      if (selector === 'textarea') return storeTextarea;
+      return null;
+    },
+    parentElement: null
+  };
+  const msgContainer = {
+    querySelector() { return null; },
+    parentElement: formContainer
+  };
+  const storeButton = {
+    disabled: false,
+    parentElement: msgContainer,
+    value: '',
+    innerText: '\u9001\u4fe1',
+    textContent: '\u9001\u4fe1',
+    dispatchEvent(event) { events.push(`button:${event.type}`); },
+    click() { events.push('button:click'); }
+  };
+  const document = {
+    body: {},
+    querySelector(selector) {
+      if (selector === '#textarea') return wrongTextarea;
+      if (selector === '#submitButton') return null;
+      if (selector === '#msg button[type="submit"], #msg button') return storeButton;
+      if (selector === 'textarea[placeholder*="メッセージ"]') return storeTextarea;
+      if (selector === 'textarea') return wrongTextarea;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'button, input[type="submit"], input[type="button"]') return [storeButton];
+      return [];
+    }
+  };
+  function FakeEvent(type, options = {}) {
+    this.type = type;
+    Object.assign(this, options);
+  }
+  const api = loadBackgroundForTest({
+    document,
+    InputEvent: FakeEvent,
+    PointerEvent: FakeEvent,
+    MouseEvent: FakeEvent,
+    Event: FakeEvent,
+    scripting: {
+      async executeScript(options) {
+        return [{ result: options.func(options.args[0]) }];
+      }
+    }
+  });
+
+  const result = await api.sendYahooTradeMessage(1, 'hello');
+
+  assert.equal(result.success, true);
+  assert.equal(wrongTextarea.value, '');
+  assert.equal(storeTextarea.value, 'hello');
+  assert.ok(events.includes('button:click'));
 }
 
 async function testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender() {
@@ -9503,6 +9681,9 @@ testYahooTradeMessageExtractionSkipsStoreLegalLinks();
 testYahooTradeMessageExtractionDoesNotFallbackToStoreLegalLinks();
 testYahooTradeMessageExtractionReadsStoreDisabledPostingThread();
 testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages();
+testYahooTradeMessageExtractionDoesNotReturnTransactionInfoForStoreEmptyForm();
+testYahooTradeMessageSendScopesStoreTextareaToMsgForm();
+await testSendYahooTradeMessageScopesStoreTextareaToMsgForm();
 await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();
 testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();

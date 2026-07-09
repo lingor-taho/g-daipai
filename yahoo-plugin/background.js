@@ -987,6 +987,19 @@ function extractYahooTradeMessageFromPage() {
   const normal = document.querySelector('#messagelist');
   if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const emptyStoreMessageResult = () => ({
+    success: true,
+    messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
+    pageType: 'store-empty'
+  });
+  const hasMessageForm = node => {
+    if (!node || typeof node.querySelector !== 'function') return false;
+    return Boolean(node.querySelector('textarea')) &&
+      Boolean(node.querySelector('#msg button, button[type="submit"]'));
+  };
+  const hasTransactionInfo = node => /取引情報|配送情報|購入日時|注文番号/.test(
+    normalize(node?.innerText || node?.textContent || '')
+  );
   const isStoreMessageList = node => {
     if (!node || typeof node.querySelector !== 'function') return false;
     if (!node.querySelector('dl') || !node.querySelector('dd')) return false;
@@ -1002,21 +1015,13 @@ function extractYahooTradeMessageFromPage() {
   }
   const store = storeCandidates.find(isStoreMessageList);
   if (store) return { success: true, messageHtml: store.outerHTML, pageType: 'store' };
-  const storeMessageForm = Array.from(document.querySelectorAll('section') || [])
-    .find(node => {
-      if (!node || typeof node.querySelector !== 'function') return false;
-      return Boolean(node.querySelector('textarea')) &&
-        Boolean(node.querySelector('#msg button, button[type="submit"]'));
-    });
-  if (storeMessageForm) {
-    return {
-      success: true,
-      messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
-      pageType: 'store-empty'
-    };
-  }
+  const storeMessageForm = Array.from(document.querySelectorAll('section, .acMdMsgForm, [id*="message"], [class*="Msg"]') || [])
+    .find(hasMessageForm);
+  if (storeMessageForm) return emptyStoreMessageResult();
   const fallback = [...document.querySelectorAll('.acMdMsgForm, [id*="message"], [class*="Msg"]')]
     .find(node => /送信|あなた|ストア|メッセージ|取引/.test((node.innerText || node.textContent || '').trim()));
+  if (fallback && hasMessageForm(fallback)) return emptyStoreMessageResult();
+  if (fallback && hasTransactionInfo(fallback)) return { success: false, error: 'message list not found' };
   if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
   return { success: false, error: 'message list not found' };
 }
@@ -1029,16 +1034,27 @@ function getYahooTradeMessageSendScript(messageText) {
   const encoded = JSON.stringify(String(messageText || ''));
   return `(() => {
     const messageText = ${encoded};
-    const textarea = document.querySelector('#textarea') ||
-      document.querySelector('textarea[placeholder*="メッセージ"]') ||
-      document.querySelector('textarea');
+    const findNearbyTextarea = button => {
+      let node = button;
+      for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
+        const textarea = node.querySelector && node.querySelector('textarea');
+        if (textarea) return textarea;
+      }
+      return null;
+    };
+    const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+    const textarea = storeButton
+      ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
+      : (document.querySelector('#textarea') ||
+        document.querySelector('textarea[placeholder*="メッセージ"]') ||
+        document.querySelector('textarea'));
     if (!textarea) return { success: false, error: 'message textarea not found' };
     textarea.focus();
     textarea.value = messageText;
     textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: messageText }));
     textarea.dispatchEvent(new Event('change', { bubbles: true }));
-    const button = document.querySelector('#submitButton') ||
-      document.querySelector('#msg button[type="submit"], #msg button') ||
+    const button = storeButton ||
+      document.querySelector('#submitButton') ||
       [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
         .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
     if (!button) return { success: false, error: 'message submit button not found' };
@@ -1075,16 +1091,27 @@ async function sendYahooTradeMessage(tabId, messageText) {
     world: 'MAIN',
     args: [String(messageText || '')],
     func: messageText => {
-      const textarea = document.querySelector('#textarea') ||
-        document.querySelector('textarea[placeholder*="メッセージ"]') ||
-        document.querySelector('textarea');
+      const findNearbyTextarea = button => {
+        let node = button;
+        for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
+          const textarea = node.querySelector && node.querySelector('textarea');
+          if (textarea) return textarea;
+        }
+        return null;
+      };
+      const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+      const textarea = storeButton
+        ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
+        : (document.querySelector('#textarea') ||
+          document.querySelector('textarea[placeholder*="メッセージ"]') ||
+          document.querySelector('textarea'));
       if (!textarea) return { success: false, error: 'message textarea not found' };
       textarea.focus();
       textarea.value = messageText;
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: messageText }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
-      const button = document.querySelector('#submitButton') ||
-        document.querySelector('#msg button[type="submit"], #msg button') ||
+      const button = storeButton ||
+        document.querySelector('#submitButton') ||
         [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
           .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
       if (!button) return { success: false, error: 'message submit button not found' };

@@ -644,9 +644,18 @@ function buildAdminMessagesListQuery(filters = {}) {
             u.id AS user_id,
             u.username,
             m.message_html,
-            m.fetch_status,
+            CASE WHEN m.fetch_requested_at IS NOT NULL
+                   OR m.fetch_started_at IS NOT NULL
+                   OR m.updated_at IS NOT NULL
+                   OR NULLIF(TRIM(COALESCE(m.message_html, '')), '') IS NOT NULL
+                 THEN m.fetch_status ELSE NULL END AS fetch_status,
+            m.fetch_requested_at,
             m.fetch_started_at,
-            m.fetch_error,
+            CASE WHEN m.fetch_requested_at IS NOT NULL
+                   OR m.fetch_started_at IS NOT NULL
+                   OR m.updated_at IS NOT NULL
+                   OR NULLIF(TRIM(COALESCE(m.message_html, '')), '') IS NOT NULL
+                 THEN m.fetch_error ELSE NULL END AS fetch_error,
             m.send_status,
             m.send_error,
             m.updated_at AS message_updated_at
