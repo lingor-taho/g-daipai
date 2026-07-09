@@ -1862,6 +1862,42 @@ function testPaymentPageStateDetectsBuyerDeletedCancellation() {
   assert.equal(cancelledState.cancelled, true);
 }
 
+function testPaymentPageStateUsesPrimaryStatusForCancellation() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=q1235534082',
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    bodyText: [
+      '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002',
+      '\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u8aac\u660e\u6587\u306b\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3068\u3044\u3046\u6587\u5b57\u5217\u304c\u542b\u307e\u308c\u3066\u3082\u3001\u3053\u308c\u306f\u72b6\u614b\u3067\u306f\u306a\u3044\u3002'
+    ].join('\n'),
+    controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b']
+  });
+
+  assert.equal(state.cancelled, false);
+  assert.equal(state.hasPurchaseProcedureButton, true);
+}
+
+function testPaymentPageStateUsesNormalStatusComment() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=q1235534082',
+    transactionStatusText: '\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002\n\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+    bodyText: [
+      '\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002',
+      '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u671f\u65e5\u3092\u904e\u304e\u308b\u3068\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u308b\u5834\u5408\u304c\u3042\u308a\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3068\u3044\u3046\u8aac\u660e\u304c\u3042\u308b\u3002'
+    ].join('\n'),
+    controls: []
+  });
+
+  assert.equal(state.cancelled, false);
+  assert.equal(state.alreadyPaid, true);
+}
+
 function testPaymentPageStateDetectsStoreConfirmationSection() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
@@ -9116,6 +9152,8 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testPaymentNoAppraisalSelectionClicksUnsetRadio();
   testPaymentPageStateUsesTotalAmountWithPayPayBenefitAd();
   testPaymentPageStateDetectsBuyerDeletedCancellation();
+  testPaymentPageStateUsesPrimaryStatusForCancellation();
+  testPaymentPageStateUsesNormalStatusComment();
   testPaymentPageStateDetectsStoreConfirmationSection();
   testPaymentPageStateRespectsExplicitNoStoreConfirmationSection();
   testPaymentPageStateIgnoresStoreConfirmationTitleWithoutChangeControl();

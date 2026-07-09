@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-03
+**最后更新**: 2026-07-09
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -313,6 +313,22 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-09 付款页状态改为结构化节点判断
+
+生产商品 `q1235534082` 在 Yahoo 商城购买状态页仍显示 `落札おめでとうございます。購入手続きを行ってください。`，但系统订单被写成 `cancelled`。生产 debug 确认订单 `512` 从 `pending_settlement` 变为 `cancelled`，来源为 `payment_cancelled_page`；页面卖家消息中包含“期限后会落札者削除/取引はできません”一类说明文字，原付款页状态判断扫全文，容易把消息内容误当订单状态。
+
+修复：`yahoo-plugin/background.js` 的付款页状态优先读取主状态结构，不再用整页正文判断取消/已付款/完成。商城商品从 `main header p.sc-5968173-0` 或 `#pap` 购买按钮前的主状态段落读取，例如 `落札おめでとうございます。購入手続きを行ってください。`；普通商品从 `.acMdStatusCmt .elAdvnc p.fntB` 读取，例如 `出品者に支払い完了の連絡をしました。` + `商品の発送連絡をお待ちください。`。卖家消息、交易说明和帮助文案不再参与付款状态关键词判断；同时 `取引はできません` 不再作为单独全文取消关键词，必须依附真实取消状态文案。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增的结构化状态回归，后续仍停在既有 `testBuyoutMessageChannelClosedOnThankYouStaysBidding` 失败。
 
 ### 2026-07-08 用户端生产服务不再使用 Vite dev
 
