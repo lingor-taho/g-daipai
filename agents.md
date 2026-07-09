@@ -314,6 +314,22 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-09 消息重新抓取不再沿用旧记录
+
+后台消息读取页点击“消息更新”后，线上 `/api/plugin/yahoo-messages/jobs` 和 `/api/plugin/idle-action/next` 均显示当前没有 pending 消息任务；结合代码确认，旧逻辑存在两个问题：一是提交抓取任务时要求 `tasks.status='success'`，但消息列表本身按订单展示，部分已有订单可能因任务状态不是 `success` 而无法排队；二是已有 `message_html` 的订单即使后续抓取失败，前端仍优先显示旧 `message_updated_at`，让用户看到旧时间并误以为没有执行。
+
+修复：消息抓取请求现在只要求订单存在且订单未取消，不再依赖 `tasks.status='success'`。每次提交抓取任务时会清空旧 `message_html` 和 `updated_at`，确保后续只显示本次最新抓取结果；如果本次失败，消息读取页显示失败信息，不再显示旧聊天记录或旧更新时间。普通/商城消息的实际页面抓取逻辑不变，仍由插件领取 pending 任务后打开 Yahoo 交易页提取。
+
+验证：
+```powershell
+node src/server/routes/admin.orders.test.js
+node src/admin/src/MessageRead.display.test.js
+node --check src/server/routes/admin.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-09 订单结算和付款队列拆分
 
 后台订单管理的“结算”和“支付”现在拆成两个明确步骤。点击“结算”只按当前公式写入汇率、手续费、含税成交价、应付款和 `settled_at`，不再修改 `orders.order_status`，因此不会因为批量结算就把订单自动送进插件付款队列。

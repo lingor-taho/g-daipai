@@ -57,3 +57,19 @@ assert.equal(
   true,
   'MessageRead should let stuck message processing rows become clickable after 30 seconds'
 );
+
+{
+  const messageTimeColumnIndex = source.indexOf("dataIndex: 'message_updated_at'");
+  const failedStatusIndex = source.indexOf("row.fetch_status === 'failed'", messageTimeColumnIndex);
+  const oldMessageTimeIndex = source.indexOf('value ? (', messageTimeColumnIndex);
+  assert.equal(
+    failedStatusIndex > messageTimeColumnIndex && failedStatusIndex < oldMessageTimeIndex,
+    true,
+    'MessageRead should show fetch failures before old successful message timestamps'
+  );
+  assert.equal(
+    source.includes('旧记录'),
+    false,
+    'MessageRead should not offer old messages after a later fetch attempt fails'
+  );
+}

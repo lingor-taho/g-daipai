@@ -248,7 +248,11 @@ export default function MessageReadPage() {
             title: '时间',
             dataIndex: 'message_updated_at',
             width: 180,
-            render: (value, row: any) => value ? (
+            render: (value, row: any) => row.fetch_status === 'failed' ? (
+              <Space direction="vertical" size={0}>
+                <Typography.Text type="danger">{row.fetch_error || '抓取失败'}</Typography.Text>
+              </Space>
+            ) : value ? (
               <Button type="link" style={{ padding: 0 }} onClick={() => setSelected(row)}>{formatDateTime(value)}</Button>
             ) : row.fetch_status === 'failed' ? <Typography.Text type="danger">{row.fetch_error || '抓取失败'}</Typography.Text> : '-'
           }

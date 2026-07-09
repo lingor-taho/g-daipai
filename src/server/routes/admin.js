@@ -674,7 +674,7 @@ async function requestYahooMessageFetch(database, orderId) {
     `SELECT o.id AS order_id, COALESCE(o.product_id, t.product_id) AS product_id
      FROM orders o
      INNER JOIN tasks t ON t.id = o.task_id
-     WHERE o.id = ? AND t.status = 'success'`,
+     WHERE o.id = ? AND o.order_status != 'cancelled'`,
     [id]
   );
   if (!order) {
@@ -683,13 +683,15 @@ async function requestYahooMessageFetch(database, orderId) {
     throw error;
   }
   await database.query(
-    `INSERT INTO yahoo_trade_messages (order_id, product_id, fetch_status, fetch_requested_at, fetch_error, created_at)
-     VALUES (?, ?, 'pending', CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP)
+    `INSERT INTO yahoo_trade_messages (order_id, product_id, message_html, fetch_status, fetch_requested_at, fetch_error, updated_at, created_at)
+     VALUES (?, ?, NULL, 'pending', CURRENT_TIMESTAMP, NULL, NULL, CURRENT_TIMESTAMP)
      ON CONFLICT(order_id) DO UPDATE SET
        product_id = excluded.product_id,
+       message_html = NULL,
        fetch_status = 'pending',
        fetch_requested_at = CURRENT_TIMESTAMP,
-       fetch_error = NULL`,
+       fetch_error = NULL,
+       updated_at = NULL`,
     [order.order_id, order.product_id]
   );
   return { success: true, orderId: order.order_id, productId: order.product_id };

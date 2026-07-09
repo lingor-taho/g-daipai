@@ -37,6 +37,7 @@ const {
   deleteManualOrderImportBatch,
   requestScan,
   requestPayment,
+  requestYahooMessageFetch,
   clearPaymentAlertAndContinue,
   normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig,
@@ -170,6 +171,32 @@ function testManualOrderImportSummarySeparatesEmptyReadyBatches() {
       readyEmpty: 1
     }
   );
+}
+
+async function testRequestYahooMessageFetchAllowsExistingOrderWithoutSuccessfulTask() {
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      assert.doesNotMatch(sql, /t\.status\s*=\s*'success'/);
+      assert.match(sql, /o\.order_status != 'cancelled'/);
+      return { order_id: 77, product_id: 's1235672175' };
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await requestYahooMessageFetch(fakeDb, 77);
+
+  assert.deepEqual(result, { success: true, orderId: 77, productId: 's1235672175' });
+  const insert = calls.find(call => call.type === 'query');
+  assert.ok(insert);
+  assert.match(insert.sql, /fetch_status = 'pending'/);
+  assert.match(insert.sql, /message_html = NULL/);
+  assert.match(insert.sql, /updated_at = NULL/);
+  assert.deepEqual(insert.params, [77, 's1235672175']);
 }
 
 async function testConfirmManualOrderImportSkipsUnassignedItems() {
@@ -1242,9 +1269,10 @@ testBuildBidFailureReportQueries();
 testBuildRecentTaskFailureUserReportQuery();
 testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
-testManualOrderImportSummarySeparatesEmptyReadyBatches();
+  testManualOrderImportSummarySeparatesEmptyReadyBatches();
 
 Promise.all([
+  testRequestYahooMessageFetchAllowsExistingOrderWithoutSuccessfulTask(),
   testUpdateOrderRemarkStoresTrimmedRemark(),
   testUpdateOrderRemarkRejectsMissingOrder(),
   testRequestScanSetsCounterToConfiguredEveryRuns(),
