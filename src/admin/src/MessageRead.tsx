@@ -68,7 +68,17 @@ function sanitizeTradeHtml(html: string) {
     .replace(/\shref="javascript:[^"]*"/gi, ' href="#"');
 }
 
+function isTransactionInfoWithoutYahooMessageMarkup(html: string) {
+  const raw = String(html || '');
+  const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const hasTransactionInfo = /取引情報|配送情報|購入日時|注文番号/.test(text);
+  const hasYahooMessageMarkup = /id=["']messagelist["']|sc-c46fd2ce-0|sc-5ecc53ec|data-gdaipai-message-empty/i.test(raw) ||
+    /(?:あなた|ストア|出品者|落札者)[\s\S]*<dd\b/i.test(raw);
+  return hasTransactionInfo && !hasYahooMessageMarkup;
+}
+
 function renderTradeHtml(html: string) {
+  if (isTransactionInfoWithoutYahooMessageMarkup(html)) return '';
   const sanitized = sanitizeTradeHtml(html);
   if (typeof DOMParser === 'undefined') return sanitized;
   const parser = new DOMParser();

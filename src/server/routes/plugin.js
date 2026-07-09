@@ -1906,6 +1906,19 @@ async function getYahooMessageJobs(database = db, limit = 3) {
   return { jobs, total: jobs.length };
 }
 
+const EMPTY_YAHOO_TRADE_MESSAGE_HTML = '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>';
+
+function normalizeYahooTradeMessageHtml(html = '') {
+  const raw = String(html || '').trim();
+  if (!raw) return '';
+  const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const hasTransactionInfo = /取引情報|配送情報|購入日時|注文番号/.test(text);
+  const hasYahooMessageMarkup = /id=["']messagelist["']|sc-c46fd2ce-0|sc-5ecc53ec|data-gdaipai-message-empty/i.test(raw) ||
+    /(?:あなた|ストア|出品者|落札者)[\s\S]*<dd\b/i.test(raw);
+  if (hasTransactionInfo && !hasYahooMessageMarkup) return EMPTY_YAHOO_TRADE_MESSAGE_HTML;
+  return raw;
+}
+
 async function updateYahooMessageStatus(payload = {}, database = db) {
   const orderId = Number(payload.orderId || 0);
   if (!Number.isInteger(orderId) || orderId <= 0) {
@@ -1927,7 +1940,7 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
       );
       return { updated: result.rowCount || 0 };
     }
-    const messageHtml = String(payload.messageHtml || '').trim();
+    const messageHtml = normalizeYahooTradeMessageHtml(payload.messageHtml || '');
     const result = await database.query(
       `UPDATE yahoo_trade_messages
        SET send_status = 'idle',
@@ -1952,7 +1965,7 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
     );
     return { updated: result.rowCount || 0 };
   }
-  const messageHtml = String(payload.messageHtml || '').trim();
+  const messageHtml = normalizeYahooTradeMessageHtml(payload.messageHtml || '');
   if (!messageHtml) {
     const error = new Error('messageHtml is required');
     error.statusCode = 400;
@@ -3198,6 +3211,7 @@ module.exports.getScanJobs = getScanJobs;
 module.exports.updateScanStatus = updateScanStatus;
 module.exports.getYahooMessageJobs = getYahooMessageJobs;
 module.exports.updateYahooMessageStatus = updateYahooMessageStatus;
+module.exports.normalizeYahooTradeMessageHtml = normalizeYahooTradeMessageHtml;
 module.exports.buildDaipaiSheetRow = buildDaipaiSheetRow;
 module.exports.calculateSheetPayable = calculateSheetPayable;
 module.exports.getOrdersForSheetAppend = getOrdersForSheetAppend;

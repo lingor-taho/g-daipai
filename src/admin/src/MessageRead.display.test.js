@@ -29,6 +29,15 @@ assert.equal(
 );
 
 assert.equal(
+  source.includes('function isTransactionInfoWithoutYahooMessageMarkup') &&
+    source.includes('購入日時') &&
+    source.includes('注文番号') &&
+    source.includes("if (isTransactionInfoWithoutYahooMessageMarkup(html)) return ''"),
+  true,
+  'MessageRead modal should hide transaction info that was saved as message html'
+);
+
+assert.equal(
   source.includes('canRequestMessageUpdate') &&
     source.includes("row.order_status === 'cancelled'") &&
     source.includes("row.order_status === 'bundle_completed'") &&

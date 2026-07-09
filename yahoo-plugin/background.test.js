@@ -541,6 +541,30 @@ async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
   assert.ok(events.includes('button:click'));
 }
 
+async function testSendYahooTradeMessageRetriesUntilTextareaRenders() {
+  let calls = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn) {
+      fn();
+      return 1;
+    },
+    scripting: {
+      async executeScript() {
+        calls += 1;
+        if (calls === 1) {
+          return [{ result: { success: false, error: 'message textarea not found' } }];
+        }
+        return [{ result: { success: true } }];
+      }
+    }
+  });
+
+  const result = await api.sendYahooTradeMessage(1, 'hello');
+
+  assert.equal(result.success, true);
+  assert.equal(calls, 2);
+}
+
 async function testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender() {
   let calls = 0;
   const api = loadBackgroundForTest({
@@ -562,15 +586,13 @@ async function testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender() 
   assert.equal(calls, 2);
 }
 
-function testSendYahooMessageJobDoesNotAutoFetchAfterSend() {
+function testSendYahooMessageJobFetchesLatestMessagesAfterSend() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
   assert.ok(sendBranch, 'send branch should be present');
-  assert.doesNotMatch(
-    sendBranch[1],
-    /extractYahooTradeMessages/,
-    'sending a Yahoo message should not automatically fetch messages afterward'
-  );
+  assert.match(sendBranch[1], /sendYahooTradeMessage\(tab\.id, job\.sendText/);
+  assert.match(sendBranch[1], /extractYahooTradeMessages\(tab\.id\)/);
+  assert.match(sendBranch[1], /messageHtml: extractResult\?\.success \? extractResult\.messageHtml : ''/);
 }
 
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
@@ -9684,8 +9706,9 @@ testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages();
 testYahooTradeMessageExtractionDoesNotReturnTransactionInfoForStoreEmptyForm();
 testYahooTradeMessageSendScopesStoreTextareaToMsgForm();
 await testSendYahooTradeMessageScopesStoreTextareaToMsgForm();
+await testSendYahooTradeMessageRetriesUntilTextareaRenders();
 await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();
-testSendYahooMessageJobDoesNotAutoFetchAfterSend();
+testSendYahooMessageJobFetchesLatestMessagesAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick();

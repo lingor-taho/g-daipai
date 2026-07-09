@@ -40,6 +40,8 @@ const {
   getOrderForSheetUpdate,
   getPaymentJobs,
   getConfirmReceiptJobs,
+  updateYahooMessageStatus,
+  normalizeYahooTradeMessageHtml,
   summarizePaymentError,
   updatePaymentStatus,
   updateConfirmReceiptStatus,
@@ -2644,6 +2646,41 @@ async function testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating() {
   assert.equal(calls.length, 0);
 }
 
+function testNormalizeYahooTradeMessageHtmlDropsTransactionInfoWithoutMessageMarkup() {
+  const html = '<div><ul><li>購入日時<br>2026年7月9日 10時2分</li><li>注文番号<br>otakara-reuse-10046903</li></ul></div>';
+  const result = normalizeYahooTradeMessageHtml(html);
+
+  assert.match(result, /data-gdaipai-message-empty/);
+  assert.doesNotMatch(result, /otakara-reuse-10046903/);
+}
+
+function testNormalizeYahooTradeMessageHtmlKeepsStoreMessageWithOrderNumber() {
+  const html = '<ul class="sc-c46fd2ce-0"><dl class="sc-5ecc53ec-0"><dt><span>ストア</span></dt><div><dd>ご注文受付番号：otakara-reuse-10046903</dd><dd><time>7月9日 11:47</time></dd></div></dl></ul>';
+  const result = normalizeYahooTradeMessageHtml(html);
+
+  assert.equal(result, html);
+}
+
+async function testUpdateYahooMessageStatusOverwritesBadTransactionMessageWithEmptyPlaceholder() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  await updateYahooMessageStatus({
+    orderId: 123,
+    jobType: 'fetch',
+    messageHtml: '<div><li>購入日時 2026年7月9日 10時2分</li><li>注文番号 otakara-reuse-10046903</li></div>'
+  }, fakeDb);
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].params[0], /data-gdaipai-message-empty/);
+  assert.doesNotMatch(calls[0].params[0], /otakara-reuse-10046903/);
+}
+
 testDirectTaskIsReadyImmediately();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
@@ -2744,6 +2781,9 @@ Promise.all([
   testUpdatePaymentStatusFailureWritesConciseAlert(),
   testUpdatePaymentStatusMarksCancelled(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
+  testNormalizeYahooTradeMessageHtmlDropsTransactionInfoWithoutMessageMarkup(),
+  testNormalizeYahooTradeMessageHtmlKeepsStoreMessageWithOrderNumber(),
+  testUpdateYahooMessageStatusOverwritesBadTransactionMessageWithEmptyPlaceholder(),
   testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput(),
   testPluginDiagnosticsSaveAndQuery()
 ]).catch(err => {
