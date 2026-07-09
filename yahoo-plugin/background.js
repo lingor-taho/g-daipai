@@ -3320,9 +3320,12 @@ function isYahooConfirmReceiptCompleteText(text = '') {
 }
 
 function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
-  const text = String(snapshot.bodyText || '').replace(/\s+/g, ' ').trim();
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const text = normalize(snapshot.bodyText || '');
+  const transactionStatusText = normalize(snapshot.transactionStatusText || snapshot.primaryStatusText || '');
+  const lifecycleText = transactionStatusText || text;
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
-  const cancelled = isYahooTransactionCancelledText(text);
+  const cancelled = isYahooTransactionCancelledText(lifecycleText);
   const transactionNavRendered = (
     /\u53d6\u5f15\u30ca\u30d3/.test(text) &&
     /\u8cfc\u5165/.test(text) &&
@@ -3331,24 +3334,25 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   );
   const transactionDetailRendered = /\u53d6\u5f15\u60c5\u5831/.test(text) || /\u53d6\u5f15\u306e\u72b6\u6cc1/.test(text);
   const paidOrShipped = (
-    /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text) &&
-    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text)
+    /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) &&
+    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
   ) || (
-    /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(text) &&
-    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text)
+    /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(lifecycleText) &&
+    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
   ) || (
-    /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(text) &&
-    /\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text)
+    /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(lifecycleText) &&
+    /\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
   ) || (
-    /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(text) &&
-    /\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(text)
+    /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(lifecycleText) &&
+    /\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleText)
   );
   return {
     url: snapshot.url || '',
+    transactionStatusText,
     textSample: text.slice(0, 500),
     cancelled,
     paidOrShipped,
-    complete: isYahooConfirmReceiptCompleteText(text),
+    complete: isYahooConfirmReceiptCompleteText(lifecycleText),
     rendered: transactionNavRendered && transactionDetailRendered,
     hasReceiptCheckbox: /\u5546\u54c1\u3092\u53d7\u3051\u53d6\u308a\u307e\u3057\u305f/.test(text) || Boolean(snapshot.hasReceiptCheckbox),
     hasReceiptCheckboxChecked: Boolean(snapshot.hasReceiptCheckboxChecked),
@@ -3372,6 +3376,45 @@ async function getConfirmReceiptPageState(tabId) {
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
         .map(el => getText(el))
         .filter(Boolean);
+      const isLifecycleStatusText = text => (
+        /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text) ||
+        /\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044/.test(text) ||
+        /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text) ||
+        /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(text) ||
+        /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(text) ||
+        /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(text) ||
+        /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(text) ||
+        /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text) ||
+        /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(text) ||
+        /\u843d\u672d\u8005\u524a\u9664/.test(text) ||
+        /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
+        /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
+        /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text) ||
+        /\u5168\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text)
+      );
+      const extractPrimaryTransactionStatusText = () => {
+        const normalStatus = [...document.querySelectorAll('.acMdStatusCmt .elAdvnc p.fntB')]
+          .map(el => getText(el))
+          .filter(Boolean);
+        if (normalStatus.length) return normalize(normalStatus.join('\n'));
+
+        const storeStatus = [...document.querySelectorAll('main header p.sc-5968173-0 span, main header p.sc-5968173-0')]
+          .map(el => getText(el))
+          .find(text => text && isLifecycleStatusText(text));
+        if (storeStatus) return storeStatus;
+
+        const purchaseAction = document.querySelector('#pap');
+        let node = purchaseAction?.previousElementSibling || null;
+        let depth = 0;
+        while (node && depth < 8) {
+          const text = getText(node);
+          if (text && text.length < 240 && isLifecycleStatusText(text)) return text;
+          node = node.previousElementSibling;
+          depth += 1;
+        }
+        return '';
+      };
+      const transactionStatusText = extractPrimaryTransactionStatusText();
       const isVisible = el => {
         if (!el) return false;
         const style = window.getComputedStyle?.(el);
@@ -3404,6 +3447,7 @@ async function getConfirmReceiptPageState(tabId) {
         snapshot: {
           url: location.href,
           bodyText: normalize(document.body?.textContent || ''),
+          transactionStatusText,
           controls,
           hasReceiptCheckbox: Boolean(checkbox),
           hasReceiptCheckboxChecked: Boolean(checkbox?.checked),

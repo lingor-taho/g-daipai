@@ -3960,6 +3960,38 @@ function testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText() {
   }
 }
 
+function testConfirmReceiptPageStateUsesPrimaryStatusText() {
+  const api = loadBackgroundForTest();
+
+  const activeStoreState = api.buildConfirmReceiptPageStateFromSnapshot({
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    bodyText: [
+      '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002',
+      '\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u671f\u9650\u5f8c\u306f\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3068\u3044\u3046\u8aac\u660e\u6587'
+    ].join('\n'),
+    controls: []
+  });
+
+  assert.equal(activeStoreState.cancelled, false);
+  assert.equal(activeStoreState.paidOrShipped, false);
+
+  const normalPaidState = api.buildConfirmReceiptPageStateFromSnapshot({
+    transactionStatusText: '\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002\n\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+    bodyText: [
+      '\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002',
+      '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u671f\u9650\u5f8c\u306f\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u308b\u3068\u3044\u3046\u8aac\u660e\u6587'
+    ].join('\n'),
+    controls: []
+  });
+
+  assert.equal(normalPaidState.cancelled, false);
+  assert.equal(normalPaidState.paidOrShipped, true);
+}
+
 function testConfirmReceiptPageStateDetectsReceiptCompletionText() {
   const api = loadBackgroundForTest();
 
@@ -9202,6 +9234,7 @@ testSendYahooMessageJobDoesNotAutoFetchAfterSend();
   await testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking();
   testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();
   testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText();
+  testConfirmReceiptPageStateUsesPrimaryStatusText();
   testConfirmReceiptPageStateDetectsReceiptCompletionText();
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();

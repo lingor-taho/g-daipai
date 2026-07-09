@@ -314,6 +314,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-09 确认收货/交易开始/待发货扫描改用主状态区
+
+生产商品 `q1235534082` 的 Yahoo 商城交易页主状态仍是 `落札おめでとうございます。購入手続きを行ってください。`，但卖家消息里包含“期限后会落札者削除/取引はできません”一类说明文字，确认收货 `cancel_check` 曾从 `pending_payment` 误推进到 `cancelled`。同类全文关键词风险也存在于交易开始状态判断和待发货扫描。
+
+修复：这三条路径的生命周期状态改为优先读取 Yahoo 固定状态区。普通商品读 `.acMdStatusCmt .elAdvnc p.fntB`，商城商品读 `main header p.sc-5968173-0`，并兼容 `#pap` 购买按钮附近的主状态段。交易开始的 `cancelled`、待发货扫描的 `cancelled/shipped/pending_shipment`、确认收货 `cancel_check` 的 `cancelled/paidOrShipped/complete` 都基于主状态区判断；物流公司、单号等详情仍按原来的结构化配送/消息区域提取。
+
+验证：
+```powershell
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.test.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增的状态区回归，后续仍停在既有 `testBuyoutMessageChannelClosedOnThankYouStaysBidding` 失败。
+
 ### 2026-07-09 付款页状态改为结构化节点判断
 
 生产商品 `q1235534082` 在 Yahoo 商城购买状态页仍显示 `落札おめでとうございます。購入手続きを行ってください。`，但系统订单被写成 `cancelled`。生产 debug 确认订单 `512` 从 `pending_settlement` 变为 `cancelled`，来源为 `payment_cancelled_page`；页面卖家消息中包含“期限后会落札者削除/取引はできません”一类说明文字，原付款页状态判断扫全文，容易把消息内容误当订单状态。

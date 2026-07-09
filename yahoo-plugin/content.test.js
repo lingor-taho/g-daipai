@@ -3073,7 +3073,15 @@ function testBundleTransactionActionStateDetectsPaymentReadyPage() {
 function testBundleTransactionActionStateDetectsBuyerDeletedCancellation() {
   const api = loadContentForTest(
     '\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3002 \u904e\u53bb\u306e\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8\u306e\u95b2\u89a7\u306e\u307f\u53ef\u80fd\u3067\u3059\u3002',
-    '/buyer/top'
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector === '.acMdStatusCmt .elAdvnc p.fntB') {
+          return [createTestElement('\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3002')];
+        }
+        return [];
+      }
+    }
   );
   const state = api.getBundleTransactionActionState();
 
@@ -3081,10 +3089,40 @@ function testBundleTransactionActionStateDetectsBuyerDeletedCancellation() {
 
   const cancelledState = loadContentForTest(
     '\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002',
-    '/buyer/top'
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'main header p.sc-5968173-0 span, main header p.sc-5968173-0') {
+          return [createTestElement('\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002')];
+        }
+        return [];
+      }
+    }
   ).getBundleTransactionActionState();
 
   assert.equal(cancelledState.cancelled, true);
+}
+
+function testBundleTransactionActionStateUsesPrimaryStatusText() {
+  const api = loadContentForTest(
+    [
+      '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002',
+      '\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u671f\u9650\u5f8c\u306f\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3068\u3044\u3046\u8aac\u660e\u6587'
+    ].join('\n'),
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'main header p.sc-5968173-0 span, main header p.sc-5968173-0') {
+          return [createTestElement('\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002')];
+        }
+        return [];
+      }
+    }
+  );
+
+  assert.equal(api.getBundleTransactionActionState().cancelled, false);
 }
 
 function testExtractWaitingShippingScanResultFindsShippingFee() {
@@ -4104,8 +4142,42 @@ function testExtractPendingShipmentScanResultFallsBackToSellerName() {
 }
 
 function testExtractPendingShipmentScanResultDetectsCancelled() {
-  const api = loadContentForTest('\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002\u30ad\u30e3\u30f3\u30bb\u30eb\u5f8c\u306e\u6d41\u308c\u306f\u30d8\u30eb\u30d7\u3092\u3054\u78ba\u8a8d\u304f\u3060\u3055\u3044\u3002');
+  const api = loadContentForTest(
+    '\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002\u30ad\u30e3\u30f3\u30bb\u30eb\u5f8c\u306e\u6d41\u308c\u306f\u30d8\u30eb\u30d7\u3092\u3054\u78ba\u8a8d\u304f\u3060\u3055\u3044\u3002',
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'main header p.sc-5968173-0 span, main header p.sc-5968173-0') {
+          return [createTestElement('\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002')];
+        }
+        return [];
+      }
+    }
+  );
   assert.equal(api.extractPendingShipmentScanResult().type, 'cancelled');
+}
+
+function testExtractPendingShipmentScanResultUsesPrimaryStatusText() {
+  const api = loadContentForTest(
+    [
+      '\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002',
+      '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3068\u3044\u3046\u904e\u53bb\u8aac\u660e',
+      '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3068\u3044\u3046\u4f8b\u6587'
+    ].join('\n'),
+    '/order/status',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'main header p.sc-5968173-0 span, main header p.sc-5968173-0') {
+          return [createTestElement('\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002')];
+        }
+        return [];
+      }
+    }
+  );
+
+  assert.equal(api.extractPendingShipmentScanResult().type, 'pending_shipment');
 }
 
 async function run() {
@@ -4230,6 +4302,7 @@ async function run() {
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
   testBundleTransactionActionStateDetectsPaymentReadyPage();
   testBundleTransactionActionStateDetectsBuyerDeletedCancellation();
+  testBundleTransactionActionStateUsesPrimaryStatusText();
   testExtractWaitingShippingScanResultFindsShippingFee();
   testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
   testExtractWaitingShippingScanResultDetectsPendingShipping();
@@ -4281,6 +4354,7 @@ async function run() {
   testExtractPendingShipmentScanResultFallsBackToSellerInfoNameInsideFullTradeBlock();
   testExtractPendingShipmentScanResultFallsBackToSellerName();
   testExtractPendingShipmentScanResultDetectsCancelled();
+  testExtractPendingShipmentScanResultUsesPrimaryStatusText();
 }
 
 run().catch(err => {

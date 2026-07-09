@@ -1913,16 +1913,66 @@ function detectPlacementDefaultModal(text = getBodyText()) {
     !!findClickableByText(/^\s*OK\s*$/);
 }
 
-function isYahooTransactionCancelledText(text = getBodyText()) {
+function isTransactionLifecycleStatusText(text = '') {
   const source = String(text || '');
-  return /\u843d\u672d\u8005\u524a\u9664/.test(source) ||
-    /\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
+  return /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(source) ||
+    /\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044/.test(source) ||
+    /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(source) ||
+    /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(source) ||
+    /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(source) ||
+    /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(source) ||
+    /\u843d\u672d\u8005\u524a\u9664/.test(source) ||
+    /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
+    /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
+    /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(source) ||
+    /\u5168\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(source);
+}
+
+function extractPrimaryTransactionStatusText() {
+  const normalStatus = Array.from(document.querySelectorAll('.acMdStatusCmt .elAdvnc p.fntB') || [])
+    .map(element => normalizeTextValue(getRenderedText(element), 240))
+    .filter(Boolean);
+  if (normalStatus.length) return normalStatus.join('\n');
+
+  const storeStatus = Array.from(document.querySelectorAll('main header p.sc-5968173-0 span, main header p.sc-5968173-0') || [])
+    .map(element => normalizeTextValue(getRenderedText(element), 240))
+    .find(text => text && isTransactionLifecycleStatusText(text));
+  if (storeStatus) return storeStatus;
+
+  const purchaseAction = document.querySelector('#pap');
+  let node = purchaseAction?.previousElementSibling || null;
+  let depth = 0;
+  while (node && depth < 8) {
+    const text = normalizeTextValue(getRenderedText(node), 240);
+    if (text && isTransactionLifecycleStatusText(text)) return text;
+    node = node.previousElementSibling;
+    depth += 1;
+  }
+  return '';
+}
+
+function extractTransactionStatusPrefixText(text = getBodyText()) {
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!source) return '';
+  const markerMatch = source.search(/(?:\u30e1\u30c3\u30bb\u30fc\u30b8|\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8|\u53d6\u5f15\u60c5\u5831|\u304a\u5c4a\u3051\u60c5\u5831|\u914d\u9001\u60c5\u5831|\u304a\u652f\u6255\u3044\u60c5\u5831|\u30b9\u30c8\u30a2\u60c5\u5831|\u51fa\u54c1\u8005\u60c5\u5831)/);
+  const head = (markerMatch >= 0 ? source.slice(0, markerMatch) : source).slice(0, 400);
+  return isTransactionLifecycleStatusText(head) ? head : '';
+}
+
+function getTransactionLifecycleStatusText(text = getBodyText()) {
+  return extractPrimaryTransactionStatusText() || extractTransactionStatusPrefixText(text);
+}
+
+function isYahooTransactionCancelledText(text = '') {
+  const source = String(text || '');
+  return /\u843d\u672d\u8005\u524a\u9664[\s\S]{0,80}\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
     /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
 }
 
 function detectBuyerDeletedCancellation(text = getBodyText()) {
-  return isYahooTransactionCancelledText(text);
+  return isYahooTransactionCancelledText(getTransactionLifecycleStatusText(text));
 }
 
 function normalizeYenText(value) {
@@ -2391,12 +2441,13 @@ function getNormalPaymentInfoText() {
 
 function extractPendingShipmentScanResult(text = getBodyText()) {
   const source = String(text || '');
-  if (/\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source)) {
+  const lifecycleStatusText = getTransactionLifecycleStatusText(source);
+  if (isYahooTransactionCancelledText(lifecycleStatusText)) {
     return { type: 'cancelled' };
   }
 
-  const storeShipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(source);
-  const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(source);
+  const storeShipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(lifecycleStatusText);
+  const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(lifecycleStatusText);
   if (storeShipped) {
     const trackingNumber = extractTrackingNumberFromText(source, { includeUnlabeled: false });
     const storeInfoName = extractStoreInfoName(source);
@@ -2443,8 +2494,8 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     };
   }
 
-  const storePending = /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059[\s\S]{0,120}\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061/.test(source);
-  const normalPending = /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61[\s\S]{0,120}\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061/.test(source);
+  const storePending = /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059[\s\S]{0,120}\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061/.test(lifecycleStatusText);
+  const normalPending = /\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61[\s\S]{0,120}\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061/.test(lifecycleStatusText);
   if (storePending || normalPending) {
     return { type: 'pending_shipment' };
   }
