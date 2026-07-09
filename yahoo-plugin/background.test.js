@@ -411,6 +411,7 @@ function testYahooTradeMessageSendScopesStoreTextareaToMsgForm() {
   const createTextarea = name => ({
     name,
     value: '',
+    scrollIntoView() { events.push(`${name}:scroll`); },
     focus() { events.push(`${name}:focus`); },
     dispatchEvent(event) { events.push(`${name}:${event.type}`); }
   });
@@ -427,14 +428,21 @@ function testYahooTradeMessageSendScopesStoreTextareaToMsgForm() {
     querySelector() { return null; },
     parentElement: formContainer
   };
+  const messageSection = { innerText: '', textContent: '' };
   const storeButton = {
     disabled: false,
     parentElement: msgContainer,
     value: '',
     innerText: '\u9001\u4fe1',
     textContent: '\u9001\u4fe1',
+    scrollIntoView() { events.push('button:scroll'); },
+    focus() { events.push('button:focus'); },
     dispatchEvent(event) { events.push(`button:${event.type}`); },
-    click() { events.push('button:click'); }
+    click() {
+      events.push('button:click');
+      messageSection.innerText = storeTextarea.value;
+      messageSection.textContent = storeTextarea.value;
+    }
   };
   const document = {
     body: {},
@@ -447,6 +455,7 @@ function testYahooTradeMessageSendScopesStoreTextareaToMsgForm() {
       return null;
     },
     querySelectorAll(selector) {
+      if (selector === '#messagelist, ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"], section') return [messageSection];
       if (selector === 'button, input[type="submit"], input[type="button"]') return [storeButton];
       return [];
     }
@@ -468,6 +477,81 @@ function testYahooTradeMessageSendScopesStoreTextareaToMsgForm() {
   assert.equal(result.success, true);
   assert.equal(wrongTextarea.value, '');
   assert.equal(storeTextarea.value, 'hello');
+  assert.ok(events.indexOf('store:focus') >= 0);
+  assert.ok(events.indexOf('button:focus') > events.indexOf('store:focus'));
+  assert.ok(events.includes('button:click'));
+}
+
+function testYahooTradeMessageSendUsesNativeTextareaSetterForStoreReactForm() {
+  const api = loadBackgroundForTest();
+  const events = [];
+  let nativeSetterCalled = false;
+  function FakeTextarea() {}
+  Object.defineProperty(FakeTextarea.prototype, 'value', {
+    configurable: true,
+    get() { return this._value || ''; },
+    set(value) {
+      nativeSetterCalled = true;
+      this._value = value;
+    }
+  });
+  const storeTextarea = new FakeTextarea();
+  storeTextarea.scrollIntoView = () => events.push('textarea:scroll');
+  storeTextarea.focus = () => events.push('textarea:focus');
+  storeTextarea.dispatchEvent = event => events.push(`textarea:${event.type}`);
+  const formContainer = {
+    querySelector(selector) {
+      if (selector === 'textarea') return storeTextarea;
+      return null;
+    },
+    parentElement: null
+  };
+  const msgContainer = {
+    querySelector() { return null; },
+    parentElement: formContainer
+  };
+  const messageSection = { innerText: '', textContent: '' };
+  const storeButton = {
+    disabled: false,
+    parentElement: msgContainer,
+    value: '',
+    innerText: '\u9001\u4fe1',
+    textContent: '\u9001\u4fe1',
+    scrollIntoView() { events.push('button:scroll'); },
+    focus() { events.push('button:focus'); },
+    dispatchEvent(event) { events.push(`button:${event.type}`); },
+    click() {
+      events.push('button:click');
+      messageSection.innerText = storeTextarea.value;
+      messageSection.textContent = storeTextarea.value;
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#msg button[type="submit"], #msg button') return storeButton;
+      return null;
+    },
+    querySelectorAll() { return []; }
+  };
+  function FakeEvent(type, options = {}) {
+    this.type = type;
+    Object.assign(this, options);
+  }
+
+  const result = Function(
+    'document',
+    'InputEvent',
+    'PointerEvent',
+    'MouseEvent',
+    'Event',
+    `return ${api.getYahooTradeMessageSendScript('hello')};`
+  )(document, FakeEvent, FakeEvent, FakeEvent, FakeEvent);
+
+  assert.equal(result.success, true);
+  assert.equal(nativeSetterCalled, true);
+  assert.equal(storeTextarea.value, 'hello');
+  assert.ok(events.includes('textarea:input'));
+  assert.ok(events.indexOf('button:focus') > events.indexOf('textarea:focus'));
   assert.ok(events.includes('button:click'));
 }
 
@@ -476,6 +560,7 @@ async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
   const createTextarea = name => ({
     name,
     value: '',
+    scrollIntoView() { events.push(`${name}:scroll`); },
     focus() { events.push(`${name}:focus`); },
     dispatchEvent(event) { events.push(`${name}:${event.type}`); }
   });
@@ -492,14 +577,21 @@ async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
     querySelector() { return null; },
     parentElement: formContainer
   };
+  const messageSection = { innerText: '', textContent: '' };
   const storeButton = {
     disabled: false,
     parentElement: msgContainer,
     value: '',
     innerText: '\u9001\u4fe1',
     textContent: '\u9001\u4fe1',
+    scrollIntoView() { events.push('button:scroll'); },
+    focus() { events.push('button:focus'); },
     dispatchEvent(event) { events.push(`button:${event.type}`); },
-    click() { events.push('button:click'); }
+    click() {
+      events.push('button:click');
+      messageSection.innerText = storeTextarea.value;
+      messageSection.textContent = storeTextarea.value;
+    }
   };
   const document = {
     body: {},
@@ -512,6 +604,7 @@ async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
       return null;
     },
     querySelectorAll(selector) {
+      if (selector === '#messagelist, ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"], section') return [messageSection];
       if (selector === 'button, input[type="submit"], input[type="button"]') return [storeButton];
       return [];
     }
@@ -528,7 +621,7 @@ async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
     Event: FakeEvent,
     scripting: {
       async executeScript(options) {
-        return [{ result: options.func(options.args[0]) }];
+        return [{ result: options.func(...(options.args || [])) }];
       }
     }
   });
@@ -538,6 +631,7 @@ async function testSendYahooTradeMessageScopesStoreTextareaToMsgForm() {
   assert.equal(result.success, true);
   assert.equal(wrongTextarea.value, '');
   assert.equal(storeTextarea.value, 'hello');
+  assert.ok(events.indexOf('button:focus') > events.indexOf('store:focus'));
   assert.ok(events.includes('button:click'));
 }
 
@@ -590,7 +684,7 @@ function testSendYahooMessageJobFetchesLatestMessagesAfterSend() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
   assert.ok(sendBranch, 'send branch should be present');
-  assert.match(sendBranch[1], /sendYahooTradeMessage\(tab\.id, job\.sendText/);
+  assert.match(sendBranch[1], /sendYahooTradeMessage\(tab, job\.sendText/);
   assert.match(sendBranch[1], /extractYahooTradeMessages\(tab\.id\)/);
   assert.match(sendBranch[1], /messageHtml: extractResult\?\.success \? extractResult\.messageHtml : ''/);
 }
@@ -9705,6 +9799,7 @@ testYahooTradeMessageExtractionReadsStoreDisabledPostingThread();
 testYahooTradeMessageExtractionSucceedsForStoreFormWithoutMessages();
 testYahooTradeMessageExtractionDoesNotReturnTransactionInfoForStoreEmptyForm();
 testYahooTradeMessageSendScopesStoreTextareaToMsgForm();
+testYahooTradeMessageSendUsesNativeTextareaSetterForStoreReactForm();
 await testSendYahooTradeMessageScopesStoreTextareaToMsgForm();
 await testSendYahooTradeMessageRetriesUntilTextareaRenders();
 await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();

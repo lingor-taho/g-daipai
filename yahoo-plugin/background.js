@@ -1030,42 +1030,246 @@ function getYahooTradeMessageExtractScript() {
   return `(${extractYahooTradeMessageFromPage.toString()})()`;
 }
 
+function runYahooTradeMessageSendFromPage(messageText) {
+  const findNearbyTextarea = button => {
+    let node = button;
+    for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
+      const textarea = node.querySelector && node.querySelector('textarea');
+      if (textarea) return textarea;
+    }
+    return null;
+  };
+  const setTextareaValue = (textarea, value) => {
+    const ownDescriptor = Object.getOwnPropertyDescriptor(textarea, 'value');
+    const prototype = Object.getPrototypeOf(textarea);
+    const prototypeDescriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, 'value') : null;
+    if (prototypeDescriptor?.set && ownDescriptor?.set !== prototypeDescriptor.set) {
+      prototypeDescriptor.set.call(textarea, value);
+    } else if (ownDescriptor?.set) {
+      ownDescriptor.set.call(textarea, value);
+    } else {
+      textarea.value = value;
+    }
+  };
+  const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+  const textarea = storeButton
+    ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
+    : (document.querySelector('#textarea') ||
+      document.querySelector('textarea[placeholder*="メッセージ"]') ||
+      document.querySelector('textarea'));
+  if (!textarea) return { success: false, error: 'message textarea not found' };
+  textarea.scrollIntoView?.({ block: 'center', inline: 'center' });
+  textarea.focus();
+  setTextareaValue(textarea, String(messageText || ''));
+  textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(messageText || '') }));
+  textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  const button = storeButton ||
+    document.querySelector('#submitButton') ||
+    [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+      .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
+  if (!button) return { success: false, error: 'message submit button not found' };
+  if (button.disabled) return { success: false, error: 'message submit button disabled' };
+  button.scrollIntoView?.({ block: 'center', inline: 'center' });
+  button.focus?.();
+  button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+  button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+  button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+  button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+  button.click();
+  return { success: true, pageType: storeButton ? 'store' : 'normal' };
+}
+
 function getYahooTradeMessageSendScript(messageText) {
   const encoded = JSON.stringify(String(messageText || ''));
-  return `(() => {
-    const messageText = ${encoded};
-    const findNearbyTextarea = button => {
-      let node = button;
-      for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
-        const textarea = node.querySelector && node.querySelector('textarea');
-        if (textarea) return textarea;
-      }
-      return null;
+  return `(${runYahooTradeMessageSendFromPage.toString()})(${encoded})`;
+}
+
+function isYahooTradeSentMessageVisibleFromPage(messageText) {
+  const expected = String(messageText || '').replace(/\s+/g, ' ').trim();
+  if (!expected) return { success: false, error: 'message text is empty' };
+  const scopes = [
+    ...Array.from(document.querySelectorAll('#messagelist, ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"], section') || [])
+  ];
+  const text = scopes
+    .map(node => String(node.innerText || node.textContent || ''))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { success: text.includes(expected), found: text.includes(expected) };
+}
+
+function getYahooTradeMessageSendPointsFromPage() {
+  const findNearbyTextarea = button => {
+    let node = button;
+    for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
+      const textarea = node.querySelector && node.querySelector('textarea');
+      if (textarea) return textarea;
+    }
+    return null;
+  };
+  const rectToPoint = node => {
+    if (!node || typeof node.getBoundingClientRect !== 'function') return null;
+    const rect = node.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
     };
-    const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
-    const textarea = storeButton
-      ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
-      : (document.querySelector('#textarea') ||
-        document.querySelector('textarea[placeholder*="メッセージ"]') ||
-        document.querySelector('textarea'));
-    if (!textarea) return { success: false, error: 'message textarea not found' };
-    textarea.focus();
-    textarea.value = messageText;
-    textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: messageText }));
-    textarea.dispatchEvent(new Event('change', { bubbles: true }));
-    const button = storeButton ||
-      document.querySelector('#submitButton') ||
-      [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-        .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
-    if (!button) return { success: false, error: 'message submit button not found' };
-    if (button.disabled) return { success: false, error: 'message submit button disabled' };
-    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-    button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
-    button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-    button.click();
-    return { success: true };
-  })()`;
+  };
+  const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+  const button = storeButton ||
+    document.querySelector('#submitButton') ||
+    [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+      .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
+  const textarea = storeButton
+    ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
+    : (document.querySelector('#textarea') ||
+      document.querySelector('textarea[placeholder*="メッセージ"]') ||
+      document.querySelector('textarea'));
+  const textareaPoint = rectToPoint(textarea);
+  const buttonPoint = rectToPoint(button);
+  if (!textareaPoint) return { success: false, error: 'message textarea point not found' };
+  if (!buttonPoint) return { success: false, error: 'message submit button point not found' };
+  return {
+    success: true,
+    pageType: storeButton ? 'store' : 'normal',
+    textarea: textareaPoint,
+    button: buttonPoint,
+    buttonText: String(button.value || button.innerText || button.textContent || '').trim()
+  };
+}
+
+function prepareYahooTradeMessageTextareaForTrustedInputFromPage() {
+  const findNearbyTextarea = button => {
+    let node = button;
+    for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
+      const textarea = node.querySelector && node.querySelector('textarea');
+      if (textarea) return textarea;
+    }
+    return null;
+  };
+  const setTextareaValue = (textarea, value) => {
+    const ownDescriptor = Object.getOwnPropertyDescriptor(textarea, 'value');
+    const prototype = Object.getPrototypeOf(textarea);
+    const prototypeDescriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, 'value') : null;
+    if (prototypeDescriptor?.set && ownDescriptor?.set !== prototypeDescriptor.set) {
+      prototypeDescriptor.set.call(textarea, value);
+    } else if (ownDescriptor?.set) {
+      ownDescriptor.set.call(textarea, value);
+    } else {
+      textarea.value = value;
+    }
+  };
+  const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+  const textarea = storeButton
+    ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
+    : (document.querySelector('#textarea') ||
+      document.querySelector('textarea[placeholder*="メッセージ"]') ||
+      document.querySelector('textarea'));
+  if (!textarea) return { success: false, error: 'message textarea not found' };
+  textarea.focus();
+  if (typeof textarea.select === 'function') textarea.select();
+  setTextareaValue(textarea, '');
+  textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+  textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  return { success: true };
+}
+
+async function waitForYahooSentMessageVisible(tabId, messageText, timeoutMs = MESSAGE_EXTRACT_RENDER_WAIT_MS) {
+  const startedAt = Date.now();
+  let lastResult = { success: false };
+  while (Date.now() - startedAt <= timeoutMs) {
+    const injectionResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [String(messageText || '')],
+      func: isYahooTradeSentMessageVisibleFromPage
+    });
+    lastResult = injectionResult?.[0]?.result || { success: false };
+    if (lastResult?.success) return true;
+    await sleep(MESSAGE_EXTRACT_POLL_MS);
+  }
+  return false;
+}
+
+async function dispatchTrustedYahooMessageSend(tab, messageText) {
+  const tabId = typeof tab === 'number' ? tab : tab?.id;
+  if (!tabId) return { success: false, error: 'tabId is required for trusted message send' };
+  const pointResult = (await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: getYahooTradeMessageSendPointsFromPage
+  }))?.[0]?.result;
+  if (!pointResult?.success) return pointResult || { success: false, error: 'message send point not found' };
+  const target = { tabId };
+  let diagnostics = await getTrustedInputDiagnostics(tabId, 'yahooMessageSend', 'debuggerMouse', pointResult.button);
+  try {
+    await chrome.tabs.update(tabId, { active: true }).catch(() => null);
+    if (tab?.windowId && chrome.windows?.update) {
+      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
+    }
+    await chrome.debugger.attach(target, '1.3');
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: pointResult.textarea.x,
+      y: pointResult.textarea.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: pointResult.textarea.x,
+      y: pointResult.textarea.y,
+      button: 'left',
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: pointResult.textarea.x,
+      y: pointResult.textarea.y,
+      button: 'left',
+      clickCount: 1
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: prepareYahooTradeMessageTextareaForTrustedInputFromPage
+    });
+    await chrome.debugger.sendCommand(target, 'Input.insertText', { text: String(messageText || '') });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: pointResult.button.x,
+      y: pointResult.button.y,
+      button: 'none'
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: pointResult.button.x,
+      y: pointResult.button.y,
+      button: 'left',
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: pointResult.button.x,
+      y: pointResult.button.y,
+      button: 'left',
+      clickCount: 1
+    });
+    await chrome.debugger.detach(target).catch(() => null);
+    diagnostics = await getTrustedInputDiagnostics(tabId, 'yahooMessageSend', 'debuggerMouse', pointResult.button).catch(() => diagnostics);
+    await postPluginDiagnostic({
+      type: 'trusted_input',
+      action: 'yahooMessageSend',
+      method: 'debuggerMouse',
+      message: 'trusted Yahoo message send dispatched',
+      diagnostics
+    });
+    return { success: true, method: 'debuggerMouse', diagnostics, text: pointResult.buttonText };
+  } catch (e) {
+    await chrome.debugger.detach(target).catch(() => null);
+    return { success: false, error: e.message || 'trusted Yahoo message send failed', diagnostics };
+  }
 }
 
 async function extractYahooTradeMessages(tabId) {
@@ -1085,52 +1289,35 @@ async function extractYahooTradeMessages(tabId) {
   return lastResult;
 }
 
-async function sendYahooTradeMessage(tabId, messageText) {
+async function sendYahooTradeMessage(tabOrId, messageText) {
+  const tabId = typeof tabOrId === 'number' ? tabOrId : tabOrId?.id;
   const startedAt = Date.now();
   let lastResult = { success: false, error: 'message send returned no result' };
+  let storePageSeen = false;
   while (Date.now() - startedAt <= MESSAGE_EXTRACT_RENDER_WAIT_MS) {
     const injectionResult = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
       args: [String(messageText || '')],
-      func: messageText => {
-        const findNearbyTextarea = button => {
-          let node = button;
-          for (let i = 0; i < 6 && node; i += 1, node = node.parentElement) {
-            const textarea = node.querySelector && node.querySelector('textarea');
-            if (textarea) return textarea;
-          }
-          return null;
-        };
-        const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
-        const textarea = storeButton
-          ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
-          : (document.querySelector('#textarea') ||
-            document.querySelector('textarea[placeholder*="メッセージ"]') ||
-            document.querySelector('textarea'));
-        if (!textarea) return { success: false, error: 'message textarea not found' };
-        textarea.focus();
-        textarea.value = messageText;
-        textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: messageText }));
-        textarea.dispatchEvent(new Event('change', { bubbles: true }));
-        const button = storeButton ||
-          document.querySelector('#submitButton') ||
-          [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-            .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
-        if (!button) return { success: false, error: 'message submit button not found' };
-        if (button.disabled) return { success: false, error: 'message submit button disabled' };
-        button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-        button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
-        button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-        button.click();
-        return { success: true };
-      }
+      func: runYahooTradeMessageSendFromPage
     });
     lastResult = injectionResult?.[0]?.result || { success: false, error: 'message send returned no result' };
-    if (lastResult?.success) return lastResult;
+    if (lastResult?.success) {
+      if (lastResult.pageType !== 'store') return lastResult;
+      storePageSeen = true;
+      const visible = await waitForYahooSentMessageVisible(tabId, messageText, MESSAGE_EXTRACT_RENDER_WAIT_MS);
+      if (visible) return { ...lastResult, verified: true };
+      break;
+    }
     if (!/message (textarea|submit button) not found/.test(String(lastResult?.error || ''))) return lastResult;
     await sleep(MESSAGE_EXTRACT_POLL_MS);
+  }
+  if (storePageSeen) {
+    const trustedResult = await dispatchTrustedYahooMessageSend(tabOrId, messageText);
+    if (!trustedResult?.success) return trustedResult;
+    const visible = await waitForYahooSentMessageVisible(tabId, messageText, MESSAGE_EXTRACT_RENDER_WAIT_MS);
+    if (visible) return { success: true, verified: true, method: trustedResult.method || 'debuggerMouse', diagnostics: trustedResult.diagnostics };
+    return { success: false, error: 'sent message not found after send', diagnostics: trustedResult.diagnostics };
   }
   return lastResult;
 }
@@ -6435,7 +6622,7 @@ async function executeYahooMessageJob(job) {
     const result = await withTimeout((async () => {
       tab = await openTransactionPage(job, beforeTabIds);
       if (job.jobType === 'send') {
-        const sendResult = await sendYahooTradeMessage(tab.id, job.sendText || '');
+        const sendResult = await sendYahooTradeMessage(tab, job.sendText || '');
         if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
         const extractResult = await extractYahooTradeMessages(tab.id);
         await updateYahooMessageStatus({
