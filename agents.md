@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-09
+**最后更新**: 2026-07-10
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -313,6 +313,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-10 消息读取兼容同捆提示页
+
+后台消息读取/发送任务打开 Yahoo 交易页后，会先执行消息专用的安全导航，再提取或发送消息。普通商品遇到“可以同捆”“卖家同意同捆主商品”或“卖家要求单品交易”等同捆提示时，只点击提示区域内精确的 `閉じる`；商城商品遇到“まとめて購入手続き”提示时，先关闭提示，再点击 `単品で購入手続きする` 进入单品页面。导航完成的判定是普通/商城消息列表或商城消息发送区域出现，不会继续点击确认、付款或购买完成按钮。
+
+同捆子商品不单独读取消息：后台继续隐藏 `bundle_completed` 子订单的消息更新入口，服务端也拒绝为这类子订单创建读取或发送任务；如果异常任务打开了带 `この商品を確認する` 的同捆子商品选择页，插件会停止并返回明确错误，不会点击 `まとめて取引を確認する`，也不会跳到主商品会话。消息抓取和消息发送共用相同的前置导航。因为新增了最多 12 秒的同捆导航等待，单个消息任务总超时从 30 秒调整为 45 秒。
+
+验证：
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node src/server/routes/admin.orders.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增的普通同捆关闭、商城两步入口和同捆子商品停止回归，后续仍停在既有 `testBuyoutMessageChannelClosedOnThankYouStaysBidding` 失败。
 
 ### 2026-07-09 商城消息无记录也可打开聊天框
 

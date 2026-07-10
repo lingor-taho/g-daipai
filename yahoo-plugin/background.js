@@ -11,9 +11,10 @@ const MULTI_BID_TASK_MAX_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 const BID_PENDING_FINAL_RETRY_DELAY_MS = 10000;
 const BID_PENDING_FINAL_FAST_RETRY_DELAY_MS = 1500;
 const MANUAL_CAPTCHA_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
-const MESSAGE_JOB_TIMEOUT_MS = 30000;
+const MESSAGE_JOB_TIMEOUT_MS = 45000;
 const MESSAGE_EXTRACT_RENDER_WAIT_MS = 8000;
 const MESSAGE_EXTRACT_POLL_MS = 500;
+const MESSAGE_NAVIGATION_WAIT_MS = 12000;
 const BIDDING_SYNC_MAX_PAGES = 50;
 const PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS = 8000;
 const PENDING_SHIPMENT_SCAN_POLL_MS = 500;
@@ -1024,6 +1025,168 @@ function extractYahooTradeMessageFromPage() {
   if (fallback && hasTransactionInfo(fallback)) return { success: false, error: 'message list not found' };
   if (fallback) return { success: true, messageHtml: fallback.outerHTML, pageType: 'fallback' };
   return { success: false, error: 'message list not found' };
+}
+
+function getYahooMessageNavigationStateFromPage() {
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const textOf = node => normalize([
+    node?.textContent,
+    node?.value,
+    node?.title,
+    node?.getAttribute?.('aria-label')
+  ].filter(Boolean).join(' '));
+  const isVisible = node => {
+    if (!node) return false;
+    const style = globalThis.getComputedStyle?.(node);
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+    const rect = node.getBoundingClientRect?.();
+    return !rect || (rect.width > 0 && rect.height > 0);
+  };
+  const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+    .filter(isVisible);
+  const findControl = pattern => controls.find(node => pattern.test(textOf(node))) || null;
+  const normalMessageReady = Boolean(document.querySelector('#messagelist'));
+  const storeMessageListReady = [...document.querySelectorAll('ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"], section ul')]
+    .some(node => node.querySelector?.('dl') && node.querySelector?.('dd') && node.querySelector?.('time'));
+  const storeMessageFormReady = Boolean(document.querySelector('#msg textarea')) &&
+    Boolean(document.querySelector('#msg button, #msg button[type="submit"]'));
+  const closeButton = findControl(/^\s*\u9589\u3058\u308b\s*$/);
+  let noticeRoot = null;
+  if (closeButton) {
+    let node = closeButton;
+    for (let depth = 0; depth < 8 && node; depth += 1, node = node.parentElement) {
+      const text = textOf(node);
+      if (/\u307e\u3068\u3081\u3066(?:\u53d6\u5f15|\u8cfc\u5165\u624b\u7d9a\u304d)|\u5546\u54c1\u3054\u3068\u306b\u53d6\u5f15|\u5358\u54c1\u3067\u306e\u53d6\u5f15/.test(text)) {
+        noticeRoot = node;
+        break;
+      }
+    }
+  }
+  const noticeText = textOf(noticeRoot);
+  const childProductButton = findControl(/^\s*\u3053\u306e\u5546\u54c1\u3092\u78ba\u8a8d\u3059\u308b\s*$/);
+  const bundleChildChoice = Boolean(childProductButton) &&
+    /\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f/.test(normalize(document.body?.textContent || ''));
+  return {
+    url: document.location?.href || '',
+    messageReady: normalMessageReady || storeMessageListReady || storeMessageFormReady,
+    normalMessageReady,
+    storeMessageReady: storeMessageListReady || storeMessageFormReady,
+    hasBundleNotice: Boolean(noticeRoot),
+    hasStoreBundleNotice: /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d/.test(noticeText),
+    hasCloseButton: Boolean(closeButton && noticeRoot),
+    bundleChildChoice,
+    hasSinglePurchaseProcedureButton: Boolean(findControl(/\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/)),
+    noticeText: noticeText.slice(0, 300)
+  };
+}
+
+function clickYahooMessageNavigationActionFromPage(action) {
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const textOf = node => normalize([
+    node?.textContent,
+    node?.value,
+    node?.title,
+    node?.getAttribute?.('aria-label')
+  ].filter(Boolean).join(' '));
+  const isVisible = node => {
+    if (!node) return false;
+    const style = globalThis.getComputedStyle?.(node);
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+    const rect = node.getBoundingClientRect?.();
+    return !rect || (rect.width > 0 && rect.height > 0);
+  };
+  const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+    .filter(isVisible);
+  let target = null;
+  if (action === 'closeBundleNotice') {
+    target = controls.find(node => {
+      if (!/^\s*\u9589\u3058\u308b\s*$/.test(textOf(node))) return false;
+      let parent = node;
+      for (let depth = 0; depth < 8 && parent; depth += 1, parent = parent.parentElement) {
+        if (/\u307e\u3068\u3081\u3066(?:\u53d6\u5f15|\u8cfc\u5165\u624b\u7d9a\u304d)|\u5546\u54c1\u3054\u3068\u306b\u53d6\u5f15|\u5358\u54c1\u3067\u306e\u53d6\u5f15/.test(textOf(parent))) return true;
+      }
+      return false;
+    });
+  } else if (action === 'singlePurchaseProcedure') {
+    target = controls.find(node => /\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/.test(textOf(node)));
+  }
+  if (!target) return { success: false, error: `Yahoo message navigation action not found: ${action}` };
+  const href = target.href || target.getAttribute?.('href') || '';
+  target.scrollIntoView?.({ block: 'center', inline: 'center' });
+  target.focus?.();
+  if (!href) target.click?.();
+  return { success: true, href, text: textOf(target) };
+}
+
+async function getYahooMessageNavigationState(tabId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: getYahooMessageNavigationStateFromPage
+  });
+  return result?.[0]?.result || null;
+}
+
+async function clickYahooMessageNavigationAction(tab, action) {
+  const previousTabIds = await getTabIds();
+  const previousUrl = String(tab?.url || '');
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: 'MAIN',
+    args: [action],
+    func: clickYahooMessageNavigationActionFromPage
+  });
+  const clickResult = result?.[0]?.result || { success: false, error: 'Yahoo message navigation click returned no result' };
+  if (!clickResult.success) return { ...clickResult, tab };
+  if (clickResult.href) {
+    await chrome.tabs.update(tab.id, { url: clickResult.href, active: false });
+  }
+  await sleep(action === 'closeBundleNotice' ? 800 : 1200);
+  let nextTab = await switchToNewestNewTab(previousTabIds, tab).catch(() => tab);
+  if (!nextTab?.id) nextTab = tab;
+  await waitForTransactionPageInteractive(nextTab.id).catch(() => {});
+  const refreshed = await chrome.tabs.get(nextTab.id).catch(() => nextTab);
+  refreshed._gdaipaiCreatedTabIds = [...new Set([
+    ...(tab?._gdaipaiCreatedTabIds || []),
+    ...(nextTab?._gdaipaiCreatedTabIds || []),
+    ...(nextTab.id !== tab.id ? [nextTab.id] : [])
+  ])];
+  return { success: true, tab: refreshed, changed: String(refreshed.url || '') !== previousUrl, text: clickResult.text };
+}
+
+async function prepareYahooMessagePage(tab, job = {}) {
+  const startedAt = Date.now();
+  let current = tab;
+  let storeBundleNoticeSeen = false;
+  let transitions = 0;
+  while (Date.now() - startedAt <= MESSAGE_NAVIGATION_WAIT_MS && transitions < 3) {
+    const state = await getYahooMessageNavigationState(current.id).catch(() => null);
+    if (!state) {
+      await sleep(MESSAGE_EXTRACT_POLL_MS);
+      continue;
+    }
+    if (state.bundleChildChoice) {
+      throw new Error('bundle child messages are not fetched separately');
+    }
+    if (state.hasBundleNotice && state.hasCloseButton) {
+      storeBundleNoticeSeen = storeBundleNoticeSeen || state.hasStoreBundleNotice;
+      const result = await clickYahooMessageNavigationAction(current, 'closeBundleNotice');
+      if (!result?.success) throw new Error(result?.error || 'bundle notice close failed');
+      current = result.tab;
+      transitions += 1;
+      continue;
+    }
+    if (state.messageReady) return current;
+    if ((storeBundleNoticeSeen || String(job.productType || '') === 'store') && state.hasSinglePurchaseProcedureButton) {
+      const result = await clickYahooMessageNavigationAction(current, 'singlePurchaseProcedure');
+      if (!result?.success) throw new Error(result?.error || 'single purchase procedure navigation failed');
+      current = result.tab;
+      transitions += 1;
+      continue;
+    }
+    await sleep(MESSAGE_EXTRACT_POLL_MS);
+  }
+  return current;
 }
 
 function getYahooTradeMessageExtractScript() {
@@ -6621,6 +6784,7 @@ async function executeYahooMessageJob(job) {
   try {
     const result = await withTimeout((async () => {
       tab = await openTransactionPage(job, beforeTabIds);
+      tab = await prepareYahooMessagePage(tab, job);
       if (job.jobType === 'send') {
         const sendResult = await sendYahooTradeMessage(tab, job.sendText || '');
         if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
@@ -6642,7 +6806,7 @@ async function executeYahooMessageJob(job) {
         messageHtml: extractResult.messageHtml
       });
       return { success: true };
-    })(), MESSAGE_JOB_TIMEOUT_MS, () => new Error('message job timeout after 30s'));
+    })(), MESSAGE_JOB_TIMEOUT_MS, () => new Error('message job timeout after 45s'));
     return result;
   } catch (error) {
     await updateYahooMessageStatus({
@@ -7007,6 +7171,10 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   updateYahooMessageStatus,
   getYahooTradeMessageExtractScript,
   getYahooTradeMessageSendScript,
+  getYahooMessageNavigationStateFromPage,
+  clickYahooMessageNavigationActionFromPage,
+  getYahooMessageNavigationState,
+  prepareYahooMessagePage,
   extractYahooTradeMessages,
   sendYahooTradeMessage,
   executeYahooMessageJob,

@@ -3,10 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-function testYahooMessageJobsUseThirtySecondTimeout() {
+function testYahooMessageJobsUseFortyFiveSecondTimeout() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
-  assert.match(source, /MESSAGE_JOB_TIMEOUT_MS = 30000/);
-  assert.match(source, /message job timeout after 30s/);
+  assert.match(source, /MESSAGE_JOB_TIMEOUT_MS = 45000/);
+  assert.match(source, /message job timeout after 45s/);
   assert.match(source, /withTimeout\([\s\S]*MESSAGE_JOB_TIMEOUT_MS/);
 }
 
@@ -680,8 +680,128 @@ async function testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender() 
   assert.equal(calls, 2);
 }
 
+function createYahooMessageNavigationElement(text, parentElement = null) {
+  return {
+    textContent: text,
+    innerText: text,
+    value: '',
+    title: '',
+    parentElement,
+    clicked: false,
+    getAttribute() { return ''; },
+    getBoundingClientRect() { return { width: 120, height: 32 }; },
+    scrollIntoView() {},
+    focus() {},
+    click() { this.clicked = true; }
+  };
+}
+
+function testYahooMessageNavigationClosesNormalBundleNotice() {
+  const notice = createYahooMessageNavigationElement('\u3053\u306e\u5546\u54c1\u306f\u3001\u307e\u3068\u3081\u3066\u53d6\u5f15\u304c\u3067\u304d\u307e\u3059\u3002');
+  const close = createYahooMessageNavigationElement('\u9589\u3058\u308b', notice);
+  const document = {
+    body: { textContent: notice.textContent },
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector.includes('button, a')) return [close];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({
+    document
+  });
+
+  const state = api.getYahooMessageNavigationStateFromPage();
+  const result = api.clickYahooMessageNavigationActionFromPage('closeBundleNotice');
+
+  assert.equal(state.hasBundleNotice, true);
+  assert.equal(state.hasStoreBundleNotice, false);
+  assert.equal(result.success, true);
+  assert.equal(close.clicked, true);
+}
+
+function testYahooMessageNavigationDetectsStoreBundleSequence() {
+  const notice = createYahooMessageNavigationElement('\u3053\u306e\u5546\u54c1\u306f\u3001\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d\u304c\u3067\u304d\u307e\u3059\u3002');
+  const close = createYahooMessageNavigationElement('\u9589\u3058\u308b', notice);
+  const single = createYahooMessageNavigationElement('\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b');
+  const document = {
+    body: { textContent: `${notice.textContent} ${single.textContent}` },
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector.includes('button, a')) return [close, single];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({
+    document
+  });
+
+  const state = api.getYahooMessageNavigationStateFromPage();
+  const result = api.clickYahooMessageNavigationActionFromPage('singlePurchaseProcedure');
+
+  assert.equal(state.hasStoreBundleNotice, true);
+  assert.equal(state.hasCloseButton, true);
+  assert.equal(state.hasSinglePurchaseProcedureButton, true);
+  assert.equal(result.success, true);
+  assert.equal(single.clicked, true);
+}
+
+function testYahooMessageNavigationRejectsBundleChildChoice() {
+  const child = createYahooMessageNavigationElement('\u3053\u306e\u5546\u54c1\u3092\u78ba\u8a8d\u3059\u308b');
+  const document = {
+    body: { textContent: '\u51fa\u54c1\u8005\u304c\u3001\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f\u3002' },
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector.includes('button, a')) return [child];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({
+    document
+  });
+
+  const state = api.getYahooMessageNavigationStateFromPage();
+
+  assert.equal(state.bundleChildChoice, true);
+  assert.equal(state.hasCloseButton, false);
+}
+
+async function testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence() {
+  const actions = [];
+  const states = [
+    { hasBundleNotice: true, hasStoreBundleNotice: true, hasCloseButton: true, messageReady: false },
+    { hasBundleNotice: false, hasSinglePurchaseProcedureButton: true, messageReady: false },
+    { hasBundleNotice: false, hasSinglePurchaseProcedureButton: false, messageReady: true }
+  ];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() { return [{ id: 41, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=k1', status: 'complete' }]; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=k1', status: 'complete' }; }
+    },
+    scripting: {
+      async executeScript(options) {
+        if (options.files) return undefined;
+        if (options.args?.length) {
+          actions.push(options.args[0]);
+          return [{ result: { success: true, text: options.args[0] } }];
+        }
+        return [{ result: states.shift() || { messageReady: true } }];
+      }
+    }
+  });
+
+  const result = await api.prepareYahooMessagePage(
+    { id: 41, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=k1', status: 'complete', _gdaipaiCreatedTabIds: [41] },
+    { productType: 'store' }
+  );
+
+  assert.equal(result.id, 41);
+  assert.deepEqual(actions, ['closeBundleNotice', 'singlePurchaseProcedure']);
+}
+
 function testSendYahooMessageJobFetchesLatestMessagesAfterSend() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  assert.match(source, /tab = await prepareYahooMessagePage\(tab, job\);/);
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
   assert.ok(sendBranch, 'send branch should be present');
   assert.match(sendBranch[1], /sendYahooTradeMessage\(tab, job\.sendText/);
@@ -9782,7 +9902,7 @@ function testWorkerIntervalConfigReschedulesPollingTimer() {
 }
 
 async function run() {
-  testYahooMessageJobsUseThirtySecondTimeout();
+  testYahooMessageJobsUseFortyFiveSecondTimeout();
   testPaymentSyntheticClickWaitsTenSecondsForNextState();
   await testStartPollingIsIdempotentWithinWorker();
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
@@ -9803,6 +9923,10 @@ testYahooTradeMessageSendUsesNativeTextareaSetterForStoreReactForm();
 await testSendYahooTradeMessageScopesStoreTextareaToMsgForm();
 await testSendYahooTradeMessageRetriesUntilTextareaRenders();
 await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();
+testYahooMessageNavigationClosesNormalBundleNotice();
+testYahooMessageNavigationDetectsStoreBundleSequence();
+testYahooMessageNavigationRejectsBundleChildChoice();
+await testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence();
 testSendYahooMessageJobFetchesLatestMessagesAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
