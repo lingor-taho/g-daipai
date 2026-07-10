@@ -184,6 +184,7 @@ async function testRequestYahooMessageFetchAllowsExistingOrderWithoutSuccessfulT
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
       assert.doesNotMatch(sql, /t\.status\s*=\s*'success'/);
+      assert.match(sql, /o\.order_status IS NULL/);
       assert.match(sql, /o\.order_status NOT IN \('cancelled', 'bundle_completed'\)/);
       return { order_id: 77, product_id: 's1235672175' };
     },

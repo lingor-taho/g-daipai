@@ -1466,6 +1466,11 @@ async function sendYahooTradeMessage(tabOrId, messageText) {
     });
     lastResult = injectionResult?.[0]?.result || { success: false, error: 'message send returned no result' };
     if (lastResult?.success) {
+      if (lastResult.pageType === 'normal') {
+        const visible = await waitForYahooSentMessageVisible(tabId, messageText, MESSAGE_EXTRACT_RENDER_WAIT_MS);
+        if (visible) return { ...lastResult, verified: true };
+        return { success: false, error: 'sent message not found after send' };
+      }
       if (lastResult.pageType !== 'store') return lastResult;
       storePageSeen = true;
       const visible = await waitForYahooSentMessageVisible(tabId, messageText, MESSAGE_EXTRACT_RENDER_WAIT_MS);

@@ -659,6 +659,30 @@ async function testSendYahooTradeMessageRetriesUntilTextareaRenders() {
   assert.equal(calls, 2);
 }
 
+async function testSendYahooTradeMessageWaitsForNormalMessageBeforeReturning() {
+  let calls = 0;
+  const api = loadBackgroundForTest({
+    setTimeout(fn) {
+      fn();
+      return 1;
+    },
+    scripting: {
+      async executeScript() {
+        calls += 1;
+        if (calls === 1) return [{ result: { success: true, pageType: 'normal' } }];
+        if (calls === 2) return [{ result: { success: false, found: false } }];
+        return [{ result: { success: true, found: true } }];
+      }
+    }
+  });
+
+  const result = await api.sendYahooTradeMessage(1, '222');
+
+  assert.equal(result.success, true);
+  assert.equal(result.verified, true);
+  assert.equal(calls, 3);
+}
+
 async function testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender() {
   let calls = 0;
   const api = loadBackgroundForTest({
@@ -9922,6 +9946,7 @@ testYahooTradeMessageSendScopesStoreTextareaToMsgForm();
 testYahooTradeMessageSendUsesNativeTextareaSetterForStoreReactForm();
 await testSendYahooTradeMessageScopesStoreTextareaToMsgForm();
 await testSendYahooTradeMessageRetriesUntilTextareaRenders();
+await testSendYahooTradeMessageWaitsForNormalMessageBeforeReturning();
 await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();
 testYahooMessageNavigationClosesNormalBundleNotice();
 testYahooMessageNavigationDetectsStoreBundleSequence();

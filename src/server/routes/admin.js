@@ -683,7 +683,8 @@ async function requestYahooMessageFetch(database, orderId) {
     `SELECT o.id AS order_id, COALESCE(o.product_id, t.product_id) AS product_id
      FROM orders o
      INNER JOIN tasks t ON t.id = o.task_id
-     WHERE o.id = ? AND o.order_status NOT IN ('cancelled', 'bundle_completed')`,
+     WHERE o.id = ?
+       AND (o.order_status IS NULL OR o.order_status NOT IN ('cancelled', 'bundle_completed'))`,
     [id]
   );
   if (!order) {

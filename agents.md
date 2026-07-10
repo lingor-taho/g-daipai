@@ -314,6 +314,37 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-10 个人商品发送后等待新消息渲染再抓取
+
+个人商品发送消息原本在点击 Yahoo `送信` 后立即进入消息提取；Yahoo 消息列表异步更新较慢时，第二次发送后可能仍抓到发送前的旧列表，例如已显示 `111`，发送 `222` 后自动更新仍只有 `111`。调用顺序虽然是发送后抓取，但缺少发送完成后的页面可见性等待。
+
+修复：个人商品与商城商品一样，发送点击后必须等待本次消息文本出现在 Yahoo 消息区域，确认可见后才执行聊天记录抓取和服务端覆盖。个人商品等待超时会把发送任务标记失败，并保留 pending 抓取任务供下一轮重试，不再用旧消息列表冒充本次自动更新结果。
+
+验证：
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
+注意：完整 `node yahoo-plugin/background.test.js` 已通过本次新增的个人商品发送后等待回归，后续仍停在既有 `testBuyoutMessageChannelClosedOnThankYouStaysBidding` 失败。
+
+### 2026-07-10 空订单状态支持消息抓取和发送
+
+刚落札订单在后续订单工作流尚未推进前，`orders.order_status` 可能暂时为空。后台消息读取列表原本会显示这类订单和“消息更新”按钮，但消息抓取/发送共用的服务端校验使用 `NOT IN ('cancelled', 'bundle_completed')`，SQLite 会把空状态排除并返回 `order not found`。
+
+修复：消息抓取和发送现在明确允许 `order_status IS NULL`，仍拒绝 `cancelled` 和 `bundle_completed`；新订单后续状态流转逻辑保持不变。
+
+验证：
+```powershell
+node src/server/routes/admin.orders.test.js
+node --check src/server/routes/admin.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-10 消息读取兼容同捆提示页
 
 后台消息读取/发送任务打开 Yahoo 交易页后，会先执行消息专用的安全导航，再提取或发送消息。普通商品遇到“可以同捆”“卖家同意同捆主商品”或“卖家要求单品交易”等同捆提示时，只点击提示区域内精确的 `閉じる`；商城商品遇到“まとめて購入手続き”提示时，先关闭提示，再点击 `単品で購入手続きする` 进入单品页面。导航完成的判定是普通/商城消息列表或商城消息发送区域出现，不会继续点击确认、付款或购买完成按钮。
