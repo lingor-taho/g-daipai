@@ -16,6 +16,7 @@ const MESSAGE_EXTRACT_RENDER_WAIT_MS = 8000;
 const MESSAGE_EXTRACT_POLL_MS = 500;
 const MESSAGE_NAVIGATION_WAIT_MS = 12000;
 const BIDDING_SYNC_MAX_PAGES = 50;
+const BIDDING_SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS = 8000;
 const PENDING_SHIPMENT_SCAN_POLL_MS = 500;
 const CONFIRM_RECEIPT_CANCEL_CHECK_RENDER_WAIT_MS = 8000;
@@ -4475,7 +4476,9 @@ async function openBiddingPageForSync(options = {}) {
   const tab = existingTab
     ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/bidding', active: false })
     : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/bidding', active: false });
+  let timedOut = false;
   try {
+    return await withTimeout((async () => {
     const itemsByProduct = new Map();
     for (let page = 0; page < BIDDING_SYNC_MAX_PAGES; page += 1) {
       if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
@@ -4501,8 +4504,14 @@ async function openBiddingPageForSync(options = {}) {
       await chrome.tabs.update(tab.id, { url: response.nextPageUrl, active: false });
     }
     await syncBiddingItems([...itemsByProduct.values()]);
+    })(), BIDDING_SYNC_TIMEOUT_MS, () => {
+      timedOut = true;
+      const error = new Error('Bidding page sync timeout after 5 minutes');
+      error.code = 'BIDDING_SYNC_TIMEOUT';
+      return error;
+    });
   } finally {
-    if (closeAfter && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
+    if ((closeAfter || timedOut) && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
   }
 }
 

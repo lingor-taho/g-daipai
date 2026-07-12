@@ -314,6 +314,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-12 入札页同步增加五分钟整轮超时
+
+插件常规监控抓取 `/my/bidding` 时，除原有单页 30 秒加载等待外，整轮分页同步新增 5 分钟硬超时。网络卡顿或分页长时间无法完成并超过 5 分钟时，本轮入札同步会报错并自动关闭对应 tab；`syncMonitorYahooPages` 的 `finally` 会继续释放 `monitorRunning`，不阻塞下一轮监控重新运行。正常完成时仍按原逻辑抓取全部可见分页，落札页同步逻辑不变。
+
+验证：
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-12 普通商品同捆状态修复批处理
 
 数据批处理新增“普通商品同捆修复”独立页，用于 Yahoo 端已经成功申请同捆、但系统因落札时间差导致同组订单分别停在 `pending_payment` / `pending_bundle` 的状态错位。管理员按顺序输入多个商品 ID，第一项作为主商品；服务端校验同一用户、普通商品、未结算、允许修复的早期状态和原组无遗漏后，在事务中为整组生成新的 `bundle_group_id`，统一改为 `pending_bundle`，清空旧同捆运费和交易开始错误，并写入 `admin_normal_bundle_repair` 状态审计。

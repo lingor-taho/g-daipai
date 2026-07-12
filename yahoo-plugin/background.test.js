@@ -10,6 +10,14 @@ function testYahooMessageJobsUseFortyFiveSecondTimeout() {
   assert.match(source, /withTimeout\([\s\S]*MESSAGE_JOB_TIMEOUT_MS/);
 }
 
+function testBiddingSyncUsesFiveMinuteTimeoutAndClosesTimedOutTab() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  assert.match(source, /BIDDING_SYNC_TIMEOUT_MS = 5 \* 60 \* 1000/);
+  assert.match(source, /withTimeout\(\(async \(\) => \{[\s\S]*BIDDING_SYNC_TIMEOUT_MS/);
+  assert.match(source, /Bidding page sync timeout after 5 minutes/);
+  assert.match(source, /\(closeAfter \|\| timedOut\)[\s\S]*chrome\.tabs\.remove/);
+}
+
 function testPaymentSyntheticClickWaitsTenSecondsForNextState() {
   const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   assert.match(source, /waitForPaymentStateAcrossTabs\(tab,\s*waitFor,\s*previousTabIds,\s*10000\)/);
@@ -32,7 +40,12 @@ function loadBackgroundForTest(overrides = {}) {
       __G_DAIPAI_RANDOM__: overrides.random
     },
     setInterval(...args) { return overrides.setInterval ? overrides.setInterval(...args) : undefined; },
-    setTimeout(fn, ms) { return overrides.setTimeout ? overrides.setTimeout(fn, ms) : fn(); },
+    setTimeout(fn, ms) {
+      if (overrides.setTimeout) return overrides.setTimeout(fn, ms);
+      // Keep the production five-minute monitor watchdog pending in unrelated unit tests.
+      if (ms === 5 * 60 * 1000) return undefined;
+      return fn();
+    },
     clearTimeout() {},
     clearInterval(...args) { return overrides.clearInterval ? overrides.clearInterval(...args) : undefined; },
     Date: overrides.Date || Date,
@@ -9927,6 +9940,7 @@ function testWorkerIntervalConfigReschedulesPollingTimer() {
 
 async function run() {
   testYahooMessageJobsUseFortyFiveSecondTimeout();
+  testBiddingSyncUsesFiveMinuteTimeoutAndClosesTimedOutTab();
   testPaymentSyntheticClickWaitsTenSecondsForNextState();
   await testStartPollingIsIdempotentWithinWorker();
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
