@@ -314,6 +314,21 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-12 普通商品同捆状态修复批处理
+
+数据批处理新增“普通商品同捆修复”独立页，用于 Yahoo 端已经成功申请同捆、但系统因落札时间差导致同组订单分别停在 `pending_payment` / `pending_bundle` 的状态错位。管理员按顺序输入多个商品 ID，第一项作为主商品；服务端校验同一用户、普通商品、未结算、允许修复的早期状态和原组无遗漏后，在事务中为整组生成新的 `bundle_group_id`，统一改为 `pending_bundle`，清空旧同捆运费和交易开始错误，并写入 `admin_normal_bundle_repair` 状态审计。
+
+自动交易开始回写也同步硬化：插件已经在 Yahoo 成功提交同捆并回传完整商品 ID 时，允许把同组内提前进入 `pending_payment` / `waiting_shipping` 的订单纠正为 `pending_bundle`，避免以后再次产生同类错位；其他交易开始状态回写仍只更新空状态订单。
+
+验证：
+```powershell
+node src/server/routes/admin.orders.test.js
+node src/server/routes/plugin.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-10 个人商品发送后等待新消息渲染再抓取
 
 个人商品发送消息原本在点击 Yahoo `送信` 后立即进入消息提取；Yahoo 消息列表异步更新较慢时，第二次发送后可能仍抓到发送前的旧列表，例如已显示 `111`，发送 `222` 后自动更新仍只有 `111`。调用顺序虽然是发送后抓取，但缺少发送完成后的页面可见性等待。

@@ -6,6 +6,7 @@ import OrderStatusRefreshPage from './OrderStatusRefresh';
 import ReceiptSheetBackfillPage from './ReceiptSheetBackfill';
 import TrackingRescanPage from './TrackingRescan';
 import ProductDataDeletePage from './ProductDataDelete';
+import NormalBundleRepairPage from './NormalBundleRepair';
 
 const labels = {
   shipping: '运费更新',
@@ -23,6 +24,11 @@ export default function DataBatchPage() {
       className="admin-data-batch-tabs"
       defaultActiveKey="shipping"
       items={[
+        {
+          key: 'normalBundleRepair',
+          label: '普通商品同捆修复',
+          children: <NormalBundleRepairPage />
+        },
         {
           key: 'shipping',
           label: labels.shipping,

@@ -1812,6 +1812,127 @@ function buildStoreBundleGroupId(mainProductId, nowMs = Date.now()) {
   return `store-bundle-${String(mainProductId || '').toLowerCase()}-${nowMs}`;
 }
 
+function parseNormalBundleRepairProductIds(input) {
+  return [...new Set(String(input || '')
+    .split(/[\s,，]+/)
+    .map(value => extractAuctionId(value) || String(value || '').trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+function buildNormalBundleRepairGroupId(mainProductId, nowMs = Date.now()) {
+  return `bundle-repair-${new Date(nowMs).toISOString().slice(0, 10).replace(/-/g, '')}-${String(mainProductId || '').toLowerCase()}-${nowMs}`;
+}
+
+async function repairNormalBundle(database, payload = {}, options = {}) {
+  const productIds = parseNormalBundleRepairProductIds(payload.productIdsText || payload.productIds || '');
+  if (productIds.length < 2) {
+    const error = new Error('至少需要输入两个不同的商品 ID');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const placeholders = productIds.map(() => '?').join(',');
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.order_status,
+            o.bundle_group_id,
+            o.settled_at,
+            o.total_amount_cny,
+            t.product_id,
+            t.user_id,
+            COALESCE(p.product_type, 'normal') AS product_type
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = t.product_id
+     WHERE LOWER(t.product_id) IN (${placeholders})
+       AND t.status = 'success'`,
+    productIds
+  );
+  const byProductId = new Map(rows.map(row => [String(row.product_id || '').toLowerCase(), row]));
+  const missing = productIds.filter(id => !byProductId.has(id));
+  if (missing.length) {
+    const error = new Error(`商品不存在或不是落札订单：${missing.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (rows.length !== productIds.length) {
+    const error = new Error('部分商品对应多个落札订单，请先检查重复数据');
+    error.statusCode = 400;
+    throw error;
+  }
+  const userIds = new Set(rows.map(row => Number(row.user_id)));
+  if (userIds.size !== 1) {
+    const error = new Error('同捆商品必须属于同一个用户');
+    error.statusCode = 400;
+    throw error;
+  }
+  const nonNormal = rows.filter(row => row.product_type !== 'normal').map(row => row.product_id);
+  if (nonNormal.length) {
+    const error = new Error(`只能修复普通商品同捆：${nonNormal.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const allowedStatuses = new Set(['', null, ORDER_STATUS_PENDING_PAYMENT, 'waiting_shipping', 'pending_bundle']);
+  const blocked = rows.filter(row => !allowedStatuses.has(row.order_status)).map(row => `${row.product_id}(${row.order_status || '空'})`);
+  if (blocked.length) {
+    const error = new Error(`这些商品状态不能修复：${blocked.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const settled = rows.filter(row => row.settled_at || row.total_amount_cny !== null).map(row => row.product_id);
+  if (settled.length) {
+    const error = new Error(`这些商品已经结算，不能修复：${settled.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existingGroups = [...new Set(rows.map(row => String(row.bundle_group_id || '').trim()).filter(Boolean))];
+  if (existingGroups.length) {
+    const groupPlaceholders = existingGroups.map(() => '?').join(',');
+    const outsideRows = await database.getAll(
+      `SELECT t.product_id, o.bundle_group_id
+       FROM orders o
+       INNER JOIN tasks t ON o.task_id = t.id
+       WHERE o.bundle_group_id IN (${groupPlaceholders})
+         AND LOWER(t.product_id) NOT IN (${placeholders})`,
+      [...existingGroups, ...productIds]
+    );
+    if (outsideRows.length) {
+      const error = new Error(`原同捆组还包含未输入商品：${outsideRows.map(row => row.product_id).join(', ')}`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const mainProductId = productIds[0];
+  const orderIds = productIds.map(id => byProductId.get(id).order_id);
+  const bundleGroupId = buildNormalBundleRepairGroupId(mainProductId, options.nowMs || Date.now());
+  const beforeRows = await getOrderStatusAuditRows(database, orderIds);
+  try {
+    await database.query('BEGIN IMMEDIATE');
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = 'pending_bundle',
+           bundle_group_id = ?,
+           bundle_shipping_fee_text = NULL,
+           transaction_start_error = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (${orderIds.map(() => '?').join(',')})`,
+      [bundleGroupId, ...orderIds]
+    );
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status: 'pending_bundle',
+      source: 'admin_normal_bundle_repair',
+      metadata: { mainProductId, productIds, bundleGroupId, yahooBundleAlreadyRequested: true }
+    });
+    await database.query('COMMIT');
+    return { mainProductId, productIds, orderIds, bundleGroupId, updated: result.rowCount || 0 };
+  } catch (error) {
+    await database.query('ROLLBACK').catch(() => null);
+    throw error;
+  }
+}
+
 function assertStoreBundleBackfillRows({ mainProductId, childProductIds, rows }) {
   const ids = [mainProductId, ...childProductIds];
   const byProductId = new Map((rows || []).map(row => [String(row.product_id || '').toLowerCase(), row]));
@@ -1983,6 +2104,15 @@ router.post('/orders/store-bundle-backfill', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || '商城同捆补录失败' });
+  }
+});
+
+router.post('/normal-bundle-repair/run', async (req, res) => {
+  try {
+    const result = await repairNormalBundle(db, req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '普通商品同捆修复失败' });
   }
 });
 
@@ -3652,6 +3782,8 @@ module.exports.refreshProductType = refreshProductType;
 module.exports.parseShippingFeeToNumber = parseShippingFeeToNumber;
 module.exports.parseStoreBundleChildProductIds = parseStoreBundleChildProductIds;
 module.exports.backfillStoreBundle = backfillStoreBundle;
+module.exports.parseNormalBundleRepairProductIds = parseNormalBundleRepairProductIds;
+module.exports.repairNormalBundle = repairNormalBundle;
 module.exports.deleteProductDataByProductId = deleteProductDataByProductId;
 module.exports.createManualOrderImportBatch = createManualOrderImportBatch;
 module.exports.confirmManualOrderImport = confirmManualOrderImport;

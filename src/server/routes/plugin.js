@@ -1318,6 +1318,7 @@ function normalizeOrderStatus(value) {
 
 async function updateTransactionStartStatus(payload = {}, database = db) {
   const error = String(payload.error || '').trim();
+  const repairingConfirmedBundle = !error && payload.status === ORDER_STATUS_PENDING_BUNDLE;
   let ids = Array.isArray(payload.orderIds)
     ? payload.orderIds
     : (payload.orderId ? [payload.orderId] : []);
@@ -1333,7 +1334,9 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
          INNER JOIN tasks t ON o.task_id = t.id
          WHERE t.product_id IN (${productPlaceholders})
            AND t.status = 'success'
-           AND (o.order_status IS NULL OR o.order_status = '')`,
+           AND ${repairingConfirmedBundle
+    ? "(o.order_status IS NULL OR o.order_status = '' OR o.order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle'))"
+    : "(o.order_status IS NULL OR o.order_status = '')"}`,
         productIds
       );
       ids = rows.map(row => row.id);
@@ -1403,7 +1406,9 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
          transaction_start_error = NULL,
          updated_at = CURRENT_TIMESTAMP
      WHERE id IN (${placeholders})
-       AND (order_status IS NULL OR order_status = '')`,
+       AND ${status === ORDER_STATUS_PENDING_BUNDLE
+    ? "(order_status IS NULL OR order_status = '' OR order_status IN ('pending_payment', 'waiting_shipping', 'pending_bundle'))"
+    : "(order_status IS NULL OR order_status = '')"}`,
     [status, bundleGroupId, ...orderIds]
   );
   if (result.rowCount) {

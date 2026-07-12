@@ -45,6 +45,8 @@ const {
   reassignOrderOwner,
   buildGoogleSheetUrl,
   parseStoreBundleChildProductIds,
+  parseNormalBundleRepairProductIds,
+  repairNormalBundle,
   normalizeManualOrderImportSummary,
   backfillStoreBundle,
   markProductOrdersForResync,
@@ -68,6 +70,42 @@ function testBuildGoogleSheetUrl() {
     'https://docs.google.com/spreadsheets/d/1NFDVdBAdi3S6RzS3u7LEd0jX-etlyATioVfghXm-GB4/edit?gid=0#gid=0'
   );
   assert.equal(buildGoogleSheetUrl(''), '');
+}
+
+function testParseNormalBundleRepairProductIdsKeepsFirstAsMain() {
+  assert.deepEqual(
+    parseNormalBundleRepairProductIds('R1231736698\nf1236640559, R1231736698'),
+    ['r1231736698', 'f1236640559']
+  );
+}
+
+async function testRepairNormalBundleUpdatesWholeGroupAtomically() {
+  const rows = [
+    { order_id: 51, order_status: 'pending_payment', bundle_group_id: '', settled_at: null, total_amount_cny: null, product_id: 'r1231736698', user_id: 7, product_type: 'normal' },
+    { order_id: 52, order_status: 'pending_bundle', bundle_group_id: 'bundle-old', settled_at: null, total_amount_cny: null, product_id: 'f1236640559', user_id: 7, product_type: 'normal' }
+  ];
+  const queries = [];
+  const fakeDb = {
+    async getAll(sql) {
+      if (/old_status/.test(sql)) return rows.map(row => ({ ...row, old_status: row.order_status }));
+      if (/NOT IN/.test(sql)) return [];
+      return rows;
+    },
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      return { rowCount: /^\s*UPDATE orders/.test(sql) ? 2 : 1 };
+    }
+  };
+  const result = await repairNormalBundle(fakeDb, {
+    productIdsText: 'r1231736698\nf1236640559'
+  }, { nowMs: Date.UTC(2026, 6, 12, 0, 0, 0) });
+  assert.equal(result.mainProductId, 'r1231736698');
+  assert.equal(result.updated, 2);
+  assert.match(result.bundleGroupId, /^bundle-repair-20260712-r1231736698-/);
+  assert.equal(queries[0].sql, 'BEGIN IMMEDIATE');
+  assert.match(queries[1].sql, /order_status = 'pending_bundle'/);
+  assert.match(queries[1].sql, /bundle_shipping_fee_text = NULL/);
+  assert.equal(queries.at(-1).sql, 'COMMIT');
 }
 
 function testBuildTrustedInputReportQueries() {
@@ -1275,6 +1313,7 @@ testBuildBidFailureReportQueries();
 testBuildRecentTaskFailureUserReportQuery();
 testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
+testParseNormalBundleRepairProductIdsKeepsFirstAsMain();
   testManualOrderImportSummarySeparatesEmptyReadyBatches();
 
 Promise.all([
@@ -1292,6 +1331,7 @@ Promise.all([
   testClearPaymentAlertAndContinueClearsMessageAndSetsFlag(),
   testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted(),
   testBackfillStoreBundleRejectsNormalProduct(),
+  testRepairNormalBundleUpdatesWholeGroupAtomically(),
   testDeleteProductDataRemovesTaskOrderAndBiddingAssociations(),
   testDeleteProductDataCanRemoveOrphanBiddingItem(),
   testReassignOrderOwnerUpdatesSourceAndSameProductTasks(),
