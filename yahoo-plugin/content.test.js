@@ -37,8 +37,13 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
     window: {
       location: {
         origin: 'http://localhost:3001',
-        href: options.href || `https://auctions.yahoo.co.jp${pathname}`,
-        pathname
+        get href() {
+          const currentPathname = options.getPathname ? options.getPathname() : pathname;
+          return options.href || `https://auctions.yahoo.co.jp${currentPathname}`;
+        },
+        get pathname() {
+          return options.getPathname ? options.getPathname() : pathname;
+        }
       },
       addEventListener() {},
       getComputedStyle(el) {
@@ -390,6 +395,26 @@ function testProductPageHighestBidderNoticeDoesNotSkipNewBid() {
 
   assert.equal(api.hasCurrentHighestBidderNotice(), true);
   assert.equal(api.isHighestBidderText(), false);
+}
+
+function testSellerCompletionInstructionsOnProductPageAreNotBidSuccess() {
+  const api = loadContentForTest(
+    '\u3054\u5e0c\u671b\u5546\u54c1\u306e\u3054\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3089\u3001\u843d\u672d\u65e5\u304b\u30894\u65e5\u4ee5\u5185\u306b\u3054\u6ce8\u6587\u306e\u78ba\u5b9a\u51e6\u7406\u3092\u304a\u9858\u3044\u3044\u305f\u3057\u307e\u3059\u3002',
+    '/jp/auction/e1236735952'
+  );
+
+  assert.equal(api.isHighestBidderText(), false);
+}
+
+async function testSellerCompletionInstructionsDoNotShortCircuitBidExecution() {
+  const result = await loadAndExecuteBidForTest(
+    '\u3054\u5e0c\u671b\u5546\u54c1\u306e\u3054\u843d\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3089\u3001\u843d\u672d\u65e5\u304b\u30894\u65e5\u4ee5\u5185\u306b\u3054\u6ce8\u6587\u306e\u78ba\u5b9a\u51e6\u7406\u3092\u304a\u9858\u3044\u3044\u305f\u3057\u307e\u3059\u3002',
+    { maxPrice: 95000, userMaxPrice: 104501, strategy: 'direct', taxType: 'tax_included' },
+    '/jp/auction/e1236735952'
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, 'bid button not found');
 }
 
 function testAcceptedBuyoutTextIsSuccess() {
@@ -1053,6 +1078,11 @@ async function testBuyoutClicksInstantBuyThenFinalAgree() {
   };
 
   const api = loadContentForTest('', '/jp/auction/t1204059533', {
+    getPathname: () => {
+      if (stage === 'product') return '/jp/auction/t1204059533';
+      if (stage === 'confirm') return '/jp/auction/t1204059533/bid/confirm';
+      return '/jp/auction/t1204059533/bid/done';
+    },
     getBodyText: () => {
       if (stage === 'product') return '\u73fe\u5728 2,800\u5186 \u4eca\u3059\u3050\u843d\u672d';
       if (stage === 'confirm') return '\u843d\u672d\u78ba\u8a8d \u4e0a\u8a18\u306e\u30ac\u30a4\u30c9\u30e9\u30a4\u30f3\u7b49\u306b\u540c\u610f\u3057\u3066 \u843d\u672d\u3059\u308b';
@@ -1111,6 +1141,11 @@ async function testStoreBuyoutClicksPurchaseFlow() {
   };
 
   const api = loadContentForTest('', '/jp/auction/v1184829642', {
+    getPathname: () => {
+      if (stage === 'product') return '/jp/auction/v1184829642';
+      if (stage === 'success') return '/order/thank-you';
+      return '/order/confirm';
+    },
     getBodyText: () => {
       if (stage === 'product') return '\u4fa1\u683c 2,460\u5186\uff08\u7a0e\u8fbc\uff09 \u8cfc\u5165\u624b\u7d9a\u304d\u3078';
       if (stage === 'confirm') return '\u8cfc\u5165\u5185\u5bb9\u306e\u78ba\u8a8d \u3053\u306e\u51fa\u54c1\u8005\u306e\u4ed6\u306e\u5546\u54c1\u3068\u307e\u3068\u3081\u3066\u8cfc\u5165\u3059\u308b \u4eca\u3059\u3050\u843d\u672d\u3059\u308b';
@@ -4194,6 +4229,8 @@ async function run() {
   await testYahooSystemErrorPageReturnsStableBidError();
   testAcceptedBidTextIsHighestBidder();
   testProductPageHighestBidderNoticeDoesNotSkipNewBid();
+  testSellerCompletionInstructionsOnProductPageAreNotBidSuccess();
+  await testSellerCompletionInstructionsDoNotShortCircuitBidExecution();
   testAcceptedBuyoutTextIsSuccess();
   testStoreBuyoutThankYouPageIsSuccess();
   testSuccessTextWinsOverGenericOutbidWords();

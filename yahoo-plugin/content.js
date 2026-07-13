@@ -448,13 +448,33 @@ function isBuyoutThankYouPage(pathname = window.location.pathname) {
   return /\/order\/thank-you\b/.test(pathname);
 }
 
+function isBidDonePage(pathname = window.location.pathname) {
+  return /\/jp\/auction\/[a-zA-Z]?\d{8,10}\/bid\/done\b/.test(pathname);
+}
+
+function markFinalBidSubmissionStarted() {
+  window.__G_DAIPAI_FINAL_BID_SUBMITTED__ = true;
+  window.__G_DAIPAI_SUCCESS_TEXT_BEFORE_FINAL_BID__ = hasBidSuccessText();
+}
+
 function isHighestBidderText(text = getBodyText(), pathname = window.location.pathname) {
-  const isBidDonePage = /\/jp\/auction\/[a-zA-Z]?\d{8,10}\/bid\/done/.test(pathname);
   if (hasExplicitOutbidText(text)) return false;
   if (isRebidRequiredText(text)) return false;
-  return hasBidSuccessText(text) ||
-    isBuyoutThankYouPage(pathname) ||
-    (isBidDonePage && /\u6700\u9ad8\u984d\u5165\u672d\u8005/.test(text) && !/\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(text));
+  if (isBuyoutThankYouPage(pathname)) return true;
+
+  // Product descriptions, store notices, and seller messages can contain phrases
+  // such as "bid completed" as instructions. A Yahoo completion URL is authoritative.
+  if (isBidDonePage(pathname)) {
+    return hasBidSuccessText(text) ||
+      (/\u6700\u9ad8\u984d\u5165\u672d\u8005/.test(text) && !/\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(text));
+  }
+
+  // Some Yahoo purchase flows update in place without changing the URL. In that
+  // case, accept success text only when it appeared after this script clicked the
+  // final submit action and was not already present in seller-provided page text.
+  return window.__G_DAIPAI_FINAL_BID_SUBMITTED__ === true &&
+    window.__G_DAIPAI_SUCCESS_TEXT_BEFORE_FINAL_BID__ === false &&
+    hasBidSuccessText(text);
 }
 
 function isOutbidPage() {
@@ -1045,6 +1065,7 @@ async function executeBidV3(maxPrice, options = {}) {
         if (!inputResult.success) return inputResult;
         reportBidProgress('rebid-price-filled');
         await sleep(MULTI_BID_REBID_SUBMIT_DELAY_MS);
+        markFinalBidSubmissionStarted();
         clickElement(rebidSubmitButton);
         reportBidProgress('rebid-submitted');
         const outcome = await waitForBidOutcome();
@@ -1063,6 +1084,7 @@ async function executeBidV3(maxPrice, options = {}) {
 
     const finalAgreeBtn = findClickable([/\u540c\u610f.*\u5165\u672d/, /\u4e0a\u8a18.*\u5165\u672d/]);
     if (finalAgreeBtn) {
+      markFinalBidSubmissionStarted();
       clickElement(finalAgreeBtn);
       reportBidProgress('final-agree-submitted');
       const outcome = await waitForBidOutcome();
@@ -1098,6 +1120,7 @@ async function executeBidV3(maxPrice, options = {}) {
         return { success: false, error: 'confirm button not found' };
       }
       await sleep(MULTI_BID_INPUT_SUBMIT_DELAY_MS);
+      markFinalBidSubmissionStarted();
       clickElement(confirmBtn);
       reportBidProgress('confirm-clicked');
       await sleep(MULTI_BID_PAGE_STEP_DELAY_MS);
@@ -1213,6 +1236,7 @@ async function executeBidV3(maxPrice, options = {}) {
     const userMaxError = validateUserMaxBeforeSubmit();
     if (userMaxError) return userMaxError;
     if (isBuyoutFinalPurchase) window.__G_DAIPAI_BUYOUT_FINAL_CLICKED__ = true;
+    markFinalBidSubmissionStarted();
     clickElement(finalAgreeBtn);
     const outcome = await waitForBidOutcome(
       isBuyoutFinalPurchase ? 10000 : DIRECT_BID_FINAL_OUTCOME_TIMEOUT_MS
@@ -1245,6 +1269,7 @@ async function executeBidV3(maxPrice, options = {}) {
     if (!confirmBtn) {
       return { success: false, error: 'confirm button not found' };
     }
+    markFinalBidSubmissionStarted();
     clickElement(confirmBtn);
     return { success: true, bidPrice: numericMaxPrice, pendingFinal: true, stage: 'confirm-clicked' };
   }
@@ -1266,6 +1291,7 @@ async function executeBidV3(maxPrice, options = {}) {
     return { success: false, error: bidMode === 'buyout' ? 'buyout button not found' : 'bid button not found' };
   }
 
+  markFinalBidSubmissionStarted();
   clickElement(bidEntryBtn);
   await new Promise(resolve => setTimeout(resolve, 1200));
   return executeBidV3(numericMaxPrice, options);

@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-10
+**最后更新**: 2026-07-13
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -313,6 +313,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-13 出价成功判定限定在 Yahoo 完成页
+
+商品页上的商品说明、ストア通知或卖家介绍可能包含“入札しました”或“落札が完了しましたら”等说明性文字。插件不再根据商品详情页初始整页文字判定出价成功；普通出价进入 `/jp/auction/{商品ID}/bid/done` 完成页后，才允许直接根据成功文案或“最高額入札者”判定成功，商城即决仍以 `/order/thank-you` 作为完成事实。对少数不改变 URL 的 Yahoo 页面内更新流程，仅当插件已经点击本轮提交动作、且成功文字在点击前不存在而在点击后新出现时才允许判成功。这样可避免卖家说明中的条件句让插件在点击出价按钮前直接误报 `bidding`。
+
+验证：
+```powershell
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/content.test.js
+node yahoo-plugin/content.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-07-12 入札页同步增加五分钟整轮超时
 
