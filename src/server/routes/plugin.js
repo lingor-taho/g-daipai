@@ -227,6 +227,13 @@ function isTaskNeedingEndTimeRefresh(task) {
 function isTaskReadyForDispatch(task, nowMs = Date.now(), config = {}) {
   const endMs = parseTimeMs(task.end_time);
   if (endMs && endMs <= nowMs) return false;
+  if (isMultiBidTask(task)) {
+    const currentPrice = Number(task.current_price || 0);
+    const maxPrice = Number(task.max_price || 0);
+    const submittedBidLimit = Number(task.highest_submitted_bid_price || 0);
+    if (maxPrice > 0 && submittedBidLimit >= maxPrice) return false;
+    if (Number(task.is_highest_bidder) === 1 && maxPrice > 0 && currentPrice >= maxPrice) return false;
+  }
   if (isMultiBidTask(task) && !isMultiBidIntervalReady(task, nowMs, config)) {
     return false;
   }
@@ -330,6 +337,16 @@ async function claimTaskForProcessing(taskId, database = db) {
        AND (
          status = 'pending'
          OR (status = 'bidding' AND strategy = 'multi_bid')
+       )
+       AND (
+         COALESCE(strategy, 'direct') <> 'multi_bid'
+         OR NOT EXISTS (
+           SELECT 1
+           FROM bid_logs completed_bl
+           WHERE completed_bl.task_id = tasks.id
+             AND completed_bl.result = 'bidding'
+             AND completed_bl.bid_price >= tasks.max_price
+         )
        )`,
     [taskId]
   );
@@ -351,6 +368,10 @@ async function getPluginTaskCandidates(database = db) {
             t.status,
             t.is_highest_bidder,
             t.last_bid_at,
+            (SELECT MAX(bl.bid_price)
+               FROM bid_logs bl
+              WHERE bl.task_id = t.id
+                AND bl.result = 'bidding') AS highest_submitted_bid_price,
             t.error_msg,
             t.created_at,
             t.updated_at,
@@ -370,8 +391,20 @@ async function getPluginTaskCandidates(database = db) {
             p.end_time
      FROM tasks t
      LEFT JOIN products p ON p.product_id = t.product_id
-     WHERE t.status = 'pending'
-        OR (t.status = 'bidding' AND t.strategy = 'multi_bid')
+     WHERE (
+          t.status = 'pending'
+          OR (t.status = 'bidding' AND t.strategy = 'multi_bid')
+        )
+       AND (
+          COALESCE(t.strategy, 'direct') <> 'multi_bid'
+          OR NOT EXISTS (
+            SELECT 1
+              FROM bid_logs completed_bl
+             WHERE completed_bl.task_id = t.id
+               AND completed_bl.result = 'bidding'
+               AND completed_bl.bid_price >= t.max_price
+          )
+       )
      ORDER BY t.created_at ASC
      LIMIT 100`
   );

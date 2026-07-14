@@ -103,8 +103,8 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
   return sandbox.window.__G_DAIPAI_TEST__;
 }
 
-async function loadAndExecuteBidForTest(bodyText, execOptions = {}, pathname = '/jp/auction/x123456789/bid/done') {
-  const api = loadContentForTest(bodyText, pathname);
+async function loadAndExecuteBidForTest(bodyText, execOptions = {}, pathname = '/jp/auction/x123456789/bid/done', options = {}) {
+  const api = loadContentForTest(bodyText, pathname, options);
   return api.executeBidV3(execOptions.maxPrice || 1000, execOptions);
 }
 
@@ -139,6 +139,28 @@ function createTestElement(text = '') {
       if (this.onDispatch) this.onDispatch(event);
     }
   };
+}
+
+function createBidActionRegion(text) {
+  return {
+    innerText: text,
+    textContent: text,
+    querySelectorAll() { return []; }
+  };
+}
+
+function createCurrentBidderStatusRegion(autoBidLimit) {
+  return createTestElement(`\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01 \u81ea\u52d5\u5165\u672d\u4e0a\u9650 ${Number(autoBidLimit).toLocaleString('ja-JP')}\u5186`);
+}
+
+function attachBidActionRegion(priceInput, getText) {
+  const region = createBidActionRegion('');
+  Object.defineProperties(region, {
+    innerText: { get: getText },
+    textContent: { get: getText }
+  });
+  priceInput.closest = () => region;
+  return region;
 }
 
 function createProductMainInfoDom(rows = {}, titleText = '') {
@@ -403,13 +425,30 @@ function testAcceptedBidTextIsHighestBidder() {
 }
 
 function testProductPageHighestBidderNoticeDoesNotSkipNewBid() {
+  const statusRegion = createCurrentBidderStatusRegion(1000);
   const api = loadContentForTest(
-    'あなたが最高額入札者です!',
-    '/jp/auction/x123456789'
+    '',
+    '/jp/auction/x123456789',
+    {
+      querySelectorAll(selector) {
+        if (selector.includes('[role="status"]')) return [statusRegion];
+        return [];
+      }
+    }
   );
 
   assert.equal(api.hasCurrentHighestBidderNotice(), true);
   assert.equal(api.isHighestBidderText(), false);
+}
+
+function testSellerHighestBidderWordsDoNotBecomeCurrentBidderStatus() {
+  const api = loadContentForTest(
+    '\u5546\u54c1\u8aac\u660e\uff1a\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01 \u81ea\u52d5\u5165\u672d\u4e0a\u9650 9,075\u5186',
+    '/jp/auction/x123456789'
+  );
+
+  assert.equal(api.hasCurrentHighestBidderNotice(), false);
+  assert.equal(api.extractAutoBidLimit(), 0);
 }
 
 function testSellerCompletionInstructionsOnProductPageAreNotBidSuccess() {
@@ -914,36 +953,171 @@ function testPlainBidEntryIsNotFinalAgree() {
 }
 
 function testExtractTaxIncludedTotal() {
-  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,250\u5186');
+  const bidRegion = createBidActionRegion('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,250\u5186 \u78ba\u8a8d\u3059\u308b');
+  const api = loadContentForTest('\u304a\u3059\u3059\u3081\u5546\u54c1 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 9,075\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x123456789/bid', {
+    querySelectorAll(selector) {
+      if (selector.includes('form[action*="bid" i]')) return [bidRegion];
+      return [];
+    }
+  });
 
   assert.equal(api.extractTaxIncludedTotal(), 1250);
 }
 
 function testMultiBidInputPageDetection() {
-  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,250\u5186 \u78ba\u8a8d\u3059\u308b');
+  const bidRegion = createBidActionRegion('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,250\u5186 \u78ba\u8a8d\u3059\u308b');
+  const api = loadContentForTest('', '/jp/auction/x123456789/bid', {
+    querySelectorAll(selector) {
+      if (selector.includes('form[action*="bid" i]')) return [bidRegion];
+      return [];
+    }
+  });
 
   assert.equal(api.isBidInputPage(), true);
 }
 
+function testBidTotalsIgnoreRecommendationTextWithoutBidRegion() {
+  const api = loadContentForTest(
+    '\u304a\u3059\u3059\u3081\u5546\u54c1 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 9,075\u5186 \u78ba\u8a8d\u3059\u308b',
+    '/jp/auction/d1237049950'
+  );
+
+  assert.equal(api.extractTaxIncludedTotal(), 0);
+  assert.equal(api.isBidInputPage(), false);
+}
+
 function testProductHighestBidderNoticeDetection() {
-  const api = loadContentForTest('\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!');
+  const statusRegion = createCurrentBidderStatusRegion(1000);
+  const api = loadContentForTest('', '/jp/auction/x123456789', {
+    querySelectorAll(selector) {
+      if (selector.includes('[role="status"]')) return [statusRegion];
+      return [];
+    }
+  });
 
   assert.equal(api.hasCurrentHighestBidderNotice(), true);
 }
 
 function testExtractAutoBidLimit() {
-  const api = loadContentForTest('\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059! \u81ea\u52d5\u5165\u672d\u4e0a\u9650 1,000\u5186');
+  const statusRegion = createCurrentBidderStatusRegion(1000);
+  const api = loadContentForTest('', '/jp/auction/x123456789', {
+    querySelectorAll(selector) {
+      if (selector.includes('[role="status"]')) return [statusRegion];
+      return [];
+    }
+  });
 
   assert.equal(api.extractAutoBidLimit(), 1000);
+}
+
+async function testMultiBidStopsWhenHighestAutoBidLimitReachedMax() {
+  const bidEntryButton = createTestElement('\u5165\u672d\u3059\u308b');
+  const statusRegion = createCurrentBidderStatusRegion(8000);
+  const bodyText = [
+    '\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01',
+    '\u81ea\u52d5\u5165\u672d\u4e0a\u9650 8,000\u5186',
+    '\u73fe\u5728 8,800\u5186\uff08\u7a0e\u8fbc\uff09',
+    '\u304a\u3059\u3059\u3081\u5546\u54c1 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 9,075\u5186 \u78ba\u8a8d\u3059\u308b'
+  ].join(' ');
+  const api = loadContentForTest(bodyText, '/jp/auction/d1237049950', {
+    querySelectorAll(selector) {
+      if (selector.includes('[role="status"]')) return [statusRegion];
+      if (selector === 'script') {
+        return [{ textContent: 'var pageData = {"items":{"productID":"d1237049950","price":"8000"}};' }];
+      }
+      if (selector.includes('button') || selector === 'body *') return [bidEntryButton];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(8000, {
+    maxPrice: 8000,
+    currentPrice: 8000,
+    userMaxPrice: 8800,
+    strategy: 'multi_bid',
+    taxType: 'tax_included',
+    multiBidIncrement: 250
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.noBid, true);
+  assert.equal(result.closeTab, true);
+  assert.equal(result.stage, 'multi-max-already-set');
+  assert.equal(result.autoBidLimit, 8000);
+  assert.equal(bidEntryButton.clicked, false);
+}
+
+async function testTimedBidStrategiesStopWhenHighestAutoBidLimitReachedMax() {
+  for (const strategy of ['1min', '2min', '5min', '10min']) {
+    const bidEntryButton = createTestElement('\u5165\u672d\u3059\u308b');
+    const statusRegion = createCurrentBidderStatusRegion(8000);
+    const bodyText = [
+      '\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01',
+      '\u81ea\u52d5\u5165\u672d\u4e0a\u9650 8,000\u5186',
+      '\u73fe\u5728 8,800\u5186\uff08\u7a0e\u8fbc\uff09',
+      '\u304a\u3059\u3059\u3081\u5546\u54c1 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 9,075\u5186 \u78ba\u8a8d\u3059\u308b'
+    ].join(' ');
+    const api = loadContentForTest(bodyText, '/jp/auction/d1237049950', {
+      querySelectorAll(selector) {
+        if (selector.includes('[role="status"]')) return [statusRegion];
+        if (selector === 'script') {
+          return [{ textContent: 'var pageData = {"items":{"productID":"d1237049950","price":"8000"}};' }];
+        }
+        if (selector.includes('button') || selector === 'body *') return [bidEntryButton];
+        return [];
+      }
+    });
+
+    const result = await api.executeBidV3(8000, {
+      maxPrice: 8000,
+      currentPrice: 8000,
+      userMaxPrice: 8800,
+      strategy,
+      taxType: 'tax_included'
+    });
+
+    assert.equal(result.success, true, strategy);
+    assert.equal(result.noBid, true, strategy);
+    assert.equal(result.closeTab, true, strategy);
+    assert.equal(result.stage, 'timed-max-already-set', strategy);
+    assert.equal(result.autoBidLimit, 8000, strategy);
+    assert.equal(bidEntryButton.clicked, false, strategy);
+  }
+}
+
+async function testTimedBidStillRaisesLimitWhenHighestAutoBidLimitIsBelowTaskMax() {
+  const statusRegion = createCurrentBidderStatusRegion(7500);
+  const result = await loadAndExecuteBidForTest(
+    '\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01 \u81ea\u52d5\u5165\u672d\u4e0a\u9650 7,500\u5186 \u73fe\u5728 7,700\u5186',
+    { maxPrice: 8000, currentPrice: 7000, userMaxPrice: 8000, strategy: '5min' },
+    '/jp/auction/d1237049950',
+    {
+      querySelectorAll(selector) {
+        if (selector.includes('[role="status"]')) return [statusRegion];
+        return [];
+      }
+    }
+  );
+
+  assert.equal(result.success, false);
+  assert.match(String(result.error || ''), /bid button not found/);
+  assert.notEqual(result.stage, 'timed-max-already-set');
 }
 
 async function testDirectBidNoLongerSkipsWhenWithinAutoBidLimit() {
   // 移除"已是最高 + 新出价≤自动上限就跳过"的拦截逻辑后，direct 任务会正常去找出价按钮，
   // 即使新出价低于当前 Yahoo 自动上限。这样用户才能用更低金额覆盖（降低）旧上限。
+  const statusRegion = createCurrentBidderStatusRegion(1000);
   const result = await loadAndExecuteBidForTest(
     '\u73fe\u5728 510\u5186 \u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059! \u81ea\u52d5\u5165\u672d\u4e0a\u9650 1,000\u5186',
     { maxPrice: 900, userMaxPrice: 900, strategy: 'direct' },
-    '/jp/auction/x123456789'
+    '/jp/auction/x123456789',
+    {
+      querySelectorAll(selector) {
+        if (selector.includes('[role="status"]')) return [statusRegion];
+        return [];
+      }
+    }
   );
 
   // 不再返回 noStatus 跳过；测试页面没有出价按钮，所以会返回 bid button not found
@@ -953,8 +1127,10 @@ async function testDirectBidNoLongerSkipsWhenWithinAutoBidLimit() {
 }
 
 async function testDirectBidWaitsForConfirmButtonEnabledAfterInput() {
+  const bodyText = '\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,000\u5186 \u78ba\u8a8d\u3059\u308b';
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
+  attachBidActionRegion(priceInput, () => bodyText);
   const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
   confirmButton.disabled = true;
   priceInput.onDispatch = event => {
@@ -965,7 +1141,7 @@ async function testDirectBidWaitsForConfirmButtonEnabledAfterInput() {
     }
   };
 
-  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,000\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x123456789/bid', {
+  const api = loadContentForTest(bodyText, '/jp/auction/x123456789/bid', {
     querySelector(selector) {
       return selector === 'input[name="bid"]' ? priceInput : null;
     },
@@ -986,12 +1162,14 @@ async function testDirectBidWaitsForConfirmButtonEnabledAfterInput() {
 }
 
 async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
+  const bodyText = '\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,000\u5186 \u78ba\u8a8d\u3059\u308b';
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
+  attachBidActionRegion(priceInput, () => bodyText);
   const otherAuctionLink = createTestAnchor('\u78ba\u8a8d', 'https://auctions.yahoo.co.jp/jp/auction/v1230349098');
   const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
 
-  const api = loadContentForTest('\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,000\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+  const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
     querySelector(selector) {
       return selector === 'input[name="bid"]' ? priceInput : null;
     },
@@ -1012,8 +1190,10 @@ async function testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm() {
 }
 
 async function testDirectBidClicksConfirmInsideBidModalOnly() {
+  const bodyText = '\u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,100\u5186 \u3053\u306e\u5546\u54c1\u3082\u6ce8\u76ee\u3055\u308c\u3066\u3044\u307e\u3059 \u78ba\u8a8d\u3059\u308b';
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
+  attachBidActionRegion(priceInput, () => bodyText);
   const modalConfirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
   const recommendationButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
   const bidModal = createTestElement('\u5165\u672d \u5165\u672d\u984d \u78ba\u8a8d\u3059\u308b');
@@ -1024,7 +1204,7 @@ async function testDirectBidClicksConfirmInsideBidModalOnly() {
   modalConfirmButton.closest = selector => selector.includes('role') || selector.includes('dialog') ? bidModal : null;
   recommendationButton.closest = () => null;
 
-  const api = loadContentForTest('\u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,100\u5186 \u3053\u306e\u5546\u54c1\u3082\u6ce8\u76ee\u3055\u308c\u3066\u3044\u307e\u3059 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+  const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
     querySelector(selector) {
       return selector === 'input[name="bid"]' ? priceInput : null;
     },
@@ -1046,8 +1226,10 @@ async function testDirectBidClicksConfirmInsideBidModalOnly() {
 }
 
 async function testDirectBidSubmitConfirmRequestsFormSubmit() {
+  const bodyText = '\u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,100\u5186 \u78ba\u8a8d\u3059\u308b';
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
+  attachBidActionRegion(priceInput, () => bodyText);
   const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
   confirmButton.type = 'submit';
   const form = {
@@ -1067,7 +1249,7 @@ async function testDirectBidSubmitConfirmRequestsFormSubmit() {
     return null;
   };
 
-  const api = loadContentForTest('\u5165\u672d \u5165\u672d\u984d \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 1,100\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+  const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
     querySelector(selector) {
       return selector === 'input[name="bid"]' ? priceInput : null;
     },
@@ -1646,12 +1828,14 @@ async function testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm() {
 }
 
 async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() {
+  const bodyText = '\u73fe\u5728 2,530\u5186 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 2,695\u5186 \u78ba\u8a8d\u3059\u308b';
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
+  attachBidActionRegion(priceInput, () => bodyText);
   const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
   const currentPrice = createTestElement('2,530\u5186');
 
-  const api = loadContentForTest('\u73fe\u5728 2,530\u5186 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 2,695\u5186 \u78ba\u8a8d\u3059\u308b', '/jp/auction/x1230699905/bid', {
+  const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
     querySelector(selector) {
       if (selector === '[class*="currentPrice"]') return currentPrice;
       return selector === 'input[name="bid"]' ? priceInput : null;
@@ -1811,6 +1995,7 @@ async function testMultiBidClicksConfirmAfterInput() {
     bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
   };
   const currentPrice = createTestElement('5,000\u5186');
+  attachBidActionRegion(priceInput, () => bodyText);
 
   const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
     getBodyText: () => bodyText,
@@ -1855,6 +2040,7 @@ async function testMultiBidWaitsAfterPriceInputBeforeConfirmClick() {
     bodyText = '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
   };
   const currentPrice = createTestElement('5,000\u5186');
+  attachBidActionRegion(priceInput, () => bodyText);
 
   const api = loadContentForTest(bodyText, '/jp/auction/x1230699905/bid', {
     getBodyText: () => bodyText,
@@ -2205,6 +2391,7 @@ async function testMultiBidRebidRequiredFallsBackToDefaultInputPriceWhenCurrentM
     const priceInput = createTestElement('');
     priceInput.name = 'bid';
     priceInput.value = String(defaultInputValue);
+    attachBidActionRegion(priceInput, () => bodyText);
     const rebidConfirmButton = createTestElement('\u5165\u672d\u3059\u308b');
     rebidConfirmButton.getAttribute = name => {
       if (name === 'data-cl-params') return '_cl_vmodule:rebid;_cl_link:cnfbtn;_cl_position:1';
@@ -2303,6 +2490,7 @@ async function testMultiBidUsesTaxExcludedLatestPagePriceNotInputDefault() {
     const priceInput = createTestElement('');
     priceInput.name = 'bid';
     priceInput.value = String(defaultInputValue);
+    attachBidActionRegion(priceInput, () => bodyText);
     const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
     confirmButton.click = () => {
       confirmButton.clicked = true;
@@ -2348,6 +2536,7 @@ async function testMultiBidPrefersYahooScriptTaxExcludedPrice() {
   const priceInput = createTestElement('');
   priceInput.name = 'bid';
   priceInput.value = '50';
+  attachBidActionRegion(priceInput, () => bodyText);
   const confirmButton = createTestElement('\u78ba\u8a8d\u3059\u308b');
   confirmButton.click = () => {
     confirmButton.clicked = true;
@@ -4417,6 +4606,7 @@ async function run() {
   await testYahooSystemErrorPageReturnsStableBidError();
   testAcceptedBidTextIsHighestBidder();
   testProductPageHighestBidderNoticeDoesNotSkipNewBid();
+  testSellerHighestBidderWordsDoNotBecomeCurrentBidderStatus();
   testSellerCompletionInstructionsOnProductPageAreNotBidSuccess();
   await testSellerCompletionInstructionsDoNotShortCircuitBidExecution();
   testAcceptedBuyoutTextIsSuccess();
@@ -4458,8 +4648,12 @@ async function run() {
   testPlainBidEntryIsNotFinalAgree();
   testExtractTaxIncludedTotal();
   testMultiBidInputPageDetection();
+  testBidTotalsIgnoreRecommendationTextWithoutBidRegion();
   testProductHighestBidderNoticeDetection();
   testExtractAutoBidLimit();
+  await testMultiBidStopsWhenHighestAutoBidLimitReachedMax();
+  await testTimedBidStrategiesStopWhenHighestAutoBidLimitReachedMax();
+  await testTimedBidStillRaisesLimitWhenHighestAutoBidLimitIsBelowTaskMax();
   await testDirectBidNoLongerSkipsWhenWithinAutoBidLimit();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();

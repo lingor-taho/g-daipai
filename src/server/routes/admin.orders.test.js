@@ -6,6 +6,7 @@ const {
   buildOrderSettlement,
   buildAdminTasksListQuery,
   buildAdminPendingTasksQuery,
+  getNextExecuteAt,
   buildAdminOrdersListQuery,
   buildAdminOrdersUserWonDateRangeQuery,
   buildOrderStatusDebugOrdersQuery,
@@ -508,8 +509,27 @@ function testAdminPendingTasksQueryUsesProductsOnly() {
   assert.match(query.sql, /CASE WHEN COALESCE\(t\.bid_mode, 'bid'\) = 'buyout'/);
   assert.match(query.sql, /THEN COALESCE\(t\.user_max_price, t\.max_price\)/);
   assert.match(query.sql, /p\.end_time AS end_time/);
+  assert.match(query.sql, /highest_submitted_bid_price/);
   assert.doesNotMatch(query.sql, /t\.(product_title|buyout_price|end_time)/);
-  assert.match(query.sql, /WHERE t\.status = 'pending' OR \(t\.status = 'bidding' AND t\.strategy = 'multi_bid'\)/);
+  assert.match(query.sql, /t\.status = 'pending' OR \(t\.status = 'bidding' AND t\.strategy = 'multi_bid'\)/);
+  assert.match(query.sql, /NOT EXISTS/);
+  assert.match(query.sql, /bl\.bid_price >= t\.max_price/);
+}
+
+function testAdminMultiBidAtSubmittedMaximumHasNoNextExecution() {
+  const nextExecuteAt = getNextExecuteAt({
+    status: 'bidding',
+    strategy: 'multi_bid',
+    max_price: 29000,
+    highest_submitted_bid_price: 29000,
+    last_bid_at: '2026-07-14T14:27:54.000Z',
+    end_time: '2026-07-17T14:00:00.000Z'
+  }, {
+    multiBidStartHours: 72,
+    multiBidIntervalMinutes: 1
+  }, Date.parse('2026-07-14T14:28:00.000Z'));
+
+  assert.equal(nextExecuteAt, null);
 }
 
 function testAdminOrdersQueryIncludesProductType() {
@@ -1291,6 +1311,7 @@ testBuildOrderSettlementPrefersBundleShippingFee();
 testNormalizeProductTypeForBatchRefresh();
 testAdminTasksListQueryUsesProductsOnly();
 testAdminPendingTasksQueryUsesProductsOnly();
+testAdminMultiBidAtSubmittedMaximumHasNoNextExecution();
 testAdminOrdersQueryIncludesProductType();
 testMapAdminOrderListItemKeepsOrderRemark();
 testAdminOrdersUserWonDateRangeQueryUsesWonAtOnly();

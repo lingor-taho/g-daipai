@@ -134,6 +134,59 @@ function testMultiBidBiddingTaskRepeatsOnlyAfterInterval() {
   }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), true);
 }
 
+function testMultiBidHighestAtMaxIsNotDispatchedAgain() {
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    is_highest_bidder: 1,
+    current_price: 8000,
+    max_price: 8000,
+    end_time: minutesFromNow(20),
+    last_bid_at: new Date(now - 10 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
+
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    is_highest_bidder: 0,
+    current_price: 19500,
+    max_price: 20000,
+    highest_submitted_bid_price: 20000,
+    end_time: minutesFromNow(20),
+    last_bid_at: new Date(now - 10 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), false);
+
+  assert.equal(isTaskReadyForDispatch({
+    strategy: 'multi_bid',
+    status: 'bidding',
+    is_highest_bidder: 1,
+    current_price: 7750,
+    max_price: 8000,
+    highest_submitted_bid_price: 7750,
+    end_time: minutesFromNow(20),
+    last_bid_at: new Date(now - 10 * 60 * 1000).toISOString()
+  }, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 }), true);
+}
+
+async function testMultiBidCandidatesIncludeSubmittedBidLimit() {
+  let candidateSql = '';
+  const fakeDb = {
+    async getAll(sql) {
+      candidateSql = sql;
+      return [];
+    }
+  };
+
+  await claimReadyPluginTasks(1, fakeDb, now, { multiBidStartHours: 0.5, multiBidIntervalMinutes: 5 });
+
+  assert.match(candidateSql, /SELECT MAX\(bl\.bid_price\)/);
+  assert.match(candidateSql, /bl\.task_id = t\.id/);
+  assert.match(candidateSql, /bl\.result = 'bidding'/);
+  assert.match(candidateSql, /highest_submitted_bid_price/);
+  assert.match(candidateSql, /NOT EXISTS/);
+  assert.match(candidateSql, /completed_bl\.bid_price >= t\.max_price/);
+}
+
 function testMultiBidBiddingTaskWithoutEndTimeStillWaitsForInterval() {
   assert.equal(isTaskReadyForDispatch({
     strategy: 'multi_bid',
@@ -297,6 +350,8 @@ async function testClaimTaskForProcessingOnlyClaimsPendingTask() {
   assert.match(calls[0].sql, /WHERE id = \?/);
   assert.match(calls[0].sql, /status = 'pending'/);
   assert.match(calls[0].sql, /status = 'bidding' AND strategy = 'multi_bid'/);
+  assert.match(calls[0].sql, /NOT EXISTS/);
+  assert.match(calls[0].sql, /completed_bl\.bid_price >= tasks\.max_price/);
   assert.deepEqual(calls[0].params, [42]);
 }
 
@@ -2686,6 +2741,7 @@ testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
 testMultiBidUsesGlobalConfigStartWindow();
 testMultiBidBiddingTaskRepeatsOnlyAfterInterval();
+testMultiBidHighestAtMaxIsNotDispatchedAgain();
 testMultiBidBiddingTaskWithoutEndTimeStillWaitsForInterval();
 testMultiBidPendingTaskWithRecentTouchStillWaitsForInterval();
 testMultiBidIntervalParsesSqliteUtcTimestamp();
@@ -2698,6 +2754,10 @@ testHeartbeatProcessingTaskOnlyRefreshesProcessingUpdatedAt();
 testTaskSchemaIncludesBuyoutAutoPaid();
 testClaimTaskForProcessingOnlyClaimsPendingTask();
 Promise.resolve().then(testClaimReadyPluginTasksClaimsMultipleReadyTasks).catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});
+Promise.resolve().then(testMultiBidCandidatesIncludeSubmittedBidLimit).catch(err => {
   console.error(err);
   process.exitCode = 1;
 });

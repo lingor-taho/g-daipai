@@ -482,11 +482,36 @@ function isHighestBidderPage() {
   return isHighestBidderText();
 }
 
-function hasCurrentHighestBidderNotice(text = getBodyText()) {
+function getCurrentBidderStatusText() {
+  const isCurrentHighestText = text => /\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(text);
+  const readText = node => normalizeVisibleText(node?.innerText || node?.textContent || '');
+  const explicitRegionSelector = '#itemStatus,[role="status"],[aria-live="polite"],[aria-live="assertive"]';
+  for (const region of document.querySelectorAll(explicitRegionSelector)) {
+    const text = readText(region);
+    if (isCurrentHighestText(text)) return text;
+  }
+
+  // The highest-bidder banner sits above the product summary. Anchor on its exact
+  // sentence and walk only nearby ancestors so seller text/recommendations cannot match.
+  for (const label of document.querySelectorAll('p,span,strong,div')) {
+    const labelText = readText(label);
+    if (!/^\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(labelText)) continue;
+    if (/\u81ea\u52d5\u5165\u672d\u4e0a\u9650/.test(labelText)) return labelText;
+    let node = label.parentElement;
+    for (let depth = 0; node && node !== document.body && depth < 5; depth += 1, node = node.parentElement) {
+      const text = readText(node);
+      if (isCurrentHighestText(text) && /\u81ea\u52d5\u5165\u672d\u4e0a\u9650/.test(text)) return text;
+    }
+    return labelText;
+  }
+  return '';
+}
+
+function hasCurrentHighestBidderNotice(text = getCurrentBidderStatusText()) {
   return /\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(text);
 }
 
-function extractAutoBidLimit(text = getBodyText()) {
+function extractAutoBidLimit(text = getCurrentBidderStatusText()) {
   const match = String(text || '').match(/\u81ea\u52d5\u5165\u672d\u4e0a\u9650[^\d]{0,30}([\d,]+)\s*\u5186?/);
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
@@ -496,13 +521,56 @@ function hasRaiseBidPrompt() {
   return /\u5024\u6bb5\u3092\u4e0a\u3052\u3066\u5165\u672d/.test(text);
 }
 
-function extractTaxIncludedTotal(text = getBodyText()) {
-  const match = String(text || '').match(/\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d[^\d]{0,30}([\d,]+)\s*\u5186?/);
+function getBidActionRegionText() {
+  const regionSelector = [
+    '[role="dialog"]',
+    '[aria-modal="true"]',
+    '.ReactModal__Content',
+    'form[action*="bid" i]',
+    'form[action*="auction" i]',
+    'form'
+  ].join(',');
+  const priceInputSelectors = [
+    'input[name="bid"]',
+    'input[name="Bid"]',
+    'input[name*="price" i]',
+    'input[id*="price" i]',
+    'input[type="number"]'
+  ];
+  const isBidRegionText = text => /\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d/.test(text) && /\u78ba\u8a8d\u3059\u308b|\u78ba\u8a8d|\u5165\u672d\u3059\u308b/.test(text);
+  const readRegionText = region => normalizeVisibleText(region?.innerText || region?.textContent || '');
+
+  const priceInput = priceInputSelectors.map(selector => document.querySelector(selector)).find(Boolean) || null;
+  const inputRegion = priceInput?.closest?.(regionSelector) || null;
+  const inputRegionText = readRegionText(inputRegion);
+  if (isBidRegionText(inputRegionText)) return inputRegionText;
+
+  for (const region of document.querySelectorAll(regionSelector)) {
+    const text = readRegionText(region);
+    if (isBidRegionText(text)) return text;
+  }
+
+  // Yahoo may render the bid panel without a form/dialog wrapper. Anchor on the
+  // exact total label and walk only its nearby ancestors; never fall back to body.
+  const labelSelector = 'dt,th,label,p,span,strong';
+  for (const label of document.querySelectorAll(labelSelector)) {
+    if (!/^\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d(?:\s|\uff1a|:|$)/.test(normalizeVisibleText(label.textContent))) continue;
+    let node = label.parentElement;
+    for (let depth = 0; node && node !== document.body && depth < 6; depth += 1, node = node.parentElement) {
+      const text = readRegionText(node);
+      if (isBidRegionText(text)) return text;
+    }
+  }
+  return '';
+}
+
+function extractTaxIncludedTotal() {
+  const match = getBidActionRegionText().match(/\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d[^\d]{0,30}([\d,]+)\s*\u5186?/);
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
 
-function isBidInputPage(text = getBodyText()) {
-  return /\u7a0e\u8fbc\u5408\u8a08\u91d1\u984d/.test(text) && /\u78ba\u8a8d\u3059\u308b|\u78ba\u8a8d/.test(text);
+function isBidInputPage() {
+  return Boolean(getBidActionRegionText());
 }
 
 function getTaxIncludedBidPrice(bidPrice, taxType) {
@@ -1044,6 +1112,16 @@ async function executeBidV3(maxPrice, options = {}) {
 
     const autoBidLimit = extractAutoBidLimit();
     if (hasCurrentHighestBidderNotice() && autoBidLimit) {
+      if (autoBidLimit >= numericMaxPrice) {
+        return {
+          success: true,
+          noBid: true,
+          closeTab: true,
+          autoBidLimit,
+          bidPrice: autoBidLimit,
+          stage: 'multi-max-already-set'
+        };
+      }
       const currentTaxExcludedPrice = extractCurrentAuctionTaxExcludedPriceForBid(taxType) || numericCurrentPrice;
       const plannedBidPrice = currentTaxExcludedPrice && numericMultiBidIncrement
         ? currentTaxExcludedPrice + numericMultiBidIncrement
@@ -1186,6 +1264,20 @@ async function executeBidV3(maxPrice, options = {}) {
 
   if (strategy === 'multi_bid') {
     return executeMultiBidLoop();
+  }
+
+  if (/^\d+min$/.test(strategy)) {
+    const autoBidLimit = extractAutoBidLimit();
+    if (hasCurrentHighestBidderNotice() && autoBidLimit >= numericMaxPrice) {
+      return {
+        success: true,
+        noBid: true,
+        closeTab: true,
+        autoBidLimit,
+        bidPrice: autoBidLimit,
+        stage: 'timed-max-already-set'
+      };
+    }
   }
 
   if (isHighestBidderPage()) {

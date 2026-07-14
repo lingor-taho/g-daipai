@@ -141,6 +141,9 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
   if (endMs && endMs <= nowMs) return null;
 
   if (isMultiBidTask(task)) {
+    const maxPrice = Number(task.max_price || 0);
+    const highestSubmittedBidPrice = Number(task.highest_submitted_bid_price || 0);
+    if (maxPrice > 0 && highestSubmittedBidPrice >= maxPrice) return null;
     const startMs = endMs ? endMs - getStrategyLeadMs({ ...task, ...multiBidConfig }) : nowMs;
     const referenceMs = parseTaskTimeMs(task.last_bid_at || (task.status === 'bidding' ? task.updated_at || task.created_at : null));
     const intervalReadyMs = referenceMs ? referenceMs + getMultiBidIntervalMs(multiBidConfig) : nowMs;
@@ -168,6 +171,10 @@ function buildAdminTasksListQuery({ pageSize, offset }) {
             t.status,
             t.is_highest_bidder,
             t.last_bid_at,
+            (SELECT MAX(bl.bid_price)
+             FROM bid_logs bl
+             WHERE bl.task_id = t.id
+               AND bl.result = 'bidding') AS highest_submitted_bid_price,
             t.error_msg,
             t.created_at,
             t.updated_at,
@@ -208,11 +215,25 @@ function buildAdminPendingTasksQuery() {
             t.start_seconds_before,
             t.status,
             t.last_bid_at,
+            (SELECT MAX(bl.bid_price)
+             FROM bid_logs bl
+             WHERE bl.task_id = t.id
+               AND bl.result = 'bidding') AS highest_submitted_bid_price,
             p.end_time AS end_time,
             t.created_at
      FROM tasks t
      LEFT JOIN products p ON p.product_id = t.product_id
-     WHERE t.status = 'pending' OR (t.status = 'bidding' AND t.strategy = 'multi_bid')
+     WHERE (t.status = 'pending' OR (t.status = 'bidding' AND t.strategy = 'multi_bid'))
+       AND (
+         COALESCE(t.strategy, 'direct') <> 'multi_bid'
+         OR NOT EXISTS (
+           SELECT 1
+           FROM bid_logs bl
+           WHERE bl.task_id = t.id
+             AND bl.result = 'bidding'
+             AND bl.bid_price >= t.max_price
+         )
+       )
      ORDER BY t.created_at ASC LIMIT 100`,
     params: []
   };
@@ -3745,6 +3766,7 @@ module.exports.saveUserClientRateOverride = saveUserClientRateOverride;
 module.exports.buildOrderSettlement = buildOrderSettlement;
 module.exports.buildAdminTasksListQuery = buildAdminTasksListQuery;
 module.exports.buildAdminPendingTasksQuery = buildAdminPendingTasksQuery;
+module.exports.getNextExecuteAt = getNextExecuteAt;
 module.exports.buildAdminOrdersListQuery = buildAdminOrdersListQuery;
 module.exports.buildAdminOrdersUserWonDateRangeQuery = buildAdminOrdersUserWonDateRangeQuery;
 module.exports.buildOrderStatusDebugOrdersQuery = buildOrderStatusDebugOrdersQuery;
