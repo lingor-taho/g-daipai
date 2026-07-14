@@ -152,42 +152,47 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
           const maxPrice = task.user_max_price || task.max_price;
           const cancelable = canCancelTask(task);
           return (
-            <List.Item key={task.id}
-              onDoubleClick={() => handleRebid(task)}
-              title="双击可再次入札"
-              style={{ ...itemCardStyle, cursor: 'pointer' }}
-              extra={
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Tag color={s.color}>{statusLabel}</Tag>
-                  {cancelable && (
-                    <Button
-                      size="mini"
-                      color="danger"
-                      fill="outline"
-                      loading={cancellingId === task.id}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleCancel(task);
-                      }}
-                      onDoubleClick={(event) => event.stopPropagation()}
+            <div key={task.id}>
+              <List.Item
+                style={itemCardStyle}
+                extra={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag color={s.color}>{statusLabel}</Tag>
+                    {cancelable && (
+                      <Button
+                        size="mini"
+                        color="danger"
+                        fill="outline"
+                        loading={cancellingId === task.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCancel(task);
+                        }}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                      >
+                        终止
+                      </Button>
+                    )}
+                  </div>
+                }
+                description={
+                  <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.65 }}>
+                    ID: <span
+                      onDoubleClick={() => handleRebid(task)}
+                      style={{ cursor: 'pointer' }}
                     >
-                      终止
-                    </Button>
-                  )}
-                </div>
-              }
-              description={
-                <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.65 }}>
-                  ID: {auctionId}，策略: <span style={getStrategyTextStyle(task.strategy)}>{strategyLabel}</span>，最高出价：
-                  <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
-                  {task.created_at ? (
-                    <>，提交时间：{formatBeijingDateTime(task.created_at)}</>
-                  ) : null}
-                </div>
-              }
-            >
-              <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, lineHeight: 1.35 }}>{task.product_title || ('商品 ' + auctionId)}</div>
-            </List.Item>
+                      {auctionId}
+                    </span>，策略: <span style={getStrategyTextStyle(task.strategy)}>{strategyLabel}</span>，最高出价：
+                    <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
+                    {task.created_at ? (
+                      <>，提交时间：{formatBeijingDateTime(task.created_at)}</>
+                    ) : null}
+                  </div>
+                }
+              >
+                <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, lineHeight: 1.35 }}>{task.product_title || ('商品 ' + auctionId)}</div>
+              </List.Item>
+            </div>
           );
         })}
       </List>

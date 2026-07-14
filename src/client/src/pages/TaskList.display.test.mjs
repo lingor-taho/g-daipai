@@ -13,9 +13,21 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('onDoubleClick={() => handleRebid(task)}'),
+  /ID:\s*<span\s+onDoubleClick=\{\(\) => handleRebid\(task\)\}/.test(source),
   true,
-  'TaskList rows must support double-click rebidding'
+  'TaskList product IDs must support double-click rebidding'
+);
+
+assert.equal(
+  /<div\s+key=\{task\.id\}\s+onDoubleClick=/.test(source),
+  false,
+  'TaskList rows must not trigger rebidding outside the product ID'
+);
+
+assert.equal(
+  source.includes('title="双击可再次入札"'),
+  false,
+  'TaskList must not display a double-click rebid hint'
 );
 
 assert.equal(
