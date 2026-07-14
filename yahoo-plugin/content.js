@@ -319,7 +319,7 @@ function toTaxExcludedBidPrice(price, text, taxType) {
   const value = Number(price || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
   if (taxType === 'tax_included' && value >= 10 && isTaxIncludedPriceText(text)) {
-    return Math.floor(value / 1.1);
+    return Math.floor((value / 1.1) + 1e-6);
   }
   return value;
 }
@@ -339,7 +339,7 @@ function extractCurrentAuctionVisibleTaxExcludedPriceForBid(taxType) {
     const el = document.querySelector(selector);
     if (!el) continue;
     const fromAttr = parseInt(String(el.getAttribute('data-price') || el.getAttribute('content') || '').replace(/,/g, ''), 10);
-    if (fromAttr > 0) return fromAttr;
+    if (fromAttr > 0) return toTaxExcludedBidPrice(fromAttr, el.textContent || '', taxType);
     const text = el.textContent || '';
     const fromText = parseYen(text);
     if (fromText > 0) return toTaxExcludedBidPrice(fromText, text, taxType);
@@ -1154,7 +1154,11 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function validateCurrentPrice() {
     if (bidMode === 'buyout') return null;
-    const currentPrice = extractCurrentAuctionPrice();
+    // Yahoo store pages can expose a tax-included amount in page scripts while
+    // max_price is always the tax-excluded amount entered in the bid form.
+    // Prefer the rendered price, whose tax label lets us normalize it safely,
+    // then fall back to the server snapshot which already uses tax-excluded yen.
+    const currentPrice = extractCurrentAuctionVisibleTaxExcludedPriceForBid(taxType) || numericCurrentPrice;
     if (currentPrice > 0 && currentPrice > numericMaxPrice) {
       return buildPriceTooHighResult(currentPrice, numericMaxPrice);
     }

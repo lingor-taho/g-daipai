@@ -1617,6 +1617,80 @@ async function testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation() 
   assert.equal(result.maxPrice, 2450);
 }
 
+async function testStoreTaxIncludedCurrentPriceUsesTaxExcludedComparison() {
+  let stage = 'confirm';
+  const currentPrice = createTestElement('41,800\u5186\uff08\u7a0e\u8fbc\uff09');
+  currentPrice.getAttribute = name => name === 'data-price' ? '41800' : '';
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u5165\u672d\u3059\u308b');
+  finalAgreeButton.click = () => {
+    finalAgreeButton.clicked = true;
+    stage = 'success';
+  };
+
+  const api = loadContentForTest('', '/jp/auction/o1236247041/bid', {
+    getBodyText: () => stage === 'confirm'
+      ? '\u73fe\u5728 41,800\u5186\uff08\u7a0e\u8fbc\uff09 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 41,800\u5186 \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u5165\u672d\u3059\u308b'
+      : '\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f',
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') {
+        return [{ textContent: 'var pageData = {"items":{"productID":"o1236247041","price":"41800"}};' }];
+      }
+      if (selector.includes('button') || selector === 'body *') {
+        return stage === 'confirm' ? [finalAgreeButton] : [];
+      }
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(40000, {
+    maxPrice: 40000,
+    currentPrice: 38000,
+    userMaxPrice: 44000,
+    strategy: 'direct',
+    taxType: 'tax_included',
+    productType: 'store'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(finalAgreeButton.clicked, true);
+}
+
+async function testStoreTaxIncludedCurrentPriceStillRejectsAboveTaxExcludedMax() {
+  const currentPrice = createTestElement('45,100\u5186\uff08\u7a0e\u8fbc\uff09');
+  currentPrice.getAttribute = name => name === 'data-price' ? '45100' : '';
+  const priceInput = createTestElement('');
+  priceInput.name = 'bid';
+
+  const api = loadContentForTest('\u73fe\u5728 45,100\u5186\uff08\u7a0e\u8fbc\uff09', '/jp/auction/o1236247041/bid', {
+    querySelector(selector) {
+      if (selector === '[class*="currentPrice"]') return currentPrice;
+      if (selector === 'input[name="bid"]') return priceInput;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(40000, {
+    maxPrice: 40000,
+    currentPrice: 38000,
+    userMaxPrice: 44000,
+    strategy: 'direct',
+    taxType: 'tax_included',
+    productType: 'store'
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.currentPrice, 41000);
+  assert.equal(result.maxPrice, 40000);
+}
+
 async function testMultiBidClicksConfirmAfterInput() {
   let bodyText = '\u73fe\u5728 5,000\u5186 \u7a0e\u8fbc\u5408\u8a08\u91d1\u984d 5,500\u5186 \u78ba\u8a8d\u3059\u308b';
   const priceInput = createTestElement('');
@@ -4287,6 +4361,8 @@ async function run() {
   await testStoreBuyoutReviewSkipsPayPayBenefitConfirmLink();
   await testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm();
   await testTimedStoreTaxBeforeBidUsesUserMaxForCurrentPriceValidation();
+  await testStoreTaxIncludedCurrentPriceUsesTaxExcludedComparison();
+  await testStoreTaxIncludedCurrentPriceStillRejectsAboveTaxExcludedMax();
   await testMultiBidClicksConfirmAfterInput();
   await testMultiBidWaitsAfterPriceInputBeforeConfirmClick();
   await testMultiBidRebidRequiredUsesTopDialogBidButton();
