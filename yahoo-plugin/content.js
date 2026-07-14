@@ -49,6 +49,33 @@ function cleanupProductTitle(title, auctionId = '') {
   return auctionId ? (`\u5546\u54c1 ${auctionId}`) : '';
 }
 
+function findProductMainInfoRoot() {
+  const itemTitle = document.querySelector('#itemTitle');
+  if (!itemTitle) return null;
+  let node = itemTitle;
+  while (node && node !== document.body) {
+    const labels = node.querySelectorAll ? [...node.querySelectorAll('dt')] : [];
+    if (labels.some(label => /^(?:\u73fe\u5728|\u5373\u6c7a)$/.test(normalizeVisibleText(label.textContent)))) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function findProductPriceRow(labelText) {
+  const root = findProductMainInfoRoot();
+  if (!root?.querySelectorAll) return null;
+  const label = [...root.querySelectorAll('dt')]
+    .find(candidate => normalizeVisibleText(candidate.textContent) === labelText);
+  const value = label?.nextElementSibling || null;
+  return value ? { label, value, text: normalizeVisibleText(value.textContent) } : null;
+}
+
+function extractProductPriceByLabel(labelText) {
+  return parseYen(findProductPriceRow(labelText)?.text || '');
+}
+
 if (false && CLIENT_ORIGINS.has(window.location.origin)) {
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
@@ -98,26 +125,10 @@ function extractProductData() {
     }
   }
 
-  // Try multiple selectors for price (Yahoo auction pages have various structures)
   function getPrice() {
     const pageDataPrice = parseYen(getPageDataItems()?.price);
     if (pageDataPrice > 0) return pageDataPrice;
-
-    const priceEl = document.querySelector('[class*="priceValue"]') ||
-                    document.querySelector('[class*="priceFrame"]') ||
-                    document.querySelector('[class*="currentPrice"]') ||
-                    document.querySelector('[class*="price"]') ||
-                    document.querySelector('[data-price]');
-    if (priceEl) {
-      const text = priceEl.textContent || priceEl.getAttribute('data-price') || '';
-      const match = text.match(/[\d,]+/);
-      return match ? parseInt(match[0].replace(/,/g, '')) : 0;
-    }
-    // Fallback: search whole page
-    const bodyText = getBodyTextWithoutProductDescription();
-    const m = bodyText.match(/(?:\u73fe\u5728|current)[^\d]{0,20}([\d,]+)/i);
-    if (m) return parseInt(m[1].replace(/,/g, ''));
-    return 0;
+    return extractProductPriceByLabel('\u73fe\u5728') || extractProductPriceByLabel('\u5373\u6c7a');
   }
 
   function getBuyoutPrice() {
@@ -127,15 +138,13 @@ function extractProductData() {
       return getTaxType() === 'tax_included' && value >= 10 ? Math.round(value * 1.1) : value;
     }
 
-    const bodyText = getBodyTextWithoutProductDescription();
-    const match = bodyText.match(/\u5373\u6c7a(?:\u4fa1\u683c)?[^\d]{0,20}([\d,]+)\s*(?:\u5186|JPY)?/i);
-    if (match?.[1]) return parseInt(match[1].replace(/,/g, ''), 10) || 0;
-    if (/\u8cfc\u5165\u624b\u7d9a\u304d\u3078/.test(bodyText)) return getPrice();
-    return 0;
+    return extractProductPriceByLabel('\u5373\u6c7a');
   }
 
   function getTaxType() {
-    const text = getBodyTextWithoutProductDescription();
+    const text = [findProductPriceRow('\u73fe\u5728')?.text, findProductPriceRow('\u5373\u6c7a')?.text]
+      .filter(Boolean)
+      .join(' ');
     if (/\uff08\s*\u7a0e\s*0\s*\u5186\s*\uff09|\(\s*\u7a0e\s*0\s*\u5186\s*\)/.test(text)) return 'tax_zero';
     if (/\uff08\s*\u7a0e\u8fbc\s*\uff09|\(\s*\u7a0e\u8fbc\s*\)/.test(text)) return 'tax_included';
     return 'tax_zero';
@@ -221,9 +230,7 @@ function extractProductData() {
     );
     if (nextDataTitle && nextDataTitle !== fallbackTitle) return nextDataTitle;
 
-    const el = document.querySelector('[class*="productTitle"]') ||
-               document.querySelector('h1[class*="title"]') ||
-               document.querySelector('h1[class*="ProductName"]') ||
+    const el = document.querySelector('#itemTitle h1') ||
                document.querySelector('meta[property="og:title"]');
     if (el) {
       return cleanupProductTitle(el.textContent || el.content || '', auctionId);
@@ -253,7 +260,7 @@ function parseYen(text) {
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
 
-function extractCurrentPriceFromScripts() {
+function extractPageDataCurrentPriceFromScripts() {
   for (const script of document.querySelectorAll('script')) {
     const text = script.textContent || '';
     const pageDataMatch = text.match(/var\s+pageData\s*=\s*(\{[\s\S]*?\});\s*<\/?script?/);
@@ -265,7 +272,13 @@ function extractCurrentPriceFromScripts() {
         if (price > 0) return price;
       } catch (_) {}
     }
+  }
+  return 0;
+}
 
+function extractStructuredDataCurrentPriceFromScripts() {
+  for (const script of document.querySelectorAll('script')) {
+    const text = script.textContent || '';
     if (script.type === 'application/ld+json') {
       try {
         const data = JSON.parse(text || '{}');
@@ -281,30 +294,17 @@ function extractCurrentPriceFromScripts() {
   return 0;
 }
 
+function extractCurrentPriceFromScripts() {
+  // pageData belongs to the auction being viewed and uses the amount accepted by
+  // Yahoo's bid form. JSON-LD may expose a tax-included display price, so only use
+  // it when the auction-specific pageData is unavailable.
+  return extractPageDataCurrentPriceFromScripts() || extractStructuredDataCurrentPriceFromScripts();
+}
+
 function extractCurrentAuctionPrice() {
   const fromScripts = extractCurrentPriceFromScripts();
   if (fromScripts > 0) return fromScripts;
-
-  const selectors = [
-    '[class*="priceValue"]',
-    '[class*="PriceValue"]',
-    '[class*="currentPrice"]',
-    '[class*="CurrentPrice"]',
-    '[class*="priceFrame"]',
-    '[data-price]',
-    '[itemprop="price"]'
-  ];
-
-  for (const selector of selectors) {
-    const el = document.querySelector(selector);
-    if (!el) continue;
-    const fromAttr = parseInt(String(el.getAttribute('data-price') || el.getAttribute('content') || '').replace(/,/g, ''), 10);
-    if (fromAttr > 0) return fromAttr;
-    const fromText = parseYen(el.textContent);
-    if (fromText > 0) return fromText;
-  }
-
-  return 0;
+  return extractProductPriceByLabel('\u73fe\u5728') || extractProductPriceByLabel('\u5373\u6c7a');
 }
 
 function getBodyText() {
@@ -325,31 +325,28 @@ function toTaxExcludedBidPrice(price, text, taxType) {
 }
 
 function extractCurrentAuctionVisibleTaxExcludedPriceForBid(taxType) {
+  const row = findProductPriceRow('\u73fe\u5728') || findProductPriceRow('\u5373\u6c7a');
+  const productPrice = toTaxExcludedBidPrice(parseYen(row?.text || ''), row?.text || '', taxType);
+  if (productPrice > 0) return productPrice;
+  if (!isRebidRequiredText()) return 0;
+
+  // A rebid dialog can render outside the product summary. This fallback is only
+  // active after Yahoo explicitly asks for a rebid; it never scans page text.
   const selectors = [
     '[class*="priceValue"]',
     '[class*="PriceValue"]',
     '[class*="currentPrice"]',
     '[class*="CurrentPrice"]',
-    '[class*="priceFrame"]',
     '[data-price]',
     '[itemprop="price"]'
   ];
-
   for (const selector of selectors) {
     const el = document.querySelector(selector);
     if (!el) continue;
-    const fromAttr = parseInt(String(el.getAttribute('data-price') || el.getAttribute('content') || '').replace(/,/g, ''), 10);
-    if (fromAttr > 0) return toTaxExcludedBidPrice(fromAttr, el.textContent || '', taxType);
     const text = el.textContent || '';
-    const fromText = parseYen(text);
-    if (fromText > 0) return toTaxExcludedBidPrice(fromText, text, taxType);
-  }
-
-  const bodyText = getBodyText();
-  const match = bodyText.match(/(?:\u73fe\u5728|current)[^\d]{0,20}([\d,]+)\s*(?:\u5186|JPY)?[^\n\r]{0,20}/i);
-  if (match) {
-    const amount = parseInt(match[1].replace(/,/g, ''), 10) || 0;
-    return toTaxExcludedBidPrice(amount, match[0], taxType);
+    const fromAttr = parseInt(String(el.getAttribute('data-price') || el.getAttribute('content') || '').replace(/,/g, ''), 10);
+    const amount = fromAttr > 0 ? fromAttr : parseYen(text);
+    if (amount > 0) return toTaxExcludedBidPrice(amount, text, taxType);
   }
   return 0;
 }
@@ -1154,11 +1151,10 @@ async function executeBidV3(maxPrice, options = {}) {
 
   function validateCurrentPrice() {
     if (bidMode === 'buyout') return null;
-    // Yahoo store pages can expose a tax-included amount in page scripts while
-    // max_price is always the tax-excluded amount entered in the bid form.
-    // Prefer the rendered price, whose tax label lets us normalize it safely,
-    // then fall back to the server snapshot which already uses tax-excluded yen.
-    const currentPrice = extractCurrentAuctionVisibleTaxExcludedPriceForBid(taxType) || numericCurrentPrice;
+    // Use auction-scoped pageData first. Broad visible-price selectors can match
+    // recommendation cards, while JSON-LD can expose a tax-included display price.
+    // The server snapshot is already normalized to the bid form's tax-excluded yen.
+    const currentPrice = extractPageDataCurrentPriceFromScripts() || numericCurrentPrice;
     if (currentPrice > 0 && currentPrice > numericMaxPrice) {
       return buildPriceTooHighResult(currentPrice, numericMaxPrice);
     }

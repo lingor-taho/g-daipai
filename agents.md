@@ -314,17 +314,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
-### 2026-07-14 商城含税商品当前价校验统一为税前口径
+### 2026-07-14 出价当前价校验限定本商品脚本数据
 
 生产商品 `o1236247041` 的任务最高价为税前 `40,000円`、用户含税上限为 `44,000円`，Yahoo 页面当前价为税前 `38,000円` / 含税 `41,800円`。普通即时拍校验曾直接把页面脚本中的含税当前价 `41,800円` 与税前任务最高价 `40,000円` 比较，导致在点击出价前误报“低于当前价”。
 
-修复：普通即时拍和定时出价校验优先读取 Yahoo 页面可见当前价，并根据可见的 `税込` 标记折回税前后与 `tasks.max_price` 比较；页面不可用时回退到服务器已经按税前保存的商品快照。可见节点通过 `data-price` 提供金额时也执行相同税前归一化。用户含税上限仍由后续含税总额校验独立保护，普通商品、即决商品和多次出价逻辑不变。
+初次修复改成优先读取宽泛可见价格节点后，又在普通商品 `b1193713249` 命中了“相关推荐”商品的 `3,200円`，把本商品实际当前价 `3,000円` 的三条任务错误拦截。最终修复：普通即时拍和定时出价只使用本商品 Yahoo `pageData.items.price` 与服务器税前商品快照做当前价校验，不再使用可能命中推荐卡片的宽泛可见价格选择器；脚本解析改为先遍历整页寻找本商品 `pageData`，找不到后才允许通用解析使用 JSON-LD，避免脚本顺序让商城含税展示价抢先返回。用户含税上限仍由后续含税总额校验独立保护，即决商品和多次出价逻辑不变。
+
+商品信息解析同时按 Yahoo 新版商城/个人商品 DOM 收紧：稳定锚点使用 `#itemTitle`、主信息区域内精确的 `dt=現在/即決`、`#itemPostage`、`#itemStatus` 和 `#bidButtonGroup`，随机 class 不作为边界。服务端和插件都不再从整页正文、任意价格 class、任意 `data-price` 或推荐商品区兜底读取商品当前价/即决价；优先使用本商品 `pageData` / `__NEXT_DATA__`，DOM fallback 也只在从 `#itemTitle` 到状态/按钮的商品主区域内解析。多次出价仅在 Yahoo 已明确显示“需要重新出价”时允许读取出价交互区的价格节点，仍不扫描全文价格。附件中的商城和个人商品 HTML 已分别验证标题、当前价、即决价、税类型、入札数、运费和即决-only 判定。
 
 验证：
 ```powershell
 node --check yahoo-plugin/content.js
 node --check yahoo-plugin/content.test.js
 node yahoo-plugin/content.test.js
+node src/server/routes/proxy.test.js
 node scripts/encoding-guard.js
 git diff --check
 ```

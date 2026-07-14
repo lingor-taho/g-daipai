@@ -88,6 +88,30 @@ function extractElementHtmlById(html, id) {
   return source.slice(openMatch.index, cursor);
 }
 
+function extractProductSummaryHtml(html) {
+  const source = String(html || '');
+  const titleOpen = /<div\b[^>]*id=["']itemTitle["'][^>]*>/i.exec(source);
+  if (!titleOpen) return '';
+  let endIndex = 0;
+  for (const id of ['itemStatus', 'bidButtonGroup']) {
+    const block = extractElementHtmlById(source, id);
+    const blockIndex = block ? source.indexOf(block, titleOpen.index) : -1;
+    if (blockIndex >= titleOpen.index) endIndex = Math.max(endIndex, blockIndex + block.length);
+  }
+  return endIndex > titleOpen.index ? source.slice(titleOpen.index, endIndex) : '';
+}
+
+function extractLabeledProductPriceText(html, labelPattern) {
+  const summaryHtml = extractProductSummaryHtml(html);
+  if (!summaryHtml) return '';
+  const row = summaryHtml.match(new RegExp(`<dt[^>]*>\\s*(?:${labelPattern})\\s*</dt>\\s*<dd[^>]*>([\\s\\S]*?)</dd>`, 'i'));
+  return row?.[1] ? normalizeText(row[1]) : '';
+}
+
+function extractLabeledProductPrice(html, labelPattern) {
+  return parsePriceText(extractLabeledProductPriceText(html, labelPattern));
+}
+
 function parsePriceText(text) {
   const match = String(text || '').match(/([\d,]+)\s*(?:円|JPY)?/);
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
@@ -129,26 +153,9 @@ function extractImage(html) {
 function extractPrice(html) {
   const pageDataPrice = extractPageDataItemPrice(html, 'price');
   if (pageDataPrice > 0) return pageDataPrice;
-
-  const currentPriceBlock = html.match(/<dt[^>]*>\s*(?:現在|current)\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i);
-  if (currentPriceBlock?.[1]) {
-    const currentPrice = parsePriceText(normalizeText(currentPriceBlock[1]));
-    if (currentPrice > 0) return currentPrice;
-  }
-
-  const patterns = [
-    /itemprop=["']price["'][^>]*content=["']([^"']+)["']/i,
-    /["']price["']\s*:\s*"?([\d,]+)/i,
-    /priceValue["']?\s*:\s*"?([\d,]+)/i,
-    /data-price=["']([^"']+)["']/i,
-    /class=["'][^"']*price[^"']*["'][^>]*>[\s\S]*?([\d,]+)\s*(?:円|JPY)?/i,
-    /([\d,]+)\s*(?:円|JPY)?\s*<\/span>/i
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) return parseInt(match[1].replace(/,/g, ''), 10) || 0;
-  }
-  return 0;
+  const nextDataPrice = parsePriceText(extractNextDataItem(html)?.price);
+  if (nextDataPrice > 0) return nextDataPrice;
+  return extractLabeledProductPrice(html, '現在|current') || extractLabeledProductPrice(html, '即決|buyout|即決価格');
 }
 
 function extractPageDataItemPrice(html, key) {
@@ -192,19 +199,7 @@ function extractBuyoutPrice(html) {
     return parsePriceText(pageDataItems.winPrice);
   }
 
-  const patterns = [
-    /<dt[^>]*>\s*(?:即決|buyout|即決価格)\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i,
-    /即決(?:価格)?[^\d]{0,20}([\d,]+)\s*(?:円|JPY)?/i,
-    /buyoutPrice["']?\s*:\s*"?([\d,]+)/i
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) {
-      const price = parsePriceText(normalizeText(match[1]));
-      if (price > 0) return price;
-    }
-  }
-  return 0;
+  return extractLabeledProductPrice(html, '即決|buyout|即決価格');
 }
 
 function toTaxIncludedBuyoutPrice(value, taxType) {
@@ -223,7 +218,8 @@ function extractBidCount(html) {
   const nextDataCount = parseCountValue(nextDataItem?.bids ?? nextDataItem?.bidCount ?? nextDataItem?.bid_count);
   if (nextDataCount !== null) return nextDataCount;
 
-  const source = String(html || '');
+  const source = extractElementHtmlById(html, 'itemStatus');
+  if (!source) return 0;
   const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
   let fallbackCount = null;
   for (const match of source.matchAll(anchorPattern)) {
@@ -242,24 +238,26 @@ function extractBuyoutOnly(html) {
   const buyoutPrice = extractBuyoutPrice(html);
   if (buyoutPrice <= 0) return false;
   const buttonGroupText = normalizeText(extractElementHtmlById(html, 'bidButtonGroup'));
-  const pageText = normalizePageTextWithoutProductDescription(html);
+  const pageText = normalizeText(extractProductSummaryHtml(html));
   const actionText = buttonGroupText || pageText;
   const hasInstantBuyButton = /今すぐ落札/.test(buttonGroupText);
   const hasStorePurchaseButton = /購入手続きへ/.test(actionText);
-  const hasStorePriceLabel = /価格[^\d]{0,20}[\d,]+\s*円/.test(pageText);
+  const hasStorePriceLabel = /(?:価格|即決)[^\d]{0,20}[\d,]+\s*円/.test(pageText);
   const hasBidButton = /入札する|入札に進む|値段を上げて入札/.test(actionText);
   return ((hasInstantBuyButton && Boolean(buttonGroupText)) || (hasStorePurchaseButton && hasStorePriceLabel)) && !hasBidButton;
 }
 
 function extractStorePurchaseTaxIncludedPrice(html) {
-  const text = normalizePageTextWithoutProductDescription(html);
+  const labeledBuyoutText = extractLabeledProductPriceText(html, '即決|buyout|即決価格');
+  if (/税込/.test(labeledBuyoutText)) return parsePriceText(labeledBuyoutText);
+  const text = normalizeText(extractProductSummaryHtml(html));
   if (!/購入手続きへ/.test(text)) return 0;
   const match = text.match(/価格[^\d]{0,40}([\d,]+)\s*円\s*[\(（]?\s*税込/i);
   return match?.[1] ? parsePriceText(match[1]) : 0;
 }
 
 function extractTaxType(html) {
-  const text = normalizePageTextWithoutProductDescription(html || '');
+  const text = normalizeText(extractProductSummaryHtml(html));
   if (/（\s*税\s*0\s*円\s*）|\(\s*税\s*0\s*円\s*\)/.test(text)) return 'tax_zero';
   if (/（\s*税込\s*）|\(\s*税込\s*\)/.test(text)) return 'tax_included';
   return 'tax_zero';
@@ -385,10 +383,12 @@ function extractTitle(html, auctionId) {
   );
   if (nextDataTitle !== '商品 ' + auctionId) return nextDataTitle;
 
+  const itemTitle = cleanupTitle(normalizeText(extractElementHtmlById(html, 'itemTitle')), auctionId);
+  if (itemTitle !== '商品 ' + auctionId) return itemTitle;
+
   const patterns = [
     /<meta[^>]*(?:property|name)=["']og:title["'][^>]*content=["']([^"']+)["']/i,
     /<meta[^>]*(?:property|name)=["']twitter:title["'][^>]*content=["']([^"']+)["']/i,
-    /<h1[^>]*>([\s\S]*?)<\/h1>/i,
     /<title>([^<]+)<\/title>/i
   ];
   for (const pattern of patterns) {

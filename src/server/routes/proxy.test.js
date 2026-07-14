@@ -50,7 +50,9 @@ async function testParseProductHtml() {
         <meta itemprop="endDate" content="2026-05-13T12:00:00+09:00">
       </head>
       <body>
-        <span itemprop="price" content="12,300"></span>
+        <div id="itemTitle"><h1>Test Product</h1></div>
+        <dl><dt>現在</dt><dd><span>12,300円</span></dd></dl>
+        <div id="itemStatus"></div>
       </body>
     </html>
   `, 'x1234567890', 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
@@ -176,8 +178,10 @@ async function testParseCurrentDisplayedPriceBeforeJsonLdOffer() {
         </script>
       </head>
       <body>
+        <div id="itemTitle"><h1>Current Price Test</h1></div>
         <dt>現在</dt>
         <dd><span>4,180<!-- -->円</span><span>（税込）</span></dd>
+        <div id="itemStatus"></div>
       </body>
     </html>
   `, 'v1229669054', 'https://auctions.yahoo.co.jp/jp/auction/v1229669054');
@@ -301,8 +305,10 @@ async function testParseStoreBuyoutOnlyProductFromPurchaseButton() {
         </script>
       </head>
       <body>
-        <span>価格</span><span>2,460円（税込）</span>
-        <a href="https://buy.auctions.yahoo.co.jp/order/confirm">購入手続きへ</a>
+        <div id="itemTitle"><h1>Store Buyout Test</h1></div>
+        <dl><dt>即決</dt><dd><span>2,460円</span><span>（税込）</span></dd></dl>
+        <div id="itemStatus"></div>
+        <div id="bidButtonGroup"><a href="https://buy.auctions.yahoo.co.jp/order/confirm">購入手続きへ</a></div>
       </body>
     </html>
   `, 'v1184829642', 'https://auctions.yahoo.co.jp/jp/auction/v1184829642');
@@ -323,10 +329,12 @@ async function testParseStoreBuyoutPriceAddsTaxForPageDataWinPrice() {
         </script>
       </head>
       <body>
+        <div id="itemTitle"><h1>Store Buyout Tax Test</h1></div>
         <dt>\u73fe\u5728</dt>
         <dd><span>275,100\u5186</span><span>\uff08\u7a0e\u8fbc\uff09</span></dd>
         <dt>\u5373\u6c7a\u4fa1\u683c</dt>
         <dd><span>250,091\u5186</span></dd>
+        <div id="itemStatus"></div>
       </body>
     </html>
   `, 'c1234567890', 'https://auctions.yahoo.co.jp/jp/auction/c1234567890');
@@ -346,9 +354,11 @@ async function testParseStoreBuyoutPriceRoundsUpTaxIncludedPageDataWinPrice() {
         </script>
       </head>
       <body>
+        <div id="itemTitle"><h1>Store Buyout Round Test</h1></div>
         <dt>\u73fe\u5728</dt>
         <dd><span>3,142\u5186</span><span>\uff08\u7a0e\u8fbc\uff09</span></dd>
-        <a href="https://buy.auctions.yahoo.co.jp/order/confirm">\u8cfc\u5165\u624b\u7d9a\u304d\u3078</a>
+        <div id="itemStatus"></div>
+        <div id="bidButtonGroup"><a href="https://buy.auctions.yahoo.co.jp/order/confirm">\u8cfc\u5165\u624b\u7d9a\u304d\u3078</a></div>
       </body>
     </html>
   `, 'u1051658399', 'https://auctions.yahoo.co.jp/jp/auction/u1051658399');
@@ -362,8 +372,10 @@ async function testParseStoreTaxTypeFromTaxIncludedLabel() {
     <html>
       <head><title>Store Product - Yahoo!</title></head>
       <body>
+        <div id="itemTitle"><h1>Store Product</h1></div>
         <dt>現在</dt>
         <dd><span>1,000円</span><span>（税込）</span></dd>
+        <div id="itemStatus"></div>
       </body>
     </html>
   `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
@@ -377,8 +389,10 @@ async function testParseProductTypeFromPriceTaxLabel() {
     <html>
       <head><title>Normal Product - Yahoo!</title></head>
       <body>
+        <div id="itemTitle"><h1>Normal Product</h1></div>
         <dt>現在</dt>
         <dd><span>1,000円</span><span>（税 0 円）</span></dd>
+        <div id="itemStatus"></div>
       </body>
     </html>
   `, 'n1222222222', 'https://auctions.yahoo.co.jp/jp/auction/n1222222222');
@@ -386,8 +400,10 @@ async function testParseProductTypeFromPriceTaxLabel() {
     <html>
       <head><title>Store Product - Yahoo!</title></head>
       <body>
+        <div id="itemTitle"><h1>Store Product</h1></div>
         <dt>現在</dt>
         <dd><span>1,100円</span><span>（税込）</span></dd>
+        <div id="itemStatus"></div>
       </body>
     </html>
   `, 's1222222222', 'https://auctions.yahoo.co.jp/jp/auction/s1222222222');
@@ -584,7 +600,9 @@ async function testFallsBackToPlaywrightWhenHttpFails() {
             <meta property="og:image" content="https://img.example/pw.jpg">
           </head>
           <body>
-            <span itemprop="price" content="2300"></span>
+            <div id="itemTitle"><h1>Playwright Product</h1></div>
+            <dl><dt>現在</dt><dd><span>2,300円</span></dd></dl>
+            <div id="itemStatus"></div>
           </body>
         </html>
       `;
@@ -606,8 +624,10 @@ async function testFetchRefreshesBeforeUsingCache() {
       <html>
         <head><title>Fresh Product - Yahoo!オークション</title></head>
         <body>
+          <div id="itemTitle"><h1>Fresh Product</h1></div>
           <dt>現在</dt>
           <dd><span>121<!-- -->円</span></dd>
+          <div id="itemStatus"></div>
         </body>
       </html>
     `,
@@ -845,7 +865,11 @@ async function testFetchProductByKeywordUsesOnlySingleSearchResult() {
       return `
         <html>
           <head><title>Keyword Product - Yahoo!オークション</title></head>
-          <body><span itemprop="price" content="2450"></span></body>
+          <body>
+            <div id="itemTitle"><h1>Keyword Product</h1></div>
+            <dl><dt>現在</dt><dd><span>2,450円</span></dd></dl>
+            <div id="itemStatus"></div>
+          </body>
         </html>
       `;
     },
@@ -906,6 +930,49 @@ async function testFailsWhenServerCannotFetchProductAndNoCacheExists() {
   );
 }
 
+async function testParseStoreProductFromMainSummaryOnly() {
+  const product = parseProductHtml(`
+    <div><dt>現在</dt><dd>推荐商品 99,999円</dd></div>
+    <div id="itemTitle"><h1>附件商城商品</h1></div>
+    <dl>
+      <dt>現在</dt><dd><span>375円</span><span>（税込）</span></dd>
+      <dt>即決</dt><dd><span>32,780円</span><span>（税込）</span></dd>
+    </dl>
+    <div id="itemPostage"><dl><dt>送料</dt><dd>大阪府は1,380円（税込）</dd></dl></div>
+    <div id="itemStatus"><a href="/jp/show/bid_hist?aID=s1236813401">5件</a></div>
+    <div id="bidButtonGroup"><button>入札する</button><button>今すぐ落札</button></div>
+    <div><dt>現在</dt><dd>另一推荐商品 88,888円</dd></div>
+  `, 's1236813401', 'https://auctions.yahoo.co.jp/jp/auction/s1236813401');
+
+  assert.equal(product.title, '附件商城商品');
+  assert.equal(product.currentPrice, 375);
+  assert.equal(product.buyoutPrice, 32780);
+  assert.equal(product.bidCount, 5);
+  assert.equal(product.taxType, 'tax_included');
+  assert.equal(product.productType, 'store');
+  assert.equal(product.shippingFeeText, '1380円');
+}
+
+async function testParsePersonalBuyoutFromMainSummaryOnly() {
+  const product = parseProductHtml(`
+    <div><span>相关推荐 即決 8,800円</span></div>
+    <div id="itemTitle"><h1>附件个人商品</h1></div>
+    <dl><dt>即決</dt><dd><span>2,480円</span><span>（税0円）</span></dd></dl>
+    <div id="itemPostage"><dl><dt>送料</dt><dd>全国一律230円（税込）</dd></dl></div>
+    <div id="itemStatus"><a href="/jp/show/bid_hist?aID=e1236608374">0件</a></div>
+    <div id="bidButtonGroup"><button>今すぐ落札</button></div>
+  `, 'e1236608374', 'https://auctions.yahoo.co.jp/jp/auction/e1236608374');
+
+  assert.equal(product.title, '附件个人商品');
+  assert.equal(product.currentPrice, 2480);
+  assert.equal(product.buyoutPrice, 2480);
+  assert.equal(product.bidCount, 0);
+  assert.equal(product.taxType, 'tax_zero');
+  assert.equal(product.productType, 'normal');
+  assert.equal(product.shippingFeeText, '230円');
+  assert.equal(product.buyoutOnly, true);
+}
+
 async function run() {
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
@@ -944,6 +1011,8 @@ async function run() {
   await testFetchProductByKeywordUsesOnlySingleSearchResult();
   await testFetchProductByKeywordFailsWhenResultCountIsNotOne();
   await testFailsWhenServerCannotFetchProductAndNoCacheExists();
+  await testParseStoreProductFromMainSummaryOnly();
+  await testParsePersonalBuyoutFromMainSummaryOnly();
 }
 
 run().catch(err => {
