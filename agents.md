@@ -314,6 +314,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-14 用户任务列表双击复用再入札
+
+用户端提交任务页内嵌的任务列表支持双击任务行再次入札。双击后会把该任务的 Yahoo 商品地址自动回填到“商品ID / 商品链接 / 商品名称”输入框，并直接复用提交页现有的商品信息抓取流程展示商品卡片；无需再手动复制商品 ID 或点击“获取商品信息”。独立任务列表页双击时会跳转到提交页并触发相同流程，“入札中”页原有“再入札”按钮也改为共用同一商品地址/提交地址辅助逻辑。任务行中的“终止”按钮会阻止双击事件冒泡，避免终止操作误触发再次入札。
+
+验证：
+```powershell
+node src/client/src/pages/TaskList.display.test.mjs
+node src/client/src/pages/ActiveBidding.display.test.mjs
+node src/client/src/pages/Submit.display.test.mjs
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-14 出价当前价校验限定本商品脚本数据
 
 生产商品 `o1236247041` 的任务最高价为税前 `40,000円`、用户含税上限为 `44,000円`，Yahoo 页面当前价为税前 `38,000円` / 含税 `41,800円`。普通即时拍校验曾直接把页面脚本中的含税当前价 `41,800円` 与税前任务最高价 `40,000円` 比较，导致在点击出价前误报“低于当前价”。

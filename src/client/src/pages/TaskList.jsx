@@ -1,11 +1,13 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
+import { useNavigate } from 'react-router-dom';
 import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
 import { getTaskFailureLabel } from '../utils/taskFailureReason';
 import { getTaskStatCards } from '../utils/taskStats';
+import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
 import { cardStyle, colors, itemCardStyle, listStyle, pageButtonStyle } from '../styles';
 
 const STATUS_MAP = {
@@ -43,7 +45,8 @@ function getStrategyTextStyle(strategy) {
   return { color: '#4b5563', fontWeight: 600 };
 }
 
-export default function TaskList({ limit = 10, embedded = false }) {
+export default function TaskList({ limit = 10, embedded = false, onRebid }) {
+  const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -108,6 +111,19 @@ export default function TaskList({ limit = 10, embedded = false }) {
     }
   }
 
+  function handleRebid(task) {
+    const productUrl = getAuctionProductUrl(task);
+    if (!productUrl) {
+      Toast.show({ content: '该任务缺少商品ID' });
+      return;
+    }
+    if (onRebid) {
+      onRebid(productUrl);
+      return;
+    }
+    navigate(getRebidSubmitPath(task));
+  }
+
   if (loading) return <div style={{ padding: 32, textAlign: 'center' }}><SpinLoading /></div>;
 
   return (
@@ -137,7 +153,9 @@ export default function TaskList({ limit = 10, embedded = false }) {
           const cancelable = canCancelTask(task);
           return (
             <List.Item key={task.id}
-              style={itemCardStyle}
+              onDoubleClick={() => handleRebid(task)}
+              title="双击可再次入札"
+              style={{ ...itemCardStyle, cursor: 'pointer' }}
               extra={
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Tag color={s.color}>{statusLabel}</Tag>
@@ -147,7 +165,11 @@ export default function TaskList({ limit = 10, embedded = false }) {
                       color="danger"
                       fill="outline"
                       loading={cancellingId === task.id}
-                      onClick={() => handleCancel(task)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleCancel(task);
+                      }}
+                      onDoubleClick={(event) => event.stopPropagation()}
                     >
                       终止
                     </Button>

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { getActiveBiddingTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
+import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
 import { formatTotalAmount } from '../utils/totalAmount';
 import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle, pageButtonStyle } from '../styles';
 
@@ -38,10 +39,6 @@ function getDisplayPrice(item) {
 
 function isOutbidItem(item) {
   return item?.bidding_status === 'outbid' || Number(item?.is_highest_bidder) === 0;
-}
-
-function getProductUrl(item) {
-  return item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${item.product_id}`;
 }
 
 function formatBeijingTime(value) {
@@ -162,7 +159,7 @@ export default function ActiveBidding() {
                     <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                   </div>
                   <a
-                    href={getProductUrl(item)}
+                    href={getAuctionProductUrl(item)}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ ...titleLinkStyle, display: 'block', fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}
@@ -197,7 +194,7 @@ export default function ActiveBidding() {
                     size="mini"
                     color="danger"
                     fill="outline"
-                    onClick={() => navigate(`/submit?url=${encodeURIComponent(getProductUrl(item))}`)}
+                    onClick={() => navigate(getRebidSubmitPath(item))}
                     style={{ ...outlineButtonStyle, flex: '0 0 auto', marginTop: 26, '--text-color': colors.danger }}
                   >
                     再入札

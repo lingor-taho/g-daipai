@@ -279,6 +279,11 @@ export default function Submit() {
     }
   }
 
+  function handleRebid(productUrl) {
+    setUrl(productUrl);
+    handleFetch(productUrl);
+  }
+
   function handleUrlChange(value) {
     setUrl(value);
     if (String(value || '').trim() !== lastFetchedUrl) {
@@ -673,7 +678,7 @@ export default function Submit() {
         </>
       )}
 
-      <TaskList key={taskListVersion} limit={10} embedded />
+      <TaskList key={taskListVersion} limit={10} embedded onRebid={handleRebid} />
     </>
   );
 }

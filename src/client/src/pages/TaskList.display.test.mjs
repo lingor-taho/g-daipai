@@ -11,3 +11,15 @@ assert.equal(
   true,
   'TaskList page must render manual_import strategy as 导入'
 );
+
+assert.equal(
+  source.includes('onDoubleClick={() => handleRebid(task)}'),
+  true,
+  'TaskList rows must support double-click rebidding'
+);
+
+assert.equal(
+  source.includes('onRebid(productUrl)'),
+  true,
+  'Embedded TaskList must reuse the submit page product-loading callback'
+);

@@ -23,3 +23,15 @@ assert.equal(
   true,
   'Submit page should use the standard product fetch success toast'
 );
+
+assert.equal(
+  source.includes('<TaskList key={taskListVersion} limit={10} embedded onRebid={handleRebid} />'),
+  true,
+  'Submit page task rows must reuse the standard product fetch flow when double-clicked'
+);
+
+assert.equal(
+  source.includes('setUrl(productUrl);') && source.includes('handleFetch(productUrl);'),
+  true,
+  'Double-click rebidding must fill the product input and fetch product details'
+);
