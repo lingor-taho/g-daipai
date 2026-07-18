@@ -181,6 +181,7 @@ function testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus() {
   assert.doesNotMatch(query.rows.sql, /INSERT INTO yahoo_trade_messages/);
   assert.doesNotMatch(query.rows.sql, /fetch_status = 'pending'/);
   assert.match(query.rows.sql, /o\.order_status/);
+  assert.match(query.rows.sql, /o\.tracking_number/);
   assert.match(query.rows.sql, /u\.username LIKE \?/);
   assert.match(query.rows.sql, /LOWER\(COALESCE\(o\.product_id, t\.product_id\)\) = \?/);
   assert.match(query.rows.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) >= \?/);

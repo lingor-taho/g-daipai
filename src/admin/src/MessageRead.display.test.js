@@ -59,6 +59,24 @@ assert.equal(
   'MessageRead table should show order status after won time'
 );
 
+{
+  const orderStatusColumnIndex = source.indexOf("dataIndex: 'order_status'");
+  const trackingNumberColumnIndex = source.indexOf("dataIndex: 'tracking_number'");
+  const messageUpdateColumnIndex = source.indexOf("title: '消息更新'");
+  assert.equal(
+    orderStatusColumnIndex >= 0 &&
+      trackingNumberColumnIndex > orderStatusColumnIndex &&
+      messageUpdateColumnIndex > trackingNumberColumnIndex,
+    true,
+    'MessageRead table should show tracking number immediately after order status'
+  );
+  assert.equal(
+    source.includes("title: '追踪号'") && source.includes("render: value => value || '-'"),
+    true,
+    'MessageRead table should show a dash when tracking number is empty'
+  );
+}
+
 assert.equal(
   source.includes('MESSAGE_PROCESSING_TIMEOUT_MS = 30000') &&
     source.includes('isMessageFetchInProgress') &&

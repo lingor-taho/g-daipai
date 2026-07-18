@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-14
+**最后更新**: 2026-07-18
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -20,7 +20,7 @@
 
 Yahoo 日本拍卖代拍系统。中国用户通过 Web 提交商品 URL、最高价和出价策略；Windows 服务器上的 Chrome 扩展轮询 API，在 Yahoo Auction 页面自动执行竞拍、同步入札中状态、同步落札订单，并处理交易开始、付款、扫描物流和确认收货等订单流程。
 
-生产侧已连续运行稳定；当前后续重点不是修复线上故障，而是三表模型收尾和用户本地商品缓存提速。
+生产侧已连续运行稳定；当前后续重点是三表模型收尾、用户本地商品缓存提速，以及 Windows Chrome 小窗口下 PIN/文字验证码截图稳定性。
 
 ---
 
@@ -189,6 +189,39 @@ npm run build --prefix src/client
 node scripts/encoding-guard.js
 ```
 
+### 3. Windows Chrome 小窗口下 PIN/文字验证码截图稳定性
+
+目标：服务器 Windows Chrome 即使窗口被缩小、视口较小或验证码区域不在当前可视范围内，后台也能稳定显示 Yahoo 文字验证码，并保证后续 PIN 的 Win32 真实键盘输入仍落在正确窗口。
+
+已确认现象和边界：
+
+- 生产后台收到的 `imageDataUrl` 可能是尺寸、格式均有效但内容全白的 PNG；不是后台跨域、Base64 截断或 `<img>` 渲染失败。
+- 当前 `captureManualCaptchaImage()` 只在激活窗口后固定等待 `500ms`，随后优先调用 `Page.captureScreenshot`，且使用 `captureBeyondViewport: false`。
+- Chrome 窗口缩小后，验证码可能处于可视视口之外，或 Windows 合成器尚未完成绘制；CDP 仍会返回非空截图数据，现有逻辑会直接把白图当成功结果上报。
+- 现有测试只覆盖“存在 PNG/Base64 数据”，尚未覆盖全白/低对比度截图、较小视口和窗口状态恢复。
+- PIN 的 Win32 `SendKeys` 依赖 Chrome 窗口可见、置前并聚焦；验证码截图修复不能在 PIN 输入前过早恢复或最小化窗口。
+
+后续建议方案：
+
+1. 进入人工验证码流程时记录 Chrome 原窗口状态和 bounds，临时置前并最大化。
+2. 将验证码元素 `scrollIntoView({ block: 'center' })`，等待页面完成绘制后再截图。
+3. CDP 截图启用 `captureBeyondViewport: true`，同时保留页面图片/canvas 直接提取作为优先或备用路径。
+4. 对截图做全白/低对比度检测；检测失败时等待后自动重试 2-3 次，不能仅凭非空 Base64 判定成功。
+5. 验证码和紧随其后的 PIN 流程全部结束后，再恢复原窗口状态和 bounds。
+6. 增加小视口、首次白图后重试成功、连续白图降级、PIN 输入前保持窗口可见，以及流程结束恢复窗口状态的回归测试。
+
+本项当前只记录方案，尚未修改 `yahoo-plugin/background.js` 或生产插件。
+
+建议验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ---
 
 ## 核心业务规则
@@ -313,6 +346,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-18 消息读取列表显示订单追踪号
+
+后台“消息读取”列表在“订单状态”后新增“追踪号”列，直接显示订单 `orders.tracking_number`；没有单号时显示 `-`。消息列表接口同步返回该字段，原有消息抓取、发送和筛选逻辑不变。
+
+验证：
+```powershell
+node src/server/routes/admin.orders.test.js
+node src/admin/src/MessageRead.display.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-07-14 多次/定时出价达到最高价后停止并限定价格状态范围
 
