@@ -7047,6 +7047,19 @@ async function executeBidTask(task, options = {}) {
       tabId: taskTab.id,
       pageError: error?.message || String(error || '')
     })) : {};
+    if (isMessageChannelClosed(e) && task?.bid_mode === 'buyout' && isBuyoutPurchaseCompleteSnapshot(tabSnapshot)) {
+      const recoveredResult = buildBuyoutPendingFinalResult(task, {
+        stage: 'buyout-final-message-disconnected-after-delayed-completion'
+      });
+      await markTaskStatus(task.id, 'bidding', null, {
+        bid_price: recoveredResult.bidPrice,
+        no_bid: recoveredResult.noBid,
+        not_highest: recoveredResult.notHighest
+      });
+      if (taskTab?.id) await closeTaskTab(taskTab.id);
+      console.log('[Yahoo Bid] Recovered delayed buyout completion and closed task tab:', task.id, tabSnapshot.url || '');
+      return;
+    }
     const diagnostics = formatDiagnosticParts({
       stage: bidStage,
       timedOut: taskTimedOut ? 'true' : '',

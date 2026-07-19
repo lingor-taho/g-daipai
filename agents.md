@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-18
+**最后更新**: 2026-07-19
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -346,6 +346,21 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-07-19 商城即决完成页延迟稳定后关闭出价 Tab
+
+商城即决商品跳转到 `buy.auctions.yahoo.co.jp/order/thank-you` 时，Chrome 可能因页面进入 back/forward cache 连续关闭两次扩展消息通道。第一次断线后的即时检查有时仍停留在购买确认页，原逻辑第二次断线后会直接进入失败处理；等失败诊断读取页面时，Yahoo 完成页其实已经稳定出现，导致任务被误标失败且完成页 tab 残留。
+
+修复：出价异常最终落库前，如果异常属于消息通道关闭，且商城即决 tab 的最终 URL 或页面内容已经明确为购买完成，则按完成事实恢复任务为 `bidding`，关闭受管任务 tab，并跳过 `bid_failure` 假诊断。回归测试覆盖第一次检查仍在 review 页、第二次断线后最终检查才出现 thank-you 页的真实时序，同时把测试商品结束时间更新到未来，确保用例确实执行出价链路。
+
+验证：
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-07-18 消息读取列表显示订单追踪号
 

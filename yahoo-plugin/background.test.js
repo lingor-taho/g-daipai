@@ -8783,7 +8783,7 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
             auctionId: 'u1234567890',
             currentPrice: 3142,
             buyoutPrice: 3142,
-            endTime: '2026-06-28T23:59:00+09:00'
+            endTime: '2099-06-28T23:59:00+09:00'
           };
         }
         if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
@@ -8810,7 +8810,7 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
     bid_mode: 'buyout',
     product_type: 'store',
     tax_type: 'tax_included',
-    end_time: '2026-06-28T23:59:00+09:00'
+    end_time: '2099-06-28T23:59:00+09:00'
   }, { alreadyClaimed: true });
 
   assert.equal(statusBodies.some(body => body.status === 'failed'), false);
@@ -8872,7 +8872,7 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
             auctionId: 'p1226403738',
             currentPrice: 500,
             buyoutPrice: 500,
-            endTime: '2026-07-05T18:59:00+09:00'
+            endTime: '2099-07-05T18:59:00+09:00'
           };
         }
         if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
@@ -8930,7 +8930,7 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
     bid_mode: 'buyout',
     product_type: 'store',
     tax_type: 'tax_included',
-    end_time: '2026-07-05T18:59:00+09:00'
+    end_time: '2099-07-05T18:59:00+09:00'
   }, { alreadyClaimed: true });
 
   assert.equal(bidMessages.length, 2);
@@ -8985,7 +8985,7 @@ async function testExecuteBidTaskRetriesTransientServerTabErrorOnce() {
           return {
             auctionId: 'c1234343054',
             currentPrice: 1000,
-            endTime: '2026-06-28T22:01:24+09:00'
+            endTime: '2099-06-28T22:01:24+09:00'
           };
         }
         if (msg.type === 'EXECUTE_BID_V2') {
@@ -9011,7 +9011,7 @@ async function testExecuteBidTaskRetriesTransientServerTabErrorOnce() {
     strategy: 'direct',
     bid_mode: 'bid',
     tax_type: 'tax_included',
-    end_time: '2026-06-28T22:01:24+09:00'
+    end_time: '2099-06-28T22:01:24+09:00'
   }, { alreadyClaimed: true });
 
   assert.equal(createCount, 2);
@@ -9092,6 +9092,7 @@ async function testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComple
 async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
   const calls = [];
   let executeBidMessages = 0;
+  let diagnosticSnapshots = 0;
   const api = loadBackgroundForTest({
     setTimeout(fn, ms) {
       if (ms >= 30000) return 1;
@@ -9131,7 +9132,7 @@ async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
           return {
             auctionId: 'x1235487667',
             currentPrice: 8600,
-            endTime: '2026-07-08T12:19:38+09:00'
+            endTime: '2099-07-08T12:19:38+09:00'
           };
         }
         if (msg.type === 'EXECUTE_BID' || msg.type === 'EXECUTE_BID_V2') {
@@ -9147,6 +9148,16 @@ async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
     scripting: {
       async executeScript(args) {
         if (args?.files) return [];
+        diagnosticSnapshots += 1;
+        if (diagnosticSnapshots === 1) {
+          return [{
+            result: {
+              title: 'Yahoo! Auction - Purchase review',
+              url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=x1235487667',
+              bodyText: 'Review purchase details'
+            }
+          }];
+        }
         return [{
           result: {
             title: 'Yahoo!オークション - 購入完了',
@@ -9167,11 +9178,12 @@ async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
     strategy: 'direct',
     bid_mode: 'buyout',
     tax_type: 'tax_included',
-    end_time: '2026-07-08T12:19:38+09:00'
+    end_time: '2099-07-08T12:19:38+09:00'
   }, { alreadyClaimed: true });
 
   const statuses = calls.filter(call => call.type === 'status').map(call => call.body.status);
-  assert.equal(executeBidMessages, 1);
+  assert.equal(executeBidMessages, 2);
+  assert.equal(diagnosticSnapshots, 2);
   assert.equal(statuses.includes('failed'), false);
   assert.equal(statuses.includes('bidding'), true);
   assert.equal(calls.some(call => call.type === 'diagnostic'), false);
@@ -9242,7 +9254,7 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoading
   }, { alreadyClaimed: true });
 
   const diagnosticIndex = calls.findIndex(call => call.type === 'diagnostic');
-  const removeIndex = calls.findIndex(call => call.type === 'remove');
+  const removeIndex = calls.map(call => call.type).lastIndexOf('remove');
   const statusIndex = calls.findIndex(call => call.type === 'status');
   assert.ok(diagnosticIndex >= 0);
   assert.ok(removeIndex >= 0);
@@ -9490,7 +9502,7 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTab
           return {
             auctionId: 'w1233744381',
             currentPrice: 19313,
-            endTime: '2026-06-28T23:05:11+09:00'
+            endTime: '2099-06-28T23:05:11+09:00'
           };
         }
         if (msg.type === 'EXECUTE_BID') {
@@ -9525,7 +9537,7 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTab
     strategy: 'direct',
     bid_mode: 'bid',
     tax_type: 'tax_zero',
-    end_time: '2026-06-28T23:05:11+09:00'
+    end_time: '2099-06-28T23:05:11+09:00'
   }, { alreadyClaimed: true });
 
   const diagnosticIndex = calls.findIndex(call => call.type === 'diagnostic');
@@ -9633,7 +9645,7 @@ async function testBidRetryKeepsActiveRunSlotUntilRetryFinishes() {
                 strategy: 'direct',
                 bid_mode: 'bid',
                 tax_type: 'tax_included',
-                end_time: '2026-06-28T22:01:24+09:00'
+                end_time: '2099-06-28T22:01:24+09:00'
               }]
             };
           }
@@ -9668,7 +9680,7 @@ async function testBidRetryKeepsActiveRunSlotUntilRetryFinishes() {
           return {
             auctionId: 'c1234343054',
             currentPrice: 1000,
-            endTime: '2026-06-28T22:01:24+09:00'
+            endTime: '2099-06-28T22:01:24+09:00'
           };
         }
         if (msg.type === 'EXECUTE_BID_V2') {
