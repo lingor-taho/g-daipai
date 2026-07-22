@@ -3,6 +3,37 @@ const { readFileSync } = require('fs');
 const { join } = require('path');
 
 const source = readFileSync(join(__dirname, 'MessageRead.tsx'), 'utf8');
+const layoutSource = readFileSync(join(__dirname, 'layouts', 'AdminLayout.tsx'), 'utf8');
+
+assert.equal(
+  source.includes('<Card title="查询订单">') &&
+    layoutSource.includes("fullLabel: '查询订单'") &&
+    !layoutSource.includes("fullLabel: '消息读取'"),
+  true,
+  'MessageRead menu and page title should be renamed to 查询订单'
+);
+
+assert.equal(
+  source.includes('name="orderStatus" label="订单状态"') &&
+    source.includes('options={ORDER_STATUS_OPTIONS}') &&
+    source.includes("params.set('orderStatus', orderStatus)"),
+  true,
+  'MessageRead should submit the selected order status as a combinable filter'
+);
+
+for (const status of [
+  'pending_payment',
+  'waiting_shipping',
+  'pending_bundle',
+  'bundle_completed',
+  'pending_settlement',
+  'pending_shipment',
+  'pending_receipt',
+  'completed',
+  'cancelled'
+]) {
+  assert.equal(source.includes(`value: '${status}'`), true, `MessageRead should offer ${status}`);
+}
 
 assert.equal(
   source.includes('yahoo-message-view'),

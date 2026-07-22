@@ -620,6 +620,18 @@ function normalizeMessagesPage(value, fallback = 1) {
   return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
 }
 
+const ADMIN_MESSAGE_ORDER_STATUSES = new Set([
+  'pending_payment',
+  'waiting_shipping',
+  'pending_bundle',
+  'bundle_completed',
+  'pending_settlement',
+  'pending_shipment',
+  'pending_receipt',
+  'completed',
+  'cancelled'
+]);
+
 function buildAdminMessagesListQuery(filters = {}) {
   const current = normalizeMessagesPage(filters.current, 1);
   const pageSize = Math.min(200, normalizeMessagesPage(filters.pageSize, 20));
@@ -645,6 +657,11 @@ function buildAdminMessagesListQuery(filters = {}) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(wonTo)) {
     where.push("substr(COALESCE(o.won_at, ''), 1, 10) <= ?");
     params.push(wonTo);
+  }
+  const orderStatus = String(filters.orderStatus || '').trim();
+  if (ADMIN_MESSAGE_ORDER_STATUSES.has(orderStatus)) {
+    where.push('o.order_status = ?');
+    params.push(orderStatus);
   }
   const fromSql = `FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id

@@ -20,7 +20,7 @@ const menuItemsConfig = [
 ];
 
 menuItemsConfig.push({ key: '/online-users', fullLabel: '在线用户', shortLabel: '在', mobileLabel: '在线' });
-menuItemsConfig.push({ key: '/message-read', fullLabel: '消息读取', shortLabel: '消', mobileLabel: '消息' });
+menuItemsConfig.push({ key: '/message-read', fullLabel: '查询订单', shortLabel: '查', mobileLabel: '查询' });
 
 
 const orderedMenuItemsConfig = [

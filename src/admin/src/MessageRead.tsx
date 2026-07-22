@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, DatePicker, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
 
 const MESSAGE_PROCESSING_TIMEOUT_MS = 30000;
+
+const ORDER_STATUS_OPTIONS = [
+  { value: 'pending_payment', label: '待支付' },
+  { value: 'waiting_shipping', label: '等待运费' },
+  { value: 'pending_bundle', label: '待同捆' },
+  { value: 'bundle_completed', label: '同捆完了' },
+  { value: 'pending_settlement', label: '待结算' },
+  { value: 'pending_shipment', label: '待发货' },
+  { value: 'pending_receipt', label: '待收货' },
+  { value: 'completed', label: '完了' },
+  { value: 'cancelled', label: '取消' }
+];
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-';
@@ -130,11 +142,13 @@ export default function MessageReadPage() {
       params.set('pageSize', String(next.pageSize || 20));
       const username = String(values.username || '').trim();
       const productId = String(values.productId || '').trim();
+      const orderStatus = String(values.orderStatus || '').trim();
       const range = values.wonRange || [];
       if (username) params.set('username', username);
       if (productId) params.set('productId', productId);
       if (range[0]) params.set('wonFrom', formatDateOnly(range[0]));
       if (range[1]) params.set('wonTo', formatDateOnly(range[1]));
+      if (orderStatus) params.set('orderStatus', orderStatus);
       const data = await fetchAdminJson(`/api/admin/messages?${params.toString()}`);
       setItems(data.items || []);
       setPagination({
@@ -190,7 +204,7 @@ export default function MessageReadPage() {
   }, []);
 
   return (
-    <Card title="消息读取">
+    <Card title="查询订单">
       <Form
         form={form}
         layout="inline"
@@ -205,6 +219,14 @@ export default function MessageReadPage() {
         </Form.Item>
         <Form.Item name="wonRange" label="落札时间">
           <DatePicker.RangePicker />
+        </Form.Item>
+        <Form.Item name="orderStatus" label="订单状态">
+          <Select
+            allowClear
+            placeholder="全部"
+            options={ORDER_STATUS_OPTIONS}
+            style={{ width: 130 }}
+          />
         </Form.Item>
         <Form.Item>
           <Space>
