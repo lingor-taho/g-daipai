@@ -65,6 +65,7 @@ const DEFAULT_SCAN_EVERY_IDLE_RUNS = 5;
 const DEFAULT_PAYMENT_JOB_LIMIT = 3;
 const DEFAULT_PAYMENT_PAGE_STAY_SECONDS = 3;
 const SHIPMENT_ALERTS_CONFIG_KEY = 'shipment_alerts';
+const GOOGLE_SHEET_ALERTS_CONFIG_KEY = 'google_sheet_alerts';
 const GOOGLE_SHEET_STATUS_PENDING_RECEIPT = '待收货';
 const BUNDLE_SHEET_COLORS = [
   { red: 0.93, green: 0.97, blue: 1 },
@@ -1651,6 +1652,13 @@ async function getOrdersForSheetAppend(orderId, database = db) {
   return { orders, isBundle: Boolean(hasBundleShipping), bundleGroupId: target.bundle_group_id || '' };
 }
 
+function getGoogleSheetAlertOrder(orderId, orders = []) {
+  return orders.find(order => Number(order.id) === Number(orderId))
+    || orders.find(order => order.order_status === ORDER_STATUS_PENDING_RECEIPT)
+    || orders[0]
+    || null;
+}
+
 async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
   await applyGoogleSheetsConfigFromDb(database);
   if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
@@ -1658,10 +1666,24 @@ async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
   if (!orders.length) return { skipped: true, reason: 'no appendable orders' };
   const baseConfig = await getSheetFinanceBaseConfig(database);
   const rows = orders.map(order => buildDaipaiSheetRow(order, baseConfig));
-  const appendResult = await appendGoogleSheetRows({
-    rows,
-    backgroundColor: isBundle ? getBundleSheetColor(bundleGroupId) : null
-  });
+  let appendResult;
+  try {
+    appendResult = await appendGoogleSheetRows({
+      rows,
+      backgroundColor: isBundle ? getBundleSheetColor(bundleGroupId) : null
+    });
+  } catch (error) {
+    const mainOrder = getGoogleSheetAlertOrder(orderId, orders);
+    await addGoogleSheetFailureAlert({
+      orderId: mainOrder?.id || orderId,
+      productId: mainOrder?.product_id || '',
+      bundleGroupId,
+      error: error?.message || String(error)
+    }, database).catch(alertError => {
+      console.warn('[Yahoo Bid] Google Sheet failure alert save failed:', alertError.message || alertError);
+    });
+    throw error;
+  }
   if (!appendResult?.skipped) {
     const ids = orders.map(order => order.id);
     const placeholders = ids.map(() => '?').join(',');
@@ -1770,6 +1792,49 @@ function parseShipmentAlerts(value) {
   } catch (_) {
     return [];
   }
+}
+
+function parseGoogleSheetAlerts(value) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function getGoogleSheetAlerts(database = db) {
+  const row = await database.getOne(
+    `SELECT value FROM config WHERE key = ?`,
+    [GOOGLE_SHEET_ALERTS_CONFIG_KEY]
+  );
+  return parseGoogleSheetAlerts(row?.value);
+}
+
+async function saveGoogleSheetAlerts(database, alerts) {
+  await saveConfigValue(database, GOOGLE_SHEET_ALERTS_CONFIG_KEY, JSON.stringify(alerts || []));
+}
+
+async function addGoogleSheetFailureAlert(payload = {}, database = db, nowMs = Date.now()) {
+  const orderId = Number(payload.orderId || 0);
+  const productId = normalizePlainText(payload.productId, 32).toLowerCase();
+  const error = normalizePlainText(payload.error || 'Google Sheets write failed', 300);
+  if (!Number.isInteger(orderId) || orderId <= 0 || !productId) {
+    return { added: false };
+  }
+  const id = `google-sheet-${orderId}`;
+  const alerts = await getGoogleSheetAlerts(database);
+  const next = alerts.filter(alert => alert?.id !== id);
+  next.push({
+    id,
+    orderId,
+    productId,
+    bundleGroupId: normalizePlainText(payload.bundleGroupId, 128),
+    error,
+    createdAt: new Date(nowMs).toISOString()
+  });
+  await saveGoogleSheetAlerts(database, next.slice(-100));
+  return { added: true, id, productId };
 }
 
 async function syncYahooWonOrders(orders = [], database = db) {
@@ -3253,12 +3318,15 @@ module.exports.normalizeYahooTradeMessageHtml = normalizeYahooTradeMessageHtml;
 module.exports.buildDaipaiSheetRow = buildDaipaiSheetRow;
 module.exports.calculateSheetPayable = calculateSheetPayable;
 module.exports.getOrdersForSheetAppend = getOrdersForSheetAppend;
+module.exports.getGoogleSheetAlertOrder = getGoogleSheetAlertOrder;
 module.exports.getOrderForSheetUpdate = getOrderForSheetUpdate;
 module.exports.appendPendingReceiptOrderToGoogleSheet = appendPendingReceiptOrderToGoogleSheet;
 module.exports.calculateOverdueShipmentDays = calculateOverdueShipmentDays;
 module.exports.addPendingShipmentAlert = addPendingShipmentAlert;
 module.exports.autoCloseShipmentAlerts = autoCloseShipmentAlerts;
 module.exports.getShipmentAlerts = getShipmentAlerts;
+module.exports.getGoogleSheetAlerts = getGoogleSheetAlerts;
+module.exports.addGoogleSheetFailureAlert = addGoogleSheetFailureAlert;
 module.exports.getPaymentJobs = getPaymentJobs;
 module.exports.summarizePaymentError = summarizePaymentError;
 module.exports.updatePaymentStatus = updatePaymentStatus;

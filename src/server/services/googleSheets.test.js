@@ -6,9 +6,11 @@ const {
   buildEnsureRemarkColumnRequest,
   buildAppendRowsFormatRequest,
   buildFindRowsByProductIdWithAnyColorPath,
+  executeGoogleSheetsRequestWithRetry,
   extractSpreadsheetId,
   getGoogleSheetsCredentialPath,
   getSheetConfig,
+  isRetryableGoogleSheetsError,
   normalizeGoogleSheetName,
   updateRowsByProductId
 } = require('./googleSheets');
@@ -104,6 +106,57 @@ async function testUpdateRowsByProductIdSkipsWhenUnconfigured() {
   });
 }
 
+async function testGoogleSheetsRetryableFailureRetriesOnce() {
+  let attempts = 0;
+  let waits = 0;
+  const result = await executeGoogleSheetsRequestWithRetry(async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      const error = new Error('rate limited');
+      error.googleSheetsStatus = 429;
+      throw error;
+    }
+    return { success: true };
+  }, {
+    wait: async () => {
+      waits += 1;
+    }
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.equal(attempts, 2);
+  assert.equal(waits, 1);
+}
+
+async function testGoogleSheetsRetryStopsAfterSecondFailure() {
+  let attempts = 0;
+  await assert.rejects(
+    () => executeGoogleSheetsRequestWithRetry(async () => {
+      attempts += 1;
+      const error = new Error('server unavailable');
+      error.googleSheetsStatus = 503;
+      throw error;
+    }, { wait: async () => {} }),
+    /server unavailable/
+  );
+  assert.equal(attempts, 2);
+}
+
+async function testGoogleSheetsNonRetryableFailureDoesNotRetry() {
+  let attempts = 0;
+  await assert.rejects(
+    () => executeGoogleSheetsRequestWithRetry(async () => {
+      attempts += 1;
+      const error = new Error('permission denied');
+      error.googleSheetsStatus = 403;
+      throw error;
+    }, { wait: async () => {} }),
+    /permission denied/
+  );
+  assert.equal(attempts, 1);
+  assert.equal(isRetryableGoogleSheetsError({ googleSheetsNetworkError: true }), true);
+}
+
 function testAppendRowFormatSetsBlackText() {
   const backgroundColor = { red: 1, green: 0.9, blue: 0.8 };
   const request = buildAppendRowsFormatRequest({
@@ -181,6 +234,9 @@ async function run() {
   await testApplyConfigFromDbOverridesEnv();
   await testMojibakeSheetNameFallsBackToDefault();
   await testUpdateRowsByProductIdSkipsWhenUnconfigured();
+  await testGoogleSheetsRetryableFailureRetriesOnce();
+  await testGoogleSheetsRetryStopsAfterSecondFailure();
+  await testGoogleSheetsNonRetryableFailureDoesNotRetry();
 }
 
 run().catch(error => {

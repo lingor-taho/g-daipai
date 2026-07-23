@@ -37,7 +37,10 @@ const {
   updateScanStatus,
   buildDaipaiSheetRow,
   getOrdersForSheetAppend,
+  getGoogleSheetAlertOrder,
   getOrderForSheetUpdate,
+  addGoogleSheetFailureAlert,
+  getGoogleSheetAlerts,
   getPaymentJobs,
   getConfirmReceiptJobs,
   updateYahooMessageStatus,
@@ -1813,6 +1816,53 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
   assert.equal(calls.length, 3);
 }
 
+function testGoogleSheetAlertUsesRequestedBundleMainOrder() {
+  const mainOrder = getGoogleSheetAlertOrder(14, [
+    { id: 13, product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
+    { id: 14, product_id: 's1113817953', order_status: ORDER_STATUS_PENDING_RECEIPT }
+  ]);
+
+  assert.equal(mainOrder.id, 14);
+  assert.equal(mainOrder.product_id, 's1113817953');
+}
+
+async function testGoogleSheetFailureAlertPersistsAndDeduplicatesByMainOrder() {
+  let storedValue = '[]';
+  const calls = [];
+  const fakeDb = {
+    async getOne(sql, params) {
+      calls.push({ type: 'getOne', sql, params });
+      return { value: storedValue };
+    },
+    async query(sql, params) {
+      calls.push({ type: 'query', sql, params });
+      storedValue = params[1];
+      return { rowCount: 1 };
+    }
+  };
+
+  await addGoogleSheetFailureAlert({
+    orderId: 14,
+    productId: 'S1113817953',
+    bundleGroupId: 'bundle-a',
+    error: 'Google Sheets request failed: 503'
+  }, fakeDb, Date.parse('2026-07-23T01:00:00.000Z'));
+  await addGoogleSheetFailureAlert({
+    orderId: 14,
+    productId: 'S1113817953',
+    bundleGroupId: 'bundle-a',
+    error: 'Google Sheets request failed: 429'
+  }, fakeDb, Date.parse('2026-07-23T01:01:00.000Z'));
+
+  const alerts = await getGoogleSheetAlerts(fakeDb);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].id, 'google-sheet-14');
+  assert.equal(alerts[0].productId, 's1113817953');
+  assert.equal(alerts[0].bundleGroupId, 'bundle-a');
+  assert.match(alerts[0].error, /429/);
+  assert.equal(calls.filter(call => call.type === 'query').length, 2);
+}
+
 async function testGetOrderForSheetUpdateUsesProductSnapshotFields() {
   const calls = [];
   const fakeDb = {
@@ -2813,6 +2863,8 @@ Promise.all([
   Promise.resolve().then(testBuildDaipaiSheetRowAppendsOrderRemarkAfterTrackingNumber),
   Promise.resolve().then(testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching),
   testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
+  Promise.resolve().then(testGoogleSheetAlertUsesRequestedBundleMainOrder),
+  testGoogleSheetFailureAlertPersistsAndDeduplicatesByMainOrder(),
   testGetOrderForSheetUpdateUsesProductSnapshotFields(),
   testUpdateScanStatusMarksPendingShipmentAsCancelled(),
   testUpdateScanStatusWritesShippingAndPendingPayment(),

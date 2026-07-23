@@ -16,6 +16,7 @@ const {
   ensureScheduledConfirmReceiptRequest,
   shouldAutoRequestConfirmReceipt,
   getShipmentAlerts,
+  getGoogleSheetAlerts,
   appendPendingReceiptOrderToGoogleSheet,
   DEFAULT_MULTI_BID_MIN_PRICE,
   DEFAULT_CONFIRM_RECEIPT_HOUR,
@@ -3097,7 +3098,8 @@ router.get('/idle-flags', async (req, res) => {
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
     paymentAlertMessage: values.payment_alert_message || '',
     captchaChallenge: await getCaptchaChallenge(db),
-    shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt)
+    shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt),
+    googleSheetAlerts: await getGoogleSheetAlerts(db)
   });
 });
 
@@ -3119,6 +3121,22 @@ router.post('/shipment-alerts/:id/close', async (req, res) => {
     );
   }
   res.json({ success: true, closed });
+});
+
+router.delete('/google-sheet-alerts/:id', async (req, res) => {
+  const alertId = String(req.params.id || '').trim();
+  if (!alertId) return res.status(400).json({ error: 'alert id is required' });
+  const alerts = await getGoogleSheetAlerts(db);
+  const next = alerts.filter(alert => alert?.id !== alertId);
+  const deleted = alerts.length - next.length;
+  if (deleted) {
+    await db.query(
+      `INSERT OR REPLACE INTO config (key, value, updated_at)
+       VALUES ('google_sheet_alerts', ?, CURRENT_TIMESTAMP)`,
+      [JSON.stringify(next)]
+    );
+  }
+  res.json({ success: true, deleted });
 });
 
 function parseShippingRefreshIds(value) {

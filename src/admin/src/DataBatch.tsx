@@ -1,4 +1,5 @@
 import { Tabs } from 'antd';
+import { useLocation, useNavigate } from 'react-router-dom';
 import ShippingRefreshPage from './ShippingRefresh';
 import ProductTypeRefreshPage from './ProductTypeRefresh';
 import OrdersResyncPage from './OrdersResync';
@@ -18,11 +19,28 @@ const labels = {
   productDataDelete: '删除商品数据'
 };
 
+const dataBatchTabKeys = new Set([
+  'normalBundleRepair',
+  'shipping',
+  'productType',
+  'ordersResync',
+  'orderStatus',
+  'receiptSheetBackfill',
+  'trackingRescan',
+  'productDataDelete'
+]);
+
 export default function DataBatchPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const requestedTab = new URLSearchParams(location.search).get('tab') || '';
+  const activeKey = dataBatchTabKeys.has(requestedTab) ? requestedTab : 'shipping';
+
   return (
     <Tabs
       className="admin-data-batch-tabs"
-      defaultActiveKey="shipping"
+      activeKey={activeKey}
+      onChange={key => navigate(`/data-batch?tab=${encodeURIComponent(key)}`, { replace: true })}
       items={[
         {
           key: 'normalBundleRepair',

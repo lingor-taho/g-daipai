@@ -380,6 +380,25 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-23 Google 表格写入失败重试和后台提醒
+
+Google Sheets 所有请求在遇到网络错误、HTTP 429 或 5xx 时会等待 1 秒后再重试 1 次；其他 4xx 配置或权限错误不自动重试。待收货订单写表最终仍失败时，服务端会在 `config.google_sheet_alerts` 中保存对应主订单的提醒；普通订单显示自身商品 ID，同捆订单只显示触发整组写表的主商品 ID，同一主订单重复失败只保留并更新一条提醒。
+
+后台顶部每 5 秒随现有 idle flags 轮询显示 Google 表格写入失败提醒，内容包括商品 ID 和最终错误；“跳转批处理”会打开“数据批处理”并直接选中“待收货补表格”，其后的 X 图标会从服务端持久化提醒列表中删除该提醒。数据批处理页支持通过 `?tab=receiptSheetBackfill` 精确选择补表标签。
+
+验证：
+```powershell
+node --check src/server/services/googleSheets.js
+node --check src/server/routes/plugin.js
+node --check src/server/routes/admin.js
+node src/server/services/googleSheets.test.js
+node src/server/routes/plugin.test.js
+node src/admin/src/AdminLayout.display.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-22 后台消息读取改为查询订单并增加状态筛选
 
 后台菜单和页面标题由“消息读取”改为“查询订单”，路由和原有消息抓取、查看、发送能力保持不变。查询区域在落札时间后新增订单状态下拉，默认查询全部，可按待支付、等待运费、待同捆、同捆完了、待结算、待发货、待收货、完了和取消九种现有状态筛选，并可与用户名、商品 ID、落札时间及分页组合使用。

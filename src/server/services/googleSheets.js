@@ -22,6 +22,7 @@ let runtimeConfig = {
   googleCredentialPath: '',
   googleSheetName: ''
 };
+const GOOGLE_SHEETS_RETRY_DELAY_MS = 1000;
 
 function base64Url(input) {
   return Buffer.from(input)
@@ -137,17 +138,25 @@ async function getAccessToken() {
     .update(unsigned)
     .sign(account.private_key);
   const assertion = `${unsigned}.${base64Url(signature)}`;
-  const response = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion
-    })
-  });
+  let response;
+  try {
+    response = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion
+      })
+    });
+  } catch (error) {
+    error.googleSheetsNetworkError = true;
+    throw error;
+  }
   const json = await response.json().catch(() => ({}));
   if (!response.ok || !json.access_token) {
-    throw new Error(`Google token request failed: ${json.error_description || json.error || response.status}`);
+    const error = new Error(`Google token request failed: ${json.error_description || json.error || response.status}`);
+    error.googleSheetsStatus = response.status;
+    throw error;
   }
   cachedToken = {
     token: json.access_token,
@@ -156,21 +165,55 @@ async function getAccessToken() {
   return cachedToken.token;
 }
 
-async function googleRequest(path, options = {}) {
+function isRetryableGoogleSheetsError(error) {
+  if (error?.googleSheetsNetworkError === true) return true;
+  if (error?.name === 'TypeError') return true;
+  const status = Number(error?.googleSheetsStatus || 0);
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+async function waitForGoogleSheetsRetry(delayMs = GOOGLE_SHEETS_RETRY_DELAY_MS) {
+  await new Promise(resolve => setTimeout(resolve, delayMs));
+}
+
+async function executeGoogleSheetsRequestWithRetry(operation, options = {}) {
+  const wait = options.wait || waitForGoogleSheetsRetry;
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isRetryableGoogleSheetsError(error)) throw error;
+    await wait(GOOGLE_SHEETS_RETRY_DELAY_MS);
+    return operation();
+  }
+}
+
+async function googleRequestOnce(path, options = {}) {
   const token = await getAccessToken();
-  const response = await fetch(`${SHEETS_API}/${path}`, {
-    ...options,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(options.headers || {})
-    }
-  });
+  let response;
+  try {
+    response = await fetch(`${SHEETS_API}/${path}`, {
+      ...options,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(options.headers || {})
+      }
+    });
+  } catch (error) {
+    error.googleSheetsNetworkError = true;
+    throw error;
+  }
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`Google Sheets request failed: ${json.error?.message || response.status}`);
+    const error = new Error(`Google Sheets request failed: ${json.error?.message || response.status}`);
+    error.googleSheetsStatus = response.status;
+    throw error;
   }
   return json;
+}
+
+async function googleRequest(path, options = {}) {
+  return executeGoogleSheetsRequestWithRetry(() => googleRequestOnce(path, options));
 }
 
 async function getSheetId(spreadsheetId, sheetName) {
@@ -543,6 +586,7 @@ module.exports = {
   buildAppendRowsFormatRequest,
   ensureRemarkColumn,
   ensureHeaderRow,
+  executeGoogleSheetsRequestWithRetry,
   extractSpreadsheetId,
   findRowsByProductId,
   findRowsByProductIdWithAnyColor,
@@ -550,6 +594,7 @@ module.exports = {
   getSheetConfig,
   googleColorToHex,
   isGoogleSheetsConfigured,
+  isRetryableGoogleSheetsError,
   normalizeGoogleSheetName,
   updateRowsByProductId
 };

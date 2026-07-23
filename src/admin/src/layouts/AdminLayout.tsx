@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Input, Layout, Menu, Space, Typography, message } from 'antd';
-import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { CloseOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
 import { getManualVerificationDisplayState } from '../manualVerificationState';
 
@@ -76,6 +76,7 @@ export default function AdminLayout() {
   const submittedCaptchaRef = useRef({ id: '', type: '' });
   const passedCaptchaTimerRef = useRef<number | null>(null);
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
+  const [googleSheetAlerts, setGoogleSheetAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
 
@@ -140,6 +141,7 @@ export default function AdminLayout() {
             }
           }
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
+          setGoogleSheetAlerts(Array.isArray(flags.googleSheetAlerts) ? flags.googleSheetAlerts : []);
         }
       } catch {
         if (active) {
@@ -148,6 +150,7 @@ export default function AdminLayout() {
           setCaptchaChallenge(null);
           setCaptchaAnswer('');
           setShipmentAlerts([]);
+          setGoogleSheetAlerts([]);
         }
       }
     }
@@ -196,6 +199,19 @@ export default function AdminLayout() {
       setShipmentAlerts(items => items.filter(item => item.id !== alertId));
     } catch (e: any) {
       message.error(e.message || '关闭待发货提醒失败');
+    }
+  }
+
+  function goToReceiptSheetBackfill() {
+    navigate('/data-batch?tab=receiptSheetBackfill');
+  }
+
+  async function deleteGoogleSheetAlert(alertId: string) {
+    try {
+      await fetchAdminJson(`/api/admin/google-sheet-alerts/${encodeURIComponent(alertId)}`, { method: 'DELETE' });
+      setGoogleSheetAlerts(items => items.filter(item => item.id !== alertId));
+    } catch (e: any) {
+      message.error(e.message || '删除Google表格写入提醒失败');
     }
   }
 
@@ -326,6 +342,38 @@ export default function AdminLayout() {
         ) : null}
         <Layout className="admin-main" style={{ marginLeft: isMobile ? 0 : (collapsed ? 50 : 210), transition: 'margin-left 0.2s' }}>
           <Content className="admin-content" style={{ padding: 20, background: '#f5f5f5', minHeight: 'calc(100vh - 64px)' }}>
+            {googleSheetAlerts.map(alert => (
+              <Alert
+                key={alert.id}
+                type="error"
+                showIcon
+                message={
+                  <Space wrap>
+                    <Typography.Text style={{ color: '#cf1322' }}>
+                      Google表格写入失败：商品ID{' '}
+                      <a
+                        href={`https://auctions.yahoo.co.jp/jp/auction/${alert.productId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {alert.productId}
+                      </a>
+                      ，错误：{alert.error || '-'}
+                    </Typography.Text>
+                    <Button size="small" danger onClick={goToReceiptSheetBackfill}>跳转批处理</Button>
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      aria-label="删除Google表格写入提醒"
+                      icon={<CloseOutlined />}
+                      onClick={() => deleteGoogleSheetAlert(alert.id)}
+                    />
+                  </Space>
+                }
+                style={{ marginBottom: 12 }}
+              />
+            ))}
             {paymentAlert ? (
               <Alert
                 type="error"
