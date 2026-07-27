@@ -70,6 +70,27 @@ function normalizePageTextWithoutProductDescription(html) {
   return normalizeText(stripScriptAndStyleHtml(stripProductDescriptionHtml(withoutHead)));
 }
 
+function normalizeComparableText(value) {
+  return normalizeText(value).replace(/\u3000/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function removeProductTitleText(text, html) {
+  const nextDataItem = extractNextDataItem(html);
+  const candidates = [
+    extractPageDataItems(html)?.productName,
+    nextDataItem?.productName,
+    nextDataItem?.title,
+    nextDataItem?.name,
+    normalizeText(extractElementHtmlById(html, 'itemTitle'))
+  ];
+  let output = normalizeComparableText(text);
+  for (const candidate of candidates) {
+    const title = normalizeComparableText(candidate);
+    if (title.length >= 4) output = output.split(title).join(' ');
+  }
+  return normalizeComparableText(output);
+}
+
 function extractElementHtmlById(html, id) {
   const source = String(html || '');
   const openPattern = new RegExp(`<([a-z0-9]+)\\b[^>]*id=["']${id}["'][^>]*>`, 'i');
@@ -278,7 +299,10 @@ function extractLowestStructuredShippingFee(item) {
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
   const nextDataItem = extractNextDataItem(html);
-  const pageText = normalizePageTextWithoutProductDescription(stripElementById(html, 'itemTitle'));
+  const pageText = removeProductTitleText(
+    normalizePageTextWithoutProductDescription(stripElementById(html, 'itemTitle')),
+    html
+  );
   const postageIndex = pageText.search(/送料|送料負担|配送方法/);
   const shippingCharge = String(nextDataItem?.chargeForShipping || '');
   const shippingInput = String(nextDataItem?.shippingInput || '');
@@ -292,7 +316,7 @@ function extractShippingFeeText(html) {
   const structuredShippingFee = extractLowestStructuredShippingFee(nextDataItem);
   if (structuredShippingFee > 0) return `${structuredShippingFee}円`;
   const isLaterInputShipping = /取引ナビ開始時に入力/.test(shippingInput);
-  const priceMatch = text.match(/送料[^\d]{0,20}([\d,]+)\s*円/);
+  const priceMatch = normalizeText(postageHtml).match(/送料[^\d]{0,20}([\d,]+)\s*円/);
   if (priceMatch && !isLaterInputShipping) return `${priceMatch[1].replace(/,/g, '')}円`;
   if (/着払い/.test(labelText)) return '着払い';
   if (/winner/i.test(shippingCharge)) return '落札者負担';

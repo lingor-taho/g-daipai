@@ -557,6 +557,24 @@ async function testWinnerPaidShippingBeatsCurrentPriceNearShippingTitle() {
   assert.equal(product.shippingFeeText, '落札者負担');
 }
 
+async function testShippingFallbackExcludesRepeatedProductTitleAndCurrentPrice() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Repeated Title 送料込み - Yahoo!</title>
+        <script>var pageData = {"items":{"productID":"r1238070462","productName":"Repeated Title 送料込み","price":"52000"}};</script>
+      </head>
+      <body>
+        <div id="itemTitle"><h1>Repeated Title 送料込み</h1></div>
+        <section class="repeated-title">Repeated Title 送料込み 現在 52,000円</section>
+      </body>
+    </html>
+  `, 'r1238070462', 'https://auctions.yahoo.co.jp/jp/auction/r1238070462');
+
+  assert.equal(product.currentPrice, 52000);
+  assert.equal(product.shippingFeeText, '');
+}
+
 async function testWinnerShippingBeatsUnrelatedFreeText() {
   const product = parseProductHtml(`
     <html>
@@ -1043,6 +1061,7 @@ async function run() {
   await testParseShippingFeeUsesLowestStructuredShippingMethod();
   await testSellerPaidShippingBeatsCurrentPriceNearFreeShippingTitle();
   await testWinnerPaidShippingBeatsCurrentPriceNearShippingTitle();
+  await testShippingFallbackExcludesRepeatedProductTitleAndCurrentPrice();
   await testWinnerShippingBeatsUnrelatedFreeText();
   await testLaterInputWinnerShippingIgnoresReferencePricesInDescription();
   await testParsePersonalTaxTypeFromTaxZeroLabel();
