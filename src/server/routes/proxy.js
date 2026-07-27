@@ -66,7 +66,8 @@ function stripProductDescriptionHtml(html) {
 }
 
 function normalizePageTextWithoutProductDescription(html) {
-  return normalizeText(stripScriptAndStyleHtml(stripProductDescriptionHtml(html)));
+  const withoutHead = String(html || '').replace(/<head\b[\s\S]*?<\/head>/gi, ' ');
+  return normalizeText(stripScriptAndStyleHtml(stripProductDescriptionHtml(withoutHead)));
 }
 
 function extractElementHtmlById(html, id) {
@@ -277,21 +278,23 @@ function extractLowestStructuredShippingFee(item) {
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
   const nextDataItem = extractNextDataItem(html);
-  const pageText = normalizePageTextWithoutProductDescription(html);
+  const pageText = normalizePageTextWithoutProductDescription(stripElementById(html, 'itemTitle'));
   const postageIndex = pageText.search(/送料|送料負担|配送方法/);
-  const fallbackText = postageIndex >= 0 ? pageText.slice(postageIndex, postageIndex + 240) : '';
-  const text = normalizeText([postageHtml, fallbackText].filter(Boolean).join(' '));
   const shippingCharge = String(nextDataItem?.chargeForShipping || '');
   const shippingInput = String(nextDataItem?.shippingInput || '');
+  const fallbackText = !postageHtml && !shippingCharge && !shippingInput && postageIndex >= 0
+    ? pageText.slice(postageIndex, postageIndex + 240)
+    : '';
+  const text = normalizeText([postageHtml, fallbackText].filter(Boolean).join(' '));
   const labelText = normalizeText([postageHtml, fallbackText, shippingInput, shippingCharge].filter(Boolean).join(' '));
   if (!text && !shippingCharge && !shippingInput) return '';
+  if (/seller/i.test(shippingCharge)) return '無料';
   const structuredShippingFee = extractLowestStructuredShippingFee(nextDataItem);
   if (structuredShippingFee > 0) return `${structuredShippingFee}円`;
   const isLaterInputShipping = /取引ナビ開始時に入力/.test(shippingInput);
   const priceMatch = text.match(/送料[^\d]{0,20}([\d,]+)\s*円/);
   if (priceMatch && !isLaterInputShipping) return `${priceMatch[1].replace(/,/g, '')}円`;
   if (/着払い/.test(labelText)) return '着払い';
-  if (/seller/i.test(shippingCharge)) return '無料';
   if (/winner/i.test(shippingCharge)) return '落札者負担';
   if (/無料/.test(labelText)) return '無料';
   if (/落札者負担|winner/i.test(labelText)) return '落札者負担';

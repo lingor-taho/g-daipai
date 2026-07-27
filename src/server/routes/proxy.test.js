@@ -510,6 +510,53 @@ async function testParseShippingFeeUsesLowestStructuredShippingMethod() {
   assert.equal(product.shippingFeeText, '110円');
 }
 
+async function testSellerPaidShippingBeatsCurrentPriceNearFreeShippingTitle() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Ended Product 送料無料 - Yahoo!</title>
+        <script type="application/ld+json">
+          {"offers":{"priceCurrency":"JPY","price":"52000","shippingDetails":{"shippingRate":{"value":"0","currency":"JPY"}}}}
+        </script>
+        <script>var pageData = {"items":{"productID":"g1238070462","productName":"Ended Product 送料無料","price":"52000"}};</script>
+      </head>
+      <body>
+        <div id="itemTitle"><h1>Ended Product 送料無料</h1></div>
+        <dl><dt>現在</dt><dd>52,000円（税0円）</dd></dl>
+        <div id="itemPostage"><dl><dt>送料</dt><dd><div class="skeleton"></div></dd></dl></div>
+        <script id="__NEXT_DATA__" type="application/json">
+          {"props":{"pageProps":{"initialState":{"detail":{"item":{"chargeForShipping":"seller"}}}}}}
+        </script>
+      </body>
+    </html>
+  `, 'g1238070462', 'https://auctions.yahoo.co.jp/jp/auction/g1238070462');
+
+  assert.equal(product.currentPrice, 52000);
+  assert.equal(product.shippingFeeText, '無料');
+}
+
+async function testWinnerPaidShippingBeatsCurrentPriceNearShippingTitle() {
+  const product = parseProductHtml(`
+    <html>
+      <head>
+        <title>Ended Product 送料情報 - Yahoo!</title>
+        <script>var pageData = {"items":{"productID":"w1238070462","productName":"Ended Product 送料情報","price":"52000"}};</script>
+      </head>
+      <body>
+        <div id="itemTitle"><h1>Ended Product 送料情報</h1></div>
+        <dl><dt>現在</dt><dd>52,000円（税0円）</dd></dl>
+        <div id="itemPostage"><dl><dt>送料</dt><dd><div class="skeleton"></div></dd></dl></div>
+        <script id="__NEXT_DATA__" type="application/json">
+          {"props":{"pageProps":{"initialState":{"detail":{"item":{"chargeForShipping":"winner"}}}}}}
+        </script>
+      </body>
+    </html>
+  `, 'w1238070462', 'https://auctions.yahoo.co.jp/jp/auction/w1238070462');
+
+  assert.equal(product.currentPrice, 52000);
+  assert.equal(product.shippingFeeText, '落札者負担');
+}
+
 async function testWinnerShippingBeatsUnrelatedFreeText() {
   const product = parseProductHtml(`
     <html>
@@ -994,6 +1041,8 @@ async function run() {
   await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();
   await testParseShippingFeeUsesLowestStructuredShippingMethod();
+  await testSellerPaidShippingBeatsCurrentPriceNearFreeShippingTitle();
+  await testWinnerPaidShippingBeatsCurrentPriceNearShippingTitle();
   await testWinnerShippingBeatsUnrelatedFreeText();
   await testLaterInputWinnerShippingIgnoresReferencePricesInDescription();
   await testParsePersonalTaxTypeFromTaxZeroLabel();
