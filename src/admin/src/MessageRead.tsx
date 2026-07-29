@@ -84,7 +84,7 @@ function isTransactionInfoWithoutYahooMessageMarkup(html: string) {
   const raw = String(html || '');
   const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const hasTransactionInfo = /取引情報|配送情報|購入日時|注文番号/.test(text);
-  const hasYahooMessageMarkup = /id=["']messagelist["']|sc-c46fd2ce-0|sc-5ecc53ec|data-gdaipai-message-empty/i.test(raw) ||
+  const hasYahooMessageMarkup = /id=["']messagelist["']|sc-c46fd2ce-0|sc-5ecc53ec|data-gdaipai-message-(?:empty|v2)/i.test(raw) ||
     /(?:あなた|ストア|出品者|落札者)[\s\S]*<dd\b/i.test(raw);
   return hasTransactionInfo && !hasYahooMessageMarkup;
 }
@@ -102,6 +102,16 @@ function renderTradeHtml(html: string) {
     } else {
       dl.classList.add('yahoo-partner-message');
     }
+  });
+  doc.querySelectorAll('.yahoo-message-v2 [class*="sc-dc9a42c0-0"]').forEach(messageBubble => {
+    const entry = messageBubble.parentElement;
+    if (!entry) return;
+    const sender = Array.from(entry.children).find(child =>
+      child.matches?.('p[class*="sc-dc9a42c0-2"]')
+    );
+    const senderText = String(sender?.textContent || '').replace(/\s+/g, '').trim();
+    entry.classList.add('yahoo-message-v2-entry');
+    entry.classList.add(senderText.includes('あなた') ? 'yahoo-own-message' : 'yahoo-partner-message');
   });
   return doc.body.firstElementChild?.innerHTML || sanitized;
 }
@@ -408,6 +418,39 @@ export default function MessageReadPage() {
           .yahoo-message-view #messagelist dd {
             white-space: pre-wrap;
             overflow-wrap: anywhere;
+          }
+          .yahoo-message-view .yahoo-message-v2 {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .yahoo-message-view .yahoo-message-v2-entry {
+            width: min(76%, 620px);
+            margin-right: auto;
+          }
+          .yahoo-message-view .yahoo-message-v2-entry.yahoo-own-message {
+            margin-right: 0;
+            margin-left: auto;
+          }
+          .yahoo-message-view .yahoo-message-v2-entry > [class*="sc-dc9a42c0-0"] {
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: #f2f2f2;
+            overflow-wrap: anywhere;
+          }
+          .yahoo-message-view .yahoo-message-v2-entry.yahoo-own-message > [class*="sc-dc9a42c0-0"] {
+            background: #f1f2ff;
+          }
+          .yahoo-message-view .yahoo-message-v2-entry [class*="sc-dc9a42c0-3"] {
+            display: block;
+            margin-top: 6px;
+            color: #888;
+            font-size: 12px;
+          }
+          .yahoo-message-view .yahoo-message-v2-entry > p[class*="sc-dc9a42c0-2"] {
+            margin: 4px 8px 0;
+            color: #666;
+            font-size: 12px;
           }
         `}</style>
         <div

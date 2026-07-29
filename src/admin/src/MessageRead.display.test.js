@@ -60,6 +60,14 @@ assert.equal(
 );
 
 assert.equal(
+  source.includes('data-gdaipai-message-(?:empty|v2)') &&
+    source.includes('.yahoo-message-v2-entry') &&
+    source.includes('sc-dc9a42c0-0'),
+  true,
+  'MessageRead modal should recognize and style redesigned normal Yahoo message markup'
+);
+
+assert.equal(
   source.includes('function isTransactionInfoWithoutYahooMessageMarkup') &&
     source.includes('購入日時') &&
     source.includes('注文番号') &&

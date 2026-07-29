@@ -380,6 +380,22 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-29 Yahoo 新版普通商品聊天结构兼容
+
+Yahoo 普通商品交易后台部分页面的聊天区从旧版 `#messagelist` 改为新版标签页和消息卡片：初始只显示“取引”，必须点击顶部“メッセージ”后才渲染聊天；消息正文/发送人/时间使用 `sc-dc9a42c0-*` 组件结构，输入框改为 `textarea[placeholder="入力してください"]`，发送按钮为普通 `type="button"`。插件现已同时识别旧版和新版结构：消息更新和发送共用的页面准备流程会在聊天区尚未渲染时精确点击可用的“メッセージ”标签并等待内容出现，旧版 `#messagelist` 已存在时不会点击；消息页就绪判断支持新版卡片和输入区；读取时复制聊天卡片并移除输入框、按钮等发送控件，保存为带 `data-gdaipai-message-v2` 标记的消息 HTML；发送、trusted-input fallback 和发送后新消息可见性确认均优先限定在新版聊天 section 内，不再依赖全局第一个 textarea。服务端消息 HTML 归一化和后台消息展示同步识别新版标记，原有普通/商城聊天路径保持不变。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node src/server/routes/plugin.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-29 Yahoo 新版普通商品手工付款后待发货文案兼容
 
 Yahoo 普通商品交易后台部分页面改版后，手工付款完成页可能只显示“商品の発送連絡をお待ちください”，不再同时显示旧版的“出品者に支払い完了の連絡をしました”。确认收货工作流中的 `cancel_check` 已新增对该单独状态文案的识别，原有已付款/已发货组合文案判断保持不变。命中新文案后仍沿用原有服务端边界，只允许把 `pending_payment` / `pending_settlement` 推进为 `pending_shipment`，后续继续由扫描流程处理。

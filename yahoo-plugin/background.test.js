@@ -224,9 +224,188 @@ function testYahooTradeMessageSelectorsCoverNormalAndStorePages() {
 
   assert.match(api.getYahooTradeMessageExtractScript(), /messagelist/);
   assert.match(api.getYahooTradeMessageExtractScript(), /sc-c46fd2ce-0/);
+  assert.match(api.getYahooTradeMessageExtractScript(), /sc-dc9a42c0-1/);
+  assert.match(api.getYahooTradeMessageExtractScript(), /data-gdaipai-message-v2/);
   assert.match(api.getYahooTradeMessageSendScript('hello'), /submitButton/);
   assert.match(api.getYahooTradeMessageSendScript('hello'), /#msg button/);
+  assert.match(api.getYahooTradeMessageSendScript('hello'), /placeholder.*5165.*529b/);
   assert.match(api.getYahooTradeMessageSendScript('hello'), /textarea/);
+}
+
+function testYahooTradeMessageExtractionReadsNormalV2ThreadWithoutComposer() {
+  const api = loadBackgroundForTest();
+  let formRemoved = false;
+  const sendButton = {
+    value: '',
+    innerText: '\u9001\u4fe1',
+    textContent: '\u9001\u4fe1'
+  };
+  const originalSection = {
+    innerText: '\u53d6\u5f15\u3067\u56f0\u3063\u305f\u3053\u3068\u306a\u3069\u304c\u3042\u3063\u305f\u3089\u8cea\u554f\u3057\u3066\u307f\u307e\u3057\u3087\u3046 \u3042\u306a\u305f \u3053\u3093\u306b\u3061\u306f 18:26',
+    textContent: '\u53d6\u5f15\u3067\u56f0\u3063\u305f\u3053\u3068\u306a\u3069\u304c\u3042\u3063\u305f\u3089\u8cea\u554f\u3057\u3066\u307f\u307e\u3057\u3087\u3046 \u3042\u306a\u305f \u3053\u3093\u306b\u3061\u306f 18:26',
+    querySelector(selector) {
+      if (selector.includes('textarea[placeholder=')) return {};
+      if (selector === '[class*="sc-dc9a42c0-1"]') return {};
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('button')) return [sendButton];
+      return [];
+    },
+    cloneNode() {
+      const clonedSendButton = { ...sendButton, remove() {} };
+      const clone = {
+        attributes: {},
+        classes: [],
+        querySelector(selector) {
+          if (selector.includes('textarea[placeholder=')) return clonedTextarea;
+          return null;
+        },
+        querySelectorAll(selector) {
+          if (selector === 'textarea, button, input') return [clonedTextarea, clonedSendButton];
+          return [];
+        },
+        classList: {
+          add(value) { clone.classes.push(value); }
+        },
+        setAttribute(name, value) {
+          clone.attributes[name] = value;
+        },
+        get outerHTML() {
+          return `<section class="${clone.classes.join(' ')}" data-gdaipai-message-v2="${clone.attributes['data-gdaipai-message-v2'] || ''}"><div>こんにちは</div>${formRemoved ? '' : '<textarea></textarea><button>送信</button>'}</section>`;
+        }
+      };
+      const formRoot = {
+        parentElement: clone,
+        querySelectorAll(selector) {
+          if (selector.includes('button')) return [clonedSendButton];
+          return [];
+        },
+        remove() { formRemoved = true; }
+      };
+      const clonedTextarea = {
+        parentElement: formRoot,
+        remove() {}
+      };
+      return clone;
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#messagelist') return null;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'section') return [originalSection];
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'normal-v2');
+  assert.match(result.messageHtml, /data-gdaipai-message-v2="true"/);
+  assert.match(result.messageHtml, /\u3053\u3093\u306b\u3061\u306f/);
+  assert.doesNotMatch(result.messageHtml, /textarea|button/);
+}
+
+function testYahooMessageNavigationDetectsNormalV2Thread() {
+  const textarea = {};
+  const sendButton = createYahooMessageNavigationElement('\u9001\u4fe1');
+  const section = createYahooMessageNavigationElement(
+    '\u53d6\u5f15\u3067\u56f0\u3063\u305f\u3053\u3068\u306a\u3069\u304c\u3042\u3063\u305f\u3089\u8cea\u554f\u3057\u3066\u307f\u307e\u3057\u3087\u3046'
+  );
+  section.querySelector = selector => {
+    if (selector.includes('textarea[placeholder=')) return textarea;
+    if (selector === '[class*="sc-dc9a42c0-1"]') return {};
+    return null;
+  };
+  section.querySelectorAll = selector => selector.includes('button') ? [sendButton] : [];
+  const document = {
+    body: { textContent: section.textContent },
+    location: { href: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=s1113817953' },
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === 'section') return [section];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({ document });
+
+  const state = api.getYahooMessageNavigationStateFromPage();
+
+  assert.equal(state.messageReady, true);
+  assert.equal(state.normalMessageReady, true);
+  assert.equal(state.normalV2MessageReady, true);
+}
+
+function testYahooTradeMessageSendScopesNormalV2Composer() {
+  const api = loadBackgroundForTest();
+  const events = [];
+  const wrongTextarea = { value: '' };
+  const normalV2Textarea = {
+    value: '',
+    closest() { return section; },
+    scrollIntoView() {},
+    focus() { events.push('textarea:focus'); },
+    dispatchEvent(event) {
+      events.push(`textarea:${event.type}`);
+      if (event.type === 'input') sendButton.disabled = false;
+    }
+  };
+  const messageSection = { innerText: '', textContent: '' };
+  const sendButton = {
+    disabled: true,
+    value: '',
+    innerText: '\u9001\u4fe1',
+    textContent: '\u9001\u4fe1',
+    scrollIntoView() {},
+    focus() { events.push('button:focus'); },
+    dispatchEvent(event) { events.push(`button:${event.type}`); },
+    click() {
+      messageSection.innerText = normalV2Textarea.value;
+      messageSection.textContent = normalV2Textarea.value;
+      events.push('button:click');
+    }
+  };
+  const section = {
+    querySelectorAll(selector) {
+      return selector.includes('button') ? [sendButton] : [];
+    }
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === '#msg button[type="submit"], #msg button') return null;
+      if (selector.includes('textarea[placeholder=')) return normalV2Textarea;
+      if (selector === '#textarea') return wrongTextarea;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('#messagelist')) return [messageSection];
+      if (selector === 'button, input[type="submit"], input[type="button"]') return [sendButton];
+      return [];
+    }
+  };
+  function FakeEvent(type, options = {}) {
+    this.type = type;
+    Object.assign(this, options);
+  }
+
+  const result = Function(
+    'document',
+    'InputEvent',
+    'PointerEvent',
+    'MouseEvent',
+    'Event',
+    `return ${api.getYahooTradeMessageSendScript('hello v2')};`
+  )(document, FakeEvent, FakeEvent, FakeEvent, FakeEvent);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'normal-v2');
+  assert.equal(normalV2Textarea.value, 'hello v2');
+  assert.equal(wrongTextarea.value, '');
+  assert.ok(events.includes('button:click'));
 }
 
 function testYahooTradeMessageExtractionSkipsStoreLegalLinks() {
@@ -801,6 +980,68 @@ function testYahooMessageNavigationRejectsBundleChildChoice() {
 
   assert.equal(state.bundleChildChoice, true);
   assert.equal(state.hasCloseButton, false);
+}
+
+function testYahooMessageNavigationOpensRedesignedMessageTab() {
+  const tradeTab = createYahooMessageNavigationElement('\u53d6\u5f15');
+  tradeTab.disabled = true;
+  tradeTab.getAttribute = name => name === 'disabled' ? '' : '';
+  const messageTab = createYahooMessageNavigationElement('\u30e1\u30c3\u30bb\u30fc\u30b8');
+  messageTab.getAttribute = name => name === 'disabled' || name === 'aria-disabled' ? null : '';
+  const infoTab = createYahooMessageNavigationElement('\u60c5\u5831');
+  const document = {
+    body: { textContent: '\u53d6\u5f15 \u30e1\u30c3\u30bb\u30fc\u30b8 \u60c5\u5831' },
+    location: { href: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=s1113817953' },
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector.includes('button, a')) return [tradeTab, messageTab, infoTab];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({ document });
+
+  const state = api.getYahooMessageNavigationStateFromPage();
+  const result = api.clickYahooMessageNavigationActionFromPage('openMessageTab');
+
+  assert.equal(state.messageReady, false);
+  assert.equal(state.hasMessageTab, true);
+  assert.equal(state.canOpenMessageTab, true);
+  assert.equal(result.success, true);
+  assert.equal(messageTab.clicked, true);
+  assert.equal(tradeTab.clicked, false);
+  assert.equal(infoTab.clicked, false);
+}
+
+async function testPrepareYahooMessagePageOpensMessageTabBeforeReading() {
+  const actions = [];
+  const states = [
+    { messageReady: false, canOpenMessageTab: true },
+    { messageReady: true, canOpenMessageTab: false }
+  ];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() { return [{ id: 42, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=s1113817953', status: 'complete' }]; },
+      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=s1113817953', status: 'complete' }; }
+    },
+    scripting: {
+      async executeScript(options) {
+        if (options.files) return undefined;
+        if (options.args?.length) {
+          actions.push(options.args[0]);
+          return [{ result: { success: true, text: '\u30e1\u30c3\u30bb\u30fc\u30b8' } }];
+        }
+        return [{ result: states.shift() || { messageReady: true } }];
+      }
+    }
+  });
+
+  const result = await api.prepareYahooMessagePage(
+    { id: 42, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=s1113817953', status: 'complete' },
+    { productType: 'normal' }
+  );
+
+  assert.equal(result.id, 42);
+  assert.deepEqual(actions, ['openMessageTab']);
 }
 
 async function testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence() {
@@ -9983,6 +10224,9 @@ async function run() {
   testPendingFinalRetryDelayIsShortForDirectBid();
 testNoServiceWorkerLifecycleErrorDetection();
 testYahooTradeMessageSelectorsCoverNormalAndStorePages();
+testYahooTradeMessageExtractionReadsNormalV2ThreadWithoutComposer();
+testYahooMessageNavigationDetectsNormalV2Thread();
+testYahooTradeMessageSendScopesNormalV2Composer();
 testYahooTradeMessageExtractionSkipsStoreLegalLinks();
 testYahooTradeMessageExtractionDoesNotFallbackToStoreLegalLinks();
 testYahooTradeMessageExtractionReadsStoreDisabledPostingThread();
@@ -9997,6 +10241,8 @@ await testYahooTradeMessageExtractionRetriesUntilStoreMessagesRender();
 testYahooMessageNavigationClosesNormalBundleNotice();
 testYahooMessageNavigationDetectsStoreBundleSequence();
 testYahooMessageNavigationRejectsBundleChildChoice();
+testYahooMessageNavigationOpensRedesignedMessageTab();
+await testPrepareYahooMessagePageOpensMessageTabBeforeReading();
 await testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence();
 testSendYahooMessageJobFetchesLatestMessagesAfterSend();
   testBidProgressMessageExtendsActiveMultiBidTimeout();

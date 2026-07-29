@@ -2766,6 +2766,13 @@ function testNormalizeYahooTradeMessageHtmlKeepsStoreMessageWithOrderNumber() {
   assert.equal(result, html);
 }
 
+function testNormalizeYahooTradeMessageHtmlKeepsNormalV2MessageMarker() {
+  const html = '<section class="yahoo-message-v2" data-gdaipai-message-v2="true"><div class="sc-dc9a42c0-1">注文番号について質問します</div></section>';
+  const result = normalizeYahooTradeMessageHtml(html);
+
+  assert.equal(result, html);
+}
+
 async function testUpdateYahooMessageStatusOverwritesBadTransactionMessageWithEmptyPlaceholder() {
   const calls = [];
   const fakeDb = {
@@ -2895,6 +2902,7 @@ Promise.all([
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
   testNormalizeYahooTradeMessageHtmlDropsTransactionInfoWithoutMessageMarkup(),
   testNormalizeYahooTradeMessageHtmlKeepsStoreMessageWithOrderNumber(),
+  testNormalizeYahooTradeMessageHtmlKeepsNormalV2MessageMarker(),
   testUpdateYahooMessageStatusOverwritesBadTransactionMessageWithEmptyPlaceholder(),
   testTypeManualPinWithSystemKeyboardUsesPowerShellNativeInput(),
   testPluginDiagnosticsSaveAndQuery()

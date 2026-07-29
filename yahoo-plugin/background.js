@@ -989,6 +989,40 @@ function extractYahooTradeMessageFromPage() {
   const normal = document.querySelector('#messagelist');
   if (normal) return { success: true, messageHtml: normal.outerHTML, pageType: 'normal' };
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const findExactSendButton = node => Array.from(
+    node?.querySelectorAll?.('button, input[type="submit"], input[type="button"]') || []
+  ).find(button => normalize(button.value || button.innerText || button.textContent || '') === '\u9001\u4fe1') || null;
+  const normalV2Section = Array.from(document.querySelectorAll('section') || []).find(section => {
+    const textarea = section.querySelector?.('textarea[placeholder="\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"], textarea[placeholder*="\u5165\u529b"]');
+    if (!textarea || !findExactSendButton(section)) return false;
+    const text = normalize(section.innerText || section.textContent || '');
+    return Boolean(section.querySelector?.('[class*="sc-dc9a42c0-1"]')) ||
+      /\u53d6\u5f15\u3067\u56f0\u3063\u305f\u3053\u3068\u306a\u3069\u304c\u3042\u3063\u305f\u3089\u8cea\u554f\u3057\u3066\u307f\u307e\u3057\u3087\u3046/.test(text);
+  });
+  if (normalV2Section) {
+    const hasMessages = Boolean(normalV2Section.querySelector?.('[class*="sc-dc9a42c0-1"]'));
+    if (!hasMessages) {
+      return {
+        success: true,
+        messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
+        pageType: 'normal-v2-empty'
+      };
+    }
+    const clone = normalV2Section.cloneNode(true);
+    const clonedTextarea = clone.querySelector?.('textarea[placeholder="\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"], textarea[placeholder*="\u5165\u529b"]');
+    if (clonedTextarea) {
+      let formRoot = clonedTextarea;
+      while (formRoot.parentElement && formRoot.parentElement !== clone) {
+        formRoot = formRoot.parentElement;
+        if (findExactSendButton(formRoot)) break;
+      }
+      formRoot.remove?.();
+    }
+    clone.querySelectorAll?.('textarea, button, input').forEach(node => node.remove?.());
+    clone.classList?.add('yahoo-message-v2');
+    clone.setAttribute?.('data-gdaipai-message-v2', 'true');
+    return { success: true, messageHtml: clone.outerHTML, pageType: 'normal-v2' };
+  }
   const emptyStoreMessageResult = () => ({
     success: true,
     messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
@@ -1046,7 +1080,21 @@ function getYahooMessageNavigationStateFromPage() {
   const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
     .filter(isVisible);
   const findControl = pattern => controls.find(node => pattern.test(textOf(node))) || null;
+  const isDisabled = node => Boolean(
+    node?.disabled ||
+    node?.getAttribute?.('disabled') !== null ||
+    node?.getAttribute?.('aria-disabled') === 'true'
+  );
   const normalMessageReady = Boolean(document.querySelector('#messagelist'));
+  const normalV2MessageReady = [...document.querySelectorAll('section')].some(section => {
+    const textarea = section.querySelector?.('textarea[placeholder="\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"], textarea[placeholder*="\u5165\u529b"]');
+    if (!textarea) return false;
+    const hasSendButton = [...section.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+      .some(node => textOf(node) === '\u9001\u4fe1');
+    if (!hasSendButton) return false;
+    return Boolean(section.querySelector?.('[class*="sc-dc9a42c0-1"]')) ||
+      /\u53d6\u5f15\u3067\u56f0\u3063\u305f\u3053\u3068\u306a\u3069\u304c\u3042\u3063\u305f\u3089\u8cea\u554f\u3057\u3066\u307f\u307e\u3057\u3087\u3046/.test(textOf(section));
+  });
   const storeMessageListReady = [...document.querySelectorAll('ul.sc-c46fd2ce-0, ul[class*="sc-c46fd2ce-0"], section ul')]
     .some(node => node.querySelector?.('dl') && node.querySelector?.('dd') && node.querySelector?.('time'));
   const storeMessageFormReady = Boolean(document.querySelector('#msg textarea')) &&
@@ -1065,18 +1113,22 @@ function getYahooMessageNavigationStateFromPage() {
   }
   const noticeText = textOf(noticeRoot);
   const childProductButton = findControl(/^\s*\u3053\u306e\u5546\u54c1\u3092\u78ba\u8a8d\u3059\u308b\s*$/);
+  const messageTabButton = findControl(/^\s*\u30e1\u30c3\u30bb\u30fc\u30b8\s*$/);
   const bundleChildChoice = Boolean(childProductButton) &&
     /\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f/.test(normalize(document.body?.textContent || ''));
   return {
     url: document.location?.href || '',
-    messageReady: normalMessageReady || storeMessageListReady || storeMessageFormReady,
-    normalMessageReady,
+    messageReady: normalMessageReady || normalV2MessageReady || storeMessageListReady || storeMessageFormReady,
+    normalMessageReady: normalMessageReady || normalV2MessageReady,
+    normalV2MessageReady,
     storeMessageReady: storeMessageListReady || storeMessageFormReady,
     hasBundleNotice: Boolean(noticeRoot),
     hasStoreBundleNotice: /\u307e\u3068\u3081\u3066\u8cfc\u5165\u624b\u7d9a\u304d/.test(noticeText),
     hasCloseButton: Boolean(closeButton && noticeRoot),
     bundleChildChoice,
     hasSinglePurchaseProcedureButton: Boolean(findControl(/\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/)),
+    hasMessageTab: Boolean(messageTabButton),
+    canOpenMessageTab: Boolean(messageTabButton && !isDisabled(messageTabButton)),
     noticeText: noticeText.slice(0, 300)
   };
 }
@@ -1110,6 +1162,13 @@ function clickYahooMessageNavigationActionFromPage(action) {
     });
   } else if (action === 'singlePurchaseProcedure') {
     target = controls.find(node => /\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/.test(textOf(node)));
+  } else if (action === 'openMessageTab') {
+    target = controls.find(node =>
+      /^\s*\u30e1\u30c3\u30bb\u30fc\u30b8\s*$/.test(textOf(node)) &&
+      !node.disabled &&
+      node.getAttribute?.('disabled') === null &&
+      node.getAttribute?.('aria-disabled') !== 'true'
+    );
   }
   if (!target) return { success: false, error: `Yahoo message navigation action not found: ${action}` };
   const href = target.href || target.getAttribute?.('href') || '';
@@ -1160,7 +1219,7 @@ async function prepareYahooMessagePage(tab, job = {}) {
   let current = tab;
   let storeBundleNoticeSeen = false;
   let transitions = 0;
-  while (Date.now() - startedAt <= MESSAGE_NAVIGATION_WAIT_MS && transitions < 3) {
+  while (Date.now() - startedAt <= MESSAGE_NAVIGATION_WAIT_MS && transitions < 4) {
     const state = await getYahooMessageNavigationState(current.id).catch(() => null);
     if (!state) {
       await sleep(MESSAGE_EXTRACT_POLL_MS);
@@ -1178,6 +1237,13 @@ async function prepareYahooMessagePage(tab, job = {}) {
       continue;
     }
     if (state.messageReady) return current;
+    if (state.canOpenMessageTab) {
+      const result = await clickYahooMessageNavigationAction(current, 'openMessageTab');
+      if (!result?.success) throw new Error(result?.error || 'Yahoo message tab click failed');
+      current = result.tab;
+      transitions += 1;
+      continue;
+    }
     if ((storeBundleNoticeSeen || String(job.productType || '') === 'store') && state.hasSinglePurchaseProcedureButton) {
       const result = await clickYahooMessageNavigationAction(current, 'singlePurchaseProcedure');
       if (!result?.success) throw new Error(result?.error || 'single purchase procedure navigation failed');
@@ -1216,9 +1282,18 @@ function runYahooTradeMessageSendFromPage(messageText) {
     }
   };
   const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+  const normalV2Textarea = document.querySelector(
+    'textarea[placeholder="\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"], textarea[placeholder*="\u5165\u529b"]'
+  );
+  const normalV2Section = normalV2Textarea?.closest?.('section') || null;
+  const normalV2Button = normalV2Section
+    ? [...normalV2Section.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+      .find(node => String(node.value || node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim() === '\u9001\u4fe1')
+    : null;
   const textarea = storeButton
     ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
-    : (document.querySelector('#textarea') ||
+    : (normalV2Textarea ||
+      document.querySelector('#textarea') ||
       document.querySelector('textarea[placeholder*="メッセージ"]') ||
       document.querySelector('textarea'));
   if (!textarea) return { success: false, error: 'message textarea not found' };
@@ -1228,6 +1303,7 @@ function runYahooTradeMessageSendFromPage(messageText) {
   textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(messageText || '') }));
   textarea.dispatchEvent(new Event('change', { bubbles: true }));
   const button = storeButton ||
+    normalV2Button ||
     document.querySelector('#submitButton') ||
     [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
       .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
@@ -1240,7 +1316,7 @@ function runYahooTradeMessageSendFromPage(messageText) {
   button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
   button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
   button.click();
-  return { success: true, pageType: storeButton ? 'store' : 'normal' };
+  return { success: true, pageType: storeButton ? 'store' : (normalV2Button ? 'normal-v2' : 'normal') };
 }
 
 function getYahooTradeMessageSendScript(messageText) {
@@ -1282,13 +1358,23 @@ function getYahooTradeMessageSendPointsFromPage() {
     };
   };
   const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+  const normalV2Textarea = document.querySelector(
+    'textarea[placeholder="\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"], textarea[placeholder*="\u5165\u529b"]'
+  );
+  const normalV2Section = normalV2Textarea?.closest?.('section') || null;
+  const normalV2Button = normalV2Section
+    ? [...normalV2Section.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+      .find(node => String(node.value || node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim() === '\u9001\u4fe1')
+    : null;
   const button = storeButton ||
+    normalV2Button ||
     document.querySelector('#submitButton') ||
     [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
       .find(node => /送信/.test(String(node.value || node.innerText || node.textContent || '').trim()));
   const textarea = storeButton
     ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
-    : (document.querySelector('#textarea') ||
+    : (normalV2Textarea ||
+      document.querySelector('#textarea') ||
       document.querySelector('textarea[placeholder*="メッセージ"]') ||
       document.querySelector('textarea'));
   const textareaPoint = rectToPoint(textarea);
@@ -1297,7 +1383,7 @@ function getYahooTradeMessageSendPointsFromPage() {
   if (!buttonPoint) return { success: false, error: 'message submit button point not found' };
   return {
     success: true,
-    pageType: storeButton ? 'store' : 'normal',
+    pageType: storeButton ? 'store' : (normalV2Button ? 'normal-v2' : 'normal'),
     textarea: textareaPoint,
     button: buttonPoint,
     buttonText: String(button.value || button.innerText || button.textContent || '').trim()
@@ -1326,9 +1412,13 @@ function prepareYahooTradeMessageTextareaForTrustedInputFromPage() {
     }
   };
   const storeButton = document.querySelector('#msg button[type="submit"], #msg button');
+  const normalV2Textarea = document.querySelector(
+    'textarea[placeholder="\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"], textarea[placeholder*="\u5165\u529b"]'
+  );
   const textarea = storeButton
     ? (findNearbyTextarea(storeButton) || document.querySelector('textarea[placeholder*="メッセージ"]') || document.querySelector('textarea'))
-    : (document.querySelector('#textarea') ||
+    : (normalV2Textarea ||
+      document.querySelector('#textarea') ||
       document.querySelector('textarea[placeholder*="メッセージ"]') ||
       document.querySelector('textarea'));
   if (!textarea) return { success: false, error: 'message textarea not found' };
@@ -1467,7 +1557,7 @@ async function sendYahooTradeMessage(tabOrId, messageText) {
     });
     lastResult = injectionResult?.[0]?.result || { success: false, error: 'message send returned no result' };
     if (lastResult?.success) {
-      if (lastResult.pageType === 'normal') {
+      if (lastResult.pageType === 'normal' || lastResult.pageType === 'normal-v2') {
         const visible = await waitForYahooSentMessageVisible(tabId, messageText, MESSAGE_EXTRACT_RENDER_WAIT_MS);
         if (visible) return { ...lastResult, verified: true };
         return { success: false, error: 'sent message not found after send' };

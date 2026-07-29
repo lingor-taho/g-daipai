@@ -2016,7 +2016,7 @@ function normalizeYahooTradeMessageHtml(html = '') {
   if (!raw) return '';
   const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const hasTransactionInfo = /取引情報|配送情報|購入日時|注文番号/.test(text);
-  const hasYahooMessageMarkup = /id=["']messagelist["']|sc-c46fd2ce-0|sc-5ecc53ec|data-gdaipai-message-empty/i.test(raw) ||
+  const hasYahooMessageMarkup = /id=["']messagelist["']|sc-c46fd2ce-0|sc-5ecc53ec|data-gdaipai-message-(?:empty|v2)/i.test(raw) ||
     /(?:あなた|ストア|出品者|落札者)[\s\S]*<dd\b/i.test(raw);
   if (hasTransactionInfo && !hasYahooMessageMarkup) return EMPTY_YAHOO_TRADE_MESSAGE_HTML;
   return raw;
