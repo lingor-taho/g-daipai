@@ -33,6 +33,18 @@ body,
   background: #fff2e0 !important;
 }
 
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-c > td {
+  background: #effbea !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-d > td {
+  background: #f5efff !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-e > td {
+  background: #fff0f3 !important;
+}
+
 .admin-orders-table .ant-table-tbody > tr.admin-bundle-row-a:hover > td,
 .admin-orders-table .ant-table-tbody > tr.admin-bundle-row-a.ant-table-row-selected > td {
   background: #dff0ff !important;
@@ -41,6 +53,21 @@ body,
 .admin-orders-table .ant-table-tbody > tr.admin-bundle-row-b:hover > td,
 .admin-orders-table .ant-table-tbody > tr.admin-bundle-row-b.ant-table-row-selected > td {
   background: #ffe8bf !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-c:hover > td,
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-c.ant-table-row-selected > td {
+  background: #dff4d7 !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-d:hover > td,
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-d.ant-table-row-selected > td {
+  background: #eaddff !important;
+}
+
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-e:hover > td,
+.admin-orders-table .ant-table-tbody > tr.admin-bundle-row-e.ant-table-row-selected > td {
+  background: #ffe0e7 !important;
 }
 
 .admin-bottom-nav-full {

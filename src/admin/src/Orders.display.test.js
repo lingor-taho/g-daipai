@@ -3,6 +3,35 @@ const { readFileSync } = require('fs');
 const { join } = require('path');
 
 const source = readFileSync(join(__dirname, 'Orders.tsx'), 'utf8');
+const globalCss = readFileSync(join(__dirname, 'global.css'), 'utf8');
+
+assert.equal(
+  source.includes('BUNDLE_ROW_CLASSES') &&
+    source.includes("'admin-bundle-row-a'") &&
+    source.includes("'admin-bundle-row-b'") &&
+    source.includes("'admin-bundle-row-c'") &&
+    source.includes("'admin-bundle-row-d'") &&
+    source.includes("'admin-bundle-row-e'") &&
+    source.includes('colorIndex % BUNDLE_ROW_CLASSES.length'),
+  true,
+  'Admin Orders should rotate bundle groups through five row color classes'
+);
+
+for (const rowClass of [
+  'admin-bundle-row-a',
+  'admin-bundle-row-b',
+  'admin-bundle-row-c',
+  'admin-bundle-row-d',
+  'admin-bundle-row-e'
+]) {
+  assert.equal(
+    globalCss.includes(`tr.${rowClass} > td`) &&
+      globalCss.includes(`tr.${rowClass}:hover > td`) &&
+      globalCss.includes(`tr.${rowClass}.ant-table-row-selected > td`),
+    true,
+    `Admin Orders should define normal, hover, and selected colors for ${rowClass}`
+  );
+}
 
 assert.equal(
   source.includes('\u4eca\u65e5\u7ed3\u7b97\u6c47\u7387'),

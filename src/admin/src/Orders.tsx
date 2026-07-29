@@ -77,6 +77,14 @@ function getBundleGroupId(row: any) {
   return String(row?.bundle_group_id || '').trim();
 }
 
+const BUNDLE_ROW_CLASSES = [
+  'admin-bundle-row-a',
+  'admin-bundle-row-b',
+  'admin-bundle-row-c',
+  'admin-bundle-row-d',
+  'admin-bundle-row-e'
+];
+
 function renderTransactionStartLastRun(log: any) {
   if (!log) return '最近执行：-';
   const source = log.source === 'manual' ? '手动' : '自动';
@@ -269,7 +277,7 @@ export default function OrdersPage() {
     for (const row of currentRows) {
       const groupId = getBundleGroupId(row);
       if (!groupId || map[groupId]) continue;
-      map[groupId] = colorIndex % 2 === 0 ? 'admin-bundle-row-a' : 'admin-bundle-row-b';
+      map[groupId] = BUNDLE_ROW_CLASSES[colorIndex % BUNDLE_ROW_CLASSES.length];
       colorIndex += 1;
     }
     return map;

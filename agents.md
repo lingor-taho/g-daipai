@@ -380,6 +380,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-29 后台订单管理同捆组扩展为五种淡色
+
+后台订单管理原来只用淡蓝、淡橙两种行背景循环标识当前列表中的不同 `bundle_group_id`，同捆组较多且分散时容易把间隔较远的不同组看成同一组。现在调色板扩展为淡蓝、淡橙、淡绿、淡紫、淡粉五种低饱和背景色，按同捆组在当前列表首次出现的顺序循环分配；同一 `bundle_group_id` 仍始终使用同一颜色。五种颜色均配置了对应的 hover/选中加深色，保证表格交互状态可见。
+
+验证：
+
+```powershell
+node src/admin/src/Orders.display.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-29 Yahoo 双向黑名单出价失败文案兼容
 
 Yahoo 黑名单导致出价失败存在两种明确文案：旧版/既有规则“出品者のブラックリストに登録されているため、入札できません”表示买家被卖家加入黑名单；另一种“この出品者はあなたのブラックリストに登録されているため、入札できません”表示该卖家已在当前 Yahoo 账号自己的黑名单中。插件现已同时识别两种文案，旧规则保持不变；两者均稳定返回“失败：卖家黑名单”并关闭任务标签，不再让第二种情况降级为通用 `Yahoo bid access failed`。
