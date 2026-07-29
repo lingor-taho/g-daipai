@@ -380,6 +380,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-29 Yahoo 新版确认收货完成页文案兼容
+
+Yahoo 交易后台处于新旧页面并行期间，部分普通商品确认收货完成页不再展示旧版的“すべての取引が完了しました / 出品者に受け取り連絡をしました”，而是展示“取引が完了しました！ / 評価がまだの場合は評価をお願いします。 / ご利用ありがとうございました。”三段文案。确认收货完成判定已新增对这组三段文案的识别，原有完成文案规则保持不变；为避免商品说明等区域单独出现“取引が完了しました”时形成误判，新增规则要求三段文案按顺序同时存在。识别成功后沿用现有 `already_completed` / `success` 回写，将普通订单或对应同捆组更新为 `completed`。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-27 运费占位页面不再把标题后的当前价误识别为运费
 
 Yahoo 原始 HTTP 页面中的 `itemPostage` 可能只有骨架占位，浏览器执行脚本后才显示实际运费；该现象不只限于已结束商品。当商品标题含“送料無料 / 送料”时，旧的整页运费回退会从标题中的“送料”开始扫描，并可能把紧随标题后的商品当前价当成运费。例如 `g1238070462` 的旧正则实际命中“送料無料 任天堂 匿名配送 現在 52,000円”，尽管同页结构化数据已经明确为 `chargeForShipping: seller`，接口仍错误返回运费 `52000円`。

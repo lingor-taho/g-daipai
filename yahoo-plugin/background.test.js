@@ -4637,6 +4637,25 @@ function testConfirmReceiptPageStateDetectsReceiptCompletionText() {
   });
 
   assert.equal(receivedNoticeState.complete, true);
+
+  const redesignedPageState = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: [
+      '\u53d6\u5f15\u30ca\u30d3',
+      '\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\uff01',
+      '\u8a55\u4fa1\u304c\u307e\u3060\u306e\u5834\u5408\u306f\u8a55\u4fa1\u3092\u304a\u9858\u3044\u3057\u307e\u3059\u3002',
+      '\u3054\u5229\u7528\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3057\u305f\u3002'
+    ].join('\n'),
+    controls: ['\u51fa\u54c1\u8005\u3092\u8a55\u4fa1\u3059\u308b']
+  });
+
+  assert.equal(redesignedPageState.complete, true);
+
+  const genericExplanationState = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: '\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u5f8c\u306b\u8a55\u4fa1\u3067\u304d\u307e\u3059\u3002',
+    controls: []
+  });
+
+  assert.equal(genericExplanationState.complete, false);
 }
 
 async function testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled() {
