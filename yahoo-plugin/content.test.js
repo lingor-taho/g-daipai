@@ -394,15 +394,22 @@ async function testYahooBidAccessFailureClosesTask() {
 }
 
 async function testYahooSellerBlacklistFailureClosesTask() {
-  const result = await loadAndExecuteBidForTest(
+  const samples = [
     '\u5165\u672d\u5185\u5bb9\u306e\u78ba\u8a8d \u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f \u51fa\u54c1\u8005\u306e\u30d6\u30e9\u30c3\u30af\u30ea\u30b9\u30c8\u306b\u767b\u9332\u3055\u308c\u3066\u3044\u308b\u305f\u3081\u3001\u5165\u672d\u3067\u304d\u307e\u305b\u3093\u3002\u8a73\u3057\u304f\u306f\u30d8\u30eb\u30d7\u3092\u3054\u89a7\u304f\u3060\u3055\u3044\u3002',
-    { maxPrice: 1000, strategy: 'direct' },
-    '/jp/auction/s576598449'
-  );
+    '\u5165\u672d\u5185\u5bb9\u306e\u78ba\u8a8d \u5165\u672d\u306b\u5931\u6557\u3057\u307e\u3057\u305f \u3053\u306e\u51fa\u54c1\u8005\u306f\u3042\u306a\u305f\u306e\u30d6\u30e9\u30c3\u30af\u30ea\u30b9\u30c8\u306b\u767b\u9332\u3055\u308c\u3066\u3044\u308b\u305f\u3081\u3001\u5165\u672d\u3067\u304d\u307e\u305b\u3093\u3002\u8a73\u3057\u304f\u306f\u30d8\u30eb\u30d7\u3092\u3054\u89a7\u304f\u3060\u3055\u3044\u3002'
+  ];
 
-  assert.equal(result.success, false);
-  assert.equal(result.closeTab, true);
-  assert.equal(result.error, '\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355');
+  for (const text of samples) {
+    const result = await loadAndExecuteBidForTest(
+      text,
+      { maxPrice: 1000, strategy: 'direct' },
+      '/jp/auction/s576598449'
+    );
+
+    assert.equal(result.success, false);
+    assert.equal(result.closeTab, true);
+    assert.equal(result.error, '\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355');
+  }
 }
 
 async function testYahooSystemErrorPageReturnsStableBidError() {
