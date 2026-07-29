@@ -3219,6 +3219,28 @@ function testBundleTransactionInfoDetectsQuantityMismatch() {
   assert.equal(info.quantityMatched, false);
 }
 
+function testBundleTransactionInfoAcceptsRedesignedQuantityLabel() {
+  const links = [
+    createTestAnchor('\u5546\u54c1A', 'https://auctions.yahoo.co.jp/jp/auction/j1235170940'),
+    createTestAnchor('\u5546\u54c1B', 'https://auctions.yahoo.co.jp/jp/auction/x1235165336')
+  ];
+  const bodyText = '\u3053\u306e\u5546\u54c1\u306f\u307e\u3068\u3081\u3066\u53d6\u5f15\u304c\u53ef\u80fd\u3067\u3059 2\u4ef6\uff08\u6570\u91cf\uff1a2\uff09';
+  const api = loadContentForTest(bodyText, '/trade/top?aid=x1235165336', {
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector === 'a[href*="/jp/auction/"]') return links;
+      return [];
+    }
+  });
+
+  const info = api.extractBundleTransactionInfo();
+
+  assert.equal(info.available, true);
+  assert.equal(info.expectedCount, 2);
+  assert.equal(JSON.stringify(info.productIds), JSON.stringify(['j1235170940', 'x1235165336']));
+  assert.equal(info.quantityMatched, true);
+}
+
 function testBundleTransactionInfoDetectsPopupBundleText() {
   const links = [
     createTestAnchor('商品A', 'https://auctions.yahoo.co.jp/jp/auction/m1114324624'),
@@ -3242,9 +3264,14 @@ function testBundleTransactionInfoDetectsPopupBundleText() {
 }
 
 function testDetectBundleRequestedComplete() {
-  const api = loadContentForTest('まとめて取引を依頼中です。 出品者からの連絡をお待ちください。', '/seller/top');
+  const legacyApi = loadContentForTest('まとめて取引を依頼中です。 出品者からの連絡をお待ちください。', '/seller/top');
+  const redesignedApi = loadContentForTest(
+    'まとめて取引を依頼中です。\n出品者からの連絡をお待ちください。',
+    '/trade/top?aid=x1235165336'
+  );
 
-  assert.equal(api.detectBundleRequestedComplete(), true);
+  assert.equal(legacyApi.detectBundleRequestedComplete(), true);
+  assert.equal(redesignedApi.detectBundleRequestedComplete(), true);
 }
 
 function testTransactionPageYahooIdTextDoesNotMeanLoggedOut() {
@@ -4714,6 +4741,7 @@ async function run() {
   testBiddingItemsExtractsRemainingTimeFromListRow();
   testBundleTransactionInfoValidatesQuantity();
   testBundleTransactionInfoDetectsQuantityMismatch();
+  testBundleTransactionInfoAcceptsRedesignedQuantityLabel();
   testBundleTransactionInfoDetectsPopupBundleText();
   testDetectBundleRequestedComplete();
   testTransactionPageYahooIdTextDoesNotMeanLoggedOut();

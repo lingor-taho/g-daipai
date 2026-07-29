@@ -5995,9 +5995,11 @@ async function completeNormalBundleRequest(tab) {
   let result = null;
   let state = await getBundleActionState(tab.id);
   if (!state?.canDecide && !state?.canConfirm && !state?.complete) {
-    result = await clickBundleActionAndFollowTab(tab, 'close');
-    if (!result?.success) return result;
-    tab = result.tab;
+    if (state?.canCloseBundleNotice !== false) {
+      result = await clickBundleActionAndFollowTab(tab, 'close');
+      if (!result?.success) return result;
+      tab = result.tab;
+    }
 
     result = await clickBundleActionAndFollowTab(tab, 'start', state => state.canStart || state.canInputTransaction || state.canDecide || state.complete);
     if (!result?.success) return result;

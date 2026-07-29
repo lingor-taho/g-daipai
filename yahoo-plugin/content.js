@@ -1801,7 +1801,9 @@ function extractBiddingItems() {
 
 function extractBundleTransactionInfo() {
   const bodyText = document.body?.textContent || '';
-  const quantityMatch = bodyText.match(/(\d+)\s*\u4ef6\s*[\uff08(]\s*\u843d\u672d\u6570\u91cf\s*[:\uff1a]\s*(\d+)\s*[\uff09)]/);
+  const legacyQuantityMatch = bodyText.match(/(\d+)\s*\u4ef6\s*[\uff08(]\s*\u843d\u672d\u6570\u91cf\s*[:\uff1a]\s*(\d+)\s*[\uff09)]/);
+  const redesignedQuantityMatch = bodyText.match(/(\d+)\s*\u4ef6\s*[\uff08(]\s*\u6570\u91cf\s*[:\uff1a]\s*(\d+)\s*[\uff09)]/);
+  const quantityMatch = legacyQuantityMatch || redesignedQuantityMatch;
   const expectedCount = quantityMatch
     ? Math.max(Number(quantityMatch[1] || 0), Number(quantityMatch[2] || 0))
     : 0;
@@ -2623,6 +2625,7 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
 }
 function getBundleTransactionActionState() {
   return {
+    canCloseBundleNotice: !!findClickableByText(/^\s*\u9589\u3058\u308b\s*$/),
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
     canInputTransaction: !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/),
     canPlacementOk: detectPlacementDefaultModal(),

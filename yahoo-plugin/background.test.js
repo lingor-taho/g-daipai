@@ -1518,6 +1518,63 @@ async function testNormalBundleRequestClicksSecondStartPageBeforeDecide() {
   assert.deepEqual(clickedActions, ['close', 'start', 'start', 'decide']);
 }
 
+async function testRedesignedNormalBundleRequestSkipsMissingCloseNotice() {
+  const clickedActions = [];
+  let phase = 'top';
+  const api = loadBackgroundForTest({
+    tabs: {
+      async query() {
+        return [{ id: 8, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=x1235165336', status: 'complete' }];
+      },
+      async get(id) {
+        return {
+          id,
+          url: phase === 'top'
+            ? 'https://contact.auctions.yahoo.co.jp/trade/top?aid=x1235165336'
+            : 'https://contact.auctions.yahoo.co.jp/trade/bundle?aid=x1235165336',
+          status: 'complete'
+        };
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 8);
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          if (message.action === 'start' && phase === 'top') {
+            phase = 'request';
+          } else if (message.action === 'start' && phase === 'request') {
+            phase = 'decide';
+          } else if (message.action === 'decide' && phase === 'decide') {
+            phase = 'complete';
+          }
+          return { success: true };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              canCloseBundleNotice: false,
+              canStart: phase === 'top' || phase === 'request',
+              canDecide: phase === 'decide',
+              complete: phase === 'complete'
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript() {
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    }
+  });
+
+  const result = await api.completeNormalBundleRequest({ id: 8 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(clickedActions, ['start', 'start', 'decide']);
+}
+
 async function testNormalBundleRequestCanStartFromInputPage() {
   const clickedActions = [];
   let phase = 'decide';
@@ -10254,6 +10311,7 @@ testSendYahooMessageJobFetchesLatestMessagesAfterSend();
   await testBundleStartDoesNotUseDebuggerWhenJsAndRequestSubmitFail();
   await testBundleActionTimeoutErrorIncludesActionName();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
+  await testRedesignedNormalBundleRequestSkipsMissingCloseNotice();
   await testNormalBundleRequestCanStartFromInputPage();
   await testNormalBundleStartAcceptsTransactionInfoInputPage();
   await testOpenTransactionPageContinuesWhenBundleActionReadyBeforeTabComplete();
