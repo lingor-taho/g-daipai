@@ -3766,7 +3766,8 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
     /\u767a\u9001\u9023\u7d61/.test(text)
   );
   const transactionDetailRendered = /\u53d6\u5f15\u60c5\u5831/.test(text) || /\u53d6\u5f15\u306e\u72b6\u6cc1/.test(text);
-  const paidOrShipped = (
+  const paidOrShipped =
+    /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText) || (
     /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) &&
     /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
   ) || (

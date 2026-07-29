@@ -380,6 +380,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-07-29 Yahoo 新版普通商品手工付款后待发货文案兼容
+
+Yahoo 普通商品交易后台部分页面改版后，手工付款完成页可能只显示“商品の発送連絡をお待ちください”，不再同时显示旧版的“出品者に支払い完了の連絡をしました”。确认收货工作流中的 `cancel_check` 已新增对该单独状态文案的识别，原有已付款/已发货组合文案判断保持不变。命中新文案后仍沿用原有服务端边界，只允许把 `pending_payment` / `pending_settlement` 推进为 `pending_shipment`，后续继续由扫描流程处理。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-07-29 Yahoo 新版确认收货完成页文案兼容
 
 Yahoo 交易后台处于新旧页面并行期间，部分普通商品确认收货完成页不再展示旧版的“すべての取引が完了しました / 出品者に受け取り連絡をしました”，而是展示“取引が完了しました！ / 評価がまだの場合は評価をお願いします。 / ご利用ありがとうございました。”三段文案。确认收货完成判定已新增对这组三段文案的识别，原有完成文案规则保持不变；为避免商品说明等区域单独出现“取引が完了しました”时形成误判，新增规则要求三段文案按顺序同时存在。识别成功后沿用现有 `already_completed` / `success` 回写，将普通订单或对应同捆组更新为 `completed`。
