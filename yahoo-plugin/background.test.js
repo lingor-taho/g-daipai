@@ -2420,6 +2420,99 @@ async function testPendingShipmentScanWaitsForRenderedShipmentState() {
   assert.equal(statusCall.body.trackingNumber, '450053704833');
 }
 
+async function testNormalV2PendingShipmentScanUsesSellerInfoNameFallback() {
+  const apiCalls = [];
+  const messageTypes = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      apiCalls.push({
+        url,
+        body: options.body ? JSON.parse(options.body) : null
+      });
+      return {
+        async json() {
+          return { success: true };
+        }
+      };
+    },
+    tabs: {
+      async query() { return []; },
+      async create() {
+        return {
+          id: 81,
+          status: 'complete',
+          url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=o1237183162'
+        };
+      },
+      async get(tabId) {
+        return {
+          id: tabId,
+          status: 'complete',
+          url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=o1237183162'
+        };
+      },
+      async sendMessage(tabId, message) {
+        assert.equal(tabId, 81);
+        if ([
+          'EXTRACT_PENDING_SHIPMENT_SCAN',
+          'CLICK_NORMAL_V2_INFO_TAB',
+          'EXTRACT_NORMAL_V2_SELLER_INFO'
+        ].includes(message.type)) {
+          messageTypes.push(message.type);
+        }
+        if (message.type === 'EXTRACT_PENDING_SHIPMENT_SCAN') {
+          return {
+            success: true,
+            loginStatus: { status: 'ok' },
+            result: {
+              type: 'shipped',
+              pageVariant: 'normal_v2',
+              shippingCompany: '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044',
+              trackingNumber: '',
+              shipmentDetailsRendered: true,
+              needsSellerInfoFallback: true,
+              trackingFallback: ''
+            }
+          };
+        }
+        if (message.type === 'CLICK_NORMAL_V2_INFO_TAB') {
+          return { success: true };
+        }
+        if (message.type === 'EXTRACT_NORMAL_V2_SELLER_INFO') {
+          return {
+            success: true,
+            ready: true,
+            sellerInfoName: 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53',
+            loginStatus: { status: 'ok' }
+          };
+        }
+        return { success: false };
+      }
+    }
+  });
+
+  const result = await api.executePendingShipmentScanJob({
+    orderId: 391,
+    orderStatus: 'pending_shipment',
+    productId: 'o1237183162',
+    productType: 'normal',
+    transactionUrl: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=o1237183162'
+  });
+
+  assert.equal(result.stop, false);
+  assert.deepEqual(messageTypes, [
+    'EXTRACT_PENDING_SHIPMENT_SCAN',
+    'CLICK_NORMAL_V2_INFO_TAB',
+    'EXTRACT_NORMAL_V2_SELLER_INFO'
+  ]);
+  const statusCall = apiCalls.find(call => String(call.url || '').endsWith('/api/plugin/scan/status'));
+  assert.ok(statusCall);
+  assert.equal(statusCall.body.orderId, 391);
+  assert.equal(statusCall.body.shipped, true);
+  assert.equal(statusCall.body.shippingCompany, '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044');
+  assert.equal(statusCall.body.trackingNumber, 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53');
+}
+
 async function testStorePendingShipmentScanKeepsPollingPastInitialPendingState() {
   const apiCalls = [];
   let messageCalls = 0;
@@ -10336,6 +10429,7 @@ testSendYahooMessageJobFetchesLatestMessagesAfterSend();
   testBuildScanStatusPayloadReportsBundleNoProgress();
   testBundleInputActionCanRunFromWaitingAgreementState();
   await testPendingShipmentScanWaitsForRenderedShipmentState();
+  await testNormalV2PendingShipmentScanUsesSellerInfoNameFallback();
   await testStorePendingShipmentScanKeepsPollingPastInitialPendingState();
   await testPendingShipmentScanKeepsPollingPastTrackingFallback();
   await testPendingShipmentScanAcceptsTrackingFallbackAfterShipmentDetailsRender();

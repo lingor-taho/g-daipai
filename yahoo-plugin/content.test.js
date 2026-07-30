@@ -198,6 +198,31 @@ function createPaymentInfoRows(rows = []) {
   };
 }
 
+function createSemanticTable(heading, rows = []) {
+  const headingCell = { textContent: heading, innerText: heading };
+  const rowElements = rows.map(([label, value]) => ({
+    textContent: `${label} ${value}`,
+    innerText: `${label} ${value}`,
+    querySelector(selector) {
+      if (selector === 'th') return { textContent: label, innerText: label };
+      if (selector === 'td') return { textContent: value, innerText: value };
+      return null;
+    }
+  }));
+  return {
+    textContent: [heading, ...rowElements.map(row => row.textContent)].join('\n'),
+    innerText: [heading, ...rowElements.map(row => row.innerText)].join('\n'),
+    querySelector(selector) {
+      if (selector === 'thead th' || selector === 'tr th') return headingCell;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'tbody tr, tr') return rowElements;
+      return [];
+    }
+  };
+}
+
 function createStoreShippingInfoSection(rows = []) {
   const rowElements = rows.map(([label, value]) => ({
     textContent: `${label} ${value}`,
@@ -3722,6 +3747,93 @@ function testExtractPendingShipmentScanResultDetectsNormalPending() {
   assert.equal(api.extractPendingShipmentScanResult().type, 'pending_shipment');
 }
 
+function testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking() {
+  const deliveryTable = createSemanticTable('\u304a\u5c4a\u3051\u60c5\u5831', [
+    ['\u914d\u9001\u65b9\u6cd5', '\u3086\u3046\u30d1\u30c3\u30af \uff08\u9001\u6599\uff1a\u7740\u6255\u3044\uff09'],
+    ['\u8ffd\u8de1\u756a\u53f7', '105868308685']
+  ]);
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u5f8c\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/trade/top?aid=w1238277830',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'table') return [deliveryTable];
+        return [];
+      }
+    }
+  );
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.pageVariant, 'normal_v2');
+  assert.equal(result.shippingCompany, '\u3086\u3046\u30d1\u30c3\u30af');
+  assert.equal(result.trackingNumber, '105868308685');
+  assert.equal(result.needsSellerInfoFallback, false);
+}
+
+function testExtractPendingShipmentScanResultNormalV2RequestsSellerInfoWithoutTracking() {
+  const deliveryTable = createSemanticTable('\u304a\u5c4a\u3051\u60c5\u5831', [
+    ['\u914d\u9001\u65b9\u6cd5', '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044 \uff08\u9001\u6599\uff1a1,320\u5186\uff09']
+  ]);
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u5f8c\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/trade/top?aid=o1237183162',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'table') return [deliveryTable];
+        return [];
+      }
+    }
+  );
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.pageVariant, 'normal_v2');
+  assert.equal(result.shippingCompany, '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044');
+  assert.equal(result.trackingNumber, '');
+  assert.equal(result.needsSellerInfoFallback, true);
+  assert.equal(result.shipmentDetailsRendered, true);
+}
+
+function testExtractNormalV2SellerInfoNameScopesNameToSellerTable() {
+  const deliveryTable = createSemanticTable('\u304a\u5c4a\u3051\u60c5\u5831', [
+    ['\u6c0f\u540d', 'GAO\u3000YUN']
+  ]);
+  const bidderTable = createSemanticTable('\u843d\u672d\u8005\u60c5\u5831', [
+    ['\u6c0f\u540d', 'GAO\u3000YUN']
+  ]);
+  const sellerTable = createSemanticTable('\u51fa\u54c1\u8005\u60c5\u5831', [
+    ['\u6c0f\u540d', 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53']
+  ]);
+  const api = loadContentForTest('', '/trade/top?aid=o1237183162', {
+    querySelectorAll(selector) {
+      if (selector === 'table') return [deliveryTable, bidderTable, sellerTable];
+      return [];
+    }
+  });
+
+  assert.equal(api.extractNormalV2SellerInfoName(), 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53');
+}
+
+function testClickNormalV2InfoTabClicksExactVisibleControl() {
+  const messageTab = createTestElement('\u30e1\u30c3\u30bb\u30fc\u30b8');
+  const infoTab = createTestElement('\u60c5\u5831');
+  for (const control of [messageTab, infoTab]) {
+    control.getAttribute = name => name === 'aria-label' ? '' : null;
+  }
+  const api = loadContentForTest('', '/trade/top?aid=o1237183162', {
+    querySelectorAll(selector) {
+      if (selector === 'button, a, [role="button"], [role="tab"]') return [messageTab, infoTab];
+      return [];
+    }
+  });
+
+  const result = api.clickNormalV2InfoTab();
+  assert.equal(result.success, true);
+  assert.equal(infoTab.clicked, true);
+  assert.equal(messageTab.clicked, false);
+}
+
 function testExtractPendingShipmentScanResultDetectsStoreShipped() {
   const shippingInfo = createStoreShippingInfoSection([
     ['\u914d\u9001\u696d\u8005', '\u65e5\u672c\u90f5\u4fbf']
@@ -4777,6 +4889,10 @@ async function run() {
   testExtractBundleScanResultDetectsBundleRejected();
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
+  testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking();
+  testExtractPendingShipmentScanResultNormalV2RequestsSellerInfoWithoutTracking();
+  testExtractNormalV2SellerInfoNameScopesNameToSellerTable();
+  testClickNormalV2InfoTabClicksExactVisibleControl();
   testExtractPendingShipmentScanResultDetectsStoreShipped();
   testExtractPendingShipmentScanResultStoreUsesShippingInfoSectionOnly();
   testExtractPendingShipmentScanResultExtractsStoreShipmentTableFields();

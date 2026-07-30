@@ -2512,6 +2512,68 @@ function cleanShippingCompanyText(value = '') {
     .replace(/[\uff08(][\s\S]*$/, ''));
 }
 
+function findSemanticTableByHeading(heading) {
+  const expected = normalizeTextValue(heading);
+  const tables = Array.from(document.querySelectorAll('table') || []);
+  return tables.find(table => {
+    const headingCell = table.querySelector?.('thead th') || table.querySelector?.('tr th');
+    return normalizeTextValue(getRenderedText(headingCell)) === expected;
+  }) || null;
+}
+
+function extractSemanticTableRowValue(table, label) {
+  if (!table) return '';
+  const expected = normalizeTextValue(label);
+  const rows = Array.from(table.querySelectorAll?.('tbody tr, tr') || []);
+  for (const row of rows) {
+    const headingCell = row.querySelector?.('th');
+    if (normalizeTextValue(getRenderedText(headingCell)) !== expected) continue;
+    return getRenderedText(row.querySelector?.('td'));
+  }
+  return '';
+}
+
+function getNormalV2DeliveryInfo() {
+  const table = findSemanticTableByHeading('\u304a\u5c4a\u3051\u60c5\u5831');
+  if (!table) {
+    return {
+      rendered: false,
+      shippingCompany: '',
+      trackingNumber: ''
+    };
+  }
+  const shippingMethod = extractSemanticTableRowValue(table, '\u914d\u9001\u65b9\u6cd5');
+  const trackingValue = extractSemanticTableRowValue(table, '\u8ffd\u8de1\u756a\u53f7');
+  return {
+    rendered: true,
+    shippingCompany: cleanShippingCompanyText(shippingMethod),
+    trackingNumber: extractTrackingNumberFromText(trackingValue, {
+      textOnly: true,
+      includeUnlabeled: true
+    })
+  };
+}
+
+function extractNormalV2SellerInfoName() {
+  const table = findSemanticTableByHeading('\u51fa\u54c1\u8005\u60c5\u5831');
+  if (!table) return '';
+  return normalizeNameValue(extractSemanticTableRowValue(table, '\u6c0f\u540d'));
+}
+
+function clickNormalV2InfoTab() {
+  const controls = Array.from(document.querySelectorAll('button, a, [role="button"], [role="tab"]') || []);
+  const target = controls.find(control =>
+    normalizeTextValue(getClickableText(control)) === '\u60c5\u5831' &&
+    isElementClickable(control) &&
+    !control.disabled &&
+    control.getAttribute?.('disabled') === null &&
+    control.getAttribute?.('aria-disabled') !== 'true'
+  );
+  if (!target) return { success: false, error: 'normal v2 info tab not found' };
+  clickElement(target);
+  return { success: true };
+}
+
 function extractNormalShippingCompanyFromPaymentInfo() {
   const root = getNormalPaymentInfoRoot();
   if (!root) return '';
@@ -2568,7 +2630,20 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
   }
 
   const storeShipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(lifecycleStatusText);
+  const normalV2Shipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f[\s\S]{0,160}\u5230\u7740\u5f8c[\s\S]{0,80}\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleStatusText);
   const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(lifecycleStatusText);
+  if (normalV2Shipped) {
+    const deliveryInfo = getNormalV2DeliveryInfo();
+    return {
+      type: 'shipped',
+      pageVariant: 'normal_v2',
+      shippingCompany: deliveryInfo.shippingCompany,
+      trackingNumber: deliveryInfo.trackingNumber,
+      shipmentDetailsRendered: deliveryInfo.rendered,
+      needsSellerInfoFallback: deliveryInfo.rendered && !deliveryInfo.trackingNumber,
+      trackingFallback: ''
+    };
+  }
   if (storeShipped) {
     const trackingNumber = extractTrackingNumberFromText(source, { includeUnlabeled: false });
     const storeInfoName = extractStoreInfoName(source);
@@ -2759,6 +2834,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'CLICK_NORMAL_V2_INFO_TAB') {
+    sendResponse(clickNormalV2InfoTab());
+    return true;
+  }
+
+  if (msg.type === 'EXTRACT_NORMAL_V2_SELLER_INFO') {
+    const loginStatus = detectYahooLoginStatus();
+    const sellerInfoName = loginStatus.status === 'ok' ? extractNormalV2SellerInfoName() : '';
+    sendResponse({
+      success: loginStatus.status === 'ok',
+      ready: Boolean(sellerInfoName),
+      sellerInfoName,
+      loginStatus
+    });
+    return true;
+  }
+
   if (msg.type === 'CLICK_TRANSACTION_CONTACT') {
     sendResponse(clickTransactionContactForProduct(msg.productId));
     return true;
@@ -2807,6 +2899,9 @@ window.__G_DAIPAI_TEST__ = {
   extractWaitingShippingScanResult,
   extractBundleScanResult,
   extractPendingShipmentScanResult,
+  getNormalV2DeliveryInfo,
+  extractNormalV2SellerInfoName,
+  clickNormalV2InfoTab,
   extractSellerInfoName,
   extractTrackingNumberFromText,
   getCurrentAuctionId,

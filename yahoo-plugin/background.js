@@ -6328,7 +6328,14 @@ async function executePendingShipmentScanJob(job) {
     const response = await waitForPendingShipmentScanResult(tab, job);
     if (response?.stop) return { stop: true };
     if (!response?.success) return { stop: false };
-    const payload = buildScanStatusPayload({ ...job, result: response.result });
+    let result = response.result;
+    if (result?.pageVariant === 'normal_v2' && result?.needsSellerInfoFallback) {
+      const fallback = await resolveNormalV2SellerInfoFallback(tab, job, result);
+      if (fallback?.stop) return { stop: true };
+      if (!fallback?.result) return { stop: false };
+      result = fallback.result;
+    }
+    const payload = buildScanStatusPayload({ ...job, result });
     if (payload) await updateScanStatus(payload);
     return { stop: false };
   } catch (e) {
@@ -6349,8 +6356,72 @@ async function readPendingShipmentScanResult(tab) {
   return response;
 }
 
+async function readNormalV2SellerInfo(tab) {
+  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_NORMAL_V2_SELLER_INFO' }).catch(error => {
+    console.error('[Yahoo Bid] Failed to extract normal v2 seller info:', error);
+    return null;
+  });
+  await reportYahooLoginStatus(response?.loginStatus);
+  if (response?.loginStatus?.status === 'failed') {
+    return { stop: true, success: false, loginStatus: response.loginStatus };
+  }
+  return response;
+}
+
+async function waitForNormalV2SellerInfo(tab, timeoutMs = PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS) {
+  const startAt = Date.now();
+  let latestResponse = null;
+  while (Date.now() - startAt <= timeoutMs) {
+    const response = await readNormalV2SellerInfo(tab);
+    if (response?.stop) return response;
+    if (response?.success) {
+      latestResponse = response;
+      if (response.ready && response.sellerInfoName) return response;
+    }
+    await sleep(PENDING_SHIPMENT_SCAN_POLL_MS);
+  }
+  return latestResponse || { success: false };
+}
+
+async function resolveNormalV2SellerInfoFallback(tab, job, result) {
+  const clickResponse = await chrome.tabs.sendMessage(tab.id, { type: 'CLICK_NORMAL_V2_INFO_TAB' }).catch(error => {
+    console.error('[Yahoo Bid] Failed to open normal v2 info tab:', error);
+    return null;
+  });
+  if (!clickResponse?.success) {
+    await postScanDiagnostic(
+      job,
+      result,
+      `normal v2 seller info fallback could not open info tab: ${clickResponse?.error || 'no response'}`
+    ).catch(() => {});
+    return { stop: false, result: null };
+  }
+  await sleep(800);
+  const infoResponse = await waitForNormalV2SellerInfo(tab);
+  if (infoResponse?.stop) return { stop: true, result: null };
+  if (!infoResponse?.success || !infoResponse?.sellerInfoName) {
+    await postScanDiagnostic(
+      job,
+      result,
+      'normal v2 seller info fallback did not render a seller name'
+    ).catch(() => {});
+    return { stop: false, result: null };
+  }
+  return {
+    stop: false,
+    result: {
+      ...result,
+      trackingNumber: infoResponse.sellerInfoName,
+      trackingFallback: 'normal_v2_seller_info_name',
+      needsSellerInfoFallback: false,
+      shipmentDetailsRendered: true
+    }
+  };
+}
+
 function isRenderedPendingShipmentScanResult(result = {}, job = {}) {
   if (result.type === 'shipped') {
+    if (result.pageVariant === 'normal_v2') return result.shipmentDetailsRendered !== false;
     return !result.trackingFallback || result.shipmentDetailsRendered !== false;
   }
   if (result.type === 'cancelled') return true;
