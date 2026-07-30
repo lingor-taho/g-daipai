@@ -223,6 +223,13 @@ function createSemanticTable(heading, rows = []) {
   };
 }
 
+function createNormalV2NextDataScript(top, usePropsInitialState = false) {
+  const data = usePropsInitialState
+    ? { props: { initialState: { top } } }
+    : { props: { pageProps: { initialState: { top } } } };
+  return { textContent: JSON.stringify(data) };
+}
+
 function createStoreShippingInfoSection(rows = []) {
   const rowElements = rows.map(([label, value]) => ({
     textContent: `${label} ${value}`,
@@ -3771,6 +3778,87 @@ function testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking(
   assert.equal(result.needsSellerInfoFallback, false);
 }
 
+function testExtractPendingShipmentScanResultUsesNormalV2NextDataWhenStatusDomIsMissed() {
+  const nextData = createNormalV2NextDataScript({
+    auctionId: 'h1238410254',
+    progressStatus: 'sellerSendDone',
+    tradeInfo: {
+      sendInfo: {
+        shipMethod: { name: '\u30cd\u30b3\u30dd\u30b9' },
+        trackingInfo: { trackingNumber: '766115146020' }
+      },
+      sellerInfo: { name: '\u5c0f\u6797\u3000\u5e78' }
+    }
+  });
+  const api = loadContentForTest(
+    '\u53d6\u5f15\u60c5\u5831 \u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u5f8c\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/trade/top?aid=h1238410254',
+    {
+      querySelector(selector) {
+        if (selector === 'script#__NEXT_DATA__') return nextData;
+        return null;
+      }
+    }
+  );
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.pageVariant, 'normal_v2');
+  assert.equal(result.shippingCompany, '\u30cd\u30b3\u30dd\u30b9');
+  assert.equal(result.trackingNumber, '766115146020');
+  assert.equal(result.needsSellerInfoFallback, false);
+}
+
+function testExtractPendingShipmentScanResultUsesNormalV2NextDataSellerNameWithoutClick() {
+  const nextData = createNormalV2NextDataScript({
+    auctionId: 'o1237183162',
+    progressStatus: 'sellerSendDone',
+    tradeInfo: {
+      sendInfo: {
+        shipMethod: { name: '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044' },
+        trackingInfo: { trackingNumber: '' }
+      },
+      sellerInfo: { name: 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53' }
+    }
+  }, true);
+  const api = loadContentForTest('', '/trade/top?aid=o1237183162', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.shippingCompany, '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044');
+  assert.equal(result.trackingNumber, 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53');
+  assert.equal(result.trackingFallback, 'normal_v2_next_data_seller_info_name');
+  assert.equal(result.needsSellerInfoFallback, false);
+}
+
+function testNormalV2NextDataDoesNotChangeOldFlowBeforeSellerSendDone() {
+  const nextData = createNormalV2NextDataScript({
+    auctionId: 'o1237183162',
+    progressStatus: 'buyerPaymentDone',
+    tradeInfo: {
+      sendInfo: {
+        shipMethod: { name: '\u3086\u3046\u30d1\u30c3\u30af' },
+        trackingInfo: { trackingNumber: '105868308685' }
+      },
+      sellerInfo: { name: '\u4e2d\u6751\u3000\u88d5' }
+    }
+  });
+  const api = loadContentForTest('', '/trade/top?aid=o1237183162', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  assert.equal(api.getNormalV2NextDataShipment(), null);
+  assert.equal(api.extractPendingShipmentScanResult().type, 'unknown');
+}
+
 function testExtractPendingShipmentScanResultNormalV2RequestsSellerInfoWithoutTracking() {
   const deliveryTable = createSemanticTable('\u304a\u5c4a\u3051\u60c5\u5831', [
     ['\u914d\u9001\u65b9\u6cd5', '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044 \uff08\u9001\u6599\uff1a1,320\u5186\uff09']
@@ -4890,6 +4978,9 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking();
+  testExtractPendingShipmentScanResultUsesNormalV2NextDataWhenStatusDomIsMissed();
+  testExtractPendingShipmentScanResultUsesNormalV2NextDataSellerNameWithoutClick();
+  testNormalV2NextDataDoesNotChangeOldFlowBeforeSellerSendDone();
   testExtractPendingShipmentScanResultNormalV2RequestsSellerInfoWithoutTracking();
   testExtractNormalV2SellerInfoNameScopesNameToSellerTable();
   testClickNormalV2InfoTabClicksExactVisibleControl();

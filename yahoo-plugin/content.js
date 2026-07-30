@@ -2512,6 +2512,35 @@ function cleanShippingCompanyText(value = '') {
     .replace(/[\uff08(][\s\S]*$/, ''));
 }
 
+function getNormalV2NextDataShipment() {
+  const script = document.querySelector('script#__NEXT_DATA__');
+  if (!script?.textContent) return null;
+  try {
+    const data = JSON.parse(script.textContent);
+    const top = data?.props?.pageProps?.initialState?.top ||
+      data?.props?.initialState?.top ||
+      null;
+    if (!top || top.progressStatus !== 'sellerSendDone') return null;
+    const sendInfo = top.tradeInfo?.sendInfo || {};
+    const auctionId = normalizeTextValue(top.auctionId);
+    return {
+      shipped: true,
+      shippingCompany: cleanShippingCompanyText(sendInfo.shipMethod?.name || ''),
+      trackingNumber: extractTrackingNumberFromText(
+        sendInfo.trackingInfo?.trackingNumber || '',
+        {
+          textOnly: true,
+          includeUnlabeled: true,
+          auctionId
+        }
+      ),
+      sellerInfoName: normalizeNameValue(top.tradeInfo?.sellerInfo?.name || '')
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function findSemanticTableByHeading(heading) {
   const expected = normalizeTextValue(heading);
   const tables = Array.from(document.querySelectorAll('table') || []);
@@ -2629,19 +2658,30 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     return { type: 'cancelled' };
   }
 
+  const normalV2NextData = getNormalV2NextDataShipment();
   const storeShipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(lifecycleStatusText);
-  const normalV2Shipped = /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f[\s\S]{0,160}\u5230\u7740\u5f8c[\s\S]{0,80}\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleStatusText);
+  const normalV2Shipped = Boolean(normalV2NextData?.shipped) ||
+    /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f[\s\S]{0,160}\u5230\u7740\u5f8c[\s\S]{0,80}\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleStatusText);
   const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(lifecycleStatusText);
   if (normalV2Shipped) {
     const deliveryInfo = getNormalV2DeliveryInfo();
+    const shippingCompany = normalV2NextData?.shippingCompany || deliveryInfo.shippingCompany;
+    const actualTrackingNumber = normalV2NextData?.trackingNumber || deliveryInfo.trackingNumber;
+    const sellerInfoName = normalV2NextData?.sellerInfoName || '';
+    const trackingNumber = actualTrackingNumber || sellerInfoName;
     return {
       type: 'shipped',
       pageVariant: 'normal_v2',
-      shippingCompany: deliveryInfo.shippingCompany,
-      trackingNumber: deliveryInfo.trackingNumber,
-      shipmentDetailsRendered: deliveryInfo.rendered,
-      needsSellerInfoFallback: deliveryInfo.rendered && !deliveryInfo.trackingNumber,
-      trackingFallback: ''
+      shippingCompany,
+      trackingNumber,
+      shipmentDetailsRendered: Boolean(normalV2NextData?.shipped || deliveryInfo.rendered),
+      needsSellerInfoFallback: Boolean(
+        (normalV2NextData?.shipped || deliveryInfo.rendered) &&
+        !trackingNumber
+      ),
+      trackingFallback: actualTrackingNumber
+        ? ''
+        : (sellerInfoName ? 'normal_v2_next_data_seller_info_name' : '')
     };
   }
   if (storeShipped) {
@@ -2899,6 +2939,7 @@ window.__G_DAIPAI_TEST__ = {
   extractWaitingShippingScanResult,
   extractBundleScanResult,
   extractPendingShipmentScanResult,
+  getNormalV2NextDataShipment,
   getNormalV2DeliveryInfo,
   extractNormalV2SellerInfoName,
   clickNormalV2InfoTab,
