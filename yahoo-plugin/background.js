@@ -1023,6 +1023,53 @@ function extractYahooTradeMessageFromPage() {
     clone.setAttribute?.('data-gdaipai-message-v2', 'true');
     return { success: true, messageHtml: clone.outerHTML, pageType: 'normal-v2' };
   }
+  const nextDataScript = document.querySelector('script#__NEXT_DATA__');
+  if (nextDataScript?.textContent) {
+    try {
+      const data = JSON.parse(nextDataScript.textContent);
+      const top = data?.props?.pageProps?.initialState?.top ||
+        data?.props?.initialState?.top ||
+        null;
+      const messageState = top?.message;
+      if (messageState && Array.isArray(messageState.messages)) {
+        const escapeHtml = value => String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+        const entries = [];
+        for (const group of messageState.messages) {
+          const dailyMessages = Array.isArray(group?.dailyMessages) ? group.dailyMessages : [];
+          if (!dailyMessages.length) continue;
+          entries.push(`<div class="yahoo-message-v2-date">${escapeHtml(group?.date || '')}</div>`);
+          for (const message of dailyMessages) {
+            const bodyHtml = escapeHtml(message?.body || '').replace(/\r?\n/g, '<br>');
+            entries.push(
+              `<div class="yahoo-message-v2-next-entry" data-gdaipai-message-own="${message?.isOwn ? 'true' : 'false'}">` +
+                `<div class="sc-dc9a42c0-0 gdaipai-next-message-body">${bodyHtml}` +
+                  `<span class="sc-dc9a42c0-3">${escapeHtml(message?.time || '')}</span>` +
+                `</div>` +
+                `<p class="sc-dc9a42c0-2">${escapeHtml(message?.name || '')}</p>` +
+              `</div>`
+            );
+          }
+        }
+        if (!entries.length) {
+          return {
+            success: true,
+            messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
+            pageType: 'normal-v2-next-data-empty'
+          };
+        }
+        return {
+          success: true,
+          messageHtml: `<div class="yahoo-message-v2" data-gdaipai-message-v2="true">${entries.join('')}</div>`,
+          pageType: 'normal-v2-next-data'
+        };
+      }
+    } catch (_) {}
+  }
   const emptyStoreMessageResult = () => ({
     success: true,
     messageHtml: '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>',
@@ -1526,7 +1573,7 @@ async function dispatchTrustedYahooMessageSend(tab, messageText) {
   }
 }
 
-async function extractYahooTradeMessages(tabId) {
+async function extractYahooTradeMessages(tabId, options = {}) {
   const startedAt = Date.now();
   let lastResult = { success: false, error: 'message extraction returned no result' };
   while (Date.now() - startedAt <= MESSAGE_EXTRACT_RENDER_WAIT_MS) {
@@ -1538,6 +1585,7 @@ async function extractYahooTradeMessages(tabId) {
     lastResult = injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
     if (lastResult?.success) return lastResult;
     if (lastResult?.error !== 'message list not found') return lastResult;
+    if (options.singleAttempt === true) return lastResult;
     await sleep(MESSAGE_EXTRACT_POLL_MS);
   }
   return lastResult;
@@ -6965,8 +7013,8 @@ async function executeYahooMessageJob(job) {
   try {
     const result = await withTimeout((async () => {
       tab = await openTransactionPage(job, beforeTabIds);
-      tab = await prepareYahooMessagePage(tab, job);
       if (job.jobType === 'send') {
+        tab = await prepareYahooMessagePage(tab, job);
         const sendResult = await sendYahooTradeMessage(tab, job.sendText || '');
         if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
         const extractResult = await extractYahooTradeMessages(tab.id);
@@ -6978,7 +7026,11 @@ async function executeYahooMessageJob(job) {
         });
         return { success: true };
       }
-      const extractResult = await extractYahooTradeMessages(tab.id);
+      let extractResult = await extractYahooTradeMessages(tab.id, { singleAttempt: true });
+      if (!extractResult?.success || extractResult.pageType === 'fallback') {
+        tab = await prepareYahooMessagePage(tab, job);
+        extractResult = await extractYahooTradeMessages(tab.id);
+      }
       if (!extractResult?.success) throw new Error(extractResult?.error || 'message extraction failed');
       await updateYahooMessageStatus({
         orderId: job.orderId,

@@ -3836,6 +3836,39 @@ function testExtractPendingShipmentScanResultUsesNormalV2NextDataSellerNameWitho
   assert.equal(result.needsSellerInfoFallback, false);
 }
 
+function testExtractPendingShipmentScanResultPrefersNormalV2MessageTrackingBeforeSellerName() {
+  const nextData = createNormalV2NextDataScript({
+    auctionId: 'o1237183162',
+    progressStatus: 'sellerSendDone',
+    tradeInfo: {
+      sendInfo: {
+        shipMethod: { name: '\u304a\u4efb\u305b\u904b\u9001\u4fbf\uff0f\u5143\u6255\u3044' },
+        trackingInfo: { trackingNumber: '' }
+      },
+      sellerInfo: { name: 'TG-JP\u3000\u30e4\u30d5\u30aa\u30af\u62c5\u5f53' }
+    },
+    message: {
+      messages: [{
+        date: '7\u670829\u65e5',
+        dailyMessages: [{
+          body: '\u767a\u9001\u3057\u307e\u3057\u305f\u3002\u8ffd\u8de1\u756a\u53f7\u306f 1234-5678-9012 \u3067\u3059\u3002'
+        }]
+      }]
+    }
+  });
+  const api = loadContentForTest('', '/trade/top?aid=o1237183162', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.trackingNumber, '123456789012');
+  assert.equal(result.trackingFallback, 'normal_v2_next_data_message');
+  assert.equal(result.needsSellerInfoFallback, false);
+}
+
 function testNormalV2NextDataDoesNotChangeOldFlowBeforeSellerSendDone() {
   const nextData = createNormalV2NextDataScript({
     auctionId: 'o1237183162',
@@ -4980,6 +5013,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking();
   testExtractPendingShipmentScanResultUsesNormalV2NextDataWhenStatusDomIsMissed();
   testExtractPendingShipmentScanResultUsesNormalV2NextDataSellerNameWithoutClick();
+  testExtractPendingShipmentScanResultPrefersNormalV2MessageTrackingBeforeSellerName();
   testNormalV2NextDataDoesNotChangeOldFlowBeforeSellerSendDone();
   testExtractPendingShipmentScanResultNormalV2RequestsSellerInfoWithoutTracking();
   testExtractNormalV2SellerInfoNameScopesNameToSellerTable();

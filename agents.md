@@ -382,9 +382,11 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ### 2026-07-30 Yahoo 新版普通商品发货页兼容
 
-Yahoo 新版普通商品取引页把旧版“出品者から商品発送の連絡がありました。到着したら、受け取り連絡をしてください。”改为“商品が発送されました。到着後、受け取り連絡をしてください。”，并把配送信息改为语义化表格。插件新增仅作用于新版的独立分支，旧版普通商品和商城判断保持不变。新版优先读取 `script#__NEXT_DATA__`：`top.progressStatus = sellerSendDone` 作为已发货事实，`top.tradeInfo.sendInfo.shipMethod.name` 和 `trackingInfo.trackingNumber` 作为物流、追踪号，缺少追踪号时直接使用 `top.tradeInfo.sellerInfo.name` 作为代用单号；同时兼容 `props.pageProps.initialState.top` 和 `props.initialState.top` 两条状态树。这样即使新版状态 DOM 的随机 class 改变或正文备用状态被顶部“取引情報”导航截断，仍会提交 `shipped: true` 并把订单从待发货推进到待收货。
+Yahoo 新版普通商品取引页把旧版“出品者から商品発送の連絡がありました。到着したら、受け取り連絡をしてください。”改为“商品が発送されました。到着後、受け取り連絡をしてください。”，并把配送信息改为语义化表格。插件新增仅作用于新版的独立分支，旧版普通商品和商城判断保持不变。新版优先读取 `script#__NEXT_DATA__`：`top.progressStatus = sellerSendDone` 作为已发货事实，`top.tradeInfo.sendInfo.shipMethod.name` 和 `trackingInfo.trackingNumber` 作为物流、追踪号；同时兼容 `props.pageProps.initialState.top` 和 `props.initialState.top` 两条状态树。这样即使新版状态 DOM 的随机 class 改变或正文备用状态被顶部“取引情報”导航截断，仍会提交 `shipped: true` 并把订单从待发货推进到待收货。
 
-新版 DOM 表格解析继续作为备用：按标题为 `お届け情報` 的表格读取 `配送方法` 和 `追跡番号`，不依赖随机 `gv-*` class。只有 `__NEXT_DATA__` 和当前 DOM 都没有有效追踪号及出品者氏名时，才点击顶部“情報”，等待页面渲染后严格限定标题为 `出品者情報` 的表格，再读取其中 `氏名`；不会误取同页 `お届け情報` 或 `落札者情報` 中的氏名，也不会走旧版聊天消息回退。情報页最终仍未渲染出卖家氏名时不提交空单号，并记录扫描诊断。
+新版 DOM 表格解析继续作为备用：按标题为 `お届け情報` 的表格读取 `配送方法` 和 `追跡番号`，不依赖随机 `gv-*` class。追踪号严格按“`お届け情報` / NextData 真实单号 → NextData 聊天正文中的单号 → `top.tradeInfo.sellerInfo.name` → 点击顶部 `情報` 后读取 `出品者情報` 的 `氏名`”顺序回退；聊天只读取 `top.message.messages[].dailyMessages[].body`，不把商品或其他页面文本作为候选。点击 `情報` 后会等待页面渲染，并严格限定标题为 `出品者情報` 的表格，不会误取同页 `お届け情報` 或 `落札者情報` 中的氏名。情報页最终仍未渲染出卖家氏名时不提交空单号，并记录扫描诊断。
+
+新版消息读取也优先利用初始页 `__NEXT_DATA__` 中的 `top.message.messages`，无需为了读取历史消息先点击“メッセージ”；生成的消息 HTML 保留新版标记、发送人、时间、换行和本人消息标记，并对原文做 HTML 转义。只有初始状态没有可识别消息数据时，读取任务才沿用既有流程点击“メッセージ”并等待 DOM。消息发送仍必须点击“メッセージ”，因为输入框和发送按钮只在该标签渲染；发送后优先读取已渲染 DOM，以取得刚发送的最新内容而不是初始 NextData 的旧快照。
 
 验证：
 

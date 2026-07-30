@@ -2523,6 +2523,11 @@ function getNormalV2NextDataShipment() {
     if (!top || top.progressStatus !== 'sellerSendDone') return null;
     const sendInfo = top.tradeInfo?.sendInfo || {};
     const auctionId = normalizeTextValue(top.auctionId);
+    const messageText = (Array.isArray(top.message?.messages) ? top.message.messages : [])
+      .flatMap(group => Array.isArray(group?.dailyMessages) ? group.dailyMessages : [])
+      .map(message => String(message?.body || '').trim())
+      .filter(Boolean)
+      .join('\n');
     return {
       shipped: true,
       shippingCompany: cleanShippingCompanyText(sendInfo.shipMethod?.name || ''),
@@ -2534,6 +2539,11 @@ function getNormalV2NextDataShipment() {
           auctionId
         }
       ),
+      messageTrackingNumber: extractTrackingNumberFromText(messageText, {
+        textOnly: true,
+        includeUnlabeled: true,
+        auctionId
+      }),
       sellerInfoName: normalizeNameValue(top.tradeInfo?.sellerInfo?.name || '')
     };
   } catch (_) {
@@ -2667,8 +2677,9 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     const deliveryInfo = getNormalV2DeliveryInfo();
     const shippingCompany = normalV2NextData?.shippingCompany || deliveryInfo.shippingCompany;
     const actualTrackingNumber = normalV2NextData?.trackingNumber || deliveryInfo.trackingNumber;
+    const messageTrackingNumber = normalV2NextData?.messageTrackingNumber || '';
     const sellerInfoName = normalV2NextData?.sellerInfoName || '';
-    const trackingNumber = actualTrackingNumber || sellerInfoName;
+    const trackingNumber = actualTrackingNumber || messageTrackingNumber || sellerInfoName;
     return {
       type: 'shipped',
       pageVariant: 'normal_v2',
@@ -2681,7 +2692,9 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
       ),
       trackingFallback: actualTrackingNumber
         ? ''
-        : (sellerInfoName ? 'normal_v2_next_data_seller_info_name' : '')
+        : (messageTrackingNumber
+          ? 'normal_v2_next_data_message'
+          : (sellerInfoName ? 'normal_v2_next_data_seller_info_name' : ''))
     };
   }
   if (storeShipped) {

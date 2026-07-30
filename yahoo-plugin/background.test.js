@@ -310,6 +310,63 @@ function testYahooTradeMessageExtractionReadsNormalV2ThreadWithoutComposer() {
   assert.doesNotMatch(result.messageHtml, /textarea|button/);
 }
 
+function testYahooTradeMessageExtractionReadsNormalV2NextDataWithoutOpeningTab() {
+  const api = loadBackgroundForTest();
+  const nextData = {
+    textContent: JSON.stringify({
+      props: {
+        pageProps: {
+          initialState: {
+            top: {
+              message: {
+                canSend: true,
+                messages: [{
+                  date: '7\u670829\u65e5',
+                  dailyMessages: [
+                    {
+                      time: '20:43',
+                      name: '\u3042\u306a\u305f',
+                      body: '\u304a\u4e16\u8a71\u306b\u306a\u308a\u307e\u3059\u3002\n<script>alert(1)</script>',
+                      isOwn: true,
+                      isSystem: false
+                    },
+                    {
+                      time: '21:50',
+                      name: '\u30a2\u30b7\u30e5\u30ea\u30fc',
+                      body: '\u660e\u65e5\u306e\u5348\u524d\u96c6\u8377\u3067\u767a\u9001\u81f4\u3057\u307e\u3059\u3002',
+                      isOwn: false,
+                      isSystem: false
+                    }
+                  ]
+                }]
+              }
+            }
+          }
+        }
+      }
+    })
+  };
+  const document = {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  const result = Function('document', `return ${api.getYahooTradeMessageExtractScript()};`)(document);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageType, 'normal-v2-next-data');
+  assert.match(result.messageHtml, /data-gdaipai-message-v2="true"/);
+  assert.match(result.messageHtml, /\u660e\u65e5\u306e\u5348\u524d\u96c6\u8377\u3067\u767a\u9001\u81f4\u3057\u307e\u3059/);
+  assert.match(result.messageHtml, /data-gdaipai-message-own="true"/);
+  assert.doesNotMatch(result.messageHtml, /<script>/);
+  assert.match(result.messageHtml, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+}
+
 function testYahooMessageNavigationDetectsNormalV2Thread() {
   const textarea = {};
   const sendButton = createYahooMessageNavigationElement('\u9001\u4fe1');
@@ -1085,6 +1142,21 @@ function testSendYahooMessageJobFetchesLatestMessagesAfterSend() {
   assert.match(sendBranch[1], /sendYahooTradeMessage\(tab, job\.sendText/);
   assert.match(sendBranch[1], /extractYahooTradeMessages\(tab\.id\)/);
   assert.match(sendBranch[1], /messageHtml: extractResult\?\.success \? extractResult\.messageHtml : ''/);
+}
+
+function testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  const executeStart = source.indexOf('async function executeYahooMessageJob(job)');
+  const executeEnd = source.indexOf('async function runYahooMessageJobs()', executeStart);
+  const executeSource = source.slice(executeStart, executeEnd);
+  const initialExtractIndex = executeSource.indexOf("extractYahooTradeMessages(tab.id, { singleAttempt: true })");
+  const fallbackPrepareIndex = executeSource.indexOf('tab = await prepareYahooMessagePage(tab, job);', initialExtractIndex);
+
+  assert.ok(initialExtractIndex >= 0, 'fetch should try initial-page message data');
+  assert.ok(fallbackPrepareIndex > initialExtractIndex, 'fetch should open message tab only after initial extraction fails');
+  const sendBranch = executeSource.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
+  assert.ok(sendBranch);
+  assert.match(sendBranch[1], /prepareYahooMessagePage\(tab, job\)/);
 }
 
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
@@ -10375,6 +10447,7 @@ async function run() {
 testNoServiceWorkerLifecycleErrorDetection();
 testYahooTradeMessageSelectorsCoverNormalAndStorePages();
 testYahooTradeMessageExtractionReadsNormalV2ThreadWithoutComposer();
+testYahooTradeMessageExtractionReadsNormalV2NextDataWithoutOpeningTab();
 testYahooMessageNavigationDetectsNormalV2Thread();
 testYahooTradeMessageSendScopesNormalV2Composer();
 testYahooTradeMessageExtractionSkipsStoreLegalLinks();
@@ -10395,6 +10468,7 @@ testYahooMessageNavigationOpensRedesignedMessageTab();
 await testPrepareYahooMessagePageOpensMessageTabBeforeReading();
 await testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence();
 testSendYahooMessageJobFetchesLatestMessagesAfterSend();
+testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick();
