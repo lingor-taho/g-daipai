@@ -1976,7 +1976,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const hasDirectPurchaseProcedureButton = controls.some(text => /^\s*\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b\s*$/.test(text));
   const directPaymentLifecycleText = [transactionStatusText, bodyText].filter(Boolean).join('\n');
   const hasDirectPaymentEntry = (
-    /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059/.test(directPaymentLifecycleText) &&
+    /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(directPaymentLifecycleText) &&
     /\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044/.test(directPaymentLifecycleText) &&
     hasDirectPurchaseProcedureButton &&
     isYahooPaymentInputUrl(purchaseProcedureUrl)

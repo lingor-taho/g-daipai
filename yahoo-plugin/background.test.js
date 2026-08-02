@@ -3406,8 +3406,8 @@ function testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice() {
 function testNormalBidderPaysPageWithPaymentEntryUsesCashOnDeliveryZeroShipping() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
-    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
-    bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
     controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
     purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
   });
@@ -3427,12 +3427,19 @@ function testNormalBidderPaysPageWithPaymentEntryUsesCashOnDeliveryZeroShipping(
     paymentShippingMode: 'cash_on_delivery',
     paymentShippingFeeJpy: 0
   }), 9550);
+
+  const misspelledState = api.buildPaymentPageStateFromSnapshot({
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
+    purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048'
+  });
+  assert.equal(misspelledState.hasDirectPaymentEntry, false);
 }
 
 function testBidderPaysPageWithoutDirectPaymentEntryKeepsExistingClassification() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
-    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
     controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b']
   });
 
@@ -3870,8 +3877,8 @@ async function testRunTransactionStartTreatsNormalCashOnDeliveryEntryAsPendingPa
             success: true,
             snapshot: {
               url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048',
-              transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
-              bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+              transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+              bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
               controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
               purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
             }

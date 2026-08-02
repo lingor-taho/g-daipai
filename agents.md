@@ -382,7 +382,7 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ### 2026-08-02 普通商品落札者负担到付支付入口兼容
 
-普通商品原始商品快照仍保留 `shipping_fee_text=落札者負担`。交易开始页只有同时出现“落札おめでとうございます。購入手続きを行ってください。”、精确的 `購入手続きをする` 控件且链接指向 `/buyer/payment/input` 时，才认定为特殊到付入口：订单写入 `payment_shipping_mode=cash_on_delivery`、`payment_shipping_fee_jpy=0`，状态进入 `pending_payment`，后续沿用正常付款流程。其他普通商品的 `落札者負担` 继续进入 `waiting_shipping`，同捆判断优先级不变。有效运费规则对该订单返回 `0円`，但不改写商品原始运费文本。
+普通商品原始商品快照仍保留 `shipping_fee_text=落札者負担`。交易开始页只有同时出现“落札おめでとうございます。購入手続きを行ってください。”、精确的 `購入手続きをする` 控件且链接指向 `/buyer/payment/input` 时，才认定为特殊到付入口：订单写入 `payment_shipping_mode=cash_on_delivery`、`payment_shipping_fee_jpy=0`，状态进入 `pending_payment`，后续沿用正常付款流程。生产商品 `1238377048` 的真实页面源码确认按钮是带 `/buyer/payment/input` 的标准链接；首次实现把“ございます”的 Unicode 误写成缺少“ご”的“ざいます”，测试数据又复制了同一错字，导致测试通过但生产永远无法命中，现已按真实文案修正测试和判断。其他普通商品的 `落札者負担` 继续进入 `waiting_shipping`，同捆判断优先级不变。有效运费规则对该订单返回 `0円`，但不改写商品原始运费文本。
 
 验证：
 ```powershell
