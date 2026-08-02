@@ -1134,6 +1134,33 @@ async function testUpdateTransactionStartStatusMarksOrderCancelled() {
   assert.match(statusUpdate.sql, /order_status IS NULL OR order_status = ''/);
 }
 
+async function testUpdateTransactionStartStatusMarksCashOnDeliveryShippingOverride() {
+  const calls = [];
+  const fakeDb = {
+    async getAll(sql, params) {
+      calls.push({ sql, params });
+      return [];
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updateTransactionStartStatus({
+    orderId: 22,
+    status: ORDER_STATUS_PENDING_PAYMENT,
+    paymentShippingMode: 'cash_on_delivery',
+    paymentShippingFeeJpy: 0
+  }, fakeDb);
+
+  assert.equal(result.updated, 1);
+  const statusUpdate = calls.find(call => /UPDATE orders/.test(call.sql) && /SET order_status/.test(call.sql));
+  assert.ok(statusUpdate);
+  assert.match(statusUpdate.sql, /payment_shipping_mode = 'cash_on_delivery'/);
+  assert.match(statusUpdate.sql, /payment_shipping_fee_jpy = 0/);
+}
+
 async function testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder() {
   const calls = [];
   const tasks = new Map([
@@ -2140,6 +2167,41 @@ async function testGetPaymentJobsIncludesBundleFinalPriceTotal() {
   assert.equal(result.jobs[0].bundleGroupId, 'bundle-a');
 }
 
+async function testGetPaymentJobsUsesCashOnDeliveryShippingOverride() {
+  let getAllCall = 0;
+  const fakeDb = {
+    async getAll(sql, params) {
+      getAllCall += 1;
+      if (getAllCall === 1) return [];
+      assert.match(sql, /payment_shipping_mode/);
+      assert.match(sql, /payment_shipping_fee_jpy/);
+      return [{
+        order_id: 23,
+        product_id: 'special1',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/special1',
+        product_title: 'Cash on delivery item',
+        product_type: 'normal',
+        transaction_url: 'https://contact.example/special1',
+        total_amount_cny: 400,
+        final_price: 9550,
+        payment_final_price: 9550,
+        shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5',
+        bundle_shipping_fee_text: '',
+        payment_shipping_mode: 'cash_on_delivery',
+        payment_shipping_fee_jpy: 0,
+        bundle_group_id: ''
+      }];
+    }
+  };
+
+  const result = await getPaymentJobs(fakeDb, { random: () => 0 });
+
+  assert.equal(result.jobs.length, 1);
+  assert.equal(result.jobs[0].paymentShippingMode, 'cash_on_delivery');
+  assert.equal(result.jobs[0].paymentShippingFeeJpy, 0);
+  assert.equal(result.jobs[0].effectiveShippingFeeText, '0\u5186');
+}
+
 function testPaymentJobLimitRangeAndRandomSelection() {
   assert.deepEqual(getPaymentJobLimitRange({ payment_job_limit: '3' }), { min: 3, max: 3 });
   assert.deepEqual(getPaymentJobLimitRange({ payment_job_limit_min: '5', payment_job_limit_max: '2' }), { min: 2, max: 5 });
@@ -2851,6 +2913,7 @@ Promise.all([
   testSaveTransactionStartRunLogWritesJsonConfig(),
   testUpdateTransactionStartStatusUpdatesBundleByProductIds(),
   testUpdateTransactionStartStatusMarksOrderCancelled(),
+  testUpdateTransactionStartStatusMarksCashOnDeliveryShippingOverride(),
   testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder(),
   testSyncYahooWonOrdersMarksStoreProductTypeWithoutTaxType(),
   testSyncYahooWonOrdersUsesWonPageAsSourceOfTruthForFailedTask(),
@@ -2881,6 +2944,7 @@ Promise.all([
   testUpdateScanStatusRejectsBundleGroupToEmptyStatus(),
   testGetPaymentJobsReturnsPendingSettlementWithPayable(),
   testGetPaymentJobsIncludesBundleFinalPriceTotal(),
+  testGetPaymentJobsUsesCashOnDeliveryShippingOverride(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
   testManualOrderImportCompletesWithoutClearingScanCounter(),
   testYahooMessageCompletesWithoutClearingScanCounter(),

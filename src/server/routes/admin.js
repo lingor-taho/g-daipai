@@ -314,6 +314,8 @@ function buildAdminOrdersUserWonDateRangeQuery({ userId, fromDate, toDate }) {
             o.order_status,
             o.order_remark,
             o.bundle_shipping_fee_text,
+            o.payment_shipping_mode,
+            o.payment_shipping_fee_jpy,
             o.transaction_url,
             o.transaction_start_error,
             o.shipping_company,
@@ -358,6 +360,7 @@ function buildOrderStatusDebugOrdersQuery(productId) {
     sql: `SELECT o.id, o.task_id, o.order_status, o.final_price, o.won_at, o.won_time_text,
             o.created_at, o.updated_at, o.transaction_started_at, o.transaction_start_error,
             o.bundle_group_id, o.bundle_shipping_fee_text,
+            o.payment_shipping_mode, o.payment_shipping_fee_jpy,
             t.product_id,
             p.product_type AS product_type,
             p.shipping_fee_text AS shipping_fee_text

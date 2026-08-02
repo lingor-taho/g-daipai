@@ -28,6 +28,17 @@ function canSettleShippingFeeText(shippingFeeText) {
 function getEffectiveShippingFeeText(order = {}) {
   const bundleText = String(order.bundle_shipping_fee_text || '').trim();
   if (bundleText) return bundleText;
+  const paymentShippingMode = String(order.payment_shipping_mode || '').trim();
+  const paymentShippingFee = order.payment_shipping_fee_jpy;
+  if (
+    paymentShippingMode === 'cash_on_delivery' &&
+    paymentShippingFee !== null &&
+    paymentShippingFee !== undefined &&
+    paymentShippingFee !== '' &&
+    Number(paymentShippingFee) === 0
+  ) {
+    return `0\u5186`;
+  }
   return String(order.shipping_fee_text || '').trim();
 }
 

@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS orders (
   total_amount_cny DECIMAL(10,2),
   order_status VARCHAR(32),
   bundle_shipping_fee_text VARCHAR(64),
+  payment_shipping_mode VARCHAR(32),
+  payment_shipping_fee_jpy INTEGER,
   transaction_url TEXT,
   bundle_group_id VARCHAR(64),
   transaction_started_at DATETIME,

@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-07-29
+**最后更新**: 2026-08-02
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -379,6 +379,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-02 普通商品落札者负担到付支付入口兼容
+
+普通商品原始商品快照仍保留 `shipping_fee_text=落札者負担`。交易开始页只有同时出现“落札おめでとうございます。購入手続きを行ってください。”、精确的 `購入手続きをする` 控件且链接指向 `/buyer/payment/input` 时，才认定为特殊到付入口：订单写入 `payment_shipping_mode=cash_on_delivery`、`payment_shipping_fee_jpy=0`，状态进入 `pending_payment`，后续沿用正常付款流程。其他普通商品的 `落札者負担` 继续进入 `waiting_shipping`，同捆判断优先级不变。有效运费规则对该订单返回 `0円`，但不改写商品原始运费文本。
+
+验证：
+```powershell
+node src/shared/shippingRules.test.cjs
+node src/server/routes/plugin.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-07-30 Yahoo 新版普通商品发货页兼容
 

@@ -43,7 +43,8 @@ const {
 } = require('../../shared/biddingRules.cjs');
 const {
   normalizeShippingFeeText,
-  parseShippingFeeToNumber
+  parseShippingFeeToNumber,
+  getEffectiveShippingFeeText
 } = require('../../shared/shippingRules.cjs');
 const {
   calculateSheetPayable,
@@ -1431,11 +1432,19 @@ async function updateTransactionStartStatus(payload = {}, database = db) {
     err.statusCode = 400;
     throw err;
   }
+  const hasCashOnDeliveryPaymentShipping = String(payload.paymentShippingMode || '').trim() === 'cash_on_delivery'
+    && payload.paymentShippingFeeJpy !== null
+    && payload.paymentShippingFeeJpy !== undefined
+    && payload.paymentShippingFeeJpy !== ''
+    && Number(payload.paymentShippingFeeJpy) === 0;
+  const paymentShippingOverrideSql = hasCashOnDeliveryPaymentShipping
+    ? ",\n         payment_shipping_mode = 'cash_on_delivery',\n         payment_shipping_fee_jpy = 0"
+    : '';
   const beforeRows = await getOrderStatusAuditRows(database, orderIds);
   const result = await database.query(
     `UPDATE orders
      SET order_status = ?,
-         bundle_group_id = COALESCE(?, bundle_group_id),
+         bundle_group_id = COALESCE(?, bundle_group_id)${paymentShippingOverrideSql},
          transaction_started_at = CURRENT_TIMESTAMP,
          transaction_start_error = NULL,
          updated_at = CURRENT_TIMESTAMP
@@ -2789,6 +2798,8 @@ async function getPaymentJobs(database = db, options = {}) {
               ELSE o.final_price
             END AS payment_final_price,
             o.bundle_shipping_fee_text,
+            o.payment_shipping_mode,
+            o.payment_shipping_fee_jpy,
             o.bundle_group_id,
             t.product_id,
             p.product_url AS product_url,
@@ -2816,7 +2827,9 @@ async function getPaymentJobs(database = db, options = {}) {
       payableCny: row.total_amount_cny,
       finalPrice: row.final_price,
       paymentFinalPrice: row.payment_final_price,
-      effectiveShippingFeeText: row.bundle_shipping_fee_text || row.shipping_fee_text || '',
+      paymentShippingMode: row.payment_shipping_mode || '',
+      paymentShippingFeeJpy: row.payment_shipping_fee_jpy,
+      effectiveShippingFeeText: getEffectiveShippingFeeText(row),
       bundleGroupId: row.bundle_group_id || ''
     })),
     total: rows.length,

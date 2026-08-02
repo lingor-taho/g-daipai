@@ -3403,6 +3403,43 @@ function testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice() {
   ));
 }
 
+function testNormalBidderPaysPageWithPaymentEntryUsesCashOnDeliveryZeroShipping() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
+    purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
+  });
+
+  assert.equal(state.hasDirectPaymentEntry, true);
+  assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'normal' }, state), true);
+  assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'store' }, state), false);
+  assert.equal(api.getExpectedPaymentShippingFeeJpy({
+    productType: 'normal',
+    effectiveShippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5',
+    paymentShippingMode: 'cash_on_delivery',
+    paymentShippingFeeJpy: 0
+  }), 0);
+  assert.equal(api.getExpectedPaymentAmountJpy({
+    finalPrice: 9550,
+    effectiveShippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5',
+    paymentShippingMode: 'cash_on_delivery',
+    paymentShippingFeeJpy: 0
+  }), 9550);
+}
+
+function testBidderPaysPageWithoutDirectPaymentEntryKeepsExistingClassification() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b']
+  });
+
+  assert.equal(state.hasDirectPaymentEntry, false);
+  assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'normal' }, state), false);
+}
+
 function testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice() {
   const api = loadBackgroundForTest();
 
@@ -3786,6 +3823,96 @@ async function testRunTransactionStartCompletesFixedShippingInfoBeforePendingPay
   assert.equal(statusCalls.length, 1);
   assert.equal(statusCalls[0].orderId, 78);
   assert.equal(statusCalls[0].status, 'pending_payment');
+}
+
+async function testRunTransactionStartTreatsNormalCashOnDeliveryEntryAsPendingPayment() {
+  const statusCalls = [];
+  const clickedActions = [];
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async create(urlOrOptions) {
+        const url = typeof urlOrOptions === 'string' ? urlOrOptions : urlOrOptions?.url;
+        return { id: 43, url, status: 'complete', windowId: 3 };
+      },
+      async get(id) {
+        return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048', status: 'complete', windowId: 3 };
+      },
+      async query() {
+        return [{ id: 43, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048', status: 'complete', windowId: 3 }];
+      },
+      async sendMessage(id, message) {
+        if (message.type === 'EXTRACT_TRANSACTION_START_INFO') {
+          return { success: true, loginStatus: { status: 'ok' }, info: { available: false } };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              complete: false,
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048'
+            }
+          };
+        }
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          return { success: false, error: 'bundle decide should not be clicked for direct payment entry' };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        if (details.world === 'MAIN') {
+          return [{ result: {
+            success: true,
+            snapshot: {
+              url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048',
+              transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+              bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+              controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
+              purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
+            }
+          } }];
+        }
+        return [{ result: { success: false, error: 'unused script' } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 863,
+                productId: '1238377048',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048',
+                shippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runTransactionStartJobs();
+
+  assert.deepEqual(clickedActions, []);
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].orderId, 863);
+  assert.equal(statusCalls[0].status, 'pending_payment');
+  assert.equal(statusCalls[0].paymentShippingMode, 'cash_on_delivery');
+  assert.equal(statusCalls[0].paymentShippingFeeJpy, 0);
 }
 
 async function testRunTransactionStartMarksBuyerDeletedPageCancelled() {
@@ -10529,6 +10656,8 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testStoreConfirmationApplyDoesNotForceHiddenInputsChecked();
   await testStoreConfirmationTrustedClickPointsUseRealSelectors();
   testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice();
+  testNormalBidderPaysPageWithPaymentEntryUsesCashOnDeliveryZeroShipping();
+  testBidderPaysPageWithoutDirectPaymentEntryKeepsExistingClassification();
   testPaymentAmountRejectsUnknownShippingWhenPageTotalExceedsFinalPrice();
   testPaymentAmountRejectsMissingDetectedTotal();
   testPaymentAmountTreatsFreeAndCashOnDeliveryAsZeroShippingForAllProducts();
@@ -10541,6 +10670,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
   await testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment();
+  await testRunTransactionStartTreatsNormalCashOnDeliveryEntryAsPendingPayment();
   await testRunTransactionStartMarksBuyerDeletedPageCancelled();
   await testRunTransactionStartPostsDiagnosticWhenNormalBundleStartFails();
   await testMonitorSyncCollectsAllBiddingPagesBeforeSync();

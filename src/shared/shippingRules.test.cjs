@@ -44,4 +44,16 @@ assert.equal(getEffectiveShippingFeeText({
   bundle_shipping_fee_text: '0円'
 }), '0円');
 
+assert.equal(getEffectiveShippingFeeText({
+  shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5',
+  payment_shipping_mode: 'cash_on_delivery',
+  payment_shipping_fee_jpy: 0
+}), '0\u5186');
+assert.equal(canSettleOrderShippingFee({
+  product_type: 'normal',
+  shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5',
+  payment_shipping_mode: 'cash_on_delivery',
+  payment_shipping_fee_jpy: 0
+}), true);
+
 console.log('shipping rules tests passed');

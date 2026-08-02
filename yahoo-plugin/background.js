@@ -1841,8 +1841,7 @@ function getRandomIntInclusive(min, max, randomFn = getRandomSource()) {
 
 function getExpectedPaymentAmountJpy(job = {}) {
   const finalPrice = getPaymentJobFinalPriceJpy(job);
-  const shippingText = job.effectiveShippingFeeText || job.shippingFeeText || '';
-  const shipping = parseYenAmount(shippingText);
+  const shipping = getExpectedPaymentShippingFeeJpy(job);
   if (finalPrice === null || shipping === null) return null;
   return finalPrice + shipping;
 }
@@ -1901,6 +1900,17 @@ function isPaymentEntryOrTerminalState(state = {}) {
 }
 
 function getExpectedPaymentShippingFeeJpy(job = {}) {
+  const paymentShippingMode = String(job.paymentShippingMode || job.payment_shipping_mode || '').trim();
+  const paymentShippingFee = job.paymentShippingFeeJpy ?? job.payment_shipping_fee_jpy;
+  if (
+    paymentShippingMode === 'cash_on_delivery' &&
+    paymentShippingFee !== null &&
+    paymentShippingFee !== undefined &&
+    paymentShippingFee !== '' &&
+    Number(paymentShippingFee) === 0
+  ) {
+    return 0;
+  }
   return parseYenAmount(job.effectiveShippingFeeText || job.shippingFeeText || '');
 }
 
@@ -1946,13 +1956,31 @@ function parsePaymentAmountJpyFromText(text) {
   return yenMatches.length ? Math.max(...yenMatches) : 0;
 }
 
+function isYahooPaymentInputUrl(value) {
+  return /\/buyer\/payment\/input(?:[/?#]|$)/i.test(String(value || '').trim());
+}
+
+function isDirectCashOnDeliveryPaymentEntry(job = {}, state = {}) {
+  const productType = String(job.productType || job.product_type || '').trim();
+  return productType === 'normal' && state?.hasDirectPaymentEntry === true;
+}
+
 function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
   const bodyText = normalize(snapshot.bodyText || '');
   const transactionStatusText = normalize(snapshot.transactionStatusText || snapshot.primaryStatusText || '');
   const lifecycleText = transactionStatusText || bodyText;
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(normalize).filter(Boolean) : [];
+  const purchaseProcedureUrl = normalize(snapshot.purchaseProcedureUrl || '');
   const hasControl = pattern => controls.some(text => pattern.test(text));
+  const hasDirectPurchaseProcedureButton = controls.some(text => /^\s*\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b\s*$/.test(text));
+  const directPaymentLifecycleText = [transactionStatusText, bodyText].filter(Boolean).join('\n');
+  const hasDirectPaymentEntry = (
+    /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3056\u3044\u307e\u3059/.test(directPaymentLifecycleText) &&
+    /\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044/.test(directPaymentLifecycleText) &&
+    hasDirectPurchaseProcedureButton &&
+    isYahooPaymentInputUrl(purchaseProcedureUrl)
+  );
   const paymentAmountJpy = parsePaymentAmountJpyFromText(bodyText);
   const paymentMethodFeeMatch = bodyText.match(/\u624b\u6570\u6599[^\d]{0,20}([\d,]+)\s*\u5186/);
   const paymentMethodFeeJpy = paymentMethodFeeMatch ? Number(paymentMethodFeeMatch[1].replace(/,/g, '')) || 0 : 0;
@@ -1983,6 +2011,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   return {
     url: snapshot.url || '',
     title: snapshot.title || '',
+    purchaseProcedureUrl,
     transactionStatusText,
     textSample: bodyText.slice(0, 500),
     controlsSample: controls.slice(0, 20),
@@ -2003,6 +2032,8 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     hasStoreBundlePurchaseNotice,
     hasSinglePurchaseProcedureButton: hasControl(/\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
     hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
+    hasDirectPurchaseProcedureButton,
+    hasDirectPaymentEntry,
     hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
     hasPlacementOkButton: hasPlacementDefaultModal && hasControl(/^\s*OK\s*$/),
     hasTransactionDecideButton: hasControl(/^\s*\u6c7a\u5b9a\u3059\u308b\s*$/),
@@ -2025,9 +2056,17 @@ async function getPaymentPageState(tabId) {
         el.getAttribute?.('aria-label')
       ].filter(Boolean).join(' '));
       const bodyText = normalize(document.body?.innerText || document.body?.textContent || '');
-      const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
-        .map(el => getText(el))
-        .filter(Boolean);
+      const controlDetails = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+        .map(el => ({
+          text: getText(el),
+          href: String(el.href || el.getAttribute?.('href') || '').trim()
+        }))
+        .filter(control => control.text);
+      const controls = controlDetails.map(control => control.text);
+      const purchaseProcedureControl = controlDetails.find(control =>
+        /^\s*\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b\s*$/.test(control.text) &&
+        /\/buyer\/payment\/input(?:[/?#]|$)/i.test(control.href)
+      );
       const isLifecycleStatusText = text => (
         /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text) ||
         /\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044/.test(text) ||
@@ -2162,6 +2201,7 @@ async function getPaymentPageState(tabId) {
           bodyText,
           transactionStatusText,
           controls,
+          purchaseProcedureUrl: purchaseProcedureControl?.href || '',
           hasStoreConfirmationSection,
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
           hasAppraisalSection: Boolean(appraisalSection),
@@ -6221,13 +6261,23 @@ async function executeTransactionStartJob(job) {
       return { processedProductIds: bundleProductIds };
     }
     if (isBidderPaysShippingText(job.shippingFeeText)) {
-      const result = await completeBidderPaysShippingTransaction(tab);
-      if (!result?.success) {
-        await updateTransactionStartStatus({ orderId: job.orderId, error: result?.error || 'bidder pays shipping confirmation failed' });
-        return { processedProductIds: [job.productId] };
+      const paymentEntryState = await getPaymentPageState(tab.id).catch(() => null);
+      if (isDirectCashOnDeliveryPaymentEntry(job, paymentEntryState)) {
+        await updateTransactionStartStatus({
+          orderId: job.orderId,
+          status: 'pending_payment',
+          paymentShippingMode: 'cash_on_delivery',
+          paymentShippingFeeJpy: 0
+        });
+      } else {
+        const result = await completeBidderPaysShippingTransaction(tab);
+        if (!result?.success) {
+          await updateTransactionStartStatus({ orderId: job.orderId, error: result?.error || 'bidder pays shipping confirmation failed' });
+          return { processedProductIds: [job.productId] };
+        }
+        tab = result.tab;
+        await updateTransactionStartStatus({ orderId: job.orderId, status: 'waiting_shipping' });
       }
-      tab = result.tab;
-      await updateTransactionStartStatus({ orderId: job.orderId, status: 'waiting_shipping' });
     } else {
       const result = await completeFixedShippingTransactionInfo(tab);
       if (!result?.success) {
@@ -7387,6 +7437,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   executePendingShipmentScanJob,
   shouldAttemptBundleInputAction,
   buildPaymentPageStateFromSnapshot,
+  isDirectCashOnDeliveryPaymentEntry,
   parsePaymentAmountJpyFromText,
   clickStoreConfirmationChange,
   checkAllStoreConfirmationItemsAndApply,
