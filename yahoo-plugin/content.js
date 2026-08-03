@@ -2088,12 +2088,30 @@ function getTransactionLifecycleStatusText(text = getBodyText()) {
 function isYahooTransactionCancelledText(text = '') {
   const source = String(text || '');
   return /\u843d\u672d\u8005\u524a\u9664[\s\S]{0,80}\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
+    /\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
 }
 
+function hasVisibleStoppedTransactionDialog() {
+  const candidates = Array.from(document.querySelectorAll(
+    '[role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [id*="modal" i], [id*="dialog" i], div, section, aside, table'
+  ) || []);
+  return candidates.some(candidate => {
+    const style = window.getComputedStyle?.(candidate);
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+    const rect = candidate.getBoundingClientRect?.();
+    if (rect && (rect.width <= 0 || rect.height <= 0)) return false;
+    const text = getRenderedText(candidate);
+    if (!/\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f/.test(text)) return false;
+    return Array.from(candidate.querySelectorAll?.('button, a, input[type="button"], input[type="submit"], [role="button"]') || [])
+      .some(control => /^\s*\u9589\u3058\u308b\s*$/.test(getRenderedText(control) || String(control?.value || '')));
+  });
+}
+
 function detectBuyerDeletedCancellation(text = getBodyText()) {
-  return isYahooTransactionCancelledText(getTransactionLifecycleStatusText(text));
+  return hasVisibleStoppedTransactionDialog() ||
+    isYahooTransactionCancelledText(getTransactionLifecycleStatusText(text));
 }
 
 function normalizeYenText(value) {
@@ -2664,7 +2682,7 @@ function getNormalPaymentInfoText() {
 function extractPendingShipmentScanResult(text = getBodyText()) {
   const source = String(text || '');
   const lifecycleStatusText = getTransactionLifecycleStatusText(source);
-  if (isYahooTransactionCancelledText(lifecycleStatusText)) {
+  if (hasVisibleStoppedTransactionDialog() || isYahooTransactionCancelledText(lifecycleStatusText)) {
     return { type: 'cancelled' };
   }
 

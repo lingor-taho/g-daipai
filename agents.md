@@ -380,6 +380,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-03 付款后取消弹窗识别
+
+普通商品付款后被取消时，Yahoo 旧版取引页可能先显示“取引が中止されました。”弹窗，关闭后才露出“落札者削除されたため、取引はできません”的底层页面。插件现在优先检查可见弹窗：弹窗包含精确的“取引が中止されました。”且带有可见“閉じる”控件时，直接作为取消事实，不点击关闭按钮；“お支払い代金は、全額返金されます。”仅为退款说明，不作为取消判定的必要条件。待发货扫描、付款页和确认收货/取消检查状态均使用该判定，原有“落札者削除”和“キャンセルされました”规则保持不变。
+
+验证：
+```powershell
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.js
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-02 普通商品落札者负担到付支付入口兼容
 
 普通商品原始商品快照仍保留 `shipping_fee_text=落札者負担`。交易开始页只有同时出现“落札おめでとうございます。購入手続きを行ってください。”、精确的 `購入手続きをする` 控件且链接指向 `/buyer/payment/input` 时，才认定为特殊到付入口：订单写入 `payment_shipping_mode=cash_on_delivery`、`payment_shipping_fee_jpy=0`，状态进入 `pending_payment`，后续沿用正常付款流程。生产商品 `1238377048` 的真实页面源码确认按钮是带 `/buyer/payment/input` 的标准链接；首次实现把“ございます”的 Unicode 误写成缺少“ご”的“ざいます”，测试数据又复制了同一错字，导致测试通过但生产永远无法命中，现已按真实文案修正测试和判断。其他普通商品的 `落札者負担` 继续进入 `waiting_shipping`，同捆判断优先级不变。有效运费规则对该订单返回 `0円`，但不改写商品原始运费文本。

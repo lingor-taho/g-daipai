@@ -4836,6 +4836,24 @@ function testExtractPendingShipmentScanResultDetectsCancelled() {
   assert.equal(api.extractPendingShipmentScanResult().type, 'cancelled');
 }
 
+function testExtractPendingShipmentScanResultDetectsVisibleStoppedTransactionDialog() {
+  const closeButton = createTestElement('\u9589\u3058\u308b');
+  const dialog = createTestElement('\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f\u3002');
+  dialog.querySelectorAll = selector => selector.includes('button') ? [closeButton] : [];
+  const api = loadContentForTest(
+    '\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f\u3002\n\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002',
+    '/buyer/top',
+    {
+      querySelectorAll(selector) {
+        if (selector.includes('[role="dialog"]') && selector.includes('div')) return [dialog];
+        return [];
+      }
+    }
+  );
+
+  assert.equal(api.extractPendingShipmentScanResult().type, 'cancelled');
+}
+
 function testExtractPendingShipmentScanResultUsesPrimaryStatusText() {
   const api = loadContentForTest(
     [
@@ -5053,6 +5071,7 @@ async function run() {
   testExtractPendingShipmentScanResultFallsBackToSellerInfoNameInsideFullTradeBlock();
   testExtractPendingShipmentScanResultFallsBackToSellerName();
   testExtractPendingShipmentScanResultDetectsCancelled();
+  testExtractPendingShipmentScanResultDetectsVisibleStoppedTransactionDialog();
   testExtractPendingShipmentScanResultUsesPrimaryStatusText();
 }
 

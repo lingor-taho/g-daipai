@@ -2007,7 +2007,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     (/\u9451\u5b9a/.test(bodyText) && (/\u9451\u5b9a\u3057\u306a\u3044/.test(bodyText) || controls.some(text => /\u9451\u5b9a\u3057\u306a\u3044/.test(text))));
   const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(lifecycleText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) && waitingShipmentText);
-  const cancelled = isYahooTransactionCancelledText(lifecycleText);
+  const cancelled = snapshot.hasStoppedTransactionDialog === true || isYahooTransactionCancelledText(lifecycleText);
   return {
     url: snapshot.url || '',
     title: snapshot.title || '',
@@ -2193,6 +2193,14 @@ async function getPaymentPageState(tabId) {
         isVisibleElement(storeConfirmationBlock) &&
         isVisibleElement(directStoreConfirmationChange)
       );
+      const hasStoppedTransactionDialog = [...document.querySelectorAll(
+        '[role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [id*="modal" i], [id*="dialog" i], div, section, aside, table'
+      )].some(candidate => {
+        const renderedText = normalize(candidate?.innerText || '');
+        if (!isVisibleElement(candidate) || !/\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f/.test(renderedText)) return false;
+        return [...candidate.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+          .some(control => isVisibleElement(control) && /^\s*\u9589\u3058\u308b\s*$/.test(normalize(control?.innerText || control?.value || '')));
+      });
       return {
         success: true,
         snapshot: {
@@ -2202,6 +2210,7 @@ async function getPaymentPageState(tabId) {
           transactionStatusText,
           controls,
           purchaseProcedureUrl: purchaseProcedureControl?.href || '',
+          hasStoppedTransactionDialog,
           hasStoreConfirmationSection,
           hasStoreConfirmationEditPage: Boolean(document.querySelector('#confirm a[data-cl-params*="_cl_link:update"]')),
           hasAppraisalSection: Boolean(appraisalSection),
@@ -3913,6 +3922,7 @@ function isYahooTransactionCancelledText(text = '') {
   const source = String(text || '');
   return /\u843d\u672d\u8005\u524a\u9664/.test(source) ||
     /\u843d\u672d\u8005\u524a\u9664[\s\S]{0,80}\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
+    /\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
 }
@@ -3936,7 +3946,7 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   const transactionStatusText = normalize(snapshot.transactionStatusText || snapshot.primaryStatusText || '');
   const lifecycleText = transactionStatusText || text;
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
-  const cancelled = isYahooTransactionCancelledText(lifecycleText);
+  const cancelled = snapshot.hasStoppedTransactionDialog === true || isYahooTransactionCancelledText(lifecycleText);
   const transactionNavRendered = (
     /\u53d6\u5f15\u30ca\u30d3/.test(text) &&
     /\u8cfc\u5165/.test(text) &&
@@ -4054,12 +4064,21 @@ async function getConfirmReceiptPageState(tabId) {
         (/\bjsOnReceiveButton\b/.test(String(el.className || '')) || !/\bjsOffReceiveButton\b/.test(String(el.className || '')))
       );
       const visibleReceiptButton = receiptButtons.find(isVisible);
+      const hasStoppedTransactionDialog = [...document.querySelectorAll(
+        '[role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [id*="modal" i], [id*="dialog" i], div, section, aside, table'
+      )].some(candidate => {
+        const renderedText = normalize(candidate?.innerText || '');
+        if (!isVisible(candidate) || !/\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f/.test(renderedText)) return false;
+        return [...candidate.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
+          .some(control => isVisible(control) && /^\s*\u9589\u3058\u308b\s*$/.test(normalize(control?.innerText || control?.value || '')));
+      });
       return {
         success: true,
         snapshot: {
           url: location.href,
           bodyText: normalize(document.body?.textContent || ''),
           transactionStatusText,
+          hasStoppedTransactionDialog,
           controls,
           hasReceiptCheckbox: Boolean(checkbox),
           hasReceiptCheckboxChecked: Boolean(checkbox?.checked),
