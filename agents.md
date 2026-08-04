@@ -380,6 +380,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-04 商品说明中的“系统错误”不再误判为 Yahoo 错误页
+
+商品 `x1239135207` 的店铺卖家说明包含“システムエラーにより、お取り引きの継続ができなくなります”，Yahoo 同时把该说明写入页面状态脚本的 `sellerMessage`。插件原先虽然排除了 `#description`，但使用克隆页面的 `textContent` 时仍会读取脚本内容，导致在 `execute-start-system-error` 阶段把正常商品页误判为 Yahoo 系统错误。现在出价状态文本会同时排除商品说明容器和 `script/style/noscript/template` 非页面状态内容；真实 Yahoo 错误页的可见错误文案仍照常识别。回归测试覆盖嵌入脚本的卖家说明含“システムエラー”时不报错。
+
+验证：
+```powershell
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/content.test.js
+node yahoo-plugin/content.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-03 付款后取消弹窗识别
 
 普通商品付款后被取消时，Yahoo 旧版取引页可能先显示“取引が中止されました。”弹窗，关闭后才露出“落札者削除されたため、取引はできません”的底层页面。插件现在优先检查可见弹窗：弹窗包含精确的“取引が中止されました。”且带有可见“閉じる”控件时，直接作为取消事实，不点击关闭按钮；“お支払い代金は、全額返金されます。”仅为退款说明，不作为取消判定的必要条件。待发货扫描、付款页和确认收货/取消检查状态均使用该判定，原有“落札者削除”和“キャンセルされました”规则保持不变。

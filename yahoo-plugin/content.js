@@ -36,7 +36,13 @@ function getBodyTextWithoutProductDescription() {
   if (!body) return '';
   if (!body.cloneNode) return body.textContent || '';
   const clone = body.cloneNode(true);
-  clone.querySelectorAll?.('#description, [id="description"]').forEach(el => el.remove());
+  // Yahoo embeds product/seller descriptions in page-state scripts in addition
+  // to rendering them in the description container. Neither source is Yahoo
+  // status UI and both can contain words such as "system error" as ordinary
+  // seller instructions, so exclude them from bid outcome detection.
+  clone.querySelectorAll?.(
+    'script, style, noscript, template, #description, [id="description"], #itemDescription, [data-testid*="description" i]'
+  ).forEach(el => el.remove());
   return clone.textContent || '';
 }
 

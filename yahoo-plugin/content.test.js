@@ -58,15 +58,25 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
           return options.getBodyText ? options.getBodyText() : bodyText;
         },
         cloneNode() {
-          const cloneText = options.getBodyTextWithoutDescription
-            ? options.getBodyTextWithoutDescription()
-            : (options.getBodyText ? options.getBodyText() : bodyText);
+          let cloneText = options.getBodyText ? options.getBodyText() : bodyText;
           return {
             querySelectorAll(selector) {
-              if (selector === '#description, [id="description"]') {
-                return [{ remove() {} }];
+              const removableNodes = [];
+              if (selector.includes('#description') && options.getBodyTextWithoutDescription) {
+                removableNodes.push({
+                  remove() {
+                    cloneText = options.getBodyTextWithoutDescription();
+                  }
+                });
               }
-              return [];
+              if (selector.includes('script') && options.getBodyTextWithoutScripts) {
+                removableNodes.push({
+                  remove() {
+                    cloneText = options.getBodyTextWithoutScripts();
+                  }
+                });
+              }
+              return removableNodes;
             },
             get textContent() {
               return cloneText;
@@ -408,6 +418,18 @@ function testProductDescriptionIsExcludedFromBidPageText() {
   const api = loadContentForTest('', '/jp/auction/d1233022997', {
     getBodyText: () => '\u5546\u54c1\u8aac\u660e \u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc \u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f \u73fe\u5728 480\u5186 \u4eca\u3059\u3050\u843d\u672d',
     getBodyTextWithoutDescription: () => '\u73fe\u5728 480\u5186 \u4eca\u3059\u3050\u843d\u672d'
+  });
+
+  assert.equal(api.isYahooBidAccessFailureText(), false);
+}
+
+function testEmbeddedSellerMessageIsExcludedFromBidPageText() {
+  const visiblePageText = '\u73fe\u5728 480\u5186 \u4eca\u3059\u3050\u843d\u672d';
+  const api = loadContentForTest('', '/jp/auction/x1239135207', {
+    getBodyText: () =>
+      `${visiblePageText} <script>sellerMessage: \u307e\u3068\u3081\u3066\u8cfc\u5165\u3092\u9078\u3070\u306a\u3044\u3067\u304f\u3060\u3055\u3044\u3002` +
+      '\u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc\u306b\u3088\u308a\u3001\u304a\u53d6\u308a\u5f15\u304d\u306e\u7d99\u7d9a\u304c\u3067\u304d\u306a\u304f\u306a\u308a\u307e\u3059\u3002</script>',
+    getBodyTextWithoutScripts: () => visiblePageText
   });
 
   assert.equal(api.isYahooBidAccessFailureText(), false);
@@ -4886,6 +4908,7 @@ async function run() {
   testYahooBidAccessFailureTextIsDetected();
   testProductDescriptionRetryTextIsNotYahooSystemError();
   testProductDescriptionIsExcludedFromBidPageText();
+  testEmbeddedSellerMessageIsExcludedFromBidPageText();
   await testYahooBidAccessFailureClosesTask();
   await testYahooSellerBlacklistFailureClosesTask();
   await testYahooSystemErrorPageReturnsStableBidError();
