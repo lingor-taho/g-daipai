@@ -1840,6 +1840,12 @@ async function testStoreBuyoutReviewSkipsPayPayBenefitConfirmLink() {
 async function testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm() {
   let stage = 'review';
   let reviewConfirmClicks = 0;
+  const storeConfirmationTitle = createTestElement('\u30b9\u30c8\u30a2\u304b\u3089\u306e\u78ba\u8a8d\u4e8b\u9805');
+  const storeConfirmationChange = createTestElement('\u5909\u66f4');
+  storeConfirmationChange.tagName = 'A';
+  const storeConfirmationBlock = createTestElement('');
+  storeConfirmationBlock.querySelectorAll = () => [storeConfirmationTitle];
+  storeConfirmationBlock.querySelector = () => storeConfirmationChange;
   const reviewConfirmLink = createTestElement('\u78ba\u8a8d\u3059\u308b');
   reviewConfirmLink.tagName = 'A';
   reviewConfirmLink.getAttribute = name => {
@@ -1863,6 +1869,9 @@ async function testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm() {
       if (stage === 'final') return '\u8cfc\u5165\u3092\u78ba\u5b9a\u3057\u307e\u3059\u304b\uff1f \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048\u8cfc\u5165\u3092\u78ba\u5b9a\u3059\u308b \u78ba\u8a8d\u3059\u308b';
       return '\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f';
     },
+    querySelector(selector) {
+      return selector === '#cartopt' ? storeConfirmationBlock : null;
+    },
     querySelectorAll(selector) {
       if (selector === 'script') {
         return [{ textContent: 'var pageData = {"items":{"productID":"q1175609593","price":"273","winPrice":"273","productName":"store buyout"}};' }];
@@ -1875,12 +1884,24 @@ async function testStoreBuyoutFinalPurchaseClickDoesNotRepeatReviewConfirm() {
     }
   });
 
+  const confirmationResult = await api.executeBidV3(272, {
+    maxPrice: 272,
+    userMaxPrice: 300,
+    bidMode: 'buyout',
+    productType: 'store',
+    taxType: 'tax_included',
+    strategy: 'direct'
+  });
+  assert.equal(confirmationResult.storeConfirmationRequired, true);
+
   const result = await api.executeBidV3(272, {
     maxPrice: 272,
     userMaxPrice: 300,
     bidMode: 'buyout',
+    productType: 'store',
     taxType: 'tax_included',
-    strategy: 'direct'
+    strategy: 'direct',
+    storeConfirmationHandled: true
   });
 
   assert.equal(result.success, true);

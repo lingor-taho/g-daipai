@@ -793,6 +793,7 @@ async function executeBidV3(maxPrice, options = {}) {
   const taxType = options.taxType === 'tax_included' ? 'tax_included' : 'tax_zero';
   const bidMode = options.bidMode === 'buyout' ? 'buyout' : 'bid';
   const productType = options.productType === 'store' ? 'store' : 'normal';
+  const storeConfirmationHandled = options.storeConfirmationHandled === true;
   const strategy = options.strategy || 'direct';
   const taskId = options.taskId || null;
   const bodyText = getBodyText();
@@ -1310,7 +1311,7 @@ async function executeBidV3(maxPrice, options = {}) {
       !findBulkPurchaseInstantBuyButton()) {
       return { success: false, error: 'bulk purchase flow did not activate', closeTab: true };
     }
-    if (productType === 'store' && hasStoreConfirmationSectionForBuyout()) {
+    if (productType === 'store' && !storeConfirmationHandled && hasStoreConfirmationSectionForBuyout()) {
       return {
         success: true,
         storeConfirmationRequired: true,
@@ -2950,7 +2951,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  executeBidV3(msg.maxPrice, { taskId: msg.taskId, bidMode: msg.bidMode, productType: msg.productType, strategy: msg.strategy, userMaxPrice: msg.userMaxPrice, currentPrice: msg.currentPrice, taxType: msg.taxType, multiBidIncrement: msg.multiBidIncrement })
+  executeBidV3(msg.maxPrice, { taskId: msg.taskId, bidMode: msg.bidMode, productType: msg.productType, strategy: msg.strategy, userMaxPrice: msg.userMaxPrice, currentPrice: msg.currentPrice, taxType: msg.taxType, multiBidIncrement: msg.multiBidIncrement, storeConfirmationHandled: msg.storeConfirmationHandled })
     .then(result => sendResponse(result))
     .catch(err => sendResponse({ success: false, error: err.message }));
   return true;

@@ -9120,6 +9120,51 @@ async function testTransactionCleanupDoesNotCloseNewAuctionProductTabs() {
   assert.deepEqual(removed, [3]);
 }
 
+async function testWorkflowCleanupDoesNotCloseManagedBidTabs() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async get(id) {
+        return { id, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1239767133' };
+      },
+      async query() {
+        return [
+          { id: 2, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1239767133' },
+          { id: 3, url: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=other' }
+        ];
+      },
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+  api.registerManagedTaskTab(5137, 2);
+
+  await api.closeTabsForTransactionFlow(null, new Set());
+  await api.closeTabsForScanFlow(null, new Set());
+
+  assert.deepEqual(removed, [3, 3]);
+}
+
+async function testManagedBidTaskTracksAndClosesAllFlowTabs() {
+  const removed = [];
+  const api = loadBackgroundForTest({
+    tabs: {
+      async remove(id) {
+        removed.push(id);
+      }
+    }
+  });
+  api.registerManagedTaskTab(89, 19);
+  api.registerManagedTaskTab(89, 20);
+
+  assert.equal(api.getCurrentManagedTaskTabId(89), 20);
+  await api.closeManagedTaskTabs(89, 19);
+
+  assert.deepEqual(removed, [19, 20]);
+  assert.equal(api.getCurrentManagedTaskTabId(89), null);
+}
+
 async function testTransactionCleanupDoesNotCloseCreatedAuctionProductTabs() {
   const removed = [];
   const api = loadBackgroundForTest({
@@ -9454,6 +9499,7 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
 
 async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
   const statusBodies = [];
+  const snapshotBodies = [];
   const removedTabs = [];
   const bidMessages = [];
   const scriptCalls = [];
@@ -9485,6 +9531,7 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
         return { ok: true, async json() { return { success: true }; } };
       }
       if (value.includes('/api/plugin/task/89/snapshot')) {
+        snapshotBodies.push(JSON.parse(options.body || '{}'));
         return { ok: true, async json() { return { success: true }; } };
       }
       return { ok: true, async json() { return {}; } };
@@ -9506,6 +9553,7 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
             auctionId: 'p1226403738',
             currentPrice: 500,
             buyoutPrice: 500,
+            taxType: 'tax_zero',
             endTime: '2099-07-05T18:59:00+09:00'
           };
         }
@@ -9569,6 +9617,10 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
 
   assert.equal(bidMessages.length, 2);
   assert.equal(bidMessages.every(msg => msg.productType === 'store'), true);
+  assert.equal(bidMessages[0].storeConfirmationHandled, false);
+  assert.equal(bidMessages[1].storeConfirmationHandled, true);
+  assert.equal(Object.hasOwn(snapshotBodies[0], 'buyout_price'), false);
+  assert.equal(Object.hasOwn(snapshotBodies[0], 'tax_type'), false);
   assert.equal(scriptCalls[0], 'change');
   assert.equal(scriptCalls.includes('ready'), true);
   assert.equal(scriptCalls.includes('checkbox'), true);
@@ -10775,6 +10827,8 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   testYahooLoginPageCountsAsTransactionTab();
   await testTransactionCleanupClosesNewYahooLoginTabs();
   await testTransactionCleanupDoesNotCloseNewAuctionProductTabs();
+  await testWorkflowCleanupDoesNotCloseManagedBidTabs();
+  await testManagedBidTaskTracksAndClosesAllFlowTabs();
   await testTransactionCleanupDoesNotCloseCreatedAuctionProductTabs();
   await testTransactionCleanupKeepsManualVerificationTabsOpen();
   await testTransactionCleanupKeepsCurrentManualVerificationTabFromCreatedIds();

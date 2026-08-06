@@ -3207,20 +3207,17 @@ router.post('/yahoo-login/status', async (req, res) => {
   res.json({ success: true });
 });
 
+function buildPluginTaskSnapshotUpdate(payload = {}) {
+  return {
+    product_title: payload.product_title,
+    product_image_url: payload.product_image_url,
+    current_price: payload.current_price,
+    end_time: payload.end_time
+  };
+}
+
 router.patch('/task/:id/snapshot', async (req, res) => {
-  const {
-    product_url,
-    product_title,
-    product_image_url,
-    current_price,
-    buyout_price,
-    bid_count,
-    tax_type,
-    product_type,
-    shipping_fee_text,
-    end_time,
-    status
-  } = req.body || {};
+  const { status } = req.body || {};
   await db.query(
     `UPDATE tasks
      SET status = COALESCE(?, status),
@@ -3241,17 +3238,8 @@ router.patch('/task/:id/snapshot', async (req, res) => {
   if (task) {
     await upsertProductSnapshot(db, {
       product_id: task.product_id,
-      product_url,
-      product_title,
-      product_image_url,
-      current_price,
-      buyout_price,
-      bid_count,
-      tax_type,
-      product_type,
-      shipping_fee_text,
-      end_time
-    }, { source: 'fetch' });
+      ...buildPluginTaskSnapshotUpdate(req.body || {})
+    }, { source: 'plugin' });
   }
   await processPendingFollowupTasks();
   res.json({ success: true });
@@ -3366,3 +3354,4 @@ module.exports.YAHOO_LOW_PRICE_BID_LIMIT = YAHOO_LOW_PRICE_BID_LIMIT;
 module.exports.YAHOO_LOW_PRICE_INITIAL_BID = YAHOO_LOW_PRICE_INITIAL_BID;
 module.exports.resolveOrderFinalPrice = resolveOrderFinalPrice;
 module.exports.normalizeYahooWonTimeText = normalizeYahooWonTimeText;
+module.exports.buildPluginTaskSnapshotUpdate = buildPluginTaskSnapshotUpdate;

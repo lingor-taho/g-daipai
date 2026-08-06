@@ -35,6 +35,20 @@ function testNormalizeProductSnapshotKeepsKnownFieldsOnly() {
   });
 }
 
+function testNormalizeProductSnapshotPreservesMissingBidCount() {
+  const snapshot = normalizeProductSnapshot({
+    product_id: 'h1239767133',
+    current_price: 3546
+  });
+  assert.equal(snapshot.bid_count, null);
+
+  const explicitZero = normalizeProductSnapshot({
+    product_id: 'h1239767133',
+    bid_count: 0
+  });
+  assert.equal(explicitZero.bid_count, 0);
+}
+
 async function testBackfillProductsReadsTasksAndBiddingItemsOnly() {
   const calls = [];
   const fakeDb = {
@@ -151,6 +165,7 @@ async function testUpsertProductSnapshotDoesNotDefaultMissingTypeFields() {
 }
 
 testNormalizeProductSnapshotKeepsKnownFieldsOnly();
+testNormalizeProductSnapshotPreservesMissingBidCount();
 Promise.all([
   testBackfillProductsReadsTasksAndBiddingItemsOnly(),
   testBackfillOrderProductIdsUsesTaskRelationOnly(),

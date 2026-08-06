@@ -20,6 +20,8 @@ function normalizeProductSnapshot(input = {}) {
     Object.prototype.hasOwnProperty.call(input, 'taxType');
   const hasProductType = Object.prototype.hasOwnProperty.call(input, 'product_type') ||
     Object.prototype.hasOwnProperty.call(input, 'productType');
+  const hasBidCount = Object.prototype.hasOwnProperty.call(input, 'bid_count') ||
+    Object.prototype.hasOwnProperty.call(input, 'bidCount');
   return {
     product_id: productId,
     product_url: normalizeText(input.product_url ?? input.productUrl),
@@ -27,7 +29,7 @@ function normalizeProductSnapshot(input = {}) {
     product_image_url: normalizeText(input.product_image_url ?? input.productImageUrl ?? input.imageUrl),
     current_price: normalizeInteger(input.current_price ?? input.currentPrice),
     buyout_price: normalizeInteger(input.buyout_price ?? input.buyoutPrice),
-    bid_count: normalizeInteger(input.bid_count ?? input.bidCount) || 0,
+    bid_count: hasBidCount ? (normalizeInteger(input.bid_count ?? input.bidCount) || 0) : null,
     tax_type: hasTaxType ? normalizeText(input.tax_type ?? input.taxType) : null,
     product_type: hasProductType ? normalizeText(input.product_type ?? input.productType) : null,
     shipping_fee_text: normalizeText(input.shipping_fee_text ?? input.shippingFeeText),

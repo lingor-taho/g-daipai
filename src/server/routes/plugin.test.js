@@ -64,10 +64,30 @@ const {
   ORDER_STATUS_PENDING_RECEIPT,
   ORDER_STATUS_CANCELLED,
   DEFAULT_PAYMENT_JOB_LIMIT,
-  DEFAULT_PAYMENT_PAGE_STAY_SECONDS
+  DEFAULT_PAYMENT_PAGE_STAY_SECONDS,
+  buildPluginTaskSnapshotUpdate
 } = require('./plugin');
 
 const now = Date.parse('2026-05-13T12:00:00.000Z');
+
+function testPluginTaskSnapshotUpdateAllowsOnlyDynamicFields() {
+  assert.deepEqual(buildPluginTaskSnapshotUpdate({
+    product_title: 'Title',
+    product_image_url: 'https://example.com/image.jpg',
+    current_price: 3546,
+    end_time: '2026-08-13T02:19:28+09:00',
+    buyout_price: 3546,
+    tax_type: 'tax_zero',
+    bid_count: 0,
+    product_type: 'normal',
+    shipping_fee_text: '0\u5186'
+  }), {
+    product_title: 'Title',
+    product_image_url: 'https://example.com/image.jpg',
+    current_price: 3546,
+    end_time: '2026-08-13T02:19:28+09:00'
+  });
+}
 
 function minutesFromNow(minutes) {
   return new Date(now + minutes * 60 * 1000).toISOString();
@@ -2856,6 +2876,7 @@ async function testUpdateYahooMessageStatusOverwritesBadTransactionMessageWithEm
 }
 
 testDirectTaskIsReadyImmediately();
+testPluginTaskSnapshotUpdateAllowsOnlyDynamicFields();
 testTimedTaskWaitsUntilLeadWindow();
 testTimedTaskUsesExplicitMinuteColumns();
 testMultiBidUsesGlobalConfigStartWindow();
