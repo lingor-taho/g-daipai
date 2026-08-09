@@ -1829,6 +1829,101 @@ function buildOrderSettlementUpdateQuery(orderId, settlement) {
   };
 }
 
+async function rollbackOrderSettlement(database, rawProductId) {
+  const productId = extractAuctionId(rawProductId);
+  if (!productId) {
+    const error = new Error('valid productId is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            o.order_status,
+            o.settled_at,
+            o.total_amount_cny,
+            o.jpy_to_cny_rate
+     FROM orders o
+     INNER JOIN tasks t ON o.task_id = t.id
+     WHERE LOWER(t.product_id) = ?
+       AND t.status = 'success'
+     ORDER BY datetime(COALESCE(o.won_at, o.created_at)) DESC, o.id DESC`,
+    [productId]
+  );
+  if (!rows.length) {
+    const error = new Error('系统中没有这个商品订单');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const allowedStatuses = new Set([ORDER_STATUS_PENDING_PAYMENT, ORDER_STATUS_PENDING_SETTLEMENT]);
+  const blockedRows = rows.filter(row => !allowedStatuses.has(String(row.order_status || '').trim()));
+  if (blockedRows.length) {
+    const statusText = blockedRows.map(row => `${row.order_id}(${row.order_status || '空'})`).join(', ');
+    const error = new Error(`只能撤销待支付或待结算订单：${statusText}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const unsettledRows = rows.filter(row => (
+    !row.settled_at &&
+    row.total_amount_cny === null &&
+    row.jpy_to_cny_rate === null
+  ));
+  if (unsettledRows.length) {
+    const error = new Error(`订单尚未结算：${unsettledRows.map(row => row.order_id).join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const orderIds = rows.map(row => row.order_id);
+  const beforeRows = await getOrderStatusAuditRows(database, orderIds);
+  try {
+    await database.query('BEGIN IMMEDIATE');
+    const result = await database.query(
+      `UPDATE orders
+       SET order_status = ?,
+           jpy_to_cny_rate = NULL,
+           bank_fee_jpy = NULL,
+           handling_fee_cny = NULL,
+           large_amount_fee_cny = NULL,
+           large_amount_fee_applied = NULL,
+           tax_included_final_price = NULL,
+           has_user_finance_override = NULL,
+           total_amount_cny = NULL,
+           settled_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (${orderIds.map(() => '?').join(',')})
+         AND order_status IN (?, ?)`,
+      [
+        ORDER_STATUS_PENDING_PAYMENT,
+        ...orderIds,
+        ORDER_STATUS_PENDING_PAYMENT,
+        ORDER_STATUS_PENDING_SETTLEMENT
+      ]
+    );
+    if ((result.rowCount || 0) !== orderIds.length) {
+      throw new Error(`撤销结算更新数量不一致：应更新 ${orderIds.length}，实际 ${result.rowCount || 0}`);
+    }
+    await writeOrderStatusAuditLogs(database, beforeRows, {
+      status: ORDER_STATUS_PENDING_PAYMENT,
+      source: 'admin_settlement_rollback',
+      metadata: { productId, orderIds, settlementCleared: true }
+    });
+    await database.query('COMMIT');
+    return {
+      productId,
+      orderIds,
+      updatedCount: result.rowCount || 0,
+      orderStatus: ORDER_STATUS_PENDING_PAYMENT,
+      orderStatusText: '待支付'
+    };
+  } catch (error) {
+    await database.query('ROLLBACK').catch(() => null);
+    throw error;
+  }
+}
+
 function extractAuctionId(input) {
   const match = String(input || '').match(/[a-zA-Z]?\d{8,10}/);
   return match ? match[0].toLowerCase() : '';
@@ -3678,6 +3773,43 @@ router.post('/order-status-refresh/run', async (req, res) => {
   });
 });
 
+router.post('/settlement-rollback/run', async (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || req.body?.productIds || '');
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: 'productIds is required' });
+  }
+
+  const results = [];
+  for (const productId of productIds) {
+    try {
+      results.push({ success: true, ...await rollbackOrderSettlement(db, productId) });
+    } catch (error) {
+      results.push({ productId, success: false, error: error.message || '撤销结算失败' });
+    }
+  }
+
+  const successfulProductIds = results.filter(item => item.success).map(item => item.productId);
+  let paymentResumed = false;
+  if (successfulProductIds.length) {
+    const alertRow = await db.getOne("SELECT value FROM config WHERE key = 'payment_alert_message'");
+    const alertMessage = String(alertRow?.value || '');
+    if (successfulProductIds.some(productId => alertMessage.includes(productId))) {
+      await clearPaymentAlertAndContinue(db);
+      paymentResumed = true;
+    }
+  }
+
+  res.json({
+    success: results.some(item => item.success),
+    results,
+    rolledBack: results.filter(item => item.success).length,
+    failed: results.filter(item => !item.success).length,
+    paymentResumed
+  });
+});
+
 router.get('/data-cleanup/config', async (req, res) => {
   res.json(await getDataCleanupConfig(db));
 });
@@ -3826,6 +3958,7 @@ module.exports.buildRecentTaskFailureUserReportQuery = buildRecentTaskFailureUse
 module.exports.buildAdminMessagesListQuery = buildAdminMessagesListQuery;
 module.exports.mapAdminOrderListItem = mapAdminOrderListItem;
 module.exports.buildOrderSettlementUpdateQuery = buildOrderSettlementUpdateQuery;
+module.exports.rollbackOrderSettlement = rollbackOrderSettlement;
 module.exports.reassignOrderOwner = reassignOrderOwner;
 module.exports.updateOrderRemark = updateOrderRemark;
 module.exports.calculateOrderPayable = calculateOrderPayable;

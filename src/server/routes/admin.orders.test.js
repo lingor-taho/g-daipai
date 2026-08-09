@@ -25,6 +25,7 @@ const {
   buildAdminMessagesListQuery,
   buildOrderSettlementSelectQuery,
   buildOrderSettlementUpdateQuery,
+  rollbackOrderSettlement,
   buildAdminLogsQuery,
   mapAdminOrderListItem,
   updateOrderRemark,
@@ -1302,6 +1303,76 @@ async function testRefreshProductTypeWritesProductsOnly() {
   assert.equal(productInsert.params[8], 'store');
 }
 
+async function testRollbackOrderSettlementClearsFinanceFieldsAndRestoresPendingPayment() {
+  const queries = [];
+  const orderRow = {
+    order_id: 1013,
+    order_status: ORDER_STATUS_PENDING_SETTLEMENT,
+    settled_at: '2026-08-09 04:58:01',
+    total_amount_cny: 485.2,
+    jpy_to_cny_rate: 0.045
+  };
+  const fakeDb = {
+    async getAll(sql) {
+      if (/o\.settled_at/.test(sql)) return [orderRow];
+      if (/old_status/.test(sql)) {
+        return [{
+          order_id: 1013,
+          old_status: ORDER_STATUS_PENDING_SETTLEMENT,
+          product_id: 'j1239623383'
+        }];
+      }
+      return [];
+    },
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      return { rowCount: /^\s*UPDATE orders/.test(sql) ? 1 : 1 };
+    }
+  };
+
+  const result = await rollbackOrderSettlement(fakeDb, 'J1239623383');
+
+  assert.equal(result.productId, 'j1239623383');
+  assert.deepEqual(result.orderIds, [1013]);
+  assert.equal(result.orderStatus, ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(queries[0].sql, 'BEGIN IMMEDIATE');
+  const update = queries.find(call => /^\s*UPDATE orders/.test(call.sql));
+  assert.ok(update);
+  assert.match(update.sql, /order_status = \?/);
+  assert.match(update.sql, /jpy_to_cny_rate = NULL/);
+  assert.match(update.sql, /total_amount_cny = NULL/);
+  assert.match(update.sql, /settled_at = NULL/);
+  assert.equal(update.params[0], ORDER_STATUS_PENDING_PAYMENT);
+  const audit = queries.find(call => /INSERT INTO order_status_change_logs/.test(call.sql));
+  assert.ok(audit);
+  assert.equal(audit.params[2], ORDER_STATUS_PENDING_SETTLEMENT);
+  assert.equal(audit.params[3], ORDER_STATUS_PENDING_PAYMENT);
+  assert.equal(audit.params[4], 'admin_settlement_rollback');
+  assert.equal(queries.at(-1).sql, 'COMMIT');
+}
+
+async function testRollbackOrderSettlementRejectsAlreadyPaidOrder() {
+  const fakeDb = {
+    async getAll() {
+      return [{
+        order_id: 1013,
+        order_status: ORDER_STATUS_PENDING_SHIPMENT,
+        settled_at: '2026-08-09 04:58:01',
+        total_amount_cny: 485.2,
+        jpy_to_cny_rate: 0.045
+      }];
+    },
+    async query() {
+      throw new Error('should not update');
+    }
+  };
+
+  await assert.rejects(
+    () => rollbackOrderSettlement(fakeDb, 'j1239623383'),
+    /只能撤销待支付或待结算订单/
+  );
+}
+
 testShippingFeeParsing();
 testSettleableShippingFeeDetection();
 testStoreBidderPaysShippingCanSettleAsFree();
@@ -1363,7 +1434,9 @@ Promise.all([
   testMarkProductOrdersForResyncPrefersExistingOrderTasks(),
   testMarkTrackingRescanByProductIdMarksPendingReceiptOrders(),
   testRefreshProductShippingFeeWritesProductsOnly(),
-  testRefreshProductTypeWritesProductsOnly()
+  testRefreshProductTypeWritesProductsOnly(),
+  testRollbackOrderSettlementClearsFinanceFieldsAndRestoresPendingPayment(),
+  testRollbackOrderSettlementRejectsAlreadyPaidOrder()
 ]).catch(err => {
   console.error(err);
   process.exitCode = 1;

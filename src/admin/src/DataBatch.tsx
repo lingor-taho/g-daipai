@@ -8,12 +8,14 @@ import ReceiptSheetBackfillPage from './ReceiptSheetBackfill';
 import TrackingRescanPage from './TrackingRescan';
 import ProductDataDeletePage from './ProductDataDelete';
 import NormalBundleRepairPage from './NormalBundleRepair';
+import SettlementRollbackPage from './SettlementRollback';
 
 const labels = {
   shipping: '运费更新',
   productType: '商品类型更新',
   ordersResync: '落札商品更新',
   orderStatus: '订单状态更新',
+  settlementRollback: '撤销结算',
   receiptSheetBackfill: '待收货补表格',
   trackingRescan: '单号重扫',
   productDataDelete: '删除商品数据'
@@ -25,6 +27,7 @@ const dataBatchTabKeys = new Set([
   'productType',
   'ordersResync',
   'orderStatus',
+  'settlementRollback',
   'receiptSheetBackfill',
   'trackingRescan',
   'productDataDelete'
@@ -66,6 +69,11 @@ export default function DataBatchPage() {
           key: 'orderStatus',
           label: labels.orderStatus,
           children: <OrderStatusRefreshPage />
+        },
+        {
+          key: 'settlementRollback',
+          label: labels.settlementRollback,
+          children: <SettlementRollbackPage />
         },
         {
           key: 'receiptSheetBackfill',

@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-06
+**最后更新**: 2026-08-09
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-09 后台批处理新增撤销结算
+
+数据批处理新增独立“撤销结算”页签，可按商品 ID 批量撤销尚未付款完成订单的结算。服务端只允许 `pending_payment` / `pending_settlement` 且确有结算数据的订单执行；待发货、待收货、完成或取消等状态会拒绝，避免把已付款订单退回。成功后清空汇率、应付款、结算时间、手续费、含税成交价和用户财务覆盖标记等结算派生字段，并把订单恢复为 `pending_payment`，同时写入 `admin_settlement_rollback` 状态审计日志。
+
+如果当前全局付款失败提示正好属于本次撤销成功的商品，接口会清除该提示并重新开启付款任务，让其他 `pending_settlement` 订单继续执行；被撤销订单因为已恢复为待支付且结算字段为空，不会进入付款队列。后台操作带二次确认，并逐商品显示订单 ID、更新数量和失败原因。
+
+验证：
+
+```powershell
+node --check src/server/routes/admin.js
+node src/server/routes/admin.orders.test.js
+node src/admin/src/SettlementRollback.display.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-06 店铺即决确认重复、并发清理误关 tab 与商品快照降级修复
 
