@@ -2622,6 +2622,47 @@ async function testGetConfirmReceiptJobsRetriesSheetMatchOnceBeforeSkipping() {
   assert.equal(result.jobs[0].productId, 'e1232797856');
 }
 
+async function testGetConfirmReceiptJobsFailsFastOnGoogleSheetsTimeout() {
+  let attempts = 0;
+  const delays = [];
+  const fakeDb = {
+    async getAll(sql) {
+      if (/FROM config/.test(sql)) return [{ key: 'confirm_receipt_color', value: '#ff00ff' }];
+      return [{
+        order_id: 52,
+        order_status: ORDER_STATUS_PENDING_RECEIPT,
+        transaction_url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=e1232797857',
+        bundle_group_id: '',
+        product_id: 'e1232797857',
+        product_url: 'https://auctions.yahoo.co.jp/jp/auction/e1232797857',
+        product_title: 'receipt item',
+        product_type: 'normal'
+      }];
+    }
+  };
+
+  const error = await getConfirmReceiptJobs(fakeDb, {
+    retryDelayMs: 2000,
+    async sleep(ms) {
+      delays.push(ms);
+    },
+    async findRowsByProductIdWithAnyColor() {
+      attempts += 1;
+      const timeoutError = new Error('Google Sheets API request timed out after 8000ms');
+      timeoutError.googleSheetsTimeout = true;
+      throw timeoutError;
+    }
+  }).then(() => null, caught => caught);
+
+  assert.equal(attempts, 1);
+  assert.deepEqual(delays, []);
+  assert.equal(error.statusCode, 504);
+  assert.equal(error.productId, 'e1232797857');
+  assert.equal(error.googleSheetsTimeout, true);
+  assert.match(error.message, /Google 表格查询失败：商品ID e1232797857/);
+  assert.match(error.message, /timed out after 8000ms/);
+}
+
 async function testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled() {
   const calls = [];
   const fakeDb = {
@@ -2645,6 +2686,30 @@ async function testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancel
   assert.equal(updateCall.params[2], ORDER_STATUS_PENDING_PAYMENT);
   assert.equal(updateCall.params[3], ORDER_STATUS_PENDING_SETTLEMENT);
   assert.equal(updateCall.params[4], ORDER_STATUS_PENDING_RECEIPT);
+}
+
+async function testUpdateConfirmReceiptStatusFailureClearsFlagAndWritesDetailedAlert() {
+  const calls = [];
+  const fakeDb = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+
+  const result = await updateConfirmReceiptStatus({
+    productId: 'e1232797857',
+    error: 'Google 表格查询失败：Google Sheets API request timed out after 8000ms'
+  }, fakeDb);
+
+  assert.equal(result.confirmReceiptRequested, 0);
+  assert.deepEqual(calls.map(call => call.params[0]), [
+    'confirm_receipt_requested',
+    'confirm_receipt_alert_message'
+  ]);
+  assert.equal(calls[0].params[1], '0');
+  assert.match(calls[1].params[1], /确认收货失败：商品ID e1232797857/);
+  assert.match(calls[1].params[1], /timed out after 8000ms/);
 }
 
 async function testUpdateConfirmReceiptStatusMarksPaidCancelCheckOrderPendingShipment() {
@@ -2976,7 +3041,9 @@ Promise.all([
   testCompleteConfirmReceiptIncrementsScanCounter(),
   testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCancelChecks(),
   testGetConfirmReceiptJobsRetriesSheetMatchOnceBeforeSkipping(),
+  testGetConfirmReceiptJobsFailsFastOnGoogleSheetsTimeout(),
   testUpdateConfirmReceiptStatusCompletesBundleGroup(),
+  testUpdateConfirmReceiptStatusFailureClearsFlagAndWritesDetailedAlert(),
   testUpdateConfirmReceiptStatusMarksPaymentOrSettlementOrderCancelled(),
   testUpdateConfirmReceiptStatusMarksPaidCancelCheckOrderPendingShipment(),
   testCompleteManualTransactionStartDoesNotWriteAutoRunDate(),

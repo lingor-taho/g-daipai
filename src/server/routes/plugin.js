@@ -2588,6 +2588,7 @@ async function isConfirmReceiptSheetColorMatched(productId, colorHex, options = 
   try {
     result = await resolver(targetProductId, colorHex);
   } catch (error) {
+    if (error?.googleSheetsTimeout === true) throw error;
     if (retryDelayMs > 0) await sleepFn(retryDelayMs);
     result = await resolver(targetProductId, colorHex);
   }
@@ -2627,7 +2628,12 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
       try {
         sheetMatched = await isConfirmReceiptSheetColorMatched(row.product_id, colorHex, options);
       } catch (error) {
-        sheetError = error.message || String(error);
+        const reason = error.message || String(error);
+        const sheetQueryError = new Error(`Google 表格查询失败：商品ID ${row.product_id || '-'}，原因：${reason}`);
+        sheetQueryError.statusCode = error?.googleSheetsTimeout === true ? 504 : 502;
+        sheetQueryError.productId = row.product_id || '';
+        sheetQueryError.googleSheetsTimeout = error?.googleSheetsTimeout === true;
+        throw sheetQueryError;
       }
     }
     if (!sheetMatched) continue;
@@ -3107,7 +3113,12 @@ router.get('/confirm-receipt/jobs', async (req, res) => {
     const result = await getConfirmReceiptJobs(db);
     res.json({ success: true, ...result });
   } catch (error) {
-    res.status(error.statusCode || 500).json({ error: error.message || 'confirm receipt jobs failed' });
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'confirm receipt jobs failed',
+      productId: error.productId || '',
+      timeout: error.googleSheetsTimeout === true
+    });
   }
 });
 

@@ -4969,6 +4969,41 @@ async function testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab() {
   assert.deepEqual(calls[0], { orderId: 31, productId: 's31', status: 'success', bundleGroupId: '' });
 }
 
+async function testRunConfirmReceiptJobsReportsJobQueryTimeout() {
+  const statusCalls = [];
+  const api = loadBackgroundForTest({
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          ok: false,
+          status: 504,
+          async json() {
+            return {
+              success: false,
+              error: 'Google 表格查询失败：商品ID e1232797857，原因：Google Sheets API request timed out after 8000ms',
+              productId: 'e1232797857',
+              timeout: true
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+      return { ok: true, async json() { return { task: null }; } };
+    }
+  });
+
+  const count = await api.runConfirmReceiptJobs();
+
+  assert.equal(count, 0);
+  assert.deepEqual(statusCalls, [{
+    productId: 'e1232797857',
+    error: 'Google 表格查询失败：商品ID e1232797857，原因：Google Sheets API request timed out after 8000ms'
+  }]);
+}
+
 async function testRunConfirmReceiptJobsWaitsForEnabledReceiveButton() {
   const statusCalls = [];
   const sentDebuggerCommands = [];
@@ -10768,6 +10803,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMissing();
   await testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage();
   await testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab();
+  await testRunConfirmReceiptJobsReportsJobQueryTimeout();
   await testRunConfirmReceiptJobsWaitsForEnabledReceiveButton();
   await testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking();
   testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();

@@ -8,7 +8,9 @@ const {
   buildFindRowsByProductIdWithAnyColorPath,
   executeGoogleSheetsRequestWithRetry,
   extractSpreadsheetId,
+  fetchWithGoogleSheetsTimeout,
   getGoogleSheetsCredentialPath,
+  getGoogleSheetsTimeoutMs,
   getSheetConfig,
   isRetryableGoogleSheetsError,
   normalizeGoogleSheetName,
@@ -157,6 +159,36 @@ async function testGoogleSheetsNonRetryableFailureDoesNotRetry() {
   assert.equal(isRetryableGoogleSheetsError({ googleSheetsNetworkError: true }), true);
 }
 
+async function testGoogleSheetsFetchTimesOutAndDoesNotRetry() {
+  const error = await fetchWithGoogleSheetsTimeout('https://sheets.googleapis.com/test', {}, 'Google Sheets API request', {
+    timeoutMs: 5,
+    fetch: async (url, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const abortError = new Error('aborted');
+        abortError.name = 'AbortError';
+        reject(abortError);
+      }, { once: true });
+    })
+  }).then(() => null, caught => caught);
+
+  assert.match(error.message, /Google Sheets API request timed out after 5ms/);
+  assert.equal(error.code, 'GOOGLE_SHEETS_TIMEOUT');
+  assert.equal(error.googleSheetsTimeout, true);
+  assert.equal(isRetryableGoogleSheetsError(error), false);
+}
+
+function testGoogleSheetsTimeoutUsesBoundedEnvironmentValue() {
+  withEnv('GOOGLE_SHEETS_TIMEOUT_MS', undefined, () => {
+    assert.equal(getGoogleSheetsTimeoutMs(), 8000);
+  });
+  withEnv('GOOGLE_SHEETS_TIMEOUT_MS', '12000', () => {
+    assert.equal(getGoogleSheetsTimeoutMs(), 12000);
+  });
+  withEnv('GOOGLE_SHEETS_TIMEOUT_MS', '100', () => {
+    assert.equal(getGoogleSheetsTimeoutMs(), 1000);
+  });
+}
+
 function testAppendRowFormatSetsBlackText() {
   const backgroundColor = { red: 1, green: 0.9, blue: 0.8 };
   const request = buildAppendRowsFormatRequest({
@@ -231,12 +263,14 @@ async function run() {
   testAppendRowFormatUsesWhiteBackgroundByDefault();
   testFindRowsByProductIdWithAnyColorPathReadsOnlyColumnC();
   testBuildEnsureRemarkColumnRequestInsertsKColumn();
+  testGoogleSheetsTimeoutUsesBoundedEnvironmentValue();
   await testApplyConfigFromDbOverridesEnv();
   await testMojibakeSheetNameFallsBackToDefault();
   await testUpdateRowsByProductIdSkipsWhenUnconfigured();
   await testGoogleSheetsRetryableFailureRetriesOnce();
   await testGoogleSheetsRetryStopsAfterSecondFailure();
   await testGoogleSheetsNonRetryableFailureDoesNotRetry();
+  await testGoogleSheetsFetchTimesOutAndDoesNotRetry();
 }
 
 run().catch(error => {

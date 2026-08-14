@@ -23,6 +23,47 @@ let runtimeConfig = {
   googleSheetName: ''
 };
 const GOOGLE_SHEETS_RETRY_DELAY_MS = 1000;
+const DEFAULT_GOOGLE_SHEETS_TIMEOUT_MS = 8000;
+
+function getGoogleSheetsTimeoutMs() {
+  const configured = Number(process.env.GOOGLE_SHEETS_TIMEOUT_MS);
+  if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_GOOGLE_SHEETS_TIMEOUT_MS;
+  return Math.max(1000, Math.min(60000, Math.floor(configured)));
+}
+
+async function fetchWithGoogleSheetsTimeout(url, options = {}, label = 'Google Sheets request', dependencies = {}) {
+  const timeoutMs = Number.isFinite(Number(dependencies.timeoutMs))
+    ? Math.max(1, Number(dependencies.timeoutMs))
+    : getGoogleSheetsTimeoutMs();
+  const fetchFn = dependencies.fetch || fetch;
+  const setTimer = dependencies.setTimeout || setTimeout;
+  const clearTimer = dependencies.clearTimeout || clearTimeout;
+  const controller = new AbortController();
+  const upstreamSignal = options.signal;
+  let timedOut = false;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener?.('abort', abortFromUpstream, { once: true });
+  const timer = setTimer(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await fetchFn(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
+      timeoutError.code = 'GOOGLE_SHEETS_TIMEOUT';
+      timeoutError.googleSheetsTimeout = true;
+      timeoutError.googleSheetsNetworkError = true;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimer(timer);
+    upstreamSignal?.removeEventListener?.('abort', abortFromUpstream);
+  }
+}
 
 function base64Url(input) {
   return Buffer.from(input)
@@ -140,14 +181,14 @@ async function getAccessToken() {
   const assertion = `${unsigned}.${base64Url(signature)}`;
   let response;
   try {
-    response = await fetch(TOKEN_URL, {
+    response = await fetchWithGoogleSheetsTimeout(TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
         assertion
       })
-    });
+    }, 'Google OAuth token request');
   } catch (error) {
     error.googleSheetsNetworkError = true;
     throw error;
@@ -166,6 +207,7 @@ async function getAccessToken() {
 }
 
 function isRetryableGoogleSheetsError(error) {
+  if (error?.googleSheetsTimeout === true) return false;
   if (error?.googleSheetsNetworkError === true) return true;
   if (error?.name === 'TypeError') return true;
   const status = Number(error?.googleSheetsStatus || 0);
@@ -191,14 +233,14 @@ async function googleRequestOnce(path, options = {}) {
   const token = await getAccessToken();
   let response;
   try {
-    response = await fetch(`${SHEETS_API}/${path}`, {
+    response = await fetchWithGoogleSheetsTimeout(`${SHEETS_API}/${path}`, {
       ...options,
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
         ...(options.headers || {})
       }
-    });
+    }, 'Google Sheets API request');
   } catch (error) {
     error.googleSheetsNetworkError = true;
     throw error;
@@ -588,9 +630,11 @@ module.exports = {
   ensureHeaderRow,
   executeGoogleSheetsRequestWithRetry,
   extractSpreadsheetId,
+  fetchWithGoogleSheetsTimeout,
   findRowsByProductId,
   findRowsByProductIdWithAnyColor,
   getGoogleSheetsCredentialPath,
+  getGoogleSheetsTimeoutMs,
   getSheetConfig,
   googleColorToHex,
   isGoogleSheetsConfigured,

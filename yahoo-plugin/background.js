@@ -1702,7 +1702,13 @@ async function postPluginDiagnostic(payload = {}) {
 
 async function fetchConfirmReceiptJobs() {
   const res = await apiFetch('/api/plugin/confirm-receipt/jobs');
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (res.ok === false || data?.success === false || data?.error) {
+    const error = new Error(data?.error || `确认收货任务查询失败（HTTP ${res.status || '-'}）`);
+    error.productId = data?.productId || '';
+    error.timeout = data?.timeout === true;
+    throw error;
+  }
   return Array.isArray(data.jobs) ? data.jobs : [];
 }
 
@@ -7179,10 +7185,19 @@ async function runYahooMessageJobs() {
 }
 
 async function runConfirmReceiptJobs() {
-  const jobs = await fetchConfirmReceiptJobs();
+  let jobs;
+  try {
+    jobs = await fetchConfirmReceiptJobs();
+  } catch (error) {
+    await updateConfirmReceiptStatus({
+      productId: error?.productId || '',
+      error: error?.message || String(error || '确认收货任务查询失败')
+    }).catch(() => {});
+    return 0;
+  }
   if (!jobs.length) {
     await updateConfirmReceiptStatus({ empty: true });
-    return;
+    return 0;
   }
   for (const job of jobs) {
     try {
@@ -7192,6 +7207,7 @@ async function runConfirmReceiptJobs() {
       break;
     }
   }
+  return jobs.length;
 }
 
 async function syncIdleYahooPages() {

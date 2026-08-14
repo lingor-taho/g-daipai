@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-09
+**最后更新**: 2026-08-14
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,27 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-14 Google 表格查询超时不再阻塞确认收货与扫描
+
+生产侧曾出现确认收货 flag 为 1、扫描计数长期停在 `4 / 10`：`/api/plugin/confirm-receipt/jobs` 会为待收货订单逐个查询 Google Sheets 颜色，Google OAuth 或 Sheets API 请求没有超时，外部请求不返回时插件无法完成本轮工作流，也不会回写 `/api/plugin/idle-action/complete`，因此后续扫描计数无法推进。
+
+现在 Google OAuth token 和 Sheets API 请求统一增加 8 秒硬超时，可通过 `GOOGLE_SHEETS_TIMEOUT_MS` 调整（限制为 1-60 秒）。超时错误不再重试，普通网络错误、429 和 5xx 保留原有短暂重试逻辑。确认收货查询遇到超时时立即返回带商品 ID 的 504；插件捕获后调用确认收货状态接口，清除 `confirm_receipt_requested` 并写入具体的 `confirm_receipt_alert_message`，随后正常完成本轮 idle action，使扫描计数继续推进。其他非超时的 Google 表格查询失败也会返回 502 并使用同一错误回写路径，不再静默跳过。
+
+本改动已完成本地验证，尚未部署到生产；部署 API 后还需要 reload 服务器 Chrome 中的扩展。
+
+验证：
+
+```powershell
+node src/server/services/googleSheets.test.js
+node src/server/routes/plugin.test.js
+node yahoo-plugin/background.test.js
+node --check src/server/services/googleSheets.js
+node --check src/server/routes/plugin.js
+node --check yahoo-plugin/background.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-09 后台批处理新增撤销结算
 
