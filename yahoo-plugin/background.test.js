@@ -3414,16 +3414,19 @@ function testPaymentAmountAllowsUnknownShippingWhenPageTotalEqualsFinalPrice() {
 
 function testNormalBidderPaysPageWithPaymentEntryUsesCashOnDeliveryZeroShipping() {
   const api = loadBackgroundForTest();
-  const state = api.buildPaymentPageStateFromSnapshot({
-    transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
-    bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
-    controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
-    purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
-  });
+  for (const buttonText of ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b', '\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u3059\u308b']) {
+    const state = api.buildPaymentPageStateFromSnapshot({
+      transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+      bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+      controls: [buttonText],
+      purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
+    });
 
-  assert.equal(state.hasDirectPaymentEntry, true);
-  assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'normal' }, state), true);
-  assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'store' }, state), false);
+    assert.equal(state.hasDirectPaymentEntry, true);
+    assert.equal(state.hasPurchaseProcedureButton, true);
+    assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'normal' }, state), true);
+    assert.equal(api.isDirectCashOnDeliveryPaymentEntry({ productType: 'store' }, state), false);
+  }
   assert.equal(api.getExpectedPaymentShippingFeeJpy({
     productType: 'normal',
     effectiveShippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5',
@@ -3885,10 +3888,10 @@ async function testRunTransactionStartTreatsNormalCashOnDeliveryEntryAsPendingPa
           return [{ result: {
             success: true,
             snapshot: {
-              url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=1238377048',
+              url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=1238377048',
               transactionStatusText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
               bodyText: '\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002 \u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
-              controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b'],
+              controls: ['\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u3059\u308b'],
               purchaseProcedureUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1238377048&oid=73576617-3985593517-1400965'
             }
           } }];
@@ -7080,6 +7083,46 @@ async function testCompleteStoreConfirmationItemsUsesJsClickOnlyOnEditPage() {
   assert.equal(jsCheckboxChecks, 1);
   assert.equal(jsApplyClicks, 1);
   assert.equal(trustedAttachCount, 0);
+}
+
+async function testPaymentTrustedClickPointFindsNewPurchaseProcedureAnchor() {
+  const fakeAnchor = {
+    tagName: 'A',
+    textContent: '\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u3059\u308b',
+    value: '',
+    title: '',
+    href: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=n1240182786&oid=71365193-1886876317-4887080',
+    disabled: false,
+    getAttribute(name) {
+      return name === 'aria-label' ? '' : null;
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 200, top: 300, width: 400, height: 56 };
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args || [],
+          document: {
+            querySelectorAll() {
+              return [fakeAnchor];
+            }
+          }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const point = await api.getPaymentActionClickPoint(99, 'purchaseProcedure');
+
+  assert.equal(point.success, true);
+  assert.equal(point.text, '\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u3059\u308b');
+  assert.equal(point.x, 400);
+  assert.equal(point.y, 328);
 }
 
 async function testPaymentTrustedClickPointFindsRoleButton() {
@@ -10826,6 +10869,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunStorePaymentShippingMismatchDoesNotUseDebuggerFallback();
   await testRunPaymentJobsWaitsForMatchingAmountBeforeSelectingShipping();
   await testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage();
+  await testPaymentTrustedClickPointFindsNewPurchaseProcedureAnchor();
   await testPaymentTrustedClickPointFindsRoleButton();
   await testPaymentTrustedClickPointSkipsHiddenConfirmAnchor();
   await testPaymentReviewClickPointPrefersConfirmContainerOverPayPayBenefit();

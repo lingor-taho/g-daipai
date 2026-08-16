@@ -1964,7 +1964,7 @@ function getPaymentActionPatternSource(action) {
     easyPayment: '\\u0059\\u0061\\u0068\\u006f\\u006f\\u0021\\u304b\\u3093\\u305f\\u3093\\u6c7a\\u6e08\\u3067\\u652f\\u6255\\u3046',
     paymentClose: '^\\s*\\u9589\\u3058\\u308b\\s*$',
     singlePurchaseProcedure: '\\u5358\\u54c1\\u3067\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
-    purchaseProcedure: '\\u8cfc\\u5165\\u624b\\u7d9a\\u304d\\u3059\\u308b',
+    purchaseProcedure: '\\u8cfc\\u5165\\u624b\\u7d9a\\u304d(?:\\u3092)?\\u3059\\u308b',
     transactionInfoInput: '\\u53d6\\u5f15\\u60c5\\u5831\\u3092\\u5165\\u529b\\u3059\\u308b',
     placementOk: '^\\s*OK\\s*$',
     transactionDecide: '^\\s*\\u6c7a\\u5b9a\\u3059\\u308b\\s*$',
@@ -2018,7 +2018,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(normalize).filter(Boolean) : [];
   const purchaseProcedureUrl = normalize(snapshot.purchaseProcedureUrl || '');
   const hasControl = pattern => controls.some(text => pattern.test(text));
-  const hasDirectPurchaseProcedureButton = controls.some(text => /^\s*\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b\s*$/.test(text));
+  const hasDirectPurchaseProcedureButton = controls.some(text => /^\s*\u8cfc\u5165\u624b\u7d9a\u304d(?:\u3092)?\u3059\u308b\s*$/.test(text));
   const directPaymentLifecycleText = [transactionStatusText, bodyText].filter(Boolean).join('\n');
   const hasDirectPaymentEntry = (
     /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(directPaymentLifecycleText) &&
@@ -2076,7 +2076,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     hasPaymentCloseButton: hasControl(/^\s*\u9589\u3058\u308b\s*$/),
     hasStoreBundlePurchaseNotice,
     hasSinglePurchaseProcedureButton: hasControl(/\u5358\u54c1\u3067\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
-    hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b/),
+    hasPurchaseProcedureButton: hasControl(/\u8cfc\u5165\u624b\u7d9a\u304d(?:\u3092)?\u3059\u308b/),
     hasDirectPurchaseProcedureButton,
     hasDirectPaymentEntry,
     hasTransactionInfoInputButton: hasControl(/\u53d6\u5f15\u60c5\u5831\u3092\u5165\u529b\u3059\u308b/),
@@ -2109,7 +2109,7 @@ async function getPaymentPageState(tabId) {
         .filter(control => control.text);
       const controls = controlDetails.map(control => control.text);
       const purchaseProcedureControl = controlDetails.find(control =>
-        /^\s*\u8cfc\u5165\u624b\u7d9a\u304d\u3059\u308b\s*$/.test(control.text) &&
+        /^\s*\u8cfc\u5165\u624b\u7d9a\u304d(?:\u3092)?\u3059\u308b\s*$/.test(control.text) &&
         /\/buyer\/payment\/input(?:[/?#]|$)/i.test(control.href)
       );
       const isLifecycleStatusText = text => (

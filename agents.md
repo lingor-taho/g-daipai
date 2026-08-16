@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-16
+**最后更新**: 2026-08-17
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-17 新版普通商品付款入口按钮兼容
+
+Yahoo 新版普通商品取引页将付款入口按钮由“購入手続きする”改为“購入手続きをする”，页面入口同时使用 `/trade/top`，但按钮仍是指向 `/buyer/payment/input?aid=...&oid=...` 的普通链接。插件现在在付款页面状态识别、直接付款链接提取和实际点击中同时兼容新老两种文案；`/buyer/payment/input` 链接校验、普通商品到付分类、金额校验和后续付款流程保持不变。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-16 新版普通商品追踪号未登记时保持待发货
 
