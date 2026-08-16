@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-14
+**最后更新**: 2026-08-16
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-16 新版普通商品追踪号未登记时保持待发货
+
+Yahoo 新版普通商品取引页可能已经把 `progressStatus` 标记为 `sellerSendDone`，但“お届け情報”仍显示“追跡番号：未登録（反映されるまでおまちください）”。插件原先会据此进入新版已发货分支，并在真实追踪号为空时把出品者氏名当作追踪号回写。现在只在新版已发货分支增加现有“未登録/反映されるまで”文案保护：命中时继续返回 `pending_shipment`，不执行消息或氏名兜底；老版普通商品、商城和其他订单流程保持不变。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/content.js
+node yahoo-plugin/content.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-14 Google 表格查询超时不再阻塞确认收货与扫描
 

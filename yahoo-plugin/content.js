@@ -2699,6 +2699,9 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
     /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f[\s\S]{0,160}\u5230\u7740\u5f8c[\s\S]{0,80}\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleStatusText);
   const normalShipped = /\u51fa\u54c1\u8005[\s\S]{0,80}\u5546\u54c1\u767a\u9001[\s\S]{0,80}\u9023\u7d61/.test(lifecycleStatusText);
   if (normalV2Shipped) {
+    if (hasUnregisteredTrackingNumber(source)) {
+      return { type: 'pending_shipment' };
+    }
     const deliveryInfo = getNormalV2DeliveryInfo();
     const shippingCompany = normalV2NextData?.shippingCompany || deliveryInfo.shippingCompany;
     const actualTrackingNumber = normalV2NextData?.trackingNumber || deliveryInfo.trackingNumber;

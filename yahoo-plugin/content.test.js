@@ -3821,6 +3821,34 @@ function testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking(
   assert.equal(result.needsSellerInfoFallback, false);
 }
 
+function testExtractPendingShipmentScanResultTreatsNormalV2UnregisteredTrackingAsPending() {
+  const nextData = createNormalV2NextDataScript({
+    auctionId: 'c1240267750',
+    progressStatus: 'sellerSendDone',
+    tradeInfo: {
+      sendInfo: {
+        shipMethod: { name: '\u304a\u3066\u304c\u308b\u914d\u9001\uff08\u30e4\u30de\u30c8\u904b\u8f38\uff09 \u5b85\u6025\u4fbf 60\u30b5\u30a4\u30ba' },
+        trackingInfo: { isTrackingNumberPending: true }
+      },
+      sellerInfo: { name: '***\u3000***' }
+    }
+  });
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\n\u8ffd\u8de1\u756a\u53f7\uff1a \u672a\u767b\u9332\uff08\u53cd\u6620\u3055\u308c\u308b\u307e\u3067\u304a\u307e\u3061\u304f\u3060\u3055\u3044\uff09',
+    '/trade/top?aid=c1240267750',
+    {
+      querySelector(selector) {
+        if (selector === 'script#__NEXT_DATA__') return nextData;
+        return null;
+      }
+    }
+  );
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'pending_shipment');
+  assert.equal(result.trackingNumber, undefined);
+}
+
 function testExtractPendingShipmentScanResultUsesNormalV2NextDataWhenStatusDomIsMissed() {
   const nextData = createNormalV2NextDataScript({
     auctionId: 'h1238410254',
@@ -5073,6 +5101,7 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking();
+  testExtractPendingShipmentScanResultTreatsNormalV2UnregisteredTrackingAsPending();
   testExtractPendingShipmentScanResultUsesNormalV2NextDataWhenStatusDomIsMissed();
   testExtractPendingShipmentScanResultUsesNormalV2NextDataSellerNameWithoutClick();
   testExtractPendingShipmentScanResultPrefersNormalV2MessageTrackingBeforeSellerName();
