@@ -6418,13 +6418,13 @@ async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
 function buildScanStatusPayload(job) {
   const result = job?.result || {};
   if (!job?.orderId) return null;
+  if (result.type === 'cancelled' && ['waiting_shipping', 'pending_shipment'].includes(job.orderStatus)) {
+    return {
+      orderId: job.orderId,
+      cancelled: true
+    };
+  }
   if (job.orderStatus === 'pending_shipment') {
-    if (result.type === 'cancelled') {
-      return {
-        orderId: job.orderId,
-        cancelled: true
-      };
-    }
     if (result.type === 'shipped') {
       if (result.shipmentDetailsRendered === false) return null;
       return {

@@ -2334,6 +2334,24 @@ function testBuildScanStatusPayloadSkipsPendingShipping() {
   assert.equal(payload.pending, true);
 }
 
+function testBuildScanStatusPayloadMarksWaitingShippingCancellation() {
+  const api = loadBackgroundForTest();
+  const payload = api.buildScanStatusPayload({
+    orderId: 1147,
+    orderStatus: 'waiting_shipping',
+    result: { type: 'cancelled' }
+  });
+  const bundlePayload = api.buildScanStatusPayload({
+    orderId: 1148,
+    orderStatus: 'pending_bundle',
+    result: { type: 'cancelled' }
+  });
+
+  assert.equal(payload.orderId, 1147);
+  assert.equal(payload.cancelled, true);
+  assert.notEqual(bundlePayload?.cancelled, true);
+}
+
 function testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan() {
   const api = loadBackgroundForTest();
   const payload = api.buildScanStatusPayload({
@@ -10777,6 +10795,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testBidderPaysShippingTransactionAcceptsAlreadyWaitingShippingPage();
   testBuildScanStatusPayloadUsesShippingFeeOnly();
   testBuildScanStatusPayloadSkipsPendingShipping();
+  testBuildScanStatusPayloadMarksWaitingShippingCancellation();
   testBuildScanStatusPayloadSkipsPendingShipmentDuringTrackingRescan();
   testBuildScanStatusPayloadWaitsForShipmentDetailsRender();
   testBuildScanStatusPayloadHandlesBundleShippingFee();

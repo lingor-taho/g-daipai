@@ -2319,14 +2319,15 @@ async function updateScanStatus(payload = {}, database = db) {
        SET order_status = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
-         AND order_status = ?`,
-      [ORDER_STATUS_CANCELLED, orderId, ORDER_STATUS_PENDING_SHIPMENT]
+          AND order_status IN (?, ?)`,
+      [ORDER_STATUS_CANCELLED, orderId, ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_WAITING_SHIPPING]
     );
     if (result.rowCount) {
       await autoCloseShipmentAlerts(orderId, database).catch(() => null);
+      const cancelledFromWaitingShipping = beforeRows.some(row => row.old_status === ORDER_STATUS_WAITING_SHIPPING);
       await writeOrderStatusAuditLogs(database, beforeRows, {
         status: ORDER_STATUS_CANCELLED,
-        source: 'scan_pending_shipment_cancelled',
+        source: cancelledFromWaitingShipping ? 'scan_waiting_shipping_cancelled' : 'scan_pending_shipment_cancelled',
         metadata: { orderId }
       }).catch(() => null);
     }

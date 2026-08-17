@@ -1939,12 +1939,12 @@ async function testGetOrderForSheetUpdateUsesProductSnapshotFields() {
   assert.deepEqual(calls[0].params, [15, ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
 }
 
-async function testUpdateScanStatusMarksPendingShipmentAsCancelled() {
+async function testUpdateScanStatusMarksShippingWorkflowAsCancelled() {
   const calls = [];
   const fakeDb = {
     async getAll(sql, params) {
       calls.push({ sql, params });
-      return [{ order_id: 32, order_status: ORDER_STATUS_PENDING_SHIPMENT }];
+      return [{ order_id: 32, old_status: ORDER_STATUS_WAITING_SHIPPING }];
     },
     async getOne(sql, params) {
       calls.push({ sql, params });
@@ -1964,6 +1964,10 @@ async function testUpdateScanStatusMarksPendingShipmentAsCancelled() {
   assert.equal(statusUpdate.params[0], ORDER_STATUS_CANCELLED);
   assert.equal(statusUpdate.params[1], 32);
   assert.equal(statusUpdate.params[2], ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(statusUpdate.params[3], ORDER_STATUS_WAITING_SHIPPING);
+  assert.match(statusUpdate.sql, /order_status IN \(\?, \?\)/);
+  const auditInsert = calls.find(call => /INSERT INTO order_status_change_logs/.test(call.sql));
+  assert.equal(auditInsert.params[4], 'scan_waiting_shipping_cancelled');
 }
 
 async function testUpdateScanStatusWritesShippingAndPendingPayment() {
@@ -3022,7 +3026,7 @@ Promise.all([
   Promise.resolve().then(testGoogleSheetAlertUsesRequestedBundleMainOrder),
   testGoogleSheetFailureAlertPersistsAndDeduplicatesByMainOrder(),
   testGetOrderForSheetUpdateUsesProductSnapshotFields(),
-  testUpdateScanStatusMarksPendingShipmentAsCancelled(),
+  testUpdateScanStatusMarksShippingWorkflowAsCancelled(),
   testUpdateScanStatusWritesShippingAndPendingPayment(),
   testUpdateScanStatusKeepsWaitingShippingWhenShippingPending(),
   testUpdateScanStatusCompletesBundleGroupWithShippingFee(),

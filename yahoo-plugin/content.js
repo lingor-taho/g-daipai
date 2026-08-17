@@ -2128,6 +2128,10 @@ function normalizeYenText(value) {
 
 function extractWaitingShippingScanResult(text = getBodyText()) {
   const source = String(text || '');
+  const lifecycleStatusText = getTransactionLifecycleStatusText(source);
+  if (isYahooTransactionCancelledText(lifecycleStatusText)) {
+    return { type: 'cancelled' };
+  }
   const shippingMatch = source.match(/\u652f\u6255\u3044\u91d1\u984d[\s\S]{0,200}\u9001\u6599\s*[:\uff1a]\s*([\d,]+)\s*\u5186/);
   if (shippingMatch) {
     return {

@@ -3679,6 +3679,15 @@ function testExtractWaitingShippingScanResultDetectsPendingShipping() {
   assert.equal(result.pending, true);
 }
 
+function testExtractWaitingShippingScanResultDetectsCancellation() {
+  const api = loadContentForTest(
+    '\u843d\u672d\u8005\u524a\u9664\u3055\u308c\u305f\u305f\u3081\u3001\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093\u3002\u904e\u53bb\u306e\u53d6\u5f15\u30e1\u30c3\u30bb\u30fc\u30b8\u306e\u95b2\u89a7\u306e\u307f\u53ef\u80fd\u3067\u3059\u3002',
+    '/buyer/top'
+  );
+
+  assert.equal(api.extractWaitingShippingScanResult().type, 'cancelled');
+}
+
 function testExtractWaitingShippingScanResultPendingBeatsOtherShippingText() {
   const api = loadContentForTest(
     '\u5546\u54c1\u540d \u9001\u6599\uff1a1,060\u5186 \u304a\u652f\u6255\u3044\u60c5\u5831 \u652f\u6255\u3044\u91d1\u984d \uff1a \u9001\u6599\u6c7a\u5b9a\u5f8c\u3001\u78ba\u5b9a\u3057\u307e\u3059\u3002 \u652f\u6255\u3044\u671f\u9650',
@@ -5087,6 +5096,7 @@ async function run() {
   testExtractWaitingShippingScanResultFindsShippingFee();
   testExtractWaitingShippingScanResultDoesNotUseTotalPayment();
   testExtractWaitingShippingScanResultDetectsPendingShipping();
+  testExtractWaitingShippingScanResultDetectsCancellation();
   testExtractWaitingShippingScanResultPendingBeatsOtherShippingText();
   testExtractBundleScanResultDetectsWaitingForSellerAgreement();
   testExtractBundleScanResultDetectsChildAgreementPopup();

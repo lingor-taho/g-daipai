@@ -414,6 +414,23 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-17 等待运费订单取消识别
+
+普通商品处于 `waiting_shipping` 时，Yahoo 页面若显示“落札者削除されたため、取引はできません”，原等待运费扫描只判断运费已确定或继续等待，没有复用现有取消事实识别，因此不会生成状态回写。现在等待运费提取会先在交易生命周期状态区域识别取消；插件仅为 `waiting_shipping` / `pending_shipment` 生成取消 payload，服务端也只允许这两个状态转为 `cancelled`，不会影响同捆、待付款、待收货或已完成订单。状态审计按来源记录为 `scan_waiting_shipping_cancelled` 或既有 `scan_pending_shipment_cancelled`。
+
+验证：
+
+```powershell
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node src/server/routes/plugin.test.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.js
+node --check src/server/routes/plugin.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-17 新版普通商品付款入口按钮兼容
 
 Yahoo 新版普通商品取引页将付款入口按钮由“購入手続きする”改为“購入手続きをする”，页面入口同时使用 `/trade/top`，但按钮仍是指向 `/buyer/payment/input?aid=...&oid=...` 的普通链接。插件现在在付款页面状态识别、直接付款链接提取和实际点击中同时兼容新老两种文案；`/buyer/payment/input` 链接校验、普通商品到付分类、金额校验和后续付款流程保持不变。
