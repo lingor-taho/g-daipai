@@ -5681,6 +5681,7 @@ function getBundleActionPatternSource(action) {
   const patterns = {
     close: '\\u9589\\u3058\\u308b',
     start: '^\\s*\\u307e\\u3068\\u3081\\u3066\\u53d6\\u5f15\\u3092(?:\\u306f\\u3058\\u3081\\u308b|\\u4f9d\\u983c\\u3059\\u308b)\\s*$',
+    singleStart: '^\\s*\\u53d6\\u5f15\\u3092\\u306f\\u3058\\u3081\\u308b\\s*$',
     input: '\\u53d6\\u5f15\\s*\\u60c5\\u5831\\s*\\u3092\\s*\\u5165\\u529b\\s*\\u3059\\u308b',
     placementOk: '^\\s*OK\\s*$',
     decide: '^\\s*(?:\\u6c7a\\u5b9a\\u3059\\u308b|\\u78ba\\u8a8d\\u3059\\u308b)\\s*$',
@@ -6042,7 +6043,7 @@ async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, t
 }
 
 function getBundleActionWaitTimeoutMs(action) {
-  if (action === 'start' || action === 'confirm') return 15000;
+  if (action === 'start' || action === 'singleStart' || action === 'confirm') return 15000;
   return 5000;
 }
 
@@ -6203,6 +6204,33 @@ async function completeNormalBundleRequest(tab) {
   return { success: true, tab };
 }
 
+async function startSingleTransactionAfterBundleRejected(tab, initialState = null) {
+  let state = initialState || await getBundleActionState(tab.id);
+  if (!state?.bundleRejected) {
+    return { success: true, tab, handled: false };
+  }
+
+  if (state.canCloseBundleNotice) {
+    const closeResult = await clickBundleActionAndFollowTab(tab, 'close');
+    if (!closeResult?.success) return closeResult;
+    tab = closeResult.tab;
+    state = await getBundleActionState(tab.id);
+  }
+
+  if (!state?.canStartSingleTransaction) {
+    return { success: false, error: 'single transaction start button not found after bundle rejection', tab };
+  }
+
+  const startResult = await clickBundleActionAndFollowTab(
+    tab,
+    'singleStart',
+    nextState => nextState.canPlacementOk || nextState.canDecide || nextState.canConfirm ||
+      nextState.waitingShipping || nextState.paymentReady || nextState.cancelled
+  );
+  if (!startResult?.success) return startResult;
+  return { success: true, tab: startResult.tab, handled: true };
+}
+
 async function completeBidderPaysShippingTransaction(tab) {
   let state = await getBundleActionState(tab.id);
   if (state?.canPlacementOk) {
@@ -6290,7 +6318,17 @@ async function executeTransactionStartJob(job) {
       await updateTransactionStartStatus({ orderId: job.orderId, status: 'cancelled' });
       return { processedProductIds: [job.productId] };
     }
-    if (info.available) {
+    const rejectedStartResult = await startSingleTransactionAfterBundleRejected(tab, initialState);
+    if (!rejectedStartResult?.success) {
+      await updateTransactionStartStatus({
+        orderId: job.orderId,
+        error: rejectedStartResult?.error || 'single transaction start after bundle rejection failed'
+      });
+      return { processedProductIds: [job.productId] };
+    }
+    tab = rejectedStartResult.tab;
+
+    if (info.available && !rejectedStartResult.handled) {
       if (!info.quantityMatched) {
         await updateTransactionStartStatus({ orderId: job.orderId, error: 'bundle quantity mismatch' });
         return;

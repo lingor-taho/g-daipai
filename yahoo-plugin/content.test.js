@@ -3538,6 +3538,38 @@ function testBundleTransactionActionStateDetectsReviewButtonAsDecide() {
   assert.equal(reviewButton.clicked, true);
 }
 
+function testBundleRejectedStateFindsSingleTransactionStart() {
+  const closeButton = createTestElement('');
+  closeButton.value = '\u9589\u3058\u308b';
+  closeButton.tagName = 'INPUT';
+  const singleStartButton = createTestElement('\u53d6\u5f15\u3092\u306f\u3058\u3081\u308b');
+  singleStartButton.tagName = 'A';
+  singleStartButton.href = '/buyer/edit?aid=w1239811853';
+  const api = loadContentForTest(
+    '\u53d6\u5f15\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002 \u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f\u305f\u3081\u3001\u5546\u54c1\u3054\u3068\u306b\u53d6\u5f15\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/buyer/top?aid=w1239811853',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector === 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]') {
+          return [closeButton, singleStartButton];
+        }
+        if (selector === '*') return [closeButton, singleStartButton];
+        return [];
+      }
+    }
+  );
+
+  const state = api.getBundleTransactionActionState();
+  const clickResult = api.clickBundleTransactionAction('singleStart');
+
+  assert.equal(state.bundleRejected, true);
+  assert.equal(state.canCloseBundleNotice, true);
+  assert.equal(state.canStartSingleTransaction, true);
+  assert.equal(clickResult.success, true);
+  assert.equal(singleStartButton.clicked, true);
+}
+
 function testBundleTransactionActionStateDetectsPlacementOkModal() {
   const okButton = createTestElement('OK');
   okButton.tagName = 'BUTTON';
@@ -5088,6 +5120,7 @@ async function run() {
   testClickBundleTransactionActionFindsInputRoleButtonParent();
   testBundleTransactionActionStateDetectsDecideButton();
   testBundleTransactionActionStateDetectsReviewButtonAsDecide();
+  testBundleRejectedStateFindsSingleTransactionStart();
   testBundleTransactionActionStateDetectsPlacementOkModal();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
   testBundleTransactionActionStateDetectsPaymentReadyPage();

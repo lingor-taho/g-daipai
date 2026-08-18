@@ -3775,6 +3775,102 @@ async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShip
   assert.equal(statusCalls[0].status, 'waiting_shipping');
 }
 
+async function testRunTransactionStartContinuesSingleItemAfterBundleRejected() {
+  const statusCalls = [];
+  const clickedActions = [];
+  let phase = 'rejected';
+  const currentUrl = () => phase === 'rejected' || phase === 'single_start'
+    ? 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1239811853'
+    : 'https://contact.auctions.yahoo.co.jp/buyer/edit?aid=w1239811853';
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async create(urlOrOptions) {
+        const url = typeof urlOrOptions === 'string' ? urlOrOptions : urlOrOptions?.url;
+        return { id: 42, url, status: 'complete', windowId: 3 };
+      },
+      async get(id) {
+        return { id, url: currentUrl(), status: 'complete', windowId: 3 };
+      },
+      async update(id) {
+        return { id, url: currentUrl(), status: 'complete', windowId: 3 };
+      },
+      async query() {
+        return [{ id: 42, url: currentUrl(), status: 'complete', windowId: 3 }];
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, 42);
+        if (message.type === 'EXTRACT_TRANSACTION_START_INFO') {
+          return { success: true, loginStatus: { status: 'ok' }, info: { available: false } };
+        }
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          return {
+            success: true,
+            state: {
+              bundleRejected: phase === 'rejected',
+              canCloseBundleNotice: phase === 'rejected',
+              canStartSingleTransaction: phase === 'single_start',
+              canDecide: phase === 'decide',
+              canConfirm: phase === 'confirm',
+              waitingShipping: phase === 'waiting_shipping',
+              complete: false,
+              url: currentUrl()
+            }
+          };
+        }
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') {
+          clickedActions.push(message.action);
+          if (message.action === 'close' && phase === 'rejected') phase = 'single_start';
+          else if (message.action === 'singleStart' && phase === 'single_start') phase = 'decide';
+          else if (message.action === 'decide' && phase === 'decide') phase = 'confirm';
+          else if (message.action === 'confirm' && phase === 'confirm') phase = 'waiting_shipping';
+          else return { success: false, error: `${message.action} button not found` };
+          return { success: true };
+        }
+        return { success: true };
+      },
+      async remove() {}
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 1160,
+                productId: 'w1239811853',
+                productType: 'normal',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1239811853',
+                shippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5'
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/transaction-start/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+
+  await api.runTransactionStartJobs();
+
+  assert.deepEqual(clickedActions, ['close', 'singleStart', 'decide', 'confirm']);
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].orderId, 1160);
+  assert.equal(statusCalls[0].status, 'waiting_shipping');
+  assert.equal(statusCalls[0].error, undefined);
+}
+
 async function testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment() {
   const statusCalls = [];
   const clickedActions = [];
@@ -10842,6 +10938,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
+  await testRunTransactionStartContinuesSingleItemAfterBundleRejected();
   await testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment();
   await testRunTransactionStartTreatsNormalCashOnDeliveryEntryAsPendingPayment();
   await testRunTransactionStartMarksBuyerDeletedPageCancelled();

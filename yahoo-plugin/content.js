@@ -2018,6 +2018,7 @@ function clickBundleTransactionAction(action) {
   const patterns = {
     close: /\u9589\u3058\u308b/,
     start: /^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/,
+    singleStart: /^\s*\u53d6\u5f15\u3092\u306f\u3058\u3081\u308b\s*$/,
     input: /\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/,
     placementOk: /^\s*OK\s*$/,
     decide: /^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/,
@@ -2164,7 +2165,7 @@ function extractBundleScanResult(text = getBodyText()) {
   if (bundleShippingFeeText) {
     return { type: 'shipping_ready', bundleShippingFeeText };
   }
-  if (/\u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f/.test(source)) {
+  if (detectBundleRejected(source)) {
     return { type: 'bundle_rejected' };
   }
   if (/\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source)) {
@@ -2192,6 +2193,10 @@ function extractBundleScanResult(text = getBodyText()) {
     return { type: 'shipping_pending' };
   }
   return { type: 'unknown' };
+}
+
+function detectBundleRejected(text = getBodyText()) {
+  return /\u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f/.test(String(text || ''));
 }
 
 function normalizeTextValue(value, maxLength = 128) {
@@ -2787,6 +2792,7 @@ function getBundleTransactionActionState() {
   return {
     canCloseBundleNotice: !!findClickableByText(/^\s*\u9589\u3058\u308b\s*$/),
     canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
+    canStartSingleTransaction: !!findClickableByText(/^\s*\u53d6\u5f15\u3092\u306f\u3058\u3081\u308b\s*$/),
     canInputTransaction: !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/),
     canPlacementOk: detectPlacementDefaultModal(),
     canDecide: !!findClickableByText(/^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/),
@@ -2794,6 +2800,7 @@ function getBundleTransactionActionState() {
     paymentReady: !!findClickableByText(/Yahoo!\s*\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
     waitingShipping: detectWaitingShippingPaymentAmount(),
     cancelled: detectBuyerDeletedCancellation(),
+    bundleRejected: detectBundleRejected(),
     complete: detectBundleRequestedComplete(),
     url: window.location.href
   };

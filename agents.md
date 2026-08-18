@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-17
+**最后更新**: 2026-08-18
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,21 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-18 普通商品同捆被拒绝后恢复逐件交易
+
+普通商品同捆被卖家拒绝后，扫描已能识别“出品者が単品での取引を希望した”并清除整组同捆关系，但重新领取单件订单时，`落札者負担` 分支没有处理拒绝提示框和普通“取引をはじめる”入口，会直接尝试同捆共用的“决定”动作并报 `bundle decide button not found`。现在交易页状态会明确暴露同捆拒绝事实和普通单件入口；交易开始流程优先关闭拒绝提示框、点击 `/buyer/edit` 的“取引をはじめる”，再按原单件运费规则完成信息确认。拒绝事实优先于页面保留的历史“まとめて取引情報”，正常同捆、已等待运费、固定运费和到付快捷入口保持不变。
+
+验证：
+
+```powershell
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-17 等待运费订单取消识别
 
