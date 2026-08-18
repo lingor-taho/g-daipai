@@ -5421,6 +5421,21 @@ function testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText() {
   }
 }
 
+function testConfirmReceiptPageStateIgnoresConditionalWinnerDeletionMessageWhileWaitingShipment() {
+  const api = loadBackgroundForTest();
+  const state = api.buildConfirmReceiptPageStateFromSnapshot({
+    bodyText: [
+      '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+      '\u30e1\u30c3\u30bb\u30fc\u30b8',
+      '\u4e00\u5207\u306e\u3054\u9023\u7d61\u307e\u305f\u306f\u304a\u624b\u7d9a\u304d\u3092\u3044\u305f\u3060\u3051\u306a\u3044\u5834\u5408\u3001\u843d\u672d\u8005\u524a\u9664\u53ca\u3073\u30d6\u30e9\u30c3\u30af\u30ea\u30b9\u30c8\u3078\u306e\u767b\u9332\u3092\u884c\u3046\u5834\u5408\u304c\u3054\u3056\u3044\u307e\u3059\u3002'
+    ].join('\n'),
+    controls: []
+  });
+
+  assert.equal(state.cancelled, false);
+  assert.equal(state.paidOrShipped, true);
+}
+
 function testConfirmReceiptPageStateUsesPrimaryStatusText() {
   const api = loadBackgroundForTest();
 
@@ -11038,6 +11053,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking();
   testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();
   testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText();
+  testConfirmReceiptPageStateIgnoresConditionalWinnerDeletionMessageWhileWaitingShipment();
   testConfirmReceiptPageStateUsesPrimaryStatusText();
   testConfirmReceiptPageStateDetectsReceiptCompletionText();
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();

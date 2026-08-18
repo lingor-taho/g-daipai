@@ -2122,7 +2122,7 @@ async function getPaymentPageState(tabId) {
         /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(text) ||
         /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text) ||
         /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(text) ||
-        /\u843d\u672d\u8005\u524a\u9664/.test(text) ||
+        /\u843d\u672d\u8005\u524a\u9664(?:\u3055\u308c\u307e\u3057\u305f|\u3055\u308c\u305f\u305f\u3081)[\s\S]{0,120}(?:\u51fa\u54c1\u8005\u304c\u843d\u672d\u3092\u53d6\u308a\u6d88\u3057\u307e\u3057\u305f|\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093)/.test(text) ||
         /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
         /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text)
       );
@@ -2131,6 +2131,11 @@ async function getPaymentPageState(tabId) {
           .map(el => getText(el))
           .filter(Boolean);
         if (normalStatus.length) return normalize(normalStatus.join('\n'));
+
+        const redesignedWaitingShipmentStatus = [...document.querySelectorAll('main p')]
+          .map(el => getText(el))
+          .find(text => text === '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044');
+        if (redesignedWaitingShipmentStatus) return redesignedWaitingShipmentStatus;
 
         const storeStatus = [...document.querySelectorAll('main header p.sc-5968173-0 span, main header p.sc-5968173-0')]
           .map(el => getText(el))
@@ -3965,8 +3970,7 @@ async function completeStoreConfirmationItems(tab, state, job = {}) {
 
 function isYahooTransactionCancelledText(text = '') {
   const source = String(text || '');
-  return /\u843d\u672d\u8005\u524a\u9664/.test(source) ||
-    /\u843d\u672d\u8005\u524a\u9664[\s\S]{0,80}\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093/.test(source) ||
+  return /\u843d\u672d\u8005\u524a\u9664(?:\u3055\u308c\u307e\u3057\u305f|\u3055\u308c\u305f\u305f\u3081)[\s\S]{0,120}(?:\u51fa\u54c1\u8005\u304c\u843d\u672d\u3092\u53d6\u308a\u6d88\u3057\u307e\u3057\u305f|\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093)/.test(source) ||
     /\u53d6\u5f15\u304c\u4e2d\u6b62\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source) ||
     /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(source);
@@ -4053,7 +4057,7 @@ async function getConfirmReceiptPageState(tabId) {
         /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(text) ||
         /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text) ||
         /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(text) ||
-        /\u843d\u672d\u8005\u524a\u9664/.test(text) ||
+        /\u843d\u672d\u8005\u524a\u9664(?:\u3055\u308c\u307e\u3057\u305f|\u3055\u308c\u305f\u305f\u3081)[\s\S]{0,120}(?:\u51fa\u54c1\u8005\u304c\u843d\u672d\u3092\u53d6\u308a\u6d88\u3057\u307e\u3057\u305f|\u53d6\u5f15\u306f\u3067\u304d\u307e\u305b\u3093)/.test(text) ||
         /\u53d6\u5f15\u304c\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
         /\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f/.test(text) ||
         /\u3059\u3079\u3066\u306e\u53d6\u5f15\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(text) ||
@@ -4064,6 +4068,11 @@ async function getConfirmReceiptPageState(tabId) {
           .map(el => getText(el))
           .filter(Boolean);
         if (normalStatus.length) return normalize(normalStatus.join('\n'));
+
+        const redesignedWaitingShipmentStatus = [...document.querySelectorAll('main p')]
+          .map(el => getText(el))
+          .find(text => text === '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044');
+        if (redesignedWaitingShipmentStatus) return redesignedWaitingShipmentStatus;
 
         const storeStatus = [...document.querySelectorAll('main header p.sc-5968173-0 span, main header p.sc-5968173-0')]
           .map(el => getText(el))
