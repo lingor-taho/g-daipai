@@ -414,6 +414,21 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-18 查询订单支持勾选导出 CSV
+
+后台“查询订单”表格新增行复选框、跨分页选择和“导出CSV”按钮；重新搜索或重置筛选会清空旧选择。CSV 只导出当前已勾选订单，字段顺序固定为：用户名、商品url、商品名称、落札时间、追踪号，并带 UTF-8 BOM 以便 Excel 直接打开中文。查询接口同时从 `products.product_url` 返回商品 URL，旧数据缺少 URL 时前端按商品 ID 生成标准 Yahoo 拍卖链接作为兜底。
+
+验证：
+
+```powershell
+node src/admin/src/messageReadCsv.test.js
+node src/admin/src/MessageRead.display.test.js
+node src/server/routes/admin.orders.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-18 新版普通商品お問い合わせ番号与单号重扫兼容
 
 Yahoo 新版普通商品取引页的日本邮政物流单号不一定使用既有 `trackingNumber` / “追跡番号”，生产商品 `n1240182786` 的 `__NEXT_DATA__` 使用 `top.tradeInfo.sendInfo.trackingInfo.inquiryNumber=646715100662`，页面“お届け情報”表格则显示“お問い合わせ番号”。插件原先两处都未读取，因而遗漏真实单号并可能继续走消息或卖家氏名回退。现在新版解析器同时兼容 `trackingNumber` 与 `inquiryNumber`，DOM 备用解析同时兼容“追跡番号”与“お問い合わせ番号”；真实单号仍优先于消息和卖家氏名，“未登録（反映されるまでおまちください）”保护保持在所有回退之前。

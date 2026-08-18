@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
+import { buildMessageReadCsv } from './messageReadCsv';
 
 const MESSAGE_PROCESSING_TIMEOUT_MS = 30000;
 
@@ -143,6 +144,13 @@ export default function MessageReadPage() {
   const [selected, setSelected] = useState<any>(null);
   const [sendText, setSendText] = useState('');
   const [sending, setSending] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<(string | number)[]>([]);
+  const [selectedRowsByKey, setSelectedRowsByKey] = useState<Record<string, any>>({});
+
+  function clearSelection() {
+    setSelectedRowKeys([]);
+    setSelectedRowsByKey({});
+  }
 
   async function load(next = pagination, values = form.getFieldsValue()) {
     setLoading(true);
@@ -160,7 +168,16 @@ export default function MessageReadPage() {
       if (range[1]) params.set('wonTo', formatDateOnly(range[1]));
       if (orderStatus) params.set('orderStatus', orderStatus);
       const data = await fetchAdminJson(`/api/admin/messages?${params.toString()}`);
-      setItems(data.items || []);
+      const nextItems = data.items || [];
+      setItems(nextItems);
+      setSelectedRowsByKey(previous => {
+        const next = { ...previous };
+        nextItems.forEach((row: any) => {
+          const key = String(row?.order_id ?? '');
+          if (key && Object.prototype.hasOwnProperty.call(next, key)) next[key] = row;
+        });
+        return next;
+      });
       setPagination({
         current: Number(data.current || next.current || 1),
         pageSize: Number(data.pageSize || next.pageSize || 20),
@@ -209,6 +226,42 @@ export default function MessageReadPage() {
     }
   }
 
+  function updateSelection(nextRowKeys: (string | number)[], nextRows: any[]) {
+    const selectedKeySet = new Set(nextRowKeys.map(String));
+    setSelectedRowKeys(nextRowKeys);
+    setSelectedRowsByKey(previous => {
+      const next = { ...previous };
+      Object.keys(next).forEach(key => {
+        if (!selectedKeySet.has(key)) delete next[key];
+      });
+      [...items, ...nextRows].forEach(row => {
+        const key = String(row?.order_id ?? '');
+        if (key && selectedKeySet.has(key)) next[key] = row;
+      });
+      return next;
+    });
+  }
+
+  function exportSelectedCsv() {
+    const rows = selectedRowKeys
+      .map(key => selectedRowsByKey[String(key)])
+      .filter(Boolean);
+    if (rows.length !== selectedRowKeys.length || rows.length === 0) {
+      message.warning('请选择要导出的订单');
+      return;
+    }
+    const csv = `\ufeff${buildMessageReadCsv(rows, formatDateTime)}`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `order-query-${formatDateTime(new Date().toISOString()).slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   useEffect(() => {
     load({ current: 1, pageSize: 20, total: 0 }, {});
   }, []);
@@ -218,7 +271,10 @@ export default function MessageReadPage() {
       <Form
         form={form}
         layout="inline"
-        onFinish={values => load({ ...pagination, current: 1 }, values)}
+        onFinish={values => {
+          clearSelection();
+          load({ ...pagination, current: 1 }, values);
+        }}
         style={{ marginBottom: 16, rowGap: 8 }}
       >
         <Form.Item name="username" label="用户名">
@@ -243,8 +299,10 @@ export default function MessageReadPage() {
             <Button type="primary" htmlType="submit" loading={loading}>搜索</Button>
             <Button onClick={() => {
               form.resetFields();
+              clearSelection();
               load({ current: 1, pageSize: pagination.pageSize, total: pagination.total }, {});
             }}>重置</Button>
+            <Button onClick={exportSelectedCsv} disabled={selectedRowKeys.length === 0}>导出CSV</Button>
           </Space>
         </Form.Item>
       </Form>
@@ -253,6 +311,11 @@ export default function MessageReadPage() {
         rowKey="order_id"
         loading={loading}
         dataSource={items}
+        rowSelection={{
+          selectedRowKeys,
+          preserveSelectedRowKeys: true,
+          onChange: (keys, rows) => updateSelection(keys, rows)
+        }}
         pagination={{
           current: pagination.current,
           pageSize: pagination.pageSize,

@@ -682,6 +682,7 @@ function buildAdminMessagesListQuery(filters = {}) {
             o.order_status,
             o.tracking_number,
             o.transaction_url,
+            p.product_url,
             p.product_title,
             COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
             u.id AS user_id,

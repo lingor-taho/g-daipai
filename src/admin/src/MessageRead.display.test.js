@@ -125,6 +125,22 @@ assert.equal(
 );
 
 assert.equal(
+  source.includes('rowSelection={{') &&
+    source.includes('preserveSelectedRowKeys: true') &&
+    source.includes('selectedRowKeys'),
+  true,
+  'MessageRead should show row checkboxes and preserve selected orders across pages'
+);
+
+assert.equal(
+  source.includes('buildMessageReadCsv(rows, formatDateTime)') &&
+    source.includes('>导出CSV</Button>') &&
+    source.includes("message.warning('请选择要导出的订单')"),
+  true,
+  'MessageRead should export only selected orders as CSV'
+);
+
+assert.equal(
   source.includes('function shouldShowMessageFetchError') &&
     source.includes('row.fetch_requested_at') &&
     source.includes('row.fetch_started_at') &&
