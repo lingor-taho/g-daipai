@@ -2556,6 +2556,7 @@ function getNormalV2NextDataShipment() {
       null;
     if (!top || top.progressStatus !== 'sellerSendDone') return null;
     const sendInfo = top.tradeInfo?.sendInfo || {};
+    const trackingInfo = sendInfo.trackingInfo || {};
     const auctionId = normalizeTextValue(top.auctionId);
     const messageText = (Array.isArray(top.message?.messages) ? top.message.messages : [])
       .flatMap(group => Array.isArray(group?.dailyMessages) ? group.dailyMessages : [])
@@ -2566,7 +2567,7 @@ function getNormalV2NextDataShipment() {
       shipped: true,
       shippingCompany: cleanShippingCompanyText(sendInfo.shipMethod?.name || ''),
       trackingNumber: extractTrackingNumberFromText(
-        sendInfo.trackingInfo?.trackingNumber || '',
+        trackingInfo.trackingNumber || trackingInfo.inquiryNumber || '',
         {
           textOnly: true,
           includeUnlabeled: true,
@@ -2616,7 +2617,8 @@ function getNormalV2DeliveryInfo() {
     };
   }
   const shippingMethod = extractSemanticTableRowValue(table, '\u914d\u9001\u65b9\u6cd5');
-  const trackingValue = extractSemanticTableRowValue(table, '\u8ffd\u8de1\u756a\u53f7');
+  const trackingValue = extractSemanticTableRowValue(table, '\u8ffd\u8de1\u756a\u53f7') ||
+    extractSemanticTableRowValue(table, '\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7');
   return {
     rendered: true,
     shippingCompany: cleanShippingCompanyText(shippingMethod),

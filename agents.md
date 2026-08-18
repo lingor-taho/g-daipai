@@ -414,6 +414,24 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-18 新版普通商品お問い合わせ番号与单号重扫兼容
+
+Yahoo 新版普通商品取引页的日本邮政物流单号不一定使用既有 `trackingNumber` / “追跡番号”，生产商品 `n1240182786` 的 `__NEXT_DATA__` 使用 `top.tradeInfo.sendInfo.trackingInfo.inquiryNumber=646715100662`，页面“お届け情報”表格则显示“お問い合わせ番号”。插件原先两处都未读取，因而遗漏真实单号并可能继续走消息或卖家氏名回退。现在新版解析器同时兼容 `trackingNumber` 与 `inquiryNumber`，DOM 备用解析同时兼容“追跡番号”与“お問い合わせ番号”；真实单号仍优先于消息和卖家氏名，“未登録（反映されるまでおまちください）”保护保持在所有回退之前。
+
+后台批处理“单号重扫”会把已到待收货且标记重扫的订单作为临时 `pending_shipment` 扫描任务，和自动待发货扫描共用 `EXTRACT_PENDING_SHIPMENT_SCAN`。因此本次底层修复同时覆盖自动扫描和批处理重扫；回归测试确认重扫结果会携带 `trackingRescanRequested=true`、配送方式和新单号回写，服务端随后清除重扫标记并更新既有订单及 Google Sheet。
+
+验证：
+
+```powershell
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node src/server/routes/plugin.test.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-18 普通商品同捆被拒绝后恢复逐件交易
 
 普通商品同捆被卖家拒绝后，扫描已能识别“出品者が単品での取引を希望した”并清除整组同捆关系，但重新领取单件订单时，`落札者負担` 分支没有处理拒绝提示框和普通“取引をはじめる”入口，会直接尝试同捆共用的“决定”动作并报 `bundle decide button not found`。现在交易页状态会明确暴露同捆拒绝事实和普通单件入口；交易开始流程优先关闭拒绝提示框、点击 `/buyer/edit` 的“取引をはじめる”，再按原单件运费规则完成信息确认。拒绝事实优先于页面保留的历史“まとめて取引情報”，正常同捆、已等待运费、固定运费和到付快捷入口保持不变。

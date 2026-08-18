@@ -3862,6 +3862,64 @@ function testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking(
   assert.equal(result.needsSellerInfoFallback, false);
 }
 
+function testExtractPendingShipmentScanResultReadsNormalV2InquiryNumberFromNextData() {
+  const nextData = createNormalV2NextDataScript({
+    auctionId: 'n1240182786',
+    progressStatus: 'sellerSendDone',
+    tradeInfo: {
+      sendInfo: {
+        shipMethod: { name: '\u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8' },
+        trackingInfo: {
+          inquiryNumber: '646715100662',
+          confirmUrl: 'https://trackings.post.japanpost.jp/services/srv/search/?requestNo1=646715100662'
+        }
+      },
+      sellerInfo: { name: '***\u3000***' }
+    }
+  });
+  const api = loadContentForTest('', '/trade/top?aid=n1240182786', {
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return nextData;
+      return null;
+    }
+  });
+
+  const nextDataShipment = api.getNormalV2NextDataShipment();
+  assert.equal(nextDataShipment.trackingNumber, '646715100662');
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.pageVariant, 'normal_v2');
+  assert.equal(result.shippingCompany, '\u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8');
+  assert.equal(result.trackingNumber, '646715100662');
+  assert.equal(result.trackingFallback, '');
+  assert.equal(result.needsSellerInfoFallback, false);
+}
+
+function testExtractPendingShipmentScanResultReadsNormalV2InquiryNumberFromTable() {
+  const deliveryTable = createSemanticTable('\u304a\u5c4a\u3051\u60c5\u5831', [
+    ['\u914d\u9001\u65b9\u6cd5', '\u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8\uff08\u9001\u6599\uff1a230\u5186\uff09'],
+    ['\u304a\u554f\u3044\u5408\u308f\u305b\u756a\u53f7', '646715100662']
+  ]);
+  const api = loadContentForTest(
+    '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u5f8c\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    '/trade/top?aid=n1240182786',
+    {
+      querySelectorAll(selector) {
+        if (selector === 'table') return [deliveryTable];
+        return [];
+      }
+    }
+  );
+
+  const result = api.extractPendingShipmentScanResult();
+  assert.equal(result.type, 'shipped');
+  assert.equal(result.pageVariant, 'normal_v2');
+  assert.equal(result.shippingCompany, '\u304a\u3066\u304c\u308b\u914d\u9001 \u3086\u3046\u30d1\u30b1\u30c3\u30c8');
+  assert.equal(result.trackingNumber, '646715100662');
+  assert.equal(result.needsSellerInfoFallback, false);
+}
+
 function testExtractPendingShipmentScanResultTreatsNormalV2UnregisteredTrackingAsPending() {
   const nextData = createNormalV2NextDataScript({
     auctionId: 'c1240267750',
@@ -5144,6 +5202,8 @@ async function run() {
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking();
+  testExtractPendingShipmentScanResultReadsNormalV2InquiryNumberFromNextData();
+  testExtractPendingShipmentScanResultReadsNormalV2InquiryNumberFromTable();
   testExtractPendingShipmentScanResultTreatsNormalV2UnregisteredTrackingAsPending();
   testExtractPendingShipmentScanResultUsesNormalV2NextDataWhenStatusDomIsMissed();
   testExtractPendingShipmentScanResultUsesNormalV2NextDataSellerNameWithoutClick();
