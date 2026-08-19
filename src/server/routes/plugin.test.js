@@ -2821,6 +2821,21 @@ function testSummarizePaymentErrorRemovesDebugDetails() {
   assert.equal(summary.includes('trusted='), false);
 }
 
+function testSummarizeStorePaymentShippingErrors() {
+  assert.equal(
+    summarizePaymentError('store payment shipping change page did not appear after JS click'),
+    '店铺配送方法：点击変更后未进入运费选择页'
+  );
+  assert.equal(
+    summarizePaymentError('store payment shipping option selection was not applied'),
+    '店铺配送方法：目标运费选择未生效'
+  );
+  assert.equal(
+    summarizePaymentError('store payment shipping review page did not return with expected amount after JS click'),
+    '店铺配送方法：点击変更する后应付金额未更新'
+  );
+}
+
 async function testUpdatePaymentStatusFailureWritesConciseAlert() {
   const calls = [];
   const fakeDb = {
@@ -2989,6 +3004,7 @@ testIsFollowupTaskReady();
 testNormalizeManualPinCodeKeepsDigitsOnly();
 testBuildWindowsSendKeysScriptClicksPinBoxAndTypesDigitsOnly();
 testSummarizePaymentErrorRemovesDebugDetails();
+testSummarizeStorePaymentShippingErrors();
 Promise.all([
   testSyncBiddingItemsStoresRemainingTimeText(),
   testSyncBiddingItemsDoesNotOverwriteProductIdentityFields(),

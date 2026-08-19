@@ -2880,6 +2880,9 @@ function summarizePaymentError(errorText) {
   if (/store confirmation edit page did not appear/i.test(text)) return '店铺确认事项：点击変更后未进入编辑页';
   if (/store confirmation review page did not return/i.test(text)) return '店铺确认事项：点击変更する后未返回付款确认页';
   if (/store confirmation .*click point not found/i.test(text)) return '店铺确认事项：未找到真实点击位置';
+  if (/store payment shipping change page did not appear/i.test(text)) return '店铺配送方法：点击変更后未进入运费选择页';
+  if (/store payment shipping option selection was not applied/i.test(text)) return '店铺配送方法：目标运费选择未生效';
+  if (/store payment shipping review page did not return with expected amount/i.test(text)) return '店铺配送方法：点击変更する后应付金额未更新';
   if (/payment expected amount unavailable/i.test(text)) return '未识别到页面应付金额';
   const amountMismatch = text.match(/payment amount mismatch:\s*expected\s*([^,;]+),\s*found\s*([^,;]+)/i);
   if (amountMismatch) return `付款金额不一致（应付 ${amountMismatch[1].trim()}，页面 ${amountMismatch[2].trim()}）`;

@@ -3226,15 +3226,36 @@ async function revealStorePaymentShippingOptions(tabId) {
 
 async function completeStorePaymentShippingChangePage(tab, job) {
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
+  const expectedAmount = getExpectedPaymentAmountJpy(job);
   if (!tab?.id || expectedShipping === null || expectedShipping <= 0) {
     return { success: false, error: 'store payment shipping change page missing expected shipping' };
   }
+  await focusPaymentInteractionTab(tab);
   let selectResult = null;
   for (let attempt = 0; attempt < 10; attempt += 1) {
+    const currentState = await getPaymentPageState(tab.id).catch(() => null);
+    if (!isStorePaymentShippingChangePage(currentState, job)) {
+      await sleep(500);
+      continue;
+    }
     await revealStorePaymentShippingOptions(tab.id).catch(() => null);
     await sleep(200);
     selectResult = await selectPaymentShippingOption(tab.id, expectedShipping);
-    if (selectResult?.success) break;
+    if (selectResult?.success) {
+      await sleep(300);
+      const selectedState = await getPaymentPageState(tab.id).catch(() => null);
+      if (
+        isStorePaymentShippingChangePage(selectedState, job) &&
+        Number(selectedState?.selectedShippingAmountJpy || 0) === expectedShipping
+      ) {
+        break;
+      }
+      selectResult = {
+        ...selectResult,
+        success: false,
+        error: 'store payment shipping option selection was not applied'
+      };
+    }
     await sleep(500);
   }
   if (!selectResult?.success) {
@@ -3246,17 +3267,27 @@ async function completeStorePaymentShippingChangePage(tab, job) {
       : '';
     return {
       success: false,
-      error: `store payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${candidateSummary ? `; candidates: ${candidateSummary}` : ''}`
+      error: selectResult?.error === 'store payment shipping option selection was not applied'
+        ? selectResult.error
+        : `store payment shipping option ${expectedShipping}\u5186 not selectable${optionSummary ? `; options: ${optionSummary}` : ''}${candidateSummary ? `; candidates: ${candidateSummary}` : ''}`
     };
   }
   if (selectResult.changed) await sleep(500);
+  await focusPaymentInteractionTab(tab);
   const applyResult = await clickStorePaymentShippingApplyButton(tab.id);
   if (!applyResult?.success) return { success: false, error: applyResult?.error || 'store payment shipping apply click failed' };
   const reviewTab = await waitForPaymentStateOnTab(tab, nextState =>
-    nextState.cancelled || nextState.alreadyPaid || nextState.complete || nextState.hasReviewButton,
+    nextState.cancelled ||
+    nextState.alreadyPaid ||
+    nextState.complete ||
+    (
+      isStorePaymentReviewPage(nextState) &&
+      nextState.hasReviewButton &&
+      (expectedAmount === null || Number(nextState.paymentAmountJpy || 0) === expectedAmount)
+    ),
     15000
   );
-  if (!reviewTab) return { success: false, error: 'store payment shipping review page did not return after JS click' };
+  if (!reviewTab) return { success: false, error: 'store payment shipping review page did not return with expected amount after JS click' };
   return {
     success: true,
     state: reviewTab._gdaipaiPaymentState || await getPaymentPageState(tab.id),
@@ -3283,6 +3314,7 @@ async function refreshPaymentPageState(tab, waitMs = 1500) {
 async function waitForExpandedPaymentShippingOptions(tab, job, options = {}) {
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
   const expectedAmount = getExpectedPaymentAmountJpy(job);
+  const storePaymentJob = isStorePaymentJob(job);
   const timeoutMs = Number(options.timeoutMs || 8000);
   const intervalMs = Number(options.intervalMs || 500);
   const startAt = Date.now();
@@ -3294,6 +3326,10 @@ async function waitForExpandedPaymentShippingOptions(tab, job, options = {}) {
       continue;
     }
     if (isStorePaymentShippingChangePage(latest, job)) return latest;
+    if (storePaymentJob) {
+      await sleep(intervalMs);
+      continue;
+    }
     if (expectedAmount !== null && Number(latest.paymentAmountJpy || 0) === expectedAmount) return latest;
     if (hasExpectedPaymentShippingOption(latest, expectedShipping)) return latest;
     await sleep(intervalMs);
@@ -3304,6 +3340,7 @@ async function waitForExpandedPaymentShippingOptions(tab, job, options = {}) {
 async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   const expectedShipping = getExpectedPaymentShippingFeeJpy(job);
   const expectedAmount = getExpectedPaymentAmountJpy(job);
+  const storePaymentJob = isStorePaymentJob(job);
   const currentAmount = Number(state?.paymentAmountJpy || 0);
   const needsAmountCorrection = expectedAmount !== null && currentAmount > 0 && currentAmount !== expectedAmount;
   const hasShippingChoices = (Array.isArray(state?.shippingOptions) && state.shippingOptions.length) ||
@@ -3311,22 +3348,26 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   if (!tab?.id || !state?.hasReviewButton || expectedShipping === null || expectedShipping <= 0 || (!hasShippingChoices && !needsAmountCorrection)) return state;
   if (expectedAmount !== null && currentAmount === expectedAmount) return state;
   const visibleOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
-  const hasExpectedOption = visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
+  const hasExpectedOption = !storePaymentJob && visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
   let expandResult = null;
   let trustedExpandResult = null;
   if (!hasExpectedOption) {
-    const expandAttempts = isStorePaymentJob(job) ? 5 : 1;
+    const expandAttempts = storePaymentJob ? 5 : 1;
     for (let attempt = 0; attempt < expandAttempts; attempt += 1) {
-      if (!isStorePaymentJob(job)) await focusPaymentInteractionTab(tab);
+      await focusPaymentInteractionTab(tab);
       expandResult = await expandPaymentShippingOptions(tab.id);
       state = await waitForExpandedPaymentShippingOptions(tab, job);
-      if (expandResult?.changed || expandResult?.success === false) break;
+      if (isStorePaymentShippingChangePage(state, job)) break;
+      if (!storePaymentJob && (expandResult?.changed || expandResult?.success === false)) break;
     }
     state = state || await getPaymentPageState(tab.id);
     if (isStorePaymentShippingChangePage(state, job)) {
       const storeChangeResult = await completeStorePaymentShippingChangePage(tab, job);
       if (!storeChangeResult?.success) throw new Error(storeChangeResult?.error || 'store payment shipping change flow failed');
       return storeChangeResult.state || state;
+    }
+    if (storePaymentJob) {
+      throw new Error(`store payment shipping change page did not appear after JS click${expandResult?.error ? `: ${expandResult.error}` : ''}`);
     }
     const expandedOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
     const expandedHasExpectedOption = expandedOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);

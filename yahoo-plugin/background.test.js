@@ -6360,6 +6360,7 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
   let selectAttempts = 0;
   let selectedShippingAmount = null;
   let applyClicks = 0;
+  const focusCalls = [];
   let now = 0;
   class FakeDate extends Date {
     constructor(...args) {
@@ -6414,7 +6415,10 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
         paymentAmountJpy: 6759,
         textSample: '\u304a\u652f\u6255\u3044\u91d1\u984d 6,759\u5186 \u914d\u9001\u65b9\u6cd5 \u5909\u66f4 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba 760\u5186',
         selectedShippingAmountJpy: 760,
-        shippingOptions: []
+        shippingOptions: [
+          { amountJpy: 760, checked: true, disabled: false, visible: false },
+          { amountJpy: 185, checked: false, disabled: false, visible: false }
+        ]
       }
     };
   };
@@ -6428,11 +6432,22 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
       async create() { return { id: 58, url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=h1217537840', status: 'complete' }; },
       async get(id) {
         const state = paymentState().state;
-        return { id, url: state.url, status: 'complete' };
+        return { id, windowId: 8058, url: state.url, status: 'complete' };
+      },
+      async update(id, props) {
+        focusCalls.push(['tab', id, props]);
+        const state = paymentState().state;
+        return { id, windowId: 8058, url: state.url, status: 'complete', active: props?.active === true };
       },
       async query() {
         const state = paymentState().state;
-        return [{ id: 58, url: state.url, status: 'complete' }];
+        return [{ id: 58, windowId: 8058, url: state.url, status: 'complete' }];
+      }
+    },
+    windows: {
+      async update(id, props) {
+        focusCalls.push(['window', id, props]);
+        return { id, focused: props?.focused === true };
       }
     },
     scripting: {
@@ -6485,6 +6500,10 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
 
   await api.runPaymentJobs();
 
+  assert.equal(JSON.stringify(focusCalls.slice(0, 2)), JSON.stringify([
+    ['window', 8058, { focused: true }],
+    ['tab', 58, { active: true }]
+  ]));
   assert.equal(expandClicks, 1);
   assert.equal(selectAttempts, 2);
   assert.equal(selectedShippingAmount, 185);
@@ -6571,11 +6590,12 @@ async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMa
   const calls = [];
   const actions = [];
   let shippingSelectionAttempts = 0;
+  let shippingChangeClicks = 0;
   const states = [
     {
       success: true,
       state: {
-        url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181',
+        url: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181',
         hasReviewButton: true,
         paymentAmountJpy: 670,
         textSample: '\u914d\u9001\u65b9\u6cd5 \u304a\u652f\u6255\u3044\u91d1\u984d\uff08\u5408\u8a08\uff09 670\u5186',
@@ -6583,20 +6603,25 @@ async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMa
         shippingOptions: []
       }
     },
-    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/confirm?aid=1218905181', hasFinalizeButton: true, paymentAmountJpy: 670 } },
-    { success: true, state: { url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete?aid=1218905181', complete: true } }
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/confirm?auctionId=1218905181', hasFinalizeButton: true, paymentAmountJpy: 670 } },
+    { success: true, state: { url: 'https://buy.auctions.yahoo.co.jp/order/complete?auctionId=1218905181', complete: true } }
   ];
   const api = loadBackgroundForTest({
     sleep: async () => {},
     tabs: {
-      async create() { return { id: 23, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', status: 'complete' }; },
-      async get(id) { return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', status: 'complete' }; },
-      async query() { return [{ id: 23, url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', status: 'complete' }]; }
+      async create() { return { id: 23, url: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181', status: 'complete' }; },
+      async get(id) { return { id, url: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181', status: 'complete' }; },
+      async query() { return [{ id: 23, url: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181', status: 'complete' }]; }
     },
     scripting: {
       async executeScript(...args) {
         const payload = args[0] || {};
+        const funcText = String(payload.func || '');
         if (payload.files) return undefined;
+        if (funcText.includes("reason: 'shipping change button not found'")) {
+          shippingChangeClicks += 1;
+          return [{ result: { success: true, changed: true } }];
+        }
         if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
           shippingSelectionAttempts += 1;
           return [{ result: { success: false, error: 'matching payment shipping option not found' } }];
@@ -6610,7 +6635,7 @@ async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMa
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 23, productId: '1218905181', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 23, productId: '1218905181', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -6623,6 +6648,7 @@ async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMa
   await api.runPaymentJobs();
 
   assert.equal(shippingSelectionAttempts, 0);
+  assert.equal(shippingChangeClicks, 0);
   assert.deepEqual(actions, ['review', 'finalize']);
   assert.equal(calls[0].orderId, 23);
   assert.equal(calls[0].status, 'success');
@@ -6645,16 +6671,18 @@ async function testRunStorePaymentJobsRetriesDlvryChangeUntilRenderedWhenAmountM
     }
   }
   const stateForPhase = () => {
-    if (paymentPhase === 'changePage') {
+    if (paymentPhase === 'changePage' || paymentPhase === 'changeSelected') {
+      const selectedExpected = paymentPhase === 'changeSelected';
       return {
         success: true,
         state: {
           url: 'https://buy.auctions.yahoo.co.jp/order/change/pay-method?auctionId=h1217537840',
           paymentAmountJpy: 6759,
           textSample: '\u914d\u9001\u65b9\u6cd5 \u3086\u3046\u30d1\u30c3\u30af 60\u30b5\u30a4\u30ba 760\u5186 \u30ec\u30bf\u30fc\u30d1\u30c3\u30af 950\u5186',
+          selectedShippingAmountJpy: selectedExpected ? 950 : 760,
           shippingOptions: [
-            { amountJpy: 760, checked: true, disabled: false },
-            { amountJpy: 950, checked: false, disabled: false }
+            { amountJpy: 760, checked: !selectedExpected, disabled: false },
+            { amountJpy: 950, checked: selectedExpected, disabled: false }
           ]
         }
       };
@@ -6713,6 +6741,7 @@ async function testRunStorePaymentJobsRetriesDlvryChangeUntilRenderedWhenAmountM
         if (payload.files) return undefined;
         if (payload.args && payload.args.length === 1 && typeof payload.args[0] === 'number') {
           shippingSelectionAttempts += 1;
+          paymentPhase = 'changeSelected';
           return [{ result: { success: true, changed: true, selectedShippingJpy: payload.args[0] } }];
         }
         if (payload.args && payload.args.length >= 2) {
@@ -6835,9 +6864,9 @@ async function testRunStorePaymentShippingMismatchDoesNotUseDebuggerFallback() {
   await api.runPaymentJobs();
 
   assert.equal(expandAttempts, 5);
-  assert.equal(shippingSelectionAttempts, 1);
+  assert.equal(shippingSelectionAttempts, 0);
   assert.equal(debuggerAttachCalls, 0);
-  assert.match(calls[0].error, /payment shipping option 950\u5186 not selectable/);
+  assert.match(calls[0].error, /store payment shipping change page did not appear after JS click/);
   assert.equal(String(calls[0].error).includes('trustedExpand'), false);
 }
 
