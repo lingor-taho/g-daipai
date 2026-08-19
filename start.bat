@@ -42,14 +42,23 @@ start "g-daipai-client" /b cmd /c "cd /d %ROOT% && node scripts\serve-client-dis
 echo [4/4] Start Admin Report: http://localhost:8000/#/login
 start "g-daipai-admin" /b cmd /c "cd /d %ADMIN_DIR% && npm start <NUL > %ROOT%\admin-start.log 2>&1"
 
-timeout /t 20 > nul
-
 set API_OK=0
 set CLIENT_OK=0
 set ADMIN_OK=0
+
+echo Waiting for Admin Report on port 8000 (up to 90 seconds)...
+set ADMIN_WAIT_SECONDS=0
+:wait_for_admin
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000" ^| findstr "LISTEN"') do set ADMIN_OK=1
+if "%ADMIN_OK%"=="1" goto admin_check_done
+if %ADMIN_WAIT_SECONDS% GEQ 90 goto admin_check_done
+timeout /t 2 /nobreak > nul
+set /a ADMIN_WAIT_SECONDS+=2
+goto wait_for_admin
+
+:admin_check_done
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3034" ^| findstr "LISTEN"') do set API_OK=1
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3035" ^| findstr "LISTEN"') do set CLIENT_OK=1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000" ^| findstr "LISTEN"') do set ADMIN_OK=1
 
 echo.
 if "%API_OK%"=="1" (
@@ -67,9 +76,9 @@ if "%CLIENT_OK%"=="1" (
 )
 
 if "%ADMIN_OK%"=="1" (
-  echo Admin Report OK: http://localhost:8000/#/login
+  echo Admin Report OK: http://localhost:8000/#/login ^(ready after %ADMIN_WAIT_SECONDS%s^)
 ) else (
-  echo Admin Report NOT running. Check %ROOT%\admin-start.log
+  echo Admin Report NOT running after 90 seconds. Check %ROOT%\admin-start.log
 )
 
 echo.
