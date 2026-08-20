@@ -414,6 +414,17 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-20 后台启动检查恢复固定等待20秒
+
+按当前运维选择，`start.bat` 撤销 2026-08-19 增加的 8000 端口最长90秒轮询，恢复为启动 `umi dev` 后固定等待20秒，再一次性检查 API、用户端和后台端口。本次不改后台运行方式，仍使用 `umi dev`；如果首次编译超过20秒，启动窗口仍可能显示 `Admin Report NOT running`，应结合稍后实际访问和 `admin-start.log` 判断。
+
+验证：
+
+```powershell
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-19 后台启动8000端口改为最长90秒轮询
 
 `start.bat` 启动 `umi dev` 后原先固定等待20秒并只检查一次8000端口；Umi 首次编译稍慢时会显示 `Admin Report NOT running`，但稍后刷新实际可正常打开。现在改为每2秒检查8000端口，最长等待90秒；一旦监听立即显示成功和实际等待时间，只有90秒后仍未监听才报错。API和用户端端口在后台等待结束后再检查，避免提前判定。本次不改后台运行方式，仍使用 `umi dev`。
