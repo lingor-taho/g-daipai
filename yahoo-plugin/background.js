@@ -2058,6 +2058,9 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const structuredAlreadyPaid = paymentProgressStatus === 'buyerPayDoneYahoo'
     || paymentProgressStepType === 'paidWaitShip'
     || paymentNoticeTypes.includes('buyerPaid');
+  const isPurchaseCompletePage = /\/buyer\/payment\/complete(?:[/?#]|$)/i.test(normalize(snapshot.url || ''));
+  const purchaseCompleted = /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(lifecycleText)
+    || (isPurchaseCompletePage && /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText));
   const alreadyPaid = structuredAlreadyPaid
     || (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(lifecycleText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) && waitingShipmentText);
@@ -2082,7 +2085,7 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     selectedShippingAmountJpy: selectedShippingOption ? selectedShippingOption.amountJpy : null,
     alreadyPaid,
     cancelled,
-    complete: /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(lifecycleText),
+    complete: purchaseCompleted,
     processing: /\u305f\u3060\u3044\u307e\u6c7a\u6e08\u51e6\u7406\u4e2d\u3067\u3059/.test(lifecycleText),
     hasEasyPaymentButton: hasControl(/Yahoo!\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
     hasPaymentCloseButton: hasControl(/^\s*\u9589\u3058\u308b\s*$/),
@@ -7061,7 +7064,7 @@ async function executePaymentJob(job, paymentBatch = {}) {
         PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS
       );
     } catch (e) {
-      throw new Error(`payment completion page did not appear within 15s: ${e.message || e}`);
+      throw new Error(`payment completion page did not appear within ${Math.round(PAYMENT_FINALIZE_COMPLETE_TIMEOUT_MS / 1000)}s: ${e.message || e}`);
     }
     state = tab._gdaipaiPaymentState || await getPaymentPageState(tab.id);
     if (state?.cancelled) return { cancelled: true };

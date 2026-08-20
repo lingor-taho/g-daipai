@@ -414,6 +414,19 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-20 新版普通商品付款完成页不再超时误报失败
+
+新版普通商品 `/buyer/payment/complete` 页面同时显示“購入が完了しました！”和独立状态“商品の発送連絡をお待ちください”。精确状态提取会优先返回等待发货标题，旧付款完成判断因此看不到整页中的购买完成文字，等待 60 秒后误报页面未跳转。现在保留精确状态用于取消和生命周期判断，只在当前 URL 确认为 `/buyer/payment/complete` 时，用整页“購入が完了しました”作为付款完成兜底；卖家消息和其他交易页不会触发。超时错误同时改为显示实际 60 秒，回归测试覆盖成功文字与等待发货状态同时存在的页面。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-20 新版普通商品已付款结构化状态兼容
 
 新版普通商品付款成功后，交易页可能只在可见状态标题显示“商品の発送連絡をお待ちください”，付款完成事实位于 `__NEXT_DATA__` 的 `progressStatus=buyerPayDoneYahoo`、`progressStep.type=paidWaitShip` 和 `notice[].type=buyerPaid`。付款流程原先只组合旧版付款完成文案与等待发货标题，未读取这些结构化字段，因此会继续寻找付款入口并报“页面按钮未找到”，订单停在 `pending_settlement`。现在付款页状态提取会读取上述结构化字段；确认已付款后直接按既有成功路径回写 `pending_shipment`，不会再次点击付款按钮。旧版文字识别、付款金额校验和取消识别保持不变。

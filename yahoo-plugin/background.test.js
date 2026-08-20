@@ -2863,6 +2863,26 @@ function testPaymentPageStateDetectsPurchaseCompletePage() {
   assert.equal(state.alreadyPaid, false);
 }
 
+function testPaymentPageStateDetectsRedesignedPurchaseCompletePageWithWaitingShipmentStatus() {
+  const api = loadBackgroundForTest();
+  const snapshot = {
+    url: 'https://contact.auctions.yahoo.co.jp/buyer/payment/complete?aid=v1240859676&oid=79415600-1987146617-7869143',
+    transactionStatusText: '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+    bodyText: '\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\uff01 \u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+    controls: ['\u53d6\u5f15\u5185\u5bb9\u3092\u78ba\u8a8d\u3059\u308b']
+  };
+  const state = api.buildPaymentPageStateFromSnapshot(snapshot);
+
+  assert.equal(state.complete, true);
+  assert.equal(state.alreadyPaid, false);
+
+  const tradeTopState = api.buildPaymentPageStateFromSnapshot({
+    ...snapshot,
+    url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=v1240859676'
+  });
+  assert.equal(tradeTopState.complete, false);
+}
+
 function testPaymentPageStateDetectsStoreAlreadyPaidPage() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
@@ -11093,6 +11113,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testPendingShipmentScanKeepsPollingPastTrackingFallback();
   await testPendingShipmentScanAcceptsTrackingFallbackAfterShipmentDetailsRender();
   testPaymentPageStateDetectsPurchaseCompletePage();
+  testPaymentPageStateDetectsRedesignedPurchaseCompletePageWithWaitingShipmentStatus();
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
   testPaymentPageStateDetectsNormalV2StructuredAlreadyPaidPage();
   await testGetPaymentPageStateReadsNormalV2StructuredAlreadyPaidState();
