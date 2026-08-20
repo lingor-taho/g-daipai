@@ -2875,6 +2875,80 @@ function testPaymentPageStateDetectsStoreAlreadyPaidPage() {
   assert.equal(state.complete, false);
 }
 
+function testPaymentPageStateDetectsNormalV2StructuredAlreadyPaidPage() {
+  const api = loadBackgroundForTest();
+  const state = api.buildPaymentPageStateFromSnapshot({
+    url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=j1240506006',
+    transactionStatusText: '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+    bodyText: '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+    controls: [],
+    paymentProgressStatus: 'buyerPayDoneYahoo',
+    paymentProgressStepType: 'paidWaitShip',
+    paymentNoticeTypes: ['buyerPaid']
+  });
+
+  assert.equal(state.alreadyPaid, true);
+  assert.equal(state.complete, false);
+  assert.equal(state.hasPurchaseProcedureButton, false);
+}
+
+async function testGetPaymentPageStateReadsNormalV2StructuredAlreadyPaidState() {
+  const nextData = JSON.stringify({
+    props: {
+      pageProps: {
+        initialState: {
+          top: {
+            progressStatus: 'buyerPayDoneYahoo',
+            progressStep: { type: 'paidWaitShip' },
+            notice: [{ type: 'buyerPaid', showCompleted: true }]
+          }
+        }
+      }
+    }
+  });
+  const statusElement = {
+    textContent: '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+    value: '',
+    title: '',
+    getAttribute() { return ''; }
+  };
+  const document = {
+    title: 'Yahoo!\u30aa\u30fc\u30af\u30b7\u30e7\u30f3 - \u53d6\u5f15\u30ca\u30d3',
+    body: {
+      innerText: '\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044',
+      textContent: ''
+    },
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return { textContent: nextData };
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'main p') return [statusElement];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          document,
+          location: { href: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=j1240506006' },
+          window: { getComputedStyle() { return null; } },
+          Node: { DOCUMENT_POSITION_FOLLOWING: 4 }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const state = await api.getPaymentPageState(99);
+
+  assert.equal(state.alreadyPaid, true);
+  assert.equal(state.paymentProgressStatus, 'buyerPayDoneYahoo');
+  assert.equal(state.paymentProgressStepType, 'paidWaitShip');
+  assert.deepEqual(Array.from(state.paymentNoticeTypes), ['buyerPaid']);
+}
+
 function testPaymentPageStateKeepsSelectedShippingOption() {
   const api = loadBackgroundForTest();
   const state = api.buildPaymentPageStateFromSnapshot({
@@ -11020,6 +11094,8 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testPendingShipmentScanAcceptsTrackingFallbackAfterShipmentDetailsRender();
   testPaymentPageStateDetectsPurchaseCompletePage();
   testPaymentPageStateDetectsStoreAlreadyPaidPage();
+  testPaymentPageStateDetectsNormalV2StructuredAlreadyPaidPage();
+  await testGetPaymentPageStateReadsNormalV2StructuredAlreadyPaidState();
   testPaymentPageStateKeepsSelectedShippingOption();
   testPaymentPageStateDetectsPaymentMethodFee();
   testPaymentPageStateDetectsAppraisalSection();

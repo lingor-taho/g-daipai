@@ -414,6 +414,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-20 新版普通商品已付款结构化状态兼容
+
+新版普通商品付款成功后，交易页可能只在可见状态标题显示“商品の発送連絡をお待ちください”，付款完成事实位于 `__NEXT_DATA__` 的 `progressStatus=buyerPayDoneYahoo`、`progressStep.type=paidWaitShip` 和 `notice[].type=buyerPaid`。付款流程原先只组合旧版付款完成文案与等待发货标题，未读取这些结构化字段，因此会继续寻找付款入口并报“页面按钮未找到”，订单停在 `pending_settlement`。现在付款页状态提取会读取上述结构化字段；确认已付款后直接按既有成功路径回写 `pending_shipment`，不会再次点击付款按钮。旧版文字识别、付款金额校验和取消识别保持不变。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node yahoo-plugin/background.test.js
+node src/server/routes/plugin.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-20 后台启动检查恢复固定等待20秒
 
 按当前运维选择，`start.bat` 撤销 2026-08-19 增加的 8000 端口最长90秒轮询，恢复为启动 `umi dev` 后固定等待20秒，再一次性检查 API、用户端和后台端口。本次不改后台运行方式，仍使用 `umi dev`；如果首次编译超过20秒，启动窗口仍可能显示 `Admin Report NOT running`，应结合稍后实际访问和 `admin-start.log` 判断。

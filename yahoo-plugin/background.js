@@ -2014,6 +2014,11 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
   const bodyText = normalize(snapshot.bodyText || '');
   const transactionStatusText = normalize(snapshot.transactionStatusText || snapshot.primaryStatusText || '');
+  const paymentProgressStatus = normalize(snapshot.paymentProgressStatus || '');
+  const paymentProgressStepType = normalize(snapshot.paymentProgressStepType || '');
+  const paymentNoticeTypes = Array.isArray(snapshot.paymentNoticeTypes)
+    ? snapshot.paymentNoticeTypes.map(normalize).filter(Boolean)
+    : [];
   const lifecycleText = transactionStatusText || bodyText;
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(normalize).filter(Boolean) : [];
   const purchaseProcedureUrl = normalize(snapshot.purchaseProcedureUrl || '');
@@ -2050,7 +2055,11 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     (hasStoreConfirmationSection && hasControl(/^\s*\u5909\u66f4\u3059\u308b\s*$/));
   const hasAppraisalSection = Boolean(snapshot.hasAppraisalSection) ||
     (/\u9451\u5b9a/.test(bodyText) && (/\u9451\u5b9a\u3057\u306a\u3044/.test(bodyText) || controls.some(text => /\u9451\u5b9a\u3057\u306a\u3044/.test(text))));
-  const alreadyPaid = (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(lifecycleText) && waitingShipmentText)
+  const structuredAlreadyPaid = paymentProgressStatus === 'buyerPayDoneYahoo'
+    || paymentProgressStepType === 'paidWaitShip'
+    || paymentNoticeTypes.includes('buyerPaid');
+  const alreadyPaid = structuredAlreadyPaid
+    || (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(lifecycleText) && waitingShipmentText)
     || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) && waitingShipmentText);
   const cancelled = snapshot.hasStoppedTransactionDialog === true || isYahooTransactionCancelledText(lifecycleText);
   return {
@@ -2058,6 +2067,9 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     title: snapshot.title || '',
     purchaseProcedureUrl,
     transactionStatusText,
+    paymentProgressStatus,
+    paymentProgressStepType,
+    paymentNoticeTypes,
     textSample: bodyText.slice(0, 500),
     controlsSample: controls.slice(0, 20),
     paymentAmountJpy,
@@ -2108,6 +2120,28 @@ async function getPaymentPageState(tabId) {
         }))
         .filter(control => control.text);
       const controls = controlDetails.map(control => control.text);
+      const structuredPaymentState = (() => {
+        try {
+          const raw = document.querySelector('script#__NEXT_DATA__')?.textContent || '';
+          const nextData = raw ? JSON.parse(raw) : null;
+          const top = nextData?.props?.pageProps?.initialState?.top
+            || nextData?.props?.initialState?.top
+            || {};
+          return {
+            paymentProgressStatus: normalize(top.progressStatus || ''),
+            paymentProgressStepType: normalize(top.progressStep?.type || ''),
+            paymentNoticeTypes: Array.isArray(top.notice)
+              ? top.notice.map(item => normalize(item?.type || '')).filter(Boolean)
+              : []
+          };
+        } catch {
+          return {
+            paymentProgressStatus: '',
+            paymentProgressStepType: '',
+            paymentNoticeTypes: []
+          };
+        }
+      })();
       const purchaseProcedureControl = controlDetails.find(control =>
         /^\s*\u8cfc\u5165\u624b\u7d9a\u304d(?:\u3092)?\u3059\u308b\s*$/.test(control.text) &&
         /\/buyer\/payment\/input(?:[/?#]|$)/i.test(control.href)
@@ -2258,6 +2292,7 @@ async function getPaymentPageState(tabId) {
           title: document.title || '',
           bodyText,
           transactionStatusText,
+          ...structuredPaymentState,
           controls,
           purchaseProcedureUrl: purchaseProcedureControl?.href || '',
           hasStoppedTransactionDialog,
@@ -7608,6 +7643,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   buildScanStatusPayload,
   executePendingShipmentScanJob,
   shouldAttemptBundleInputAction,
+  getPaymentPageState,
   buildPaymentPageStateFromSnapshot,
   isDirectCashOnDeliveryPaymentEntry,
   parsePaymentAmountJpyFromText,
