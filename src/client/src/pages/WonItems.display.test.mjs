@@ -59,3 +59,9 @@ assert.equal(
   true,
   'WonItems remark editor must support saving and deleting a 1000-character remark'
 );
+
+assert.equal(
+  source.includes('Dialog.confirm') || source.includes('确定删除该商品的备注吗'),
+  false,
+  'WonItems must delete a remark directly without a second confirmation dialog'
+);

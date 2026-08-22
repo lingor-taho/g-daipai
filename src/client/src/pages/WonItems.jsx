@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Dialog, Empty, InfiniteScroll, List, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
+import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
 import { deleteWonItemRemark, getWonTaskList, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
@@ -380,13 +380,6 @@ export default function WonItems() {
 
   async function handleDeleteRemark() {
     if (!remarkEditor?.user_remark) return;
-    const confirmed = await Dialog.confirm({
-      title: '删除备注',
-      content: '确定删除该商品的备注吗？',
-      confirmText: '删除',
-      cancelText: '取消'
-    });
-    if (!confirmed) return;
     setRemarkDeleting(true);
     try {
       await deleteWonItemRemark(remarkEditor.order_id);
