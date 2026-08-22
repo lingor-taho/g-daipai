@@ -11,3 +11,15 @@ assert.equal(
   true,
   'ActiveBidding page must render manual_import strategy as 导入'
 );
+
+assert.equal(
+  source.includes('<InfiniteScroll') && source.includes('hasMore={items.length < total}'),
+  true,
+  'ActiveBidding must append the next 10 items when the user reaches the bottom'
+);
+
+assert.equal(
+  source.includes('上一页') || source.includes('下一页'),
+  false,
+  'ActiveBidding must not render previous/next pagination buttons'
+);

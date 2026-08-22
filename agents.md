@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-18
+**最后更新**: 2026-08-22
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,26 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-22 用户端三页改为滚动加载并新增落札商品备注
+
+用户端提交页下方任务列表、入札中、落札商品三处移除“上一页/下一页”，默认读取 10 条，滚动到底部后继续按每次 10 条追加；追加结果按任务或商品稳定 ID 去重，加载失败保留已显示内容并支持底部重试。切换代看用户会清空并重新读取第一页；首页 10 秒状态刷新只合并第一页，不会把已追加列表缩回 10 条，入札和落札页从后台回到页面时会在接口上限内刷新已加载范围。
+
+落札商品图片下方新增备注旗帜：无备注为灰色，有备注为红色；点击后可在弹层内保存、修改或删除备注。用户备注使用 `orders.user_remark` / `user_remark_updated_at`，与后台 `order_remark` 及 Google Sheets 备注分离。用户端保存和删除接口按 `orders.task_id -> tasks.user_id` 校验当前代看用户归属，不能修改其他用户订单；备注统一裁剪首尾空白并限制 1000 字。
+
+验证：
+
+```powershell
+node --check src/server/routes/task.js
+node src/server/routes/task.test.js
+node src/client/src/utils/pagedList.test.mjs
+node src/client/src/pages/TaskList.display.test.mjs
+node src/client/src/pages/ActiveBidding.display.test.mjs
+node src/client/src/pages/WonItems.display.test.mjs
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-20 新版普通商品付款完成页不再超时误报失败
 

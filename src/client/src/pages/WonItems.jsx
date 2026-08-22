@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
-import { getWonTaskList } from '../utils/api';
+import { Button, Dialog, Empty, InfiniteScroll, List, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
+import { deleteWonItemRemark, getWonTaskList, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
 import { formatTotalAmount } from '../utils/totalAmount';
-import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle, pageButtonStyle } from '../styles';
+import { appendUniqueItems } from '../utils/pagedList';
+import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle } from '../styles';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -70,6 +71,24 @@ const sellerMessageBodyStyle = {
   maxHeight: 'calc(88vh - 54px)',
   color: '#222',
   background: '#fff'
+};
+
+const remarkDialogStyle = {
+  ...sellerMessageDialogStyle,
+  width: 'min(520px, 100%)'
+};
+
+const remarkBodyStyle = {
+  padding: 14,
+  color: colors.text,
+  background: colors.card
+};
+
+const remarkButtonRowStyle = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 10,
+  marginTop: 14
 };
 
 const sellerMessageCss = `
@@ -226,50 +245,162 @@ function getWonItemStyle(item) {
   return itemCardStyle;
 }
 
+function RemarkFlag({ active }) {
+  const color = active ? colors.danger : colors.faint;
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 3v18" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <path d="M7 4h10.2c.9 0 1.35 1.1.7 1.72L15.6 8l2.3 2.28c.65.63.2 1.72-.7 1.72H7V4Z" fill={color} />
+    </svg>
+  );
+}
+
 export default function WonItems() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [sellerMessageModal, setSellerMessageModal] = useState(null);
+  const [remarkEditor, setRemarkEditor] = useState(null);
+  const [remarkText, setRemarkText] = useState('');
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [remarkDeleting, setRemarkDeleting] = useState(false);
   const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const fetchWonItems = useCallback((nextPage = page) => {
-    const requestedPage = Number.isFinite(Number(nextPage)) && Number(nextPage) > 0 ? Number(nextPage) : page;
+  const resetWonItems = useCallback(async () => {
     if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    runDeduped(`WonItems:getWonTaskList:${requestedPage}`, () => getWonTaskList({ page: requestedPage, limit: pageSize }))
-      .then(res => {
-        setItems(res.data?.data || []);
-        setTotal(Number(res.data?.total || 0));
-        setPage(Number(res.data?.page || requestedPage));
-      })
-      .catch(e => {
-        Toast.show({ content: e.response?.data?.error || '落札商品加载失败' });
-        setItems([]);
-        setTotal(0);
-      })
-      .finally(() => setLoading(false));
+    try {
+      const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+      const res = await runDeduped(`WonItems:getWonTaskList:${actingUserKey}:1`, () => getWonTaskList({ page: 1, limit: pageSize }));
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      setItems(res.data?.data || []);
+      setTotal(Number(res.data?.total || 0));
+      setPage(1);
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '落札商品加载失败' });
+      setItems([]);
+      setTotal(0);
+      setPage(0);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    const nextPage = page + 1;
+    try {
+      const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+      const res = await getWonTaskList({ page: nextPage, limit: pageSize });
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      setItems(current => appendUniqueItems(current, res.data?.data || [], item => item.order_id || item.id));
+      setTotal(Number(res.data?.total || 0));
+      setPage(Number(res.data?.page || nextPage));
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '更多落札商品加载失败' });
+      throw e;
+    }
+  }, [page]);
+
+  const refreshLoadedItems = useCallback(async () => {
+    if (document.visibilityState === 'hidden' || isUserIdle()) return;
+    const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+    const refreshLimit = Math.min(Math.max(page, 1) * pageSize, 100);
+    try {
+      const res = await runDeduped(
+        `WonItems:refresh:${actingUserKey}:${refreshLimit}`,
+        () => getWonTaskList({ page: 1, limit: refreshLimit })
+      );
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const refreshedItems = res.data?.data || [];
+      setItems(refreshedItems);
+      setTotal(Number(res.data?.total || 0));
+      setPage(Math.max(1, Math.ceil(refreshedItems.length / pageSize)));
+    } catch (_) {}
   }, [page]);
 
   useEffect(() => {
-    fetchWonItems();
-    window.addEventListener('acting-user-change', fetchWonItems);
-    window.addEventListener(USER_ACTIVE_EVENT, fetchWonItems);
-    document.addEventListener('visibilitychange', fetchWonItems);
-    window.addEventListener('focus', fetchWonItems);
-    return () => {
-      window.removeEventListener('acting-user-change', fetchWonItems);
-      window.removeEventListener(USER_ACTIVE_EVENT, fetchWonItems);
-      document.removeEventListener('visibilitychange', fetchWonItems);
-      window.removeEventListener('focus', fetchWonItems);
+    resetWonItems();
+  }, [resetWonItems]);
+
+  useEffect(() => {
+    const handleActingUserChange = () => {
+      setItems([]);
+      setTotal(0);
+      setPage(0);
+      setRemarkEditor(null);
+      resetWonItems();
     };
-  }, [fetchWonItems]);
+    window.addEventListener('acting-user-change', handleActingUserChange);
+    window.addEventListener(USER_ACTIVE_EVENT, refreshLoadedItems);
+    document.addEventListener('visibilitychange', refreshLoadedItems);
+    window.addEventListener('focus', refreshLoadedItems);
+    return () => {
+      window.removeEventListener('acting-user-change', handleActingUserChange);
+      window.removeEventListener(USER_ACTIVE_EVENT, refreshLoadedItems);
+      document.removeEventListener('visibilitychange', refreshLoadedItems);
+      window.removeEventListener('focus', refreshLoadedItems);
+    };
+  }, [refreshLoadedItems, resetWonItems]);
+
+  function openRemarkEditor(item) {
+    if (!item.order_id) {
+      Toast.show({ content: '该落札商品尚未生成订单，暂时无法备注' });
+      return;
+    }
+    setRemarkEditor(item);
+    setRemarkText(item.user_remark || '');
+  }
+
+  async function handleSaveRemark() {
+    const normalizedRemark = remarkText.trim();
+    if (!normalizedRemark) {
+      Toast.show({ content: '请输入备注内容' });
+      return;
+    }
+    setRemarkSaving(true);
+    try {
+      const res = await saveWonItemRemark(remarkEditor.order_id, normalizedRemark);
+      const savedRemark = res.data?.user_remark || normalizedRemark;
+      setItems(current => current.map(item => item.order_id === remarkEditor.order_id
+        ? { ...item, user_remark: savedRemark }
+        : item));
+      Toast.show({ content: '备注已保存' });
+      setRemarkEditor(null);
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '备注保存失败' });
+    } finally {
+      setRemarkSaving(false);
+    }
+  }
+
+  async function handleDeleteRemark() {
+    if (!remarkEditor?.user_remark) return;
+    const confirmed = await Dialog.confirm({
+      title: '删除备注',
+      content: '确定删除该商品的备注吗？',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+    if (!confirmed) return;
+    setRemarkDeleting(true);
+    try {
+      await deleteWonItemRemark(remarkEditor.order_id);
+      setItems(current => current.map(item => item.order_id === remarkEditor.order_id
+        ? { ...item, user_remark: null }
+        : item));
+      Toast.show({ content: '备注已删除' });
+      setRemarkEditor(null);
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '备注删除失败' });
+    } finally {
+      setRemarkDeleting(false);
+    }
+  }
 
   return (
     <>
@@ -278,7 +409,7 @@ export default function WonItems() {
         header={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
             <span>落札商品</span>
-            <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={() => fetchWonItems(page)}>刷新</Button>
+            <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={resetWonItems}>刷新</Button>
           </div>
         }
       >
@@ -300,17 +431,28 @@ export default function WonItems() {
           const isCancelled = item.order_status === 'cancelled';
           const canViewPurchasePage = item.order_status === 'completed';
           return (
-            <List.Item key={item.id} style={getWonItemStyle(item)}>
+            <List.Item key={item.order_id || item.id} style={getWonItemStyle(item)}>
               <div style={{ display: 'flex', gap: 12 }}>
-                {item.product_image_url ? (
-                  <img
-                    src={item.product_image_url}
-                    alt={title}
-                    style={imageThumbStyle}
-                  />
-                ) : (
-                  <div style={imageThumbStyle} />
-                )}
+                <div style={{ width: imageThumbStyle.width, flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  {item.product_image_url ? (
+                    <img
+                      src={item.product_image_url}
+                      alt={title}
+                      style={imageThumbStyle}
+                    />
+                  ) : (
+                    <div style={imageThumbStyle} />
+                  )}
+                  <button
+                    type="button"
+                    aria-label={item.user_remark ? '修改商品备注' : '添加商品备注'}
+                    title={item.user_remark ? '修改商品备注' : '添加商品备注'}
+                    onClick={() => openRemarkEditor(item)}
+                    style={{ border: 0, background: 'transparent', padding: '5px 8px 0', lineHeight: 0, cursor: 'pointer' }}
+                  >
+                    <RemarkFlag active={Boolean(String(item.user_remark || '').trim())} />
+                  </button>
+                </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
@@ -369,14 +511,68 @@ export default function WonItems() {
             </List.Item>
           );
         })}
-        {!loading && total > pageSize && (
-          <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page <= 1} onClick={() => fetchWonItems(page - 1)}>上一页</Button>
-            <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{page} / {totalPages}</span>
-            <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page >= totalPages} onClick={() => fetchWonItems(page + 1)}>下一页</Button>
-          </div>
-        )}
+        {!loading && items.length > 0 ? (
+          <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
+        ) : null}
       </List>
+      {remarkEditor ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`商品备注：${remarkEditor.product_id}`}
+          style={sellerMessageOverlayStyle}
+          onClick={() => {
+            if (!remarkSaving && !remarkDeleting) setRemarkEditor(null);
+          }}
+        >
+          <div style={remarkDialogStyle} onClick={event => event.stopPropagation()}>
+            <div style={sellerMessageHeaderStyle}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                商品备注：{remarkEditor.product_id}
+              </span>
+              <Button
+                size="mini"
+                fill="none"
+                disabled={remarkSaving || remarkDeleting}
+                onClick={() => setRemarkEditor(null)}
+              >
+                关闭
+              </Button>
+            </div>
+            <div style={remarkBodyStyle}>
+              <TextArea
+                value={remarkText}
+                onChange={setRemarkText}
+                rows={5}
+                maxLength={1000}
+                showCount
+                autoFocus
+                placeholder="请输入该商品的备注"
+                style={{ '--font-size': '14px', padding: 10, border: `1px solid ${colors.borderStrong}`, borderRadius: 6 }}
+              />
+              <div style={remarkButtonRowStyle}>
+                <Button
+                  color="danger"
+                  fill="outline"
+                  disabled={!String(remarkEditor.user_remark || '').trim() || remarkSaving}
+                  loading={remarkDeleting}
+                  onClick={handleDeleteRemark}
+                >
+                  删除备注
+                </Button>
+                <Button
+                  color="primary"
+                  disabled={remarkDeleting}
+                  loading={remarkSaving}
+                  onClick={handleSaveRemark}
+                >
+                  保存备注
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {sellerMessageModal ? (
         <div
           role="dialog"

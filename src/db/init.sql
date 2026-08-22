@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS orders (
   tracking_number VARCHAR(128),
   tracking_rescan_requested INTEGER DEFAULT 0,
   order_remark TEXT,
+  user_remark TEXT,
+  user_remark_updated_at DATETIME,
   shipped_at DATETIME,
   settled_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

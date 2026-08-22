@@ -226,6 +226,51 @@ function buildWonTaskListInput(user, query = {}) {
   return { userId: user.id, ...normalizePagination(query, 10) };
 }
 
+function normalizeUserRemark(value) {
+  return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().slice(0, 1000);
+}
+
+async function updateUserOrderRemark(database, { orderId, userId, remark, allowEmpty = false }) {
+  const normalizedOrderId = Number(orderId);
+  const normalizedUserId = Number(userId);
+  if (!Number.isInteger(normalizedOrderId) || normalizedOrderId <= 0) {
+    const error = new Error('valid order id is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Number.isInteger(normalizedUserId) || normalizedUserId <= 0) {
+    const error = new Error('not logged in');
+    error.statusCode = 401;
+    throw error;
+  }
+  const normalizedRemark = normalizeUserRemark(remark);
+  if (!allowEmpty && !normalizedRemark) {
+    const error = new Error('请输入备注内容');
+    error.statusCode = 400;
+    throw error;
+  }
+  const storedRemark = normalizedRemark || null;
+  const result = await database.query(
+    `UPDATE orders
+     SET user_remark = ?,
+         user_remark_updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND EXISTS (
+         SELECT 1
+         FROM tasks owner_task
+         WHERE owner_task.id = orders.task_id
+           AND owner_task.user_id = ?
+       )`,
+    [storedRemark, normalizedOrderId, normalizedUserId]
+  );
+  if (!result?.rowCount) {
+    const error = new Error('order not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return { order_id: normalizedOrderId, user_remark: storedRemark };
+}
+
 function buildActiveBiddingTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
   return { userId: user.id, ...normalizePagination(query, 10) };
@@ -710,6 +755,7 @@ router.get('/won', async (req, res) => {
     const tasks = await db.getAll(
       `SELECT
          t.id,
+         o.id AS order_id,
          won_task.product_id,
          p.product_url AS product_url,
          p.product_title AS product_title,
@@ -736,6 +782,8 @@ router.get('/won', async (req, res) => {
          o.shipping_company,
          o.shipped_at,
          o.tracking_number,
+         o.user_remark,
+         o.user_remark_updated_at,
          CASE WHEN m.message_html IS NOT NULL AND TRIM(m.message_html) <> '' THEN m.message_html ELSE NULL END AS seller_message_html,
          m.updated_at AS seller_message_updated_at
        FROM tasks won_task
@@ -759,6 +807,35 @@ router.get('/won', async (req, res) => {
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/task/won/:orderId/remark - 保存当前用户的落札商品备注
+router.put('/won/:orderId/remark', async (req, res) => {
+  try {
+    const result = await updateUserOrderRemark(db, {
+      orderId: req.params.orderId,
+      userId: req.actingUser.id,
+      remark: req.body?.remark
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || '备注保存失败' });
+  }
+});
+
+// DELETE /api/task/won/:orderId/remark - 删除当前用户的落札商品备注
+router.delete('/won/:orderId/remark', async (req, res) => {
+  try {
+    const result = await updateUserOrderRemark(db, {
+      orderId: req.params.orderId,
+      userId: req.actingUser.id,
+      remark: '',
+      allowEmpty: true
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || '备注删除失败' });
   }
 });
 
@@ -880,6 +957,8 @@ module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
 module.exports.buildActiveBiddingTaskListQuery = buildActiveBiddingTaskListQuery;
 module.exports.buildWonTaskListInput = buildWonTaskListInput;
+module.exports.normalizeUserRemark = normalizeUserRemark;
+module.exports.updateUserOrderRemark = updateUserOrderRemark;
 module.exports.buildWonStatsInput = buildWonStatsInput;
 module.exports.buildWonStatsSummaryQuery = buildWonStatsSummaryQuery;
 module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;

@@ -35,3 +35,15 @@ assert.equal(
   true,
   'Embedded TaskList must reuse the submit page product-loading callback'
 );
+
+assert.equal(
+  source.includes('<InfiniteScroll') && source.includes('hasMore={tasks.length < total}'),
+  true,
+  'TaskList must append the next 10 tasks when the user reaches the bottom'
+);
+
+assert.equal(
+  source.includes('上一页') || source.includes('下一页'),
+  false,
+  'TaskList must not render previous/next pagination buttons'
+);

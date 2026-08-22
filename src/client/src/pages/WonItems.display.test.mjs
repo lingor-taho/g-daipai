@@ -35,3 +35,27 @@ assert.equal(
   true,
   'WonItems seller message modal must be read-only and use scoped message styles'
 );
+
+assert.equal(
+  source.includes('<InfiniteScroll') && source.includes('hasMore={items.length < total}'),
+  true,
+  'WonItems must append the next 10 items when the user reaches the bottom'
+);
+
+assert.equal(
+  source.includes('上一页') || source.includes('下一页'),
+  false,
+  'WonItems must not render previous/next pagination buttons'
+);
+
+assert.equal(
+  source.includes('<RemarkFlag') && source.includes('修改商品备注') && source.includes('添加商品备注'),
+  true,
+  'WonItems must render the gray/red remark flag below the product image'
+);
+
+assert.equal(
+  source.includes('删除备注') && source.includes('保存备注') && source.includes('maxLength={1000}'),
+  true,
+  'WonItems remark editor must support saving and deleting a 1000-character remark'
+);

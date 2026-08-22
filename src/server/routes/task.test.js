@@ -5,6 +5,8 @@ const {
   buildTaskListInput,
   buildActiveBiddingTaskListInput,
   buildWonTaskListInput,
+  normalizeUserRemark,
+  updateUserOrderRemark,
   buildActiveBiddingTaskListQuery,
   buildWonStatsInput,
   buildWonStatsSummaryQuery,
@@ -245,6 +247,68 @@ function testWonTaskRouteExposesFetchedSellerMessagesOnly() {
   assert.match(source, /LEFT JOIN yahoo_trade_messages m ON m\.order_id = o\.id/);
   assert.match(source, /CASE WHEN m\.message_html IS NOT NULL AND TRIM\(m\.message_html\) <> '' THEN m\.message_html ELSE NULL END AS seller_message_html/);
   assert.match(source, /m\.updated_at AS seller_message_updated_at/);
+}
+
+function testWonTaskRouteExposesUserRemarkWithoutReusingAdminRemark() {
+  const source = require('fs').readFileSync(require('path').join(__dirname, 'task.js'), 'utf8');
+  assert.match(source, /o\.id AS order_id/);
+  assert.match(source, /o\.user_remark/);
+  assert.doesNotMatch(source, /o\.order_remark AS user_remark/);
+}
+
+function testNormalizeUserRemark() {
+  assert.equal(normalizeUserRemark('  first\r\nsecond  '), 'first\nsecond');
+  assert.equal(normalizeUserRemark('x'.repeat(1001)).length, 1000);
+}
+
+async function testUpdateUserOrderRemarkUsesOrderOwnerScope() {
+  const calls = [];
+  const database = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+  const saved = await updateUserOrderRemark(database, {
+    orderId: 17,
+    userId: 9,
+    remark: '  易碎品  '
+  });
+  assert.deepEqual(saved, { order_id: 17, user_remark: '易碎品' });
+  assert.match(calls[0].sql, /owner_task\.id = orders\.task_id/);
+  assert.match(calls[0].sql, /owner_task\.user_id = \?/);
+  assert.deepEqual(calls[0].params, ['易碎品', 17, 9]);
+}
+
+async function testUpdateUserOrderRemarkDeletesAndRejectsForeignOrder() {
+  const deleteCalls = [];
+  const database = {
+    async query(sql, params) {
+      deleteCalls.push({ sql, params });
+      return { rowCount: 1 };
+    }
+  };
+  const deleted = await updateUserOrderRemark(database, {
+    orderId: 18,
+    userId: 9,
+    remark: '',
+    allowEmpty: true
+  });
+  assert.deepEqual(deleted, { order_id: 18, user_remark: null });
+  assert.equal(deleteCalls[0].params[0], null);
+
+  await assert.rejects(
+    () => updateUserOrderRemark({ query: async () => ({ rowCount: 0 }) }, {
+      orderId: 99,
+      userId: 9,
+      remark: '不可越权'
+    }),
+    error => error.statusCode === 404 && /order not found/.test(error.message)
+  );
+  await assert.rejects(
+    () => updateUserOrderRemark(database, { orderId: 18, userId: 9, remark: '   ' }),
+    error => error.statusCode === 400 && /请输入备注内容/.test(error.message)
+  );
 }
 
 function testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit() {
@@ -637,6 +701,8 @@ testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
 testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testWonTaskRouteExposesFetchedSellerMessagesOnly();
+testWonTaskRouteExposesUserRemarkWithoutReusingAdminRemark();
+testNormalizeUserRemark();
 testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testProductTypeFallsBackToTaxLabel();
@@ -667,6 +733,8 @@ Promise.all([
   testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope(),
   testFindTaskByClientRequestIdSkipsEmptyId(),
   testGetClientSiteConfigReadsNoticeSettings(),
+  testUpdateUserOrderRemarkUsesOrderOwnerScope(),
+  testUpdateUserOrderRemarkDeletesAndRejectsForeignOrder(),
   testWebsiteRateProviderUsesCacheUntilExpiry()
 ]).catch(err => {
   console.error(err);

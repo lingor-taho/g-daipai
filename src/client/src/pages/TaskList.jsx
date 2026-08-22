@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
-import { Button, Dialog, List, Tag, Toast, SpinLoading } from 'antd-mobile';
+import { Button, Dialog, InfiniteScroll, List, Tag, Toast, SpinLoading } from 'antd-mobile';
 import { useNavigate } from 'react-router-dom';
 import { cancelTask, getApiErrorMessage, getTaskList, getTaskStats } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
@@ -8,7 +8,8 @@ import { formatBeijingDateTime } from '../utils/datetime';
 import { getTaskFailureLabel } from '../utils/taskFailureReason';
 import { getTaskStatCards } from '../utils/taskStats';
 import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
-import { cardStyle, colors, itemCardStyle, listStyle, pageButtonStyle } from '../styles';
+import { appendUniqueItems, mergeFirstPageItems } from '../utils/pagedList';
+import { cardStyle, colors, itemCardStyle, listStyle } from '../styles';
 
 const STATUS_MAP = {
   pending: { label: '队列中', color: 'default' },
@@ -51,45 +52,80 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState(null);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
 
-  const fetchTasks = useCallback(() => {
+  const fetchFirstPage = useCallback(async ({ preserveLoaded = false } = {}) => {
     if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
-    Promise.all([
-      runDeduped(`TaskList:getTaskList:${limit}:${page}`, () => getTaskList({ limit, page })),
-      runDeduped('TaskList:getTaskStats', () => getTaskStats()).catch(() => ({ data: null }))
-    ])
-      .then(([taskRes, statsRes]) => {
-        setTasks(taskRes.data.data || []);
-        setTotal(Number(taskRes.data.total || 0));
-        setStats(statsRes.data || null);
-      })
-      .catch(() => {
+    if (!preserveLoaded) setLoading(true);
+    try {
+      const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+      const [taskRes, statsRes] = await Promise.all([
+        runDeduped(`TaskList:getTaskList:${actingUserKey}:${limit}:1`, () => getTaskList({ limit, page: 1 })),
+        runDeduped(`TaskList:getTaskStats:${actingUserKey}`, () => getTaskStats()).catch(() => ({ data: null }))
+      ]);
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const firstPageItems = taskRes.data.data || [];
+      setTasks(current => preserveLoaded
+        ? mergeFirstPageItems(current, firstPageItems)
+        : firstPageItems);
+      setTotal(Number(taskRes.data.total || 0));
+      setStats(statsRes.data || null);
+      if (!preserveLoaded) setPage(1);
+    } catch (_) {
+      if (!preserveLoaded) {
         setTasks([]);
         setStats(null);
-      })
-      .finally(() => setLoading(false));
+        setTotal(0);
+        setPage(0);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [limit]);
+
+  const resetTasks = useCallback(() => fetchFirstPage(), [fetchFirstPage]);
+  const refreshFirstPage = useCallback(() => fetchFirstPage({ preserveLoaded: true }), [fetchFirstPage]);
+
+  const loadMore = useCallback(async () => {
+    const nextPage = page + 1;
+    try {
+      const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+      const taskRes = await getTaskList({ limit, page: nextPage });
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      setTasks(current => appendUniqueItems(current, taskRes.data?.data || []));
+      setTotal(Number(taskRes.data?.total || 0));
+      setPage(Number(taskRes.data?.page || nextPage));
+    } catch (error) {
+      Toast.show({ content: getApiErrorMessage(error, '任务加载失败') });
+      throw error;
+    }
   }, [limit, page]);
 
   useEffect(() => {
-    fetchTasks();
-    window.addEventListener('acting-user-change', fetchTasks);
-    window.addEventListener(USER_ACTIVE_EVENT, fetchTasks);
-    document.addEventListener('visibilitychange', fetchTasks);
-    window.addEventListener('focus', fetchTasks);
-    const interval = setInterval(fetchTasks, 10000);
+    resetTasks();
+    const handleActingUserChange = () => {
+      setTasks([]);
+      setTotal(0);
+      setPage(0);
+      resetTasks();
+    };
+    window.addEventListener('acting-user-change', handleActingUserChange);
+    window.addEventListener(USER_ACTIVE_EVENT, refreshFirstPage);
+    document.addEventListener('visibilitychange', refreshFirstPage);
+    window.addEventListener('focus', refreshFirstPage);
+    const interval = setInterval(refreshFirstPage, 10000);
     return () => {
-      window.removeEventListener('acting-user-change', fetchTasks);
-      window.removeEventListener(USER_ACTIVE_EVENT, fetchTasks);
-      document.removeEventListener('visibilitychange', fetchTasks);
-      window.removeEventListener('focus', fetchTasks);
+      window.removeEventListener('acting-user-change', handleActingUserChange);
+      window.removeEventListener(USER_ACTIVE_EVENT, refreshFirstPage);
+      document.removeEventListener('visibilitychange', refreshFirstPage);
+      window.removeEventListener('focus', refreshFirstPage);
       clearInterval(interval);
     };
-  }, [fetchTasks]);
+  }, [refreshFirstPage, resetTasks]);
 
   async function handleCancel(task) {
     const confirmed = await Dialog.confirm({
@@ -103,7 +139,10 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
     try {
       await cancelTask(task.id);
       Toast.show({ content: '任务已终止' });
-      fetchTasks();
+      setTasks(current => current.map(item => item.id === task.id
+        ? { ...item, status: 'cancelled', error_msg: null }
+        : item));
+      refreshFirstPage();
     } catch (e) {
       Toast.show({ content: getApiErrorMessage(e, '终止失败') });
     } finally {
@@ -196,13 +235,9 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
           );
         })}
       </List>
-      {total > limit && (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '12px 0' }}>
-          <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</Button>
-          <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{page} / {Math.ceil(total / limit)}</span>
-          <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page >= Math.ceil(total / limit)} onClick={() => setPage(value => value + 1)}>下一页</Button>
-        </div>
-      )}
+      {!loading && tasks.length > 0 ? (
+        <InfiniteScroll loadMore={loadMore} hasMore={tasks.length < total} />
+      ) : null}
     </>
   );
 }

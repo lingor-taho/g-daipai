@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Empty, List, SpinLoading, Tag, Toast } from 'antd-mobile';
+import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import { useNavigate } from 'react-router-dom';
 import { getActiveBiddingTaskList } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
 import { formatTotalAmount } from '../utils/totalAmount';
-import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle, pageButtonStyle } from '../styles';
+import { appendUniqueItems } from '../utils/pagedList';
+import { colors, imageThumbStyle, itemCardStyle, listStyle, outlineButtonStyle } from '../styles';
 
 const STRATEGY_LABELS = {
   direct: '即时拍',
@@ -70,45 +71,87 @@ export default function ActiveBidding() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const fetchItems = useCallback((nextPage = page) => {
-    const requestedPage = Number.isFinite(Number(nextPage)) && Number(nextPage) > 0 ? Number(nextPage) : page;
+  const resetItems = useCallback(async () => {
     if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    runDeduped(`ActiveBidding:getActiveBiddingTaskList:${requestedPage}`, () => getActiveBiddingTaskList({ page: requestedPage, limit: pageSize }))
-      .then(res => {
-        setItems(res.data?.data || []);
-        setTotal(Number(res.data?.total || 0));
-        setPage(Number(res.data?.page || requestedPage));
-      })
-      .catch(e => {
-        Toast.show({ content: e.response?.data?.error || '入札中商品加载失败' });
-        setItems([]);
-        setTotal(0);
-      })
-      .finally(() => setLoading(false));
+    try {
+      const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+      const res = await runDeduped(`ActiveBidding:getActiveBiddingTaskList:${actingUserKey}:1`, () => getActiveBiddingTaskList({ page: 1, limit: pageSize }));
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      setItems(res.data?.data || []);
+      setTotal(Number(res.data?.total || 0));
+      setPage(1);
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '入札中商品加载失败' });
+      setItems([]);
+      setTotal(0);
+      setPage(0);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    const nextPage = page + 1;
+    try {
+      const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+      const res = await getActiveBiddingTaskList({ page: nextPage, limit: pageSize });
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      setItems(current => appendUniqueItems(current, res.data?.data || [], 'product_id'));
+      setTotal(Number(res.data?.total || 0));
+      setPage(Number(res.data?.page || nextPage));
+    } catch (e) {
+      Toast.show({ content: e.response?.data?.error || '更多入札中商品加载失败' });
+      throw e;
+    }
+  }, [page]);
+
+  const refreshLoadedItems = useCallback(async () => {
+    if (document.visibilityState === 'hidden' || isUserIdle()) return;
+    const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+    const refreshLimit = Math.min(Math.max(page, 1) * pageSize, 100);
+    try {
+      const res = await runDeduped(
+        `ActiveBidding:refresh:${actingUserKey}:${refreshLimit}`,
+        () => getActiveBiddingTaskList({ page: 1, limit: refreshLimit })
+      );
+      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const refreshedItems = res.data?.data || [];
+      setItems(refreshedItems);
+      setTotal(Number(res.data?.total || 0));
+      setPage(Math.max(1, Math.ceil(refreshedItems.length / pageSize)));
+    } catch (_) {}
   }, [page]);
 
   useEffect(() => {
-    fetchItems();
-    window.addEventListener('acting-user-change', fetchItems);
-    window.addEventListener(USER_ACTIVE_EVENT, fetchItems);
-    document.addEventListener('visibilitychange', fetchItems);
-    window.addEventListener('focus', fetchItems);
-    return () => {
-      window.removeEventListener('acting-user-change', fetchItems);
-      window.removeEventListener(USER_ACTIVE_EVENT, fetchItems);
-      document.removeEventListener('visibilitychange', fetchItems);
-      window.removeEventListener('focus', fetchItems);
+    resetItems();
+  }, [resetItems]);
+
+  useEffect(() => {
+    const handleActingUserChange = () => {
+      setItems([]);
+      setTotal(0);
+      setPage(0);
+      resetItems();
     };
-  }, [fetchItems]);
+    window.addEventListener('acting-user-change', handleActingUserChange);
+    window.addEventListener(USER_ACTIVE_EVENT, refreshLoadedItems);
+    document.addEventListener('visibilitychange', refreshLoadedItems);
+    window.addEventListener('focus', refreshLoadedItems);
+    return () => {
+      window.removeEventListener('acting-user-change', handleActingUserChange);
+      window.removeEventListener(USER_ACTIVE_EVENT, refreshLoadedItems);
+      document.removeEventListener('visibilitychange', refreshLoadedItems);
+      window.removeEventListener('focus', refreshLoadedItems);
+    };
+  }, [refreshLoadedItems, resetItems]);
 
   return (
     <>
@@ -117,7 +160,7 @@ export default function ActiveBidding() {
         header={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
             <span>入札中</span>
-            <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={() => fetchItems(page)}>刷新</Button>
+            <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={resetItems}>刷新</Button>
           </div>
         }
       >
@@ -204,13 +247,9 @@ export default function ActiveBidding() {
             </List.Item>
           );
         })}
-        {!loading && total > pageSize && (
-          <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page <= 1} onClick={() => fetchItems(page - 1)}>上一页</Button>
-            <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{page} / {totalPages}</span>
-            <Button size="mini" fill="outline" style={pageButtonStyle(false)} disabled={page >= totalPages} onClick={() => fetchItems(page + 1)}>下一页</Button>
-          </div>
-        )}
+        {!loading && items.length > 0 ? (
+          <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
+        ) : null}
       </List>
     </>
   );

@@ -74,6 +74,8 @@ export const submitTask = (data) => api.post('/task/submit', {
 export const getTaskList = (params) => api.get('/task/list', { params });
 export const getActiveBiddingTaskList = (params) => api.get('/task/bidding', { params });
 export const getWonTaskList = (params) => api.get('/task/won', { params });
+export const saveWonItemRemark = (orderId, remark) => api.put(`/task/won/${orderId}/remark`, { remark });
+export const deleteWonItemRemark = (orderId) => api.delete(`/task/won/${orderId}/remark`);
 export const getWonStats = (params) => api.get('/task/won-stats', { params });
 export const getTaskDetail = (id) => api.get(`/task/${id}`);
 export const cancelTask = (id) => api.patch(`/task/${id}/cancel`);
