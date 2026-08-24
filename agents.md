@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-22
+**最后更新**: 2026-08-24
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,26 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-08-24 订单 CSV 用户汇总、账号组合查询和出价限制
+
+后台订单管理导出 CSV 会先按用户名排序并连续排列同一用户订单，在每个用户订单末尾增加“用户汇总”行，分别汇总日元总价和已有的人民币应付款；文件末尾原“金额汇总”继续保留，人工补录的导出运费同时计入用户小计和最终总计。
+
+账号管理列表恢复查询区，支持用户名模糊检索和“可用策略”组合筛选；用户名可以为空，可用策略默认全部，筛选由服务端作用于完整数据和分页总数。可用出价策略新增“出价限制”：受限用户前台不显示任何说明，也不隐藏或禁用商品抓取、价格、策略和提交控件；用户点击“提交任务”时提示“出价功能被一时限制，请联系管理员。”并停止提交。服务端对所有新用户提交使用相同文案和 403 状态兜底，管理员代看也不能绕过；现有已提交任务、插件后续任务和后台手动导入不受影响。
+
+验证：
+
+```powershell
+node src/admin/src/ordersCsv.test.js
+node src/admin/src/Users.display.test.js
+node src/client/src/pages/Submit.display.test.mjs
+node src/server/routes/task.test.js
+node src/server/routes/admin.orders.test.js
+npm run build --prefix src/admin
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-22 用户端三页改为滚动加载并新增落札商品备注
 

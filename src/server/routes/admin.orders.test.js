@@ -43,6 +43,8 @@ const {
   clearPaymentAlertAndContinue,
   normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig,
+  normalizeBidStrategyScope,
+  buildAdminUsersFilter,
   deleteProductDataByProductId,
   reassignOrderOwner,
   buildGoogleSheetUrl,
@@ -801,6 +803,28 @@ function testNormalizePositiveIntegerConfig() {
   assert.equal(normalizePositiveIntegerConfig('abc', 3), 3);
 }
 
+function testAdminUserFiltersSupportOptionalUsernameAndBidStrategyScope() {
+  assert.equal(normalizeBidStrategyScope('bid_blocked'), 'bid_blocked');
+  assert.equal(normalizeBidStrategyScope('invalid'), 'all');
+
+  const empty = buildAdminUsersFilter();
+  assert.match(empty.sql, /u\.role = 'user'/);
+  assert.deepEqual(empty.params, []);
+
+  const combined = buildAdminUsersFilter({
+    username: ' Carrie ',
+    bidStrategyScope: 'bid_blocked'
+  });
+  assert.match(combined.sql, /u\.username LIKE \? ESCAPE/);
+  assert.match(combined.sql, /COALESCE\(u\.bid_strategy_scope, 'all'\) = \?/);
+  assert.deepEqual(combined.params, ['%Carrie%', 'bid_blocked']);
+
+  const allStrategies = buildAdminUsersFilter({ bidStrategyScope: 'all' });
+  assert.deepEqual(allStrategies.params, ['all']);
+  const invalid = buildAdminUsersFilter({ bidStrategyScope: 'unknown' });
+  assert.deepEqual(invalid.params, []);
+}
+
 async function testRequestScanSetsCounterToConfiguredEveryRuns() {
   const queries = [];
   const fakeDb = {
@@ -1403,6 +1427,7 @@ testCompletedOrderStatusConstant();
 testNormalizeOrderStatusRefreshTargetSupportsAllowedTargets();
 testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus();
 testNormalizePositiveIntegerConfig();
+testAdminUserFiltersSupportOptionalUsernameAndBidStrategyScope();
 testBuildGoogleSheetUrl();
 testBuildTrustedInputReportQueries();
 testBuildBidFailureReportQueries();

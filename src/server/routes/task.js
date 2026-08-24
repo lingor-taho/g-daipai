@@ -20,6 +20,11 @@ const {
   resolveBuyoutTaskPrices,
   shouldSplitDirectBidByYahooLowPriceRule
 } = require('../../shared/biddingRules.cjs');
+const {
+  BID_STRATEGY_SCOPE_ALL,
+  BID_STRATEGY_SCOPE_DIRECT_ONLY,
+  BID_STRATEGY_SCOPE_BLOCKED
+} = require('../../shared/domainConstants.cjs');
 const { upsertProductSnapshot } = require('../services/productRepository');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
@@ -138,7 +143,9 @@ function isAutomaticStrategy(strategy) {
 }
 
 function normalizeBidStrategyScope(value) {
-  return value === 'direct_only' ? 'direct_only' : 'all';
+  if (value === BID_STRATEGY_SCOPE_DIRECT_ONLY) return BID_STRATEGY_SCOPE_DIRECT_ONLY;
+  if (value === BID_STRATEGY_SCOPE_BLOCKED) return BID_STRATEGY_SCOPE_BLOCKED;
+  return BID_STRATEGY_SCOPE_ALL;
 }
 
 function isClientAdminUser(user) {
@@ -166,8 +173,14 @@ async function getClientSiteConfig(database = db) {
 function assertBidStrategyAllowed(context, strategy) {
   const loginUser = context?.loginUser || null;
   const actingUser = context?.actingUser || context;
+  const scope = normalizeBidStrategyScope(actingUser?.bid_strategy_scope);
+  if (scope === BID_STRATEGY_SCOPE_BLOCKED) {
+    const error = new Error('出价功能被一时限制，请联系管理员。');
+    error.statusCode = 403;
+    throw error;
+  }
   if (isClientAdminUser(loginUser)) return;
-  if (normalizeBidStrategyScope(actingUser?.bid_strategy_scope) !== 'direct_only') return;
+  if (scope !== BID_STRATEGY_SCOPE_DIRECT_ONLY) return;
   if ((strategy || 'direct') === 'direct') return;
   const error = new Error('该用户只能使用即时拍策略');
   error.statusCode = 403;
@@ -450,6 +463,8 @@ router.post('/submit', async (req, res) => {
     if (existingRequest) {
       return res.json({ success: true, task_id: existingRequest.id, product_id: existingRequest.product_id, duplicate: true });
     }
+    const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
+    assertBidStrategyAllowed({ loginUser: req.user, actingUser: req.actingUser }, incomingStrategy);
     const existingTask = await db.getOne(
       'SELECT id, user_id FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1',
       [input.productId]
@@ -494,8 +509,6 @@ router.post('/submit', async (req, res) => {
     const bidMaxPrice = input.bidMode === 'buyout'
       ? buyoutPrices.bidMaxPrice
       : calculateBidMaxPrice(userMaxPrice, resolvedTaxType);
-    const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
-    assertBidStrategyAllowed({ loginUser: req.user, actingUser: req.actingUser }, incomingStrategy);
     const multiBidMinPrice = await getMultiBidMinPrice();
     validateMultiBidUserMaxPrice(incomingStrategy, userMaxPrice, multiBidMinPrice);
     const multiBidIncrement = validateMultiBidIncrement(incomingStrategy, userMaxPrice, multi_bid_increment);

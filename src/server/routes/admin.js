@@ -73,7 +73,10 @@ const {
   ORDER_STATUS_BUNDLE_COMPLETED,
   ORDER_STATUS_PENDING_SHIPMENT,
   ORDER_STATUS_PENDING_RECEIPT,
-  ORDER_STATUS_CANCELLED
+  ORDER_STATUS_CANCELLED,
+  BID_STRATEGY_SCOPE_ALL,
+  BID_STRATEGY_SCOPE_DIRECT_ONLY,
+  BID_STRATEGY_SCOPE_BLOCKED
 } = require('../../shared/domainConstants.cjs');
 const {
   taxExcludedToTaxIncluded
@@ -96,7 +99,34 @@ function buildGoogleSheetUrl(spreadsheetId) {
 }
 
 function normalizeBidStrategyScope(value) {
-  return value === 'direct_only' ? 'direct_only' : 'all';
+  if (value === BID_STRATEGY_SCOPE_DIRECT_ONLY) return BID_STRATEGY_SCOPE_DIRECT_ONLY;
+  if (value === BID_STRATEGY_SCOPE_BLOCKED) return BID_STRATEGY_SCOPE_BLOCKED;
+  return BID_STRATEGY_SCOPE_ALL;
+}
+
+function escapeSqlLike(value) {
+  return String(value || '').replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+function buildAdminUsersFilter({ username = '', bidStrategyScope = '' } = {}) {
+  const clauses = ["u.role = 'user'"];
+  const params = [];
+  const normalizedUsername = String(username || '').trim();
+  const normalizedScope = String(bidStrategyScope || '').trim();
+
+  if (normalizedUsername) {
+    clauses.push("u.username LIKE ? ESCAPE '\\'");
+    params.push(`%${escapeSqlLike(normalizedUsername)}%`);
+  }
+  if ([BID_STRATEGY_SCOPE_ALL, BID_STRATEGY_SCOPE_DIRECT_ONLY, BID_STRATEGY_SCOPE_BLOCKED].includes(normalizedScope)) {
+    clauses.push("COALESCE(u.bid_strategy_scope, 'all') = ?");
+    params.push(normalizedScope);
+  }
+
+  return {
+    sql: `WHERE ${clauses.join('\n       AND ')}`,
+    params
+  };
 }
 
 function normalizeOrderStatusRefreshTarget(value) {
@@ -1142,8 +1172,13 @@ async function reassignOrderOwner(database, { orderId, userId }) {
 }
 
 router.get('/users', async (req, res) => {
-  const { current = 1, pageSize = 10 } = req.query;
+  const current = Math.max(1, Number.parseInt(String(req.query.current || 1), 10) || 1);
+  const pageSize = Math.min(200, Math.max(1, Number.parseInt(String(req.query.pageSize || 10), 10) || 10));
   const offset = (current - 1) * pageSize;
+  const filter = buildAdminUsersFilter({
+    username: req.query.username,
+    bidStrategyScope: req.query.bid_strategy_scope
+  });
   const items = await db.getAll(
     `SELECT u.id,
             u.username,
@@ -1156,12 +1191,15 @@ router.get('/users', async (req, res) => {
             u.created_at
      FROM users u
      LEFT JOIN users p ON p.id = u.parent_user_id
-     WHERE u.role = 'user'
+     ${filter.sql}
      ORDER BY u.created_at DESC
      LIMIT ? OFFSET ?`,
-    [pageSize, offset]
+    [...filter.params, pageSize, offset]
   );
-  const countResult = await db.getOne("SELECT COUNT(*) as total FROM users WHERE role = 'user'");
+  const countResult = await db.getOne(
+    `SELECT COUNT(*) as total FROM users u ${filter.sql}`,
+    filter.params
+  );
   res.json({ items, total: countResult?.total || 0 });
 });
 
@@ -3993,4 +4031,5 @@ module.exports.requestYahooMessageSend = requestYahooMessageSend;
 module.exports.clearPaymentAlertAndContinue = clearPaymentAlertAndContinue;
 module.exports.normalizePositiveIntegerConfig = normalizePositiveIntegerConfig;
 module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;
+module.exports.buildAdminUsersFilter = buildAdminUsersFilter;
 module.exports.buildGoogleSheetUrl = buildGoogleSheetUrl;

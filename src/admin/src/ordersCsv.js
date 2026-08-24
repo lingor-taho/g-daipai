@@ -49,11 +49,47 @@ function parsePayableCny(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function compareOrderUsernames(leftRow, rightRow) {
+  const leftUsername = String(leftRow?.username || '');
+  const rightUsername = String(rightRow?.username || '');
+  const localizedOrder = leftUsername.localeCompare(
+    rightUsername,
+    'zh-CN',
+    { numeric: true, sensitivity: 'base' }
+  );
+  if (localizedOrder) return localizedOrder;
+  if (leftUsername === rightUsername) return 0;
+  return leftUsername < rightUsername ? -1 : 1;
+}
+
 function buildOrdersCsv(rows = [], shippingOverrides = {}) {
   const headers = ['落札日期', '用户名', '商品链接', '商品标题', '落札价', '运费', '总价', '应付款(RMB)'];
   const totals = [];
   const payableTotals = [];
-  const lines = rows.map(row => {
+  const orderedRows = rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => compareOrderUsernames(left.row, right.row) || left.index - right.index)
+    .map(item => item.row);
+  const lines = [];
+  let currentUsername = null;
+  let userTotal = 0;
+  let userPayableTotal = 0;
+  let userPayableCount = 0;
+
+  function appendUserSummary() {
+    if (currentUsername === null) return;
+    lines.push(['用户汇总', currentUsername, '', '', '', '', userTotal, userPayableCount ? userPayableTotal : ''].map(csvEscape).join(','));
+  }
+
+  orderedRows.forEach(row => {
+    const username = String(row.username || '');
+    if (currentUsername !== null && username !== currentUsername) {
+      appendUserSummary();
+      userTotal = 0;
+      userPayableTotal = 0;
+      userPayableCount = 0;
+    }
+    currentUsername = username;
     const finalPrice = Number(row.final_price || 0);
     const shippingFee = needsCsvShippingInput(row)
       ? Number(shippingOverrides[String(row.id)] || 0)
@@ -61,20 +97,26 @@ function buildOrdersCsv(rows = [], shippingOverrides = {}) {
     const total = finalPrice + shippingFee;
     const payableCny = parsePayableCny(row.payable_cny);
     totals.push(total);
-    if (payableCny !== null) payableTotals.push(payableCny);
+    userTotal += total;
+    if (payableCny !== null) {
+      payableTotals.push(payableCny);
+      userPayableTotal += payableCny;
+      userPayableCount += 1;
+    }
     const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
     const productUrl = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
-    return [
+    lines.push([
       formatDateOnly(row.won_at),
-      row.username || '',
+      username,
       productUrl,
       row.product_title || '',
       finalPrice,
       shippingFee,
       total,
       payableCny ?? ''
-    ].map(csvEscape).join(',');
+    ].map(csvEscape).join(','));
   });
+  appendUserSummary();
   const totalAmount = totals.reduce((sum, value) => sum + value, 0);
   const payableTotalAmount = payableTotals.reduce((sum, value) => sum + value, 0);
   lines.push(['金额汇总', '', '', '', '', '', totalAmount, payableTotals.length ? payableTotalAmount : ''].map(csvEscape).join(','));

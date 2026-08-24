@@ -148,6 +148,7 @@ export default function Submit() {
   const buyoutOnly = isBuyoutOnlyProduct(product);
   const isLoginClientAdmin = Number(localStorage.getItem('userLevel') || 1) >= 3;
   const isDirectOnlyUser = !isLoginClientAdmin && bidStrategyScope === 'direct_only';
+  const isBidBlockedUser = bidStrategyScope === 'bid_blocked';
   const availableStrategyOptions = isDirectOnlyUser ? DIRECT_ONLY_STRATEGY_OPTIONS : STRATEGY_OPTIONS;
 
   useEffect(() => {
@@ -357,6 +358,10 @@ export default function Submit() {
 
   async function handleSubmit() {
     if (submitting) return;
+    if (isBidBlockedUser) {
+      Toast.show({ content: '出价功能被一时限制，请联系管理员。' });
+      return;
+    }
     const submitTaxType = getSubmitTaxType(product, storeBidPriceMode);
     const buyoutPrice = getBuyoutPrice(product);
     const inputYenPrice = getInputYenPrice();

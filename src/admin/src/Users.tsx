@@ -12,8 +12,13 @@ const USER_LEVELS = [
 
 const BID_STRATEGY_SCOPES = [
   { value: 'all', label: '全部都可以拍', color: 'green' },
-  { value: 'direct_only', label: '只能即时拍', color: 'orange' }
+  { value: 'direct_only', label: '只能即时拍', color: 'orange' },
+  { value: 'bid_blocked', label: '出价限制', color: 'red' }
 ];
+
+const BID_STRATEGY_SCOPE_VALUE_ENUM = Object.fromEntries(
+  BID_STRATEGY_SCOPES.map(item => [item.value, { text: item.label }])
+);
 
 function getLevelMeta(level: number) {
   return USER_LEVELS.find(item => item.value === Number(level)) || USER_LEVELS[0];
@@ -123,6 +128,7 @@ export default function UsersPage() {
     {
       title: '用户等级',
       dataIndex: 'user_level',
+      hideInSearch: true,
       render: (_: any, row: any) => {
         const level = getLevelMeta(row.user_level);
         return <Tag color={level.color}>{level.label}</Tag>;
@@ -131,20 +137,24 @@ export default function UsersPage() {
     {
       title: '上级归属',
       dataIndex: 'parent_username',
+      hideInSearch: true,
       render: (_: any, row: any) => row.parent_username || '-'
     },
     {
       title: '可用策略',
       dataIndex: 'bid_strategy_scope',
+      valueType: 'select',
+      valueEnum: BID_STRATEGY_SCOPE_VALUE_ENUM,
       render: (_: any, row: any) => {
         const scope = getBidStrategyScopeMeta(row.bid_strategy_scope);
         return <Tag color={scope.color}>{scope.label}</Tag>;
       }
     },
-    { title: '类型', dataIndex: 'role', render: () => <Tag>用户端</Tag> },
-    { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime' },
+    { title: '类型', dataIndex: 'role', hideInSearch: true, render: () => <Tag>用户端</Tag> },
+    { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime', hideInSearch: true },
     {
       title: '操作',
+      hideInSearch: true,
       render: (_: any, row: any) => (
         <Space>
           <Button size="small" onClick={() => openEdit(row)}>编辑</Button>
@@ -182,7 +192,7 @@ export default function UsersPage() {
           }
         }}
         rowKey="id"
-        search={false}
+        search={{ labelWidth: 'auto' }}
         headerTitle="用户账号管理"
         toolbar={{ actions: [<Button key="add" type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加用户</Button>] }}
       />

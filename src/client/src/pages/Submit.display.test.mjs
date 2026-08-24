@@ -35,3 +35,16 @@ assert.equal(
   true,
   'Double-click rebidding must fill the product input and fetch product details'
 );
+
+assert.equal(
+  source.includes("const isBidBlockedUser = bidStrategyScope === 'bid_blocked';") &&
+    /async function handleSubmit\(\) \{\s*if \(submitting\) return;\s*if \(isBidBlockedUser\) \{\s*Toast\.show\(\{ content: '出价功能被一时限制，请联系管理员。' \}\);\s*return;/.test(source),
+  true,
+  'Bid-blocked users should see the required message only when they click submit'
+);
+
+assert.equal(
+  (source.match(/出价功能被一时限制，请联系管理员。/g) || []).length,
+  1,
+  'Submit page should not render any additional bid restriction explanation'
+);

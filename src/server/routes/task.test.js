@@ -558,6 +558,7 @@ function testActiveAutomaticStrategyBlocksNewSubmission() {
 
 function testBidStrategyScopeDefaultsToAll() {
   assert.equal(normalizeBidStrategyScope('direct_only'), 'direct_only');
+  assert.equal(normalizeBidStrategyScope('bid_blocked'), 'bid_blocked');
   assert.equal(normalizeBidStrategyScope('all'), 'all');
   assert.equal(normalizeBidStrategyScope(''), 'all');
   assert.equal(normalizeBidStrategyScope(null), 'all');
@@ -582,6 +583,22 @@ function testClientAdminBypassesActingUserBidStrategyScope() {
     loginUser: { user_level: 3 },
     actingUser: { bid_strategy_scope: 'direct_only' }
   }, 'multi_bid'));
+}
+
+function testBidBlockedUserCannotSubmitAnyStrategyOrUseAdminActingOverride() {
+  for (const strategy of ['direct', 'multi_bid', '5min']) {
+    assert.throws(
+      () => assertBidStrategyAllowed({ actingUser: { bid_strategy_scope: 'bid_blocked' } }, strategy),
+      err => err?.statusCode === 403 && err?.message === '出价功能被一时限制，请联系管理员。'
+    );
+  }
+  assert.throws(
+    () => assertBidStrategyAllowed({
+      loginUser: { user_level: 3 },
+      actingUser: { bid_strategy_scope: 'bid_blocked' }
+    }, 'direct'),
+    /出价功能被一时限制，请联系管理员。/
+  );
 }
 
 async function testFindTaskByClientRequestIdUsesTrimmedIdAndUserScope() {
@@ -725,6 +742,7 @@ testActiveAutomaticStrategyBlocksNewSubmission();
 testBidStrategyScopeDefaultsToAll();
 testDirectOnlyUserAllowsOnlyDirectStrategy();
 testClientAdminBypassesActingUserBidStrategyScope();
+testBidBlockedUserCannotSubmitAnyStrategyOrUseAdminActingOverride();
 testClientManualVerificationAlertOnlyShowsPinForClientAdmin();
 testBocJpyCashSellRateParsing();
 testWebsiteRateCalculationRoundsToFourDecimals();
