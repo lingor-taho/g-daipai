@@ -43,14 +43,15 @@ function testBuildOrdersCsvUsesShippingOverridesInSummary() {
       product_title: '商品C',
       final_price: 6550,
       shipping_fee_text: '落札者負担',
-      payable_cny: 341
+      payable_cny: 341,
+      jpy_to_cny_rate: 0.05
     }
   ], { 9: 270 });
 
   const rows = csv.split('\r\n');
-  assert.equal(rows[1], '2026-06-21,将新元,https://auctions.yahoo.co.jp/jp/auction/c123456789,商品C,6550,270,6820,341');
-  assert.equal(rows.at(-2), '用户汇总,将新元,,,,,6820,341');
-  assert.equal(rows.at(-1), '金额汇总,,,,,,6820,341');
+  assert.equal(rows[1], '2026-06-21,将新元,https://auctions.yahoo.co.jp/jp/auction/c123456789,商品C,6550,270,6820,354.5');
+  assert.equal(rows.at(-2), '用户汇总,将新元,,,,,6820,354.5');
+  assert.equal(rows.at(-1), '金额汇总,,,,,,6820,354.5');
 }
 
 function testBuildOrdersCsvSortsAndSummarizesByUsernameWithoutMutatingInput() {
@@ -99,3 +100,52 @@ function testBuildOrdersCsvSortsAndSummarizesByUsernameWithoutMutatingInput() {
 testBuildOrdersCsvAppendsTotalSummaryRow();
 testBuildOrdersCsvUsesShippingOverridesInSummary();
 testBuildOrdersCsvSortsAndSummarizesByUsernameWithoutMutatingInput();
+
+function testTemporaryShippingPreservesSettledFeesAndInput() {
+  const order = Object.freeze({
+    id: 1, username: '小陈', final_price: 40000, shipping_fee_text: '着払い',
+    payable_cny: '1790', jpy_to_cny_rate: '0.0445', handling_fee_cny: 10
+  });
+  const input = Object.freeze([order]);
+  const overrides = Object.freeze({ 1: 2000 });
+  const csv = buildOrdersCsv(input, overrides);
+  assert.equal(csv.split('\r\n')[1], '-,小陈,,,40000,2000,42000,1879');
+  assert.equal(csv.split('\r\n')[2], '用户汇总,小陈,,,,,42000,1879');
+  assert.equal(csv.split('\r\n')[3], '金额汇总,,,,,,42000,1879');
+  assert.equal(buildOrdersCsv(input, overrides), csv, 'repeated exports must not accumulate shipping');
+  assert.equal(order.payable_cny, '1790');
+}
+
+function testShippingPayableBoundaries() {
+  const base = { id: 1, username: 'alice', final_price: 100, shipping_fee_text: '着払い', payable_cny: 14.45, jpy_to_cny_rate: 0.0445 };
+  const cases = [
+    { changes: {}, shipping: 0, expected: '14.45' },
+    { changes: {}, shipping: 333, expected: '29.27' },
+    { changes: { payable_cny: null }, shipping: 2000, expected: '' },
+    { changes: { payable_cny: '' }, shipping: 2000, expected: '' },
+    { changes: { shipping_fee_text: '200円' }, shipping: 2000, expected: '14.45' },
+    ...[undefined, null, '', 0, -1, 'invalid'].map(rate => ({ changes: { jpy_to_cny_rate: rate }, shipping: 2000, expected: '14.45' }))
+  ];
+  for (const { changes, shipping, expected } of cases) {
+    const lines = buildOrdersCsv([{ ...base, ...changes }], { 1: shipping }).split('\r\n');
+    for (const line of lines.slice(1)) assert.equal(line.split(',').at(-1), expected);
+  }
+}
+
+function testEachOrderUsesItsOwnRateAndSummariesRoundToCents() {
+  const csv = buildOrdersCsv([
+    { id: 1, username: 'alice', final_price: 1, shipping_fee_text: '着払い', payable_cny: 0.1, jpy_to_cny_rate: 0.05 },
+    { id: 2, username: 'alice', final_price: 1, shipping_fee_text: '落札者負担', payable_cny: 0.1, jpy_to_cny_rate: 0.1 },
+    { id: 3, username: 'bob', final_price: 1, shipping_fee_text: '着払い', payable_cny: 0.1, jpy_to_cny_rate: 0.05 }
+  ], { 1: 2, 2: 2, 3: 2 });
+  const lines = csv.split('\r\n');
+  assert.equal(lines[1].split(',').at(-1), '0.2');
+  assert.equal(lines[2].split(',').at(-1), '0.3');
+  assert.equal(lines[3], '用户汇总,alice,,,,,6,0.5');
+  assert.equal(lines[5], '用户汇总,bob,,,,,3,0.2');
+  assert.equal(lines[6], '金额汇总,,,,,,9,0.7');
+}
+
+testTemporaryShippingPreservesSettledFeesAndInput();
+testShippingPayableBoundaries();
+testEachOrderUsesItsOwnRateAndSummariesRoundToCents();

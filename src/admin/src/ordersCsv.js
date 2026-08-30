@@ -78,7 +78,7 @@ function buildOrdersCsv(rows = [], shippingOverrides = {}) {
 
   function appendUserSummary() {
     if (currentUsername === null) return;
-    lines.push(['用户汇总', currentUsername, '', '', '', '', userTotal, userPayableCount ? userPayableTotal : ''].map(csvEscape).join(','));
+    lines.push(['用户汇总', currentUsername, '', '', '', '', userTotal, userPayableCount ? Number(userPayableTotal.toFixed(2)) : ''].map(csvEscape).join(','));
   }
 
   orderedRows.forEach(row => {
@@ -91,11 +91,17 @@ function buildOrdersCsv(rows = [], shippingOverrides = {}) {
     }
     currentUsername = username;
     const finalPrice = Number(row.final_price || 0);
-    const shippingFee = needsCsvShippingInput(row)
+    const usesShippingOverride = needsCsvShippingInput(row);
+    const shippingFee = usesShippingOverride
       ? Number(shippingOverrides[String(row.id)] || 0)
       : parseCsvShippingFee(row.shipping_fee_text);
     const total = finalPrice + shippingFee;
-    const payableCny = parsePayableCny(row.payable_cny);
+    let payableCny = parsePayableCny(row.payable_cny);
+    const settlementRate = Number(row.jpy_to_cny_rate);
+    // Only add temporary export shipping; preserve all previously settled fees.
+    if (usesShippingOverride && payableCny !== null && Number.isFinite(settlementRate) && settlementRate > 0) {
+      payableCny = Number((payableCny + shippingFee * settlementRate).toFixed(2));
+    }
     totals.push(total);
     userTotal += total;
     if (payableCny !== null) {
@@ -118,7 +124,7 @@ function buildOrdersCsv(rows = [], shippingOverrides = {}) {
   });
   appendUserSummary();
   const totalAmount = totals.reduce((sum, value) => sum + value, 0);
-  const payableTotalAmount = payableTotals.reduce((sum, value) => sum + value, 0);
+  const payableTotalAmount = Number(payableTotals.reduce((sum, value) => sum + value, 0).toFixed(2));
   lines.push(['金额汇总', '', '', '', '', '', totalAmount, payableTotals.length ? payableTotalAmount : ''].map(csvEscape).join(','));
   return `${headers.join(',')}\r\n${lines.join('\r\n')}`;
 }
