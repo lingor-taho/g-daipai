@@ -255,7 +255,7 @@ git diff --check
 
 2026-08-31 已完成本地后台静态化：`start.bat` 先执行 `npm run build --prefix src/admin`，再以现有 `scripts/serve-client-dist.js` 提供 `src/admin/dist` 到原8000端口，继续把 `/api` 转发到3034。脚本支持 `STATIC_DIST_DIR` / `STATIC_PORT`，用户端3035保持原行为。后台为 hash 路由，`/#/...` 地址不变。
 
-用户提供的 Nginx 配置未包含8000后台 upstream；直接访问 `43.165.177.49:8000` 不经过 Nginx。因此生产更新后 Nginx 无需改动，只需重新运行 `start.bat`；切换时后台会短暂中断，已打开页面应 Ctrl+F5。未构建成功时脚本保留已有 `src/admin/dist` 作为临时回退，但应查看 `admin-build.log` 并修复构建问题后再发布。
+用户提供的 Nginx 配置未包含8000后台 upstream；直接访问 `43.165.177.49:8000` 不经过 Nginx。因此生产更新后 Nginx 无需改动，只需重新运行 `start.bat`；切换时后台会短暂中断，已打开页面应 Ctrl+F5。未构建成功时脚本保留已有 `src/admin/dist` 作为临时回退；构建输出直接显示在启动窗口，不能把失败构建当成成功发布。
 
 已确认现象：
 
@@ -430,7 +430,7 @@ git diff --check
 
 后台8000端口原先由 `npm start` 的 `umi dev` 提供，热更新重编译会让旧页面请求已经失效的 HMR chunk，出现开发模式专属的 `ChunkLoadError` 红色覆盖页。现在 `start.bat` 会先构建 `src/admin/dist`，再使用 `scripts/serve-client-dist.js` 提供静态后台文件到原8000端口并继续转发 `/api` 到3034。静态服务新增 `STATIC_DIST_DIR`、`STATIC_PORT` 和显示名称配置，用户端3035保持原目录和端口。
 
-后台地址和 hash 路由保持 `http://host:8000/#/...`，用户提供的 Nginx 配置未代理8000，因此无需更新 Nginx。生产执行新版 `start.bat` 时后台会短暂重启，已打开页面需 Ctrl+F5；API、数据库、插件和订单工作流不改。构建失败时暂时服务原有后台构建产物并记录 `admin-build.log`，不能把失败构建当成成功发布。
+后台地址和 hash 路由保持 `http://host:8000/#/...`，用户提供的 Nginx 配置未代理8000，因此无需更新 Nginx。生产执行新版 `start.bat` 时后台会短暂重启，已打开页面需 Ctrl+F5；API、数据库、插件和订单工作流不改。构建失败时暂时服务原有后台构建产物并在启动窗口显示失败输出，不能把失败构建当成成功发布。启动窗口会显示后台构建阶段和每秒等待点，避免构建或20秒端口等待看起来无响应。
 
 验证：
 
