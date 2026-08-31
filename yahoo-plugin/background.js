@@ -2743,30 +2743,10 @@ async function expandPaymentShippingOptions(tabId) {
       const clickTargetFor = el => el?.closest?.('[role="button"], button, a, input[type="button"], input[type="submit"]') || el;
       const clickElement = el => {
         const target = clickTargetFor(el);
-        const eventOptions = { bubbles: true, cancelable: true, view: window };
-        const keyOptions = { bubbles: true, cancelable: true, view: window };
-        const fireMouse = node => {
-          if (!node) return;
-          node.scrollIntoView?.({ block: 'center', inline: 'center' });
-          node.focus?.();
-          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerdown', eventOptions));
-          node.dispatchEvent(new MouseEvent('mousedown', eventOptions));
-          if (typeof PointerEvent !== 'undefined') node.dispatchEvent(new PointerEvent('pointerup', eventOptions));
-          node.dispatchEvent(new MouseEvent('mouseup', eventOptions));
-          node.click?.();
-          node.dispatchEvent(new MouseEvent('click', eventOptions));
-        };
-        const fireKeyboard = node => {
-          if (!node) return;
-          node.focus?.();
-          for (const key of ['Enter', ' ']) {
-            node.dispatchEvent(new KeyboardEvent('keydown', { ...keyOptions, key, code: key === ' ' ? 'Space' : 'Enter' }));
-            node.dispatchEvent(new KeyboardEvent('keyup', { ...keyOptions, key, code: key === ' ' ? 'Space' : 'Enter' }));
-          }
-        };
-        fireMouse(el);
-        if (target !== el) fireMouse(target);
-        fireKeyboard(target);
+        target.scrollIntoView?.({ block: 'center', inline: 'center' });
+        target.focus?.();
+        // This control toggles the options; repeated child/parent clicks close it again.
+        target.click();
         return target;
       };
       const dlvryBlock = document.querySelector?.('#dlvry');
@@ -3051,13 +3031,11 @@ function hasExpectedPaymentShippingOption(state = {}, expectedShipping) {
   );
 }
 
-function shouldRetryPaymentShippingChangeWithDebugger(state = {}, expandResult = {}) {
+function shouldRetryPaymentShippingChangeWithDebugger(state = {}) {
   const options = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
   if (options.length > 0) return false;
-  if (isStorePaymentShippingChangePage(state, {})) return false;
-  const sample = String(state?.textSample || '');
-  const stillShowsChange = /\u5909\u66f4(?:\u3059\u308b)?/.test(sample);
-  return Boolean(stillShowsChange || expandResult?.success === false || expandResult?.changed === false);
+  // A dispatched click is not proof of expansion. textSample may contain only ads.
+  return Boolean(state?.hasReviewButton && !state.cancelled && !state.alreadyPaid && !state.complete);
 }
 
 async function selectPaymentShippingOption(tabId, expectedShippingJpy) {
@@ -3386,10 +3364,10 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
   if (!tab?.id || !state?.hasReviewButton || expectedShipping === null || expectedShipping <= 0 || (!hasShippingChoices && !needsAmountCorrection)) return state;
   if (expectedAmount !== null && currentAmount === expectedAmount) return state;
   const visibleOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
-  const hasExpectedOption = !storePaymentJob && visibleOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
   let expandResult = null;
   let trustedExpandResult = null;
-  if (!hasExpectedOption) {
+  // Do not collapse an already visible list, even if the desired option is absent.
+  if (storePaymentJob || visibleOptions.length === 0) {
     const expandAttempts = storePaymentJob ? 5 : 1;
     for (let attempt = 0; attempt < expandAttempts; attempt += 1) {
       await focusPaymentInteractionTab(tab);
@@ -3407,10 +3385,12 @@ async function ensurePaymentShippingOption(tab, job, state, options = {}) {
     if (storePaymentJob) {
       throw new Error(`store payment shipping change page did not appear after JS click${expandResult?.error ? `: ${expandResult.error}` : ''}`);
     }
+    if (state?.cancelled || state?.alreadyPaid || state?.complete) return state;
+    if (expectedAmount !== null && Number(state?.paymentAmountJpy || 0) === expectedAmount) return state;
     const expandedOptions = Array.isArray(state?.shippingOptions) ? state.shippingOptions : [];
     const expandedHasExpectedOption = expandedOptions.some(option => Number(option?.amountJpy || 0) === expectedShipping && !option.disabled);
     if (!expandedHasExpectedOption) {
-      if (!isStorePaymentJob(job) && shouldRetryPaymentShippingChangeWithDebugger(state, expandResult)) {
+      if (shouldRetryPaymentShippingChangeWithDebugger(state)) {
         trustedExpandResult = await dispatchTrustedPaymentShippingChangeClick(tab, { skipJs: true });
         if (trustedExpandResult?.success) {
           state = await waitForExpandedPaymentShippingOptions(tab, job);
@@ -7646,6 +7626,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   getPaymentActionClickPoint,
   getPaymentShippingChangeClickPoint,
   clickPaymentShippingChangeButton,
+  expandPaymentShippingOptions,
   selectPaymentShippingOption,
   revealStorePaymentShippingOptions,
   isLikelyYahooTransactionTab,
