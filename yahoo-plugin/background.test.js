@@ -1540,6 +1540,114 @@ async function testBundleActionTimeoutErrorIncludesActionName() {
   );
 }
 
+function createDelayedBundleDecisionTest({ readyAfterMs = Infinity, newTab = false, mainClickFails = false, needsConfirm = false } = {}) {
+  let nowMs = 0;
+  let clickedAt = null;
+  let confirmed = false;
+  const clicks = [];
+  const stateReadTimes = [];
+  class FakeDate extends Date {
+    static now() { return nowMs; }
+  }
+  const tab = { id: 7, url: 'https://contact.auctions.yahoo.co.jp/buyer/input?aid=n1242168450', status: 'complete' };
+  const resultTab = { id: 8, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=n1242168450&oid=bundle', status: 'complete' };
+  const isReady = () => clickedAt !== null && nowMs - clickedAt >= readyAfterMs;
+  const click = (method, action) => {
+    clicks.push({ method, action });
+    if (clickedAt === null) clickedAt = nowMs;
+    if (action === 'confirm') confirmed = true;
+    return { success: true };
+  };
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    Date: FakeDate,
+    console: { log() {}, warn() {}, error() {} },
+    setTimeout(fn, ms) { nowMs += ms; return fn(); },
+    tabs: {
+      async query() { return newTab && isReady() ? [tab, resultTab] : [tab]; },
+      async get(id) { return id === resultTab.id ? resultTab : tab; },
+      async sendMessage(id, message) {
+        if (message.type === 'CLICK_BUNDLE_TRANSACTION_ACTION') return click('content', message.action);
+        if (message.type === 'GET_BUNDLE_TRANSACTION_ACTION_STATE') {
+          if (clickedAt !== null) stateReadTimes.push(nowMs - clickedAt);
+          const ready = isReady() && (!newTab || id === resultTab.id);
+          return {
+            success: true,
+            state: {
+              canDecide: clickedAt === null,
+              canConfirm: ready && needsConfirm && !confirmed,
+              complete: ready && (!needsConfirm || confirmed)
+            }
+          };
+        }
+        return { success: true };
+      }
+    },
+    scripting: {
+      async executeScript(details) {
+        if (details.files) return [];
+        if (mainClickFails) return [{ result: { success: false, error: 'button not found in MAIN world' } }];
+        return [{ result: click('main', needsConfirm && isReady() ? 'confirm' : 'decide') }];
+      }
+    }
+  });
+  return { api, tab, clicks, stateReadTimes, elapsed: () => nowMs - clickedAt };
+}
+
+async function testNormalBundleDecideWaitsForDelayedCompletionWithoutReclick() {
+  const fixture = createDelayedBundleDecisionTest({ readyAfterMs: 20000 });
+  const result = await fixture.api.completeNormalBundleRequest(fixture.tab);
+  assert.equal(result.success, true);
+  assert.equal(fixture.elapsed(), 20000, 'continue as soon as Yahoo completes, without waiting the full 30s');
+  assert.deepEqual(fixture.clicks, [{ method: 'main', action: 'decide' }]);
+}
+
+async function testNormalBundleDecideChecksCompletedNewTabAtTimeoutBoundary() {
+  const fixture = createDelayedBundleDecisionTest({ readyAfterMs: 30000, newTab: true });
+  const result = await fixture.api.completeNormalBundleRequest(fixture.tab);
+  assert.equal(result.success, true);
+  assert.equal(result.tab.id, 8);
+  assert.equal(fixture.elapsed(), 30000);
+  assert.ok(fixture.stateReadTimes.includes(30000), 'read the final state before declaring a timeout');
+  assert.deepEqual(fixture.clicks, [{ method: 'main', action: 'decide' }]);
+}
+
+async function testNormalBundleDecideTimesOutOnceAfterThirtySeconds() {
+  for (const mainClickFails of [false, true]) {
+    const fixture = createDelayedBundleDecisionTest({ mainClickFails });
+    await assert.rejects(
+      () => fixture.api.completeNormalBundleRequest(fixture.tab),
+      /bundle decide next page did not appear/
+    );
+    assert.equal(fixture.elapsed(), 30000, 'must not add another 30s fallback wait');
+    assert.equal(fixture.stateReadTimes.at(-1), 30000);
+    assert.deepEqual(fixture.clicks, [{ method: mainClickFails ? 'content' : 'main', action: 'decide' }]);
+  }
+}
+
+async function testNormalBundleDecideStillUsesInitialClickFallbackAndFinalConfirm() {
+  const fixture = createDelayedBundleDecisionTest({ readyAfterMs: 20000, mainClickFails: true, needsConfirm: true });
+  const result = await fixture.api.completeNormalBundleRequest(fixture.tab);
+  assert.equal(result.success, true);
+  assert.deepEqual(fixture.clicks, [
+    { method: 'content', action: 'decide' },
+    { method: 'content', action: 'confirm' }
+  ]);
+}
+
+async function testSingleTransactionDecideKeepsFiveSecondWaitAndFallback() {
+  const fixture = createDelayedBundleDecisionTest();
+  await assert.rejects(
+    () => fixture.api.clickBundleActionAndFollowTab(fixture.tab, 'decide'),
+    /bundle decide next page did not appear/
+  );
+  assert.equal(fixture.elapsed(), 10000);
+  assert.deepEqual(fixture.clicks, [
+    { method: 'main', action: 'decide' },
+    { method: 'content', action: 'decide' }
+  ]);
+}
+
 async function testNormalBundleRequestClicksSecondStartPageBeforeDecide() {
   const clickedActions = [];
   let phase = 'intro';
@@ -11080,6 +11188,11 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testBundleStartUsesContentScriptFallbackBeforeRequestSubmit();
   await testBundleStartDoesNotUseDebuggerWhenJsAndRequestSubmitFail();
   await testBundleActionTimeoutErrorIncludesActionName();
+  await testNormalBundleDecideWaitsForDelayedCompletionWithoutReclick();
+  await testNormalBundleDecideChecksCompletedNewTabAtTimeoutBoundary();
+  await testNormalBundleDecideTimesOutOnceAfterThirtySeconds();
+  await testNormalBundleDecideStillUsesInitialClickFallbackAndFinalConfirm();
+  await testSingleTransactionDecideKeepsFiveSecondWaitAndFallback();
   await testNormalBundleRequestClicksSecondStartPageBeforeDecide();
   await testRedesignedNormalBundleRequestSkipsMissingCloseNotice();
   await testNormalBundleRequestCanStartFromInputPage();

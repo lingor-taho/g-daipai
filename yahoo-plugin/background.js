@@ -6090,14 +6090,16 @@ async function waitForBundleActionState(tabId, predicate, timeoutMs = 30000) {
   throw new Error('bundle next page did not appear');
 }
 
-async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, timeoutMs = 30000) {
+async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, timeoutMs = 30000, checkAtTimeout = false) {
   const startAt = Date.now();
   const originalTabId = tab?.id;
   const previous = previousIds instanceof Set ? previousIds : new Set(previousIds || []);
   const created = new Set(tab?._gdaipaiCreatedTabIds || []);
   if (originalTabId) created.add(originalTabId);
 
-  while (Date.now() - startAt < timeoutMs) {
+  while (true) {
+    const timedOut = Date.now() - startAt >= timeoutMs;
+    if (timedOut && !checkAtTimeout) break;
     const candidates = new Map();
     const original = originalTabId ? await chrome.tabs.get(originalTabId).catch(() => null) : null;
     if (original?.id) candidates.set(original.id, original);
@@ -6125,6 +6127,7 @@ async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, t
         return candidate;
       }
     }
+    if (timedOut) break;
     await sleep(500);
   }
   throw new Error('bundle next page did not appear');
@@ -6135,7 +6138,7 @@ function getBundleActionWaitTimeoutMs(action) {
   return 5000;
 }
 
-async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null) {
+async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null, options = {}) {
   console.log(`[Yahoo Bid] clickBundleActionAndFollowTab: action=${action}, tabId=${tab.id}`);
 
   try {
@@ -6188,10 +6191,16 @@ async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null
     : state => state.complete);
 
   let nextTab = null;
-  const waitTimeoutMs = getBundleActionWaitTimeoutMs(action);
+  const isNormalBundleDecide = action === 'decide' && options.normalBundleRequest === true;
+  const waitTimeoutMs = isNormalBundleDecide ? 30000 : getBundleActionWaitTimeoutMs(action);
   try {
-    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, waitTimeoutMs);
+    nextTab = await waitForBundleActionStateAcrossTabs(tab, waitFor, previousTabIds, waitTimeoutMs, isNormalBundleDecide);
   } catch (e) {
+    // An accepted bundle submission may still be processing. Check through the
+    // deadline, then report the timeout without clicking again or waiting 30s twice.
+    if (isNormalBundleDecide) {
+      throw new Error(buildBundleActionWaitError(action, e));
+    }
     if (!nextTab && !usedContentScriptClick) {
       console.warn('[Yahoo Bid] MAIN world click did not reach next bundle state, trying content script click:', e.message || e);
       const contentClickResult = await chrome.tabs.sendMessage(tab.id, {
@@ -6280,7 +6289,9 @@ async function completeNormalBundleRequest(tab) {
     return { success: true, tab: result.tab };
   }
 
-  result = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.complete);
+  result = await clickBundleActionAndFollowTab(tab, 'decide', state => state.canConfirm || state.complete, {
+    normalBundleRequest: true
+  });
   if (!result?.success) return result;
   tab = result.tab;
   state = await getBundleActionState(tab.id);
