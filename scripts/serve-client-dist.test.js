@@ -3,7 +3,9 @@ const assert = require('assert/strict');
 const {
   isMalformedRequestUrl,
   shouldServeSpaForMalformedRequest,
-  buildProxyTargetUrl
+  buildProxyTargetUrl,
+  defaultDistDir,
+  defaultPort
 } = require('./serve-client-dist');
 
 function testMalformedRequestUrlDetection() {
@@ -41,3 +43,5 @@ function testMalformedPageNavigationFallsBackToSpa() {
 testMalformedRequestUrlDetection();
 testApiProxyTargetPreservesApiPathAndQuery();
 testMalformedPageNavigationFallsBackToSpa();
+assert.equal(defaultPort, 3035);
+assert.match(defaultDistDir.replace(/\\/g, '/'), /src\/client\/dist$/);

@@ -39,8 +39,15 @@ if errorlevel 1 (
 )
 start "g-daipai-client" /b cmd /c "cd /d %ROOT% && node scripts\serve-client-dist.js <NUL > %ROOT%\client-start.log 2>&1"
 
-echo [4/4] Start Admin Report: http://localhost:8000/#/login
-start "g-daipai-admin" /b cmd /c "cd /d %ADMIN_DIR% && npm start <NUL > %ROOT%\admin-start.log 2>&1"
+echo [4/4] Build and start Admin Report: http://localhost:8000/#/login
+type nul > "%ROOT%\admin-build.log"
+type nul > "%ROOT%\admin-start.log"
+call npm run build --prefix "%ADMIN_DIR%" > "%ROOT%\admin-build.log" 2>&1
+if errorlevel 1 (
+  echo Admin build failed. Trying to serve the existing dist directory.
+  echo Check %ROOT%\admin-build.log
+)
+start "g-daipai-admin" /b cmd /c "cd /d %ROOT% && set STATIC_DIST_DIR=%ADMIN_DIR%\dist&& set STATIC_PORT=8000&& set STATIC_SERVER_NAME=Admin&& node scripts\serve-client-dist.js <NUL > %ROOT%\admin-start.log 2>&1"
 
 timeout /t 20 > nul
 

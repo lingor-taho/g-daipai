@@ -5,9 +5,13 @@ const https = require('https');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
-const defaultDistDir = path.join(rootDir, 'src', 'client', 'dist');
-const defaultPort = Number(process.env.CLIENT_PORT || 3035);
+const configuredDistDir = String(process.env.STATIC_DIST_DIR || '').trim();
+const defaultDistDir = configuredDistDir
+  ? path.resolve(configuredDistDir)
+  : path.join(rootDir, 'src', 'client', 'dist');
+const defaultPort = Number(process.env.STATIC_PORT || process.env.CLIENT_PORT || 3035);
 const defaultApiTarget = process.env.API_TARGET || 'http://localhost:3034';
+const staticServerName = process.env.STATIC_SERVER_NAME || 'Client';
 
 function isMalformedRequestUrl(rawUrl) {
   try {
@@ -105,7 +109,7 @@ function startServer({
 } = {}) {
   const app = createClientApp({ distDir, apiTarget });
   return app.listen(port, '0.0.0.0', () => {
-    console.log(`Client static server running on port ${port}`);
+    console.log(`${staticServerName} static server running on port ${port}`);
     console.log(`Serving ${distDir}`);
     console.log(`Proxying /api to ${apiTarget}`);
   });
@@ -120,5 +124,7 @@ module.exports = {
   shouldServeSpaForMalformedRequest,
   buildProxyTargetUrl,
   createClientApp,
-  startServer
+  startServer,
+  defaultDistDir,
+  defaultPort
 };
