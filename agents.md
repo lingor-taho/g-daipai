@@ -412,6 +412,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-08-31 查询订单支持商品名称查询
+
+后台“查询订单”在商品ID后新增“商品名称”输入框，按商品快照 `products.product_title` 进行包含匹配。商品名称可与用户名、商品ID、落札时间和订单状态组合筛选；列表和分页总数使用同一 SQL 条件，翻页不会丢失筛选值。空商品名称不改变原查询结果。
+
+验证：
+
+```powershell
+node src/admin/src/MessageRead.display.test.js
+node src/server/routes/admin.orders.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-08-31 后台改为静态构建服务
 
 后台8000端口原先由 `npm start` 的 `umi dev` 提供，热更新重编译会让旧页面请求已经失效的 HMR chunk，出现开发模式专属的 `ChunkLoadError` 红色覆盖页。现在 `start.bat` 会先构建 `src/admin/dist`，再使用 `scripts/serve-client-dist.js` 提供静态后台文件到原8000端口并继续转发 `/api` 到3034。静态服务新增 `STATIC_DIST_DIR`、`STATIC_PORT` 和显示名称配置，用户端3035保持原目录和端口。

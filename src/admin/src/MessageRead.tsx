@@ -160,10 +160,12 @@ export default function MessageReadPage() {
       params.set('pageSize', String(next.pageSize || 20));
       const username = String(values.username || '').trim();
       const productId = String(values.productId || '').trim();
+      const productTitle = String(values.productTitle || '').trim();
       const orderStatus = String(values.orderStatus || '').trim();
       const range = values.wonRange || [];
       if (username) params.set('username', username);
       if (productId) params.set('productId', productId);
+      if (productTitle) params.set('productTitle', productTitle);
       if (range[0]) params.set('wonFrom', formatDateOnly(range[0]));
       if (range[1]) params.set('wonTo', formatDateOnly(range[1]));
       if (orderStatus) params.set('orderStatus', orderStatus);
@@ -282,6 +284,9 @@ export default function MessageReadPage() {
         </Form.Item>
         <Form.Item name="productId" label="商品ID">
           <Input allowClear placeholder="m123..." style={{ width: 160 }} />
+        </Form.Item>
+        <Form.Item name="productTitle" label="商品名称">
+          <Input allowClear placeholder="商品名称" style={{ width: 160 }} />
         </Form.Item>
         <Form.Item name="wonRange" label="落札时间">
           <DatePicker.RangePicker />

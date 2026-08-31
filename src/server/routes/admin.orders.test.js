@@ -170,6 +170,7 @@ function testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus() {
     pageSize: '25',
     username: 'stone',
     productId: 'M1233870776',
+    productTitle: 'ゲームボーイ',
     wonFrom: '2026-06-24',
     wonTo: '2026-06-25',
     orderStatus: 'pending_receipt'
@@ -189,12 +190,13 @@ function testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus() {
   assert.match(query.rows.sql, /p\.product_url/);
   assert.match(query.rows.sql, /u\.username LIKE \?/);
   assert.match(query.rows.sql, /LOWER\(COALESCE\(o\.product_id, t\.product_id\)\) = \?/);
+  assert.match(query.rows.sql, /COALESCE\(p\.product_title, ''\) LIKE \?/);
   assert.match(query.rows.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) >= \?/);
   assert.match(query.rows.sql, /substr\(COALESCE\(o\.won_at, ''\), 1, 10\) <= \?/);
   assert.match(query.rows.sql, /o\.order_status = \?/);
   assert.match(query.rows.sql, /ORDER BY datetime\(COALESCE\(o\.won_at, t\.updated_at\)\) DESC, o\.id DESC/);
-  assert.deepEqual(query.rows.params, ['%stone%', 'm1233870776', '2026-06-24', '2026-06-25', 'pending_receipt', 25, 25]);
-  assert.deepEqual(query.count.params, ['%stone%', 'm1233870776', '2026-06-24', '2026-06-25', 'pending_receipt']);
+  assert.deepEqual(query.rows.params, ['%stone%', 'm1233870776', '%ゲームボーイ%', '2026-06-24', '2026-06-25', 'pending_receipt', 25, 25]);
+  assert.deepEqual(query.count.params, ['%stone%', 'm1233870776', '%ゲームボーイ%', '2026-06-24', '2026-06-25', 'pending_receipt']);
   assert.equal(query.pagination.current, 2);
   assert.equal(query.pagination.pageSize, 25);
 }

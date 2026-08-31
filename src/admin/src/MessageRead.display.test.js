@@ -21,6 +21,14 @@ assert.equal(
   'MessageRead should submit the selected order status as a combinable filter'
 );
 
+assert.equal(
+  source.includes('name="productTitle" label="商品名称"') &&
+    source.includes("params.set('productTitle', productTitle)") &&
+    source.indexOf('name="productTitle"') > source.indexOf('name="productId"'),
+  true,
+  'MessageRead should provide a product title filter immediately after product ID'
+);
+
 for (const status of [
   'pending_payment',
   'waiting_shipping',

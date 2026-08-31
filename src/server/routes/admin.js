@@ -682,6 +682,11 @@ function buildAdminMessagesListQuery(filters = {}) {
     where.push('LOWER(COALESCE(o.product_id, t.product_id)) = ?');
     params.push(productId);
   }
+  const productTitle = String(filters.productTitle || '').trim();
+  if (productTitle) {
+    where.push("COALESCE(p.product_title, '') LIKE ?");
+    params.push(`%${productTitle}%`);
+  }
   const wonFrom = String(filters.wonFrom || '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(wonFrom)) {
     where.push("substr(COALESCE(o.won_at, ''), 1, 10) >= ?");
