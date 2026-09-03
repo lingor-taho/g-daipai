@@ -4054,6 +4054,11 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   const transactionStatusText = normalize(snapshot.transactionStatusText || snapshot.primaryStatusText || '');
   const lifecycleText = transactionStatusText || text;
   const controls = Array.isArray(snapshot.controls) ? snapshot.controls.map(item => String(item || '').replace(/\s+/g, ' ').trim()) : [];
+  const progressStatus = normalize(snapshot.progressStatus || '');
+  const progressStepType = normalize(snapshot.progressStepType || '');
+  const noticeTypes = Array.isArray(snapshot.noticeTypes)
+    ? snapshot.noticeTypes.map(item => normalize(item)).filter(Boolean)
+    : [];
   const cancelled = snapshot.hasStoppedTransactionDialog === true || isYahooTransactionCancelledText(lifecycleText);
   const transactionNavRendered = (
     /\u53d6\u5f15\u30ca\u30d3/.test(text) &&
@@ -4062,7 +4067,12 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
     /\u767a\u9001\u9023\u7d61/.test(text)
   );
   const transactionDetailRendered = /\u53d6\u5f15\u60c5\u5831/.test(text) || /\u53d6\u5f15\u306e\u72b6\u6cc1/.test(text);
-  const paidOrShipped =
+  const structuredPaidOrShipped =
+    progressStatus === 'buyerPayDoneYahoo' ||
+    progressStatus === 'sellerSendDone' ||
+    progressStepType === 'paidWaitShip' ||
+    noticeTypes.includes('buyerPaid');
+  const paidOrShipped = structuredPaidOrShipped ||
     /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText) || (
     /\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) &&
     /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
@@ -4071,7 +4081,8 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
     /\u5546\u54c1\u306e\u767a\u9001\u9023\u7d61\u3092\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
   ) || (
     /\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(lifecycleText) &&
-    /\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText)
+    (/\u5230\u7740\u307e\u3067\u304a\u5f85\u3061\u304f\u3060\u3055\u3044/.test(lifecycleText) ||
+      /\u5230\u7740\u5f8c[\s\u3001\uff0c]*\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleText))
   ) || (
     /\u51fa\u54c1\u8005\u304b\u3089\u5546\u54c1\u767a\u9001\u306e\u9023\u7d61\u304c\u3042\u308a\u307e\u3057\u305f/.test(lifecycleText) &&
     /\u5230\u7740\u3057\u305f\u3089\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044/.test(lifecycleText)
@@ -4079,6 +4090,9 @@ function buildConfirmReceiptPageStateFromSnapshot(snapshot = {}) {
   return {
     url: snapshot.url || '',
     transactionStatusText,
+    progressStatus,
+    progressStepType,
+    noticeTypes,
     textSample: text.slice(0, 500),
     cancelled,
     paidOrShipped,
@@ -4106,6 +4120,28 @@ async function getConfirmReceiptPageState(tabId) {
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]')]
         .map(el => getText(el))
         .filter(Boolean);
+      const structuredTransactionState = (() => {
+        try {
+          const raw = document.querySelector('script#__NEXT_DATA__')?.textContent || '';
+          const nextData = raw ? JSON.parse(raw) : null;
+          const top = nextData?.props?.pageProps?.initialState?.top ||
+            nextData?.props?.initialState?.top ||
+            {};
+          return {
+            progressStatus: normalize(top.progressStatus || ''),
+            progressStepType: normalize(top.progressStep?.type || ''),
+            noticeTypes: Array.isArray(top.notice)
+              ? top.notice.map(item => normalize(item?.type || '')).filter(Boolean)
+              : []
+          };
+        } catch {
+          return {
+            progressStatus: '',
+            progressStepType: '',
+            noticeTypes: []
+          };
+        }
+      })();
       const isLifecycleStatusText = text => (
         /\u843d\u672d\u304a\u3081\u3067\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(text) ||
         /\u8cfc\u5165\u624b\u7d9a\u304d\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044/.test(text) ||
@@ -4191,6 +4227,7 @@ async function getConfirmReceiptPageState(tabId) {
           url: location.href,
           bodyText: normalize(document.body?.textContent || ''),
           transactionStatusText,
+          ...structuredTransactionState,
           hasStoppedTransactionDialog,
           controls,
           hasReceiptCheckbox: Boolean(checkbox),
@@ -7680,6 +7717,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   executeYahooMessageJob,
   runYahooMessageJobs,
   runConfirmReceiptJobs,
+  getConfirmReceiptPageState,
   extractAuctionIdFromText,
   normalizeWorkerIntervalMs,
   applyPluginConfig,

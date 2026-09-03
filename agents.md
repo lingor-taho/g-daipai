@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-08-31
+**最后更新**: 2026-09-03
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -411,6 +411,22 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-03 新版交易页已付款/已发货结构状态兼容
+
+确认收货的补查任务会检查仍处于“待支付 / 待结算”的订单；此前该路径只读取新版页面已渲染的日文状态文字，未读取 `__NEXT_DATA__`。因此页面只提供 `buyerPayDoneYahoo`、`paidWaitShip`、`buyerPaid` 或 `sellerSendDone` 结构状态时，可能没有把订单修正为“待发货”。现在确认收货解析也读取这些结构字段：已付款或卖家已发货均回写既有的 `pending_shipment`，服务端仍只允许 `pending_payment` / `pending_settlement` 进入该状态，不会自动确认收货或改写其他订单状态。
+
+同时兼容新版普通交易页“商品が発送されました。到着後、受け取り連絡をしてください。”的可见文案。原有取消识别、待收货的 Google Sheet 确认、付款和物流扫描流程不变。本次只改插件和回归测试，未修改订单、数据库或 API；生产更新 `yahoo-plugin/background.js` 后在 Chrome 手动 reload 扩展即可，API 无需重启。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-08-31 查询订单支持商品名称查询
 

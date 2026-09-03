@@ -5623,6 +5623,66 @@ function testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText() {
   }
 }
 
+function testConfirmReceiptPageStateDetectsNormalV2StructuredPaidOrShippedState() {
+  const api = loadBackgroundForTest();
+  const samples = [
+    { progressStatus: 'buyerPayDoneYahoo' },
+    { progressStepType: 'paidWaitShip' },
+    { noticeTypes: ['buyerPaid'] },
+    { progressStatus: 'sellerSendDone' },
+    { bodyText: '\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f\u3002\u5230\u7740\u5f8c\u3001\u53d7\u3051\u53d6\u308a\u9023\u7d61\u3092\u3057\u3066\u304f\u3060\u3055\u3044\u3002' }
+  ];
+
+  for (const snapshot of samples) {
+    const state = api.buildConfirmReceiptPageStateFromSnapshot({ controls: [], ...snapshot });
+    assert.equal(state.paidOrShipped, true);
+    assert.equal(state.cancelled, false);
+  }
+}
+
+async function testGetConfirmReceiptPageStateReadsNormalV2StructuredShipmentState() {
+  const nextData = JSON.stringify({
+    props: {
+      pageProps: {
+        initialState: {
+          top: {
+            progressStatus: 'sellerSendDone',
+            progressStep: { type: 'paidWaitShip' },
+            notice: [{ type: 'buyerPaid', showCompleted: true }]
+          }
+        }
+      }
+    }
+  });
+  const document = {
+    body: { textContent: '' },
+    querySelector(selector) {
+      if (selector === 'script#__NEXT_DATA__') return { textContent: nextData };
+      return null;
+    },
+    querySelectorAll() { return []; }
+  };
+  const api = loadBackgroundForTest({
+    scripting: {
+      async executeScript(payload) {
+        const result = vm.runInNewContext(`(${payload.func.toString()})()`, {
+          document,
+          location: { href: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=h1238410254' },
+          window: { getComputedStyle() { return null; } }
+        });
+        return [{ result }];
+      }
+    }
+  });
+
+  const state = await api.getConfirmReceiptPageState(99);
+
+  assert.equal(state.paidOrShipped, true);
+  assert.equal(state.progressStatus, 'sellerSendDone');
+  assert.equal(state.progressStepType, 'paidWaitShip');
+  assert.deepEqual(Array.from(state.noticeTypes), ['buyerPaid']);
+}
+
 function testConfirmReceiptPageStateIgnoresConditionalWinnerDeletionMessageWhileWaitingShipment() {
   const api = loadBackgroundForTest();
   const state = api.buildConfirmReceiptPageStateFromSnapshot({
@@ -5885,6 +5945,64 @@ async function testRunConfirmReceiptJobsMarksPaidCancelCheckOrderPendingShipment
   assert.equal(statusCalls.length, 1);
   assert.equal(statusCalls[0].status, 'pending_shipment');
   assert.equal(statusCalls[0].orderId, 43);
+}
+
+async function testRunConfirmReceiptJobsMarksNormalV2StructuredShipmentPendingShipment() {
+  const statusCalls = [];
+  const api = loadBackgroundForTest({
+    sleep: async () => {},
+    tabs: {
+      async create() { return { id: 38, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=h1238410254', status: 'complete' }; },
+      async get(id) { return { id, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=h1238410254', status: 'complete' }; },
+      async query() { return [{ id: 38, windowId: 5, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=h1238410254', status: 'complete' }]; }
+    },
+    scripting: {
+      async executeScript(payload = {}) {
+        if (payload.files) return undefined;
+        return [{
+          result: {
+            success: true,
+            snapshot: {
+              bodyText: '',
+              controls: [],
+              progressStatus: 'sellerSendDone'
+            }
+          }
+        }];
+      }
+    },
+    fetch: async (url, options = {}) => {
+      if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
+        return {
+          async json() {
+            return {
+              success: true,
+              jobs: [{
+                orderId: 46,
+                productId: 'h1238410254',
+                productType: 'normal',
+                orderStatus: 'pending_payment',
+                jobType: 'cancel_check',
+                transactionUrl: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=h1238410254',
+                bundleGroupId: ''
+              }]
+            };
+          }
+        };
+      }
+      if (String(url).includes('/api/plugin/confirm-receipt/status')) {
+        statusCalls.push(JSON.parse(options.body || '{}'));
+        return { async json() { return { success: true, updated: 1 }; } };
+      }
+      return { async json() { return { task: null }; } };
+    }
+  });
+
+  await api.runConfirmReceiptJobs();
+
+  assert.equal(statusCalls.length, 1);
+  assert.equal(statusCalls[0].status, 'pending_shipment');
+  assert.equal(statusCalls[0].orderId, 46);
 }
 
 async function testRunConfirmReceiptJobsWaitsForPaidCancelCheckTextAfterTabComplete() {
@@ -11368,12 +11486,15 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking();
   testConfirmReceiptPageStateDetectsWinnerDeletedCancellation();
   testConfirmReceiptPageStateDetectsPaidOrShippedTransactionText();
+  testConfirmReceiptPageStateDetectsNormalV2StructuredPaidOrShippedState();
+  await testGetConfirmReceiptPageStateReadsNormalV2StructuredShipmentState();
   testConfirmReceiptPageStateIgnoresConditionalWinnerDeletionMessageWhileWaitingShipment();
   testConfirmReceiptPageStateUsesPrimaryStatusText();
   testConfirmReceiptPageStateDetectsReceiptCompletionText();
   await testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled();
   await testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMissing();
   await testRunConfirmReceiptJobsMarksPaidCancelCheckOrderPendingShipment();
+  await testRunConfirmReceiptJobsMarksNormalV2StructuredShipmentPendingShipment();
   await testRunConfirmReceiptJobsWaitsForPaidCancelCheckTextAfterTabComplete();
   await testRunConfirmReceiptJobsStopsWaitingAfterOtherCancelCheckStatusRenders();
   await testRunPaymentJobsSelectsExpectedShippingBeforeReview();
