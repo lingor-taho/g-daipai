@@ -102,9 +102,9 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('onClick={() => onBid(detailProduct || selectedItem)}') && />\s*購入へ\s*<\/Button>/.test(source),
+  source.includes('onClick={() => onBid(detailProduct || selectedItem)}') && />\s*去竞拍\s*<\/Button>/.test(source),
   true,
-  'The detail view should expose only the existing bid-selection action as 購入へ'
+  'The detail view should expose only the existing bid-selection action as 去竞拍'
 );
 
 assert.equal(
@@ -121,9 +121,9 @@ assert.equal(
 );
 
 assert.equal(
-  /function handleSearchBid\(item\) \{\s*closeProductSearch\(\);\s*handleRebid\(item\.auctionId\);\s*\}/.test(submitSource),
+  /function handleSearchBid\(item\) \{\s*closeProductSearch\(\);\s*const productUrl = item\.standardUrl \|\| `https:\/\/auctions\.yahoo\.co\.jp\/jp\/auction\/\$\{item\.auctionId\}`;\s*handleRebid\(productUrl\);\s*\}/.test(submitSource),
   true,
-  '入札 should close the popup and reuse the rebid product-fetch flow with the auction id'
+  'Search bid actions should close the popup and fill the standard Yahoo product URL'
 );
 
 assert.equal(

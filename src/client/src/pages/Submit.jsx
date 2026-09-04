@@ -391,7 +391,8 @@ export default function Submit() {
 
   function handleSearchBid(item) {
     closeProductSearch();
-    handleRebid(item.auctionId);
+    const productUrl = item.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${item.auctionId}`;
+    handleRebid(productUrl);
   }
 
   function handleUrlChange(value) {

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
+import { Button, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
 import { deleteWonItemRemark, getWonTaskList, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
@@ -266,9 +266,21 @@ export default function WonItems() {
   const [remarkText, setRemarkText] = useState('');
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkDeleting, setRemarkDeleting] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const requestGenerationRef = useRef(0);
   const pageSize = 10;
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchKeyword(searchInput.trim());
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   const resetWonItems = useCallback(async () => {
+    const requestGeneration = requestGenerationRef.current + 1;
+    requestGenerationRef.current = requestGeneration;
     if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
@@ -276,27 +288,32 @@ export default function WonItems() {
     setLoading(true);
     try {
       const actingUserKey = localStorage.getItem('actingUserId') || 'self';
-      const res = await runDeduped(`WonItems:getWonTaskList:${actingUserKey}:1`, () => getWonTaskList({ page: 1, limit: pageSize }));
-      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const res = await runDeduped(
+        `WonItems:getWonTaskList:${actingUserKey}:${searchKeyword}:1`,
+        () => getWonTaskList({ page: 1, limit: pageSize, search: searchKeyword })
+      );
+      if (requestGenerationRef.current !== requestGeneration || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
       setItems(res.data?.data || []);
       setTotal(Number(res.data?.total || 0));
       setPage(1);
     } catch (e) {
+      if (requestGenerationRef.current !== requestGeneration) return;
       Toast.show({ content: e.response?.data?.error || '落札商品加载失败' });
       setItems([]);
       setTotal(0);
       setPage(0);
     } finally {
-      setLoading(false);
+      if (requestGenerationRef.current === requestGeneration) setLoading(false);
     }
-  }, []);
+  }, [searchKeyword]);
 
   const loadMore = useCallback(async () => {
     const nextPage = page + 1;
+    const requestGeneration = requestGenerationRef.current;
     try {
       const actingUserKey = localStorage.getItem('actingUserId') || 'self';
-      const res = await getWonTaskList({ page: nextPage, limit: pageSize });
-      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const res = await getWonTaskList({ page: nextPage, limit: pageSize, search: searchKeyword });
+      if (requestGenerationRef.current !== requestGeneration || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
       setItems(current => appendUniqueItems(current, res.data?.data || [], item => item.order_id || item.id));
       setTotal(Number(res.data?.total || 0));
       setPage(Number(res.data?.page || nextPage));
@@ -304,24 +321,25 @@ export default function WonItems() {
       Toast.show({ content: e.response?.data?.error || '更多落札商品加载失败' });
       throw e;
     }
-  }, [page]);
+  }, [page, searchKeyword]);
 
   const refreshLoadedItems = useCallback(async () => {
     if (document.visibilityState === 'hidden' || isUserIdle()) return;
     const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+    const requestGeneration = requestGenerationRef.current;
     const refreshLimit = Math.min(Math.max(page, 1) * pageSize, 100);
     try {
       const res = await runDeduped(
-        `WonItems:refresh:${actingUserKey}:${refreshLimit}`,
-        () => getWonTaskList({ page: 1, limit: refreshLimit })
+        `WonItems:refresh:${actingUserKey}:${searchKeyword}:${refreshLimit}`,
+        () => getWonTaskList({ page: 1, limit: refreshLimit, search: searchKeyword })
       );
-      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      if (requestGenerationRef.current !== requestGeneration || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
       const refreshedItems = res.data?.data || [];
       setItems(refreshedItems);
       setTotal(Number(res.data?.total || 0));
       setPage(Math.max(1, Math.ceil(refreshedItems.length / pageSize)));
     } catch (_) {}
-  }, [page]);
+  }, [page, searchKeyword]);
 
   useEffect(() => {
     resetWonItems();
@@ -333,6 +351,8 @@ export default function WonItems() {
       setTotal(0);
       setPage(0);
       setRemarkEditor(null);
+      setSearchInput('');
+      setSearchKeyword('');
       resetWonItems();
     };
     window.addEventListener('acting-user-change', handleActingUserChange);
@@ -400,9 +420,16 @@ export default function WonItems() {
       <List
         style={listStyle}
         header={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
-            <span>落札商品</span>
-            <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={resetWonItems}>刷新</Button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
+            <span style={{ flex: '0 0 auto' }}>落札商品</span>
+            <SearchBar
+              value={searchInput}
+              onChange={setSearchInput}
+              placeholder="商品ID或商品标题"
+              aria-label="搜索落札商品"
+              style={{ flex: 1, minWidth: 0, '--height': '32px', '--border-radius': '4px' }}
+            />
+            <Button size="mini" fill="outline" style={{ ...outlineButtonStyle, flex: '0 0 auto' }} onClick={resetWonItems}>刷新</Button>
           </div>
         }
       >
@@ -413,7 +440,7 @@ export default function WonItems() {
         )}
         {!loading && items.length === 0 && (
           <div style={{ padding: 24 }}>
-            <Empty description="暂无落札商品" />
+            <Empty description={searchKeyword ? '未找到匹配的落札商品' : '暂无落札商品'} />
           </div>
         )}
         {!loading && items.map(item => {

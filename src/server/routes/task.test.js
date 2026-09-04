@@ -5,6 +5,7 @@ const {
   buildTaskListInput,
   buildActiveBiddingTaskListInput,
   buildWonTaskListInput,
+  buildWonTaskSearchFilter,
   normalizeUserRemark,
   updateUserOrderRemark,
   buildActiveBiddingTaskListQuery,
@@ -234,12 +235,22 @@ function testTaskListUsesAuthenticatedUserId() {
 }
 
 function testWonTaskListUsesAuthenticatedUserIdAndCapsLimit() {
-  const input = buildWonTaskListInput({ id: 9 }, { page: '3', limit: '999' });
+  const input = buildWonTaskListInput({ id: 9 }, { page: '3', limit: '999', search: '  BEAMS %_  ' });
   assert.equal(input.userId, 9);
   assert.equal(input.limit, 100);
   assert.equal(input.page, 3);
   assert.equal(input.offset, 200);
+  assert.equal(input.search, 'BEAMS %_');
   assert.throws(() => buildWonTaskListInput(null, {}), /not logged in/);
+}
+
+function testWonTaskSearchFilterMatchesProductIdAndTitleSafely() {
+  const filter = buildWonTaskSearchFilter(' BEAMS %_ ');
+  assert.match(filter.sql, /won_task\.product_id/);
+  assert.match(filter.sql, /p\.product_title/);
+  assert.match(filter.sql, /ESCAPE/);
+  assert.deepEqual(filter.params, ['%BEAMS \\%\\_%', '%BEAMS \\%\\_%']);
+  assert.deepEqual(buildWonTaskSearchFilter(''), { sql: '', params: [] });
 }
 
 function testWonTaskRouteExposesFetchedSellerMessagesOnly() {
@@ -717,6 +728,7 @@ testSubmitAcceptsThirdPartyAndNumericAuctionUrls();
 testSubmitRejectsMissingAuthenticatedUser();
 testTaskListUsesAuthenticatedUserId();
 testWonTaskListUsesAuthenticatedUserIdAndCapsLimit();
+testWonTaskSearchFilterMatchesProductIdAndTitleSafely();
 testWonTaskRouteExposesFetchedSellerMessagesOnly();
 testWonTaskRouteExposesUserRemarkWithoutReusingAdminRemark();
 testNormalizeUserRemark();

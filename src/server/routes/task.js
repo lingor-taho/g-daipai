@@ -236,7 +236,25 @@ function buildTaskListInput(user, query = {}) {
 
 function buildWonTaskListInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
-  return { userId: user.id, ...normalizePagination(query, 10) };
+  return {
+    userId: user.id,
+    ...normalizePagination(query, 10),
+    search: String(query.search || '').trim().slice(0, 200)
+  };
+}
+
+function buildWonTaskSearchFilter(search) {
+  const normalizedSearch = String(search || '').trim();
+  if (!normalizedSearch) return { sql: '', params: [] };
+  const escapedSearch = normalizedSearch.replace(/[\\%_]/g, match => `\\${match}`);
+  const pattern = `%${escapedSearch}%`;
+  return {
+    sql: `AND (
+      LOWER(COALESCE(won_task.product_id, '')) LIKE LOWER(?) ESCAPE '\\'
+      OR LOWER(COALESCE(p.product_title, '')) LIKE LOWER(?) ESCAPE '\\'
+    )`,
+    params: [pattern, pattern]
+  };
 }
 
 function normalizeUserRemark(value) {
@@ -758,12 +776,15 @@ router.get('/won', async (req, res) => {
   try {
     const input = buildWonTaskListInput(req.user, req.query);
     input.userId = req.actingUser.id;
+    const searchFilter = buildWonTaskSearchFilter(input.search);
     const totalRow = await db.getOne(
       `SELECT COUNT(*) AS total
-       FROM tasks
-       WHERE user_id = ?
-         AND status = 'success'`,
-      [input.userId]
+       FROM tasks won_task
+       LEFT JOIN products p ON p.product_id = won_task.product_id
+       WHERE won_task.user_id = ?
+         AND won_task.status = 'success'
+         ${searchFilter.sql}`,
+      [input.userId, ...searchFilter.params]
     );
     const tasks = await db.getAll(
       `SELECT
@@ -813,9 +834,10 @@ router.get('/won', async (req, res) => {
        LEFT JOIN yahoo_trade_messages m ON m.order_id = o.id
        WHERE won_task.user_id = ?
          AND won_task.status = 'success'
+         ${searchFilter.sql}
        ORDER BY datetime(COALESCE(o.won_at, won_task.updated_at)) DESC, won_task.id DESC
        LIMIT ? OFFSET ?`,
-      [input.userId, input.userId, input.limit, input.offset]
+      [input.userId, input.userId, ...searchFilter.params, input.limit, input.offset]
     );
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
@@ -970,6 +992,7 @@ module.exports.buildTaskListInput = buildTaskListInput;
 module.exports.buildActiveBiddingTaskListInput = buildActiveBiddingTaskListInput;
 module.exports.buildActiveBiddingTaskListQuery = buildActiveBiddingTaskListQuery;
 module.exports.buildWonTaskListInput = buildWonTaskListInput;
+module.exports.buildWonTaskSearchFilter = buildWonTaskSearchFilter;
 module.exports.normalizeUserRemark = normalizeUserRemark;
 module.exports.updateUserOrderRemark = updateUserOrderRemark;
 module.exports.buildWonStatsInput = buildWonStatsInput;

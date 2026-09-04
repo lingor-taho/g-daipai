@@ -43,6 +43,16 @@ assert.equal(
 );
 
 assert.equal(
+  source.includes('<SearchBar') &&
+    source.includes('placeholder="商品ID或商品标题"') &&
+    source.includes('setSearchKeyword(searchInput.trim())') &&
+    source.includes('getWonTaskList({ page: 1, limit: pageSize, search: searchKeyword })') &&
+    source.includes('getWonTaskList({ page: nextPage, limit: pageSize, search: searchKeyword })'),
+  true,
+  'WonItems search must query the server by product id/title and preserve filtered infinite scrolling'
+);
+
+assert.equal(
   source.includes('上一页') || source.includes('下一页'),
   false,
   'WonItems must not render previous/next pagination buttons'

@@ -714,7 +714,7 @@ export default function ProductSearchPopup({
                   onClick={() => onBid(detailProduct || selectedItem)}
                   style={{ '--background-color': colors.danger, '--border-color': colors.danger, fontSize: 17, fontWeight: 700 }}
                 >
-                  購入へ
+                  去竞拍
                 </Button>
               )}
             </div>
