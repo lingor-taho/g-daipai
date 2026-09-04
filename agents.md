@@ -412,6 +412,25 @@ GET /api/plugin/diagnostics?type=trusted_input
 
 ## 最近重要变更摘要
 
+### 2026-09-04 Yahoo 普通出价完成页误判修复
+
+普通出价点击最终确认后，Yahoo 跳转到 `/jp/auction/{id}/bid/done` 时可能使原 content-script 消息通道进入 back/forward cache 并断开。旧后台会重新注入并再次执行完整出价；完成页中残留的通用“系统错误”或“再入札が必要です”文字可能先被读取，导致已成为最高价者的任务误报“Yahoo页面错误”或“出价后被超过”。
+
+现在普通出价消息断开后先只读当前 tab：仅当 URL 是同一商品的 `/bid/done`，且可见正文明确显示“あなたが最高額入札者です”或无冲突的正式完成文案时，按已出价处理并交给 `/my/won` 后续同步，不再执行第二次出价。商品 ID 不匹配、明确“最高額入札者ではありません”、真实系统错误或单独“再入札が必要です”不会被当作成功。content script 自身也在完成页优先识别当前账号最高价者；同一次最终点击后的页面若出现可见最高价状态，则不会被页面其他残留文字覆盖。直接出价在普通商品页降低既有自动出价上限的原行为不变，真实系统错误、被超过、卖家黑名单、即决和多次出价流程不变。
+
+本次只修改 Chrome 扩展代码和测试，不修改数据库、任务历史或 API。生产更新 `yahoo-plugin/background.js`、`yahoo-plugin/content.js` 后需要在 Chrome 扩展页手动 reload，API 无需重启。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/content.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 ### 2026-09-03 用户端商品名称多结果弹层
 
 用户端按商品名称搜索时，不再因为 Yahoo 返回多个商品而直接报错。服务端新增搜索列表接口，每页只抓取一次 Yahoo 原生搜索页，解析商品 ID、图片、标题、当前价、即决价、运费、入札数和剩余时间；第一页固定使用 Yahoo 的 50 条分页参数，后续在弹层接近底部时再请求下一页，并按商品 ID 去重。

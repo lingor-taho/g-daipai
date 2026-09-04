@@ -478,6 +478,20 @@ async function testYahooSystemErrorPageReturnsStableBidError() {
   assert.match(result.error, /Yahoo bid failed/);
 }
 
+async function testBidDoneHighestBidderWinsOverUnrelatedErrorAndRebidText() {
+  const result = await loadAndExecuteBidForTest(
+    '\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01 \u81ea\u52d5\u5165\u672d\u4e0a\u9650 9,800\u5186 ' +
+      '\u304a\u3059\u3059\u3081\u60c5\u5831 \u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc \u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059',
+    { maxPrice: 9800, strategy: 'direct' },
+    '/jp/auction/n1243150792/bid/done'
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.noBid, true);
+  assert.equal(result.closeTab, true);
+  assert.equal(result.stage, 'bid-done-highest');
+}
+
 function testAcceptedBidTextIsHighestBidder() {
   const api = loadContentForTest('あなたが最高額入札者です。入札を受け付けました。');
 
@@ -507,6 +521,20 @@ function testSellerHighestBidderWordsDoNotBecomeCurrentBidderStatus() {
     '\u5546\u54c1\u8aac\u660e\uff1a\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01 \u81ea\u52d5\u5165\u672d\u4e0a\u9650 9,075\u5186',
     '/jp/auction/x123456789'
   );
+
+  assert.equal(api.hasCurrentHighestBidderNotice(), false);
+  assert.equal(api.extractAutoBidLimit(), 0);
+}
+
+function testHiddenHighestBidderRegionDoesNotBecomeCurrentStatus() {
+  const statusRegion = createCurrentBidderStatusRegion(38000);
+  statusRegion.hidden = true;
+  const api = loadContentForTest('', '/jp/auction/1243033921', {
+    querySelectorAll(selector) {
+      if (selector.includes('[role="status"]')) return [statusRegion];
+      return [];
+    }
+  });
 
   assert.equal(api.hasCurrentHighestBidderNotice(), false);
   assert.equal(api.extractAutoBidLimit(), 0);
@@ -1367,6 +1395,35 @@ async function testDirectBidFinalConfirmUsesShortOutcomeWait() {
   assert.match(result.error, /bid result confirmation timeout/);
   assert.equal(now, 3000);
   assert.ok(waits.length <= 6);
+}
+
+async function testFinalBidAcceptsCurrentHighestStatusDespiteStaleRebidText() {
+  let stage = 'confirm';
+  const finalAgreeButton = createTestElement('\u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048 \u5165\u672d\u3059\u308b');
+  const statusRegion = createCurrentBidderStatusRegion(38000);
+  finalAgreeButton.click = () => {
+    finalAgreeButton.clicked = true;
+    stage = 'done';
+  };
+
+  const api = loadContentForTest('', '/jp/auction/1243033921/bid/confirm', {
+    getBodyText: () => stage === 'confirm'
+      ? '\u5165\u672d\u5185\u5bb9\u306e\u78ba\u8a8d \u4e0a\u8a18\u306b\u540c\u610f\u306e\u3046\u3048 \u5165\u672d\u3059\u308b'
+      : '\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059\uff01 \u81ea\u52d5\u5165\u672d\u4e0a\u9650 38,000\u5186 \u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059',
+    querySelectorAll(selector) {
+      if (selector === 'script') return [];
+      if (selector.includes('[role="status"]')) return stage === 'done' ? [statusRegion] : [];
+      if (selector.includes('button') || selector.includes('a')) return stage === 'confirm' ? [finalAgreeButton] : [];
+      if (selector === 'body *') return stage === 'confirm' ? [finalAgreeButton] : [];
+      return [];
+    }
+  });
+
+  const result = await api.executeBidV3(38000, { maxPrice: 38000, strategy: 'direct', bidMode: 'bid' });
+
+  assert.equal(finalAgreeButton.clicked, true);
+  assert.equal(result.success, true);
+  assert.notEqual(result.rebidRequired, true);
 }
 
 async function testBuyoutClicksInstantBuyThenFinalAgree() {
@@ -5060,9 +5117,11 @@ async function run() {
   await testYahooBidAccessFailureClosesTask();
   await testYahooSellerBlacklistFailureClosesTask();
   await testYahooSystemErrorPageReturnsStableBidError();
+  await testBidDoneHighestBidderWinsOverUnrelatedErrorAndRebidText();
   testAcceptedBidTextIsHighestBidder();
   testProductPageHighestBidderNoticeDoesNotSkipNewBid();
   testSellerHighestBidderWordsDoNotBecomeCurrentBidderStatus();
+  testHiddenHighestBidderRegionDoesNotBecomeCurrentStatus();
   testSellerCompletionInstructionsOnProductPageAreNotBidSuccess();
   await testSellerCompletionInstructionsDoNotShortCircuitBidExecution();
   testAcceptedBuyoutTextIsSuccess();
@@ -5116,6 +5175,7 @@ async function run() {
   await testDirectBidClicksConfirmInsideBidModalOnly();
   await testDirectBidSubmitConfirmRequestsFormSubmit();
   await testDirectBidFinalConfirmUsesShortOutcomeWait();
+  await testFinalBidAcceptsCurrentHighestStatusDespiteStaleRebidText();
   await testBuyoutClicksInstantBuyThenFinalAgree();
   await testStoreBuyoutClicksPurchaseFlow();
   await testStoreBuyoutIgnoresPriceInputAndClicksPurchaseButton();

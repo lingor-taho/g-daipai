@@ -228,6 +228,32 @@ function isBuyoutPurchaseCompleteSnapshot(snapshot = {}) {
     /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u8cfc\u5165\u624b\u7d9a\u304d\u306e\u5b8c\u4e86/.test(`${title} ${body}`);
 }
 
+function isNormalBidCompleteSnapshot(snapshot = {}, task = {}) {
+  if (task?.bid_mode === 'buyout') return false;
+  const auctionId = normalizeAuctionId(task?.product_url || task?.product_id || '');
+  const url = String(snapshot.url || '');
+  const body = String(snapshot.bodyText || '');
+  const doneMatch = url.match(/\/jp\/auction\/([a-zA-Z]?\d{8,10})\/bid\/done\b/i);
+  if (!doneMatch || (auctionId && normalizeAuctionId(doneMatch[1]) !== auctionId)) return false;
+  if (/\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(body)) return false;
+  if (/\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(body)) return true;
+  if (/\u30b7\u30b9\u30c6\u30e0\u30a8\u30e9\u30fc|\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f|\u6b63\u5e38\u306b\u51e6\u7406\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f|\u518d\u5165\u672d\u304c\u5fc5\u8981\u3067\u3059/.test(body)) return false;
+  return /\u5165\u672d\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f|\u5165\u672d\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f/.test(body);
+}
+
+async function recoverNormalBidCompletionAfterMessageDisconnect(tab, task, stage) {
+  if (task?.bid_mode === 'buyout' || !tab?.id) return null;
+  const snapshot = await getTabPageDiagnosticSnapshot(tab.id).catch(() => null);
+  if (!isNormalBidCompleteSnapshot(snapshot, task)) return null;
+  return {
+    success: true,
+    noBid: true,
+    bidPrice: Number(task.max_price || task.user_max_price || 0) || undefined,
+    closeTab: true,
+    stage: stage || 'normal-bid-message-disconnected-after-completion'
+  };
+}
+
 async function recoverBuyoutCompletionAfterMessageDisconnect(tab, task, stage) {
   if (task?.bid_mode !== 'buyout' || !tab?.id) return null;
   const snapshot = await getTabPageDiagnosticSnapshot(tab.id).catch(() => null);
@@ -715,6 +741,8 @@ async function executeTaskInTabV2(tab, task) {
     }
     const completed = await recoverBuyoutCompletionAfterMessageDisconnect(tab, task, 'buyout-message-disconnected-after-completion');
     if (completed) return completed;
+    const normalCompleted = await recoverNormalBidCompletionAfterMessageDisconnect(tab, task, 'normal-bid-message-disconnected-after-completion');
+    if (normalCompleted) return normalCompleted;
     await sleep(3000);
     await injectContentScript(tab.id);
     result = await sendBidMessageV2(tab.id, task);
@@ -776,6 +804,8 @@ async function executeTaskInTabV2(tab, task) {
         }
         const completed = await recoverBuyoutCompletionAfterMessageDisconnect(tab, task, 'buyout-final-message-disconnected-after-completion');
         if (completed) return completed;
+        const normalCompleted = await recoverNormalBidCompletionAfterMessageDisconnect(tab, task, 'normal-bid-final-message-disconnected-after-completion');
+        if (normalCompleted) return normalCompleted;
         await sleep(3000);
         await injectContentScript(tab.id);
         finalResult = await sendBidMessageV2(tab.id, task, { storeConfirmationHandled });
@@ -7635,6 +7665,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 
 globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
+  isNormalBidCompleteSnapshot,
   shouldKeepTaskTabOpen,
   buildTaskTimeoutError,
   getTaskExecutionTimeoutMs,

@@ -462,16 +462,24 @@ function markFinalBidSubmissionStarted() {
 }
 
 function isHighestBidderText(text = getBodyText(), pathname = window.location.pathname) {
-  if (hasExplicitOutbidText(text)) return false;
-  if (isRebidRequiredText(text)) return false;
   if (isBuyoutThankYouPage(pathname)) return true;
 
   // Product descriptions, store notices, and seller messages can contain phrases
   // such as "bid completed" as instructions. A Yahoo completion URL is authoritative.
   if (isBidDonePage(pathname)) {
-    return hasBidSuccessText(text) ||
-      (/\u6700\u9ad8\u984d\u5165\u672d\u8005/.test(text) && !/\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u306f\u3042\u308a\u307e\u305b\u3093/.test(text));
+    // Yahoo can leave hidden/recommended UI text such as "rebid required" or a
+    // generic system-error notice in the document after a successful navigation.
+    // The account-specific highest-bidder sentence on /bid/done is stronger
+    // evidence than those unrelated strings. A real explicit outbid sentence
+    // remains authoritative.
+    if (hasExplicitOutbidText(text)) return false;
+    if (/\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(text)) return true;
+    if (isRebidRequiredText(text)) return false;
+    return hasBidSuccessText(text);
   }
+
+  if (hasExplicitOutbidText(text)) return false;
+  if (isRebidRequiredText(text)) return false;
 
   // Some Yahoo purchase flows update in place without changing the URL. In that
   // case, accept success text only when it appeared after this script clicked the
@@ -492,8 +500,14 @@ function isHighestBidderPage() {
 function getCurrentBidderStatusText() {
   const isCurrentHighestText = text => /\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(text);
   const readText = node => normalizeVisibleText(node?.innerText || node?.textContent || '');
+  const isVisible = node => {
+    if (!node || node.hidden || node.getAttribute?.('aria-hidden') === 'true') return false;
+    const style = window.getComputedStyle?.(node);
+    return !style || (style.display !== 'none' && style.visibility !== 'hidden');
+  };
   const explicitRegionSelector = '#itemStatus,[role="status"],[aria-live="polite"],[aria-live="assertive"]';
   for (const region of document.querySelectorAll(explicitRegionSelector)) {
+    if (!isVisible(region)) continue;
     const text = readText(region);
     if (isCurrentHighestText(text)) return text;
   }
@@ -501,6 +515,7 @@ function getCurrentBidderStatusText() {
   // The highest-bidder banner sits above the product summary. Anchor on its exact
   // sentence and walk only nearby ancestors so seller text/recommendations cannot match.
   for (const label of document.querySelectorAll('p,span,strong,div')) {
+    if (!isVisible(label)) continue;
     const labelText = readText(label);
     if (!/^\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(labelText)) continue;
     if (/\u81ea\u52d5\u5165\u672d\u4e0a\u9650/.test(labelText)) return labelText;
@@ -749,7 +764,8 @@ async function waitForBidOutcome(timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   let sawRebidRequiredAt = 0;
   while (Date.now() < deadline) {
-    if (isHighestBidderPage()) {
+    if (isHighestBidderPage() ||
+      (window.__G_DAIPAI_FINAL_BID_SUBMITTED__ === true && hasCurrentHighestBidderNotice())) {
       return { success: true };
     }
     if (isYahooSystemBidFailureText()) {
@@ -797,6 +813,22 @@ async function executeBidV3(maxPrice, options = {}) {
   const strategy = options.strategy || 'direct';
   const taskId = options.taskId || null;
   const bodyText = getBodyText();
+  const visibleBodyText = normalizeVisibleText(document.body?.innerText || bodyText);
+
+  // A normal bid submit can navigate to /bid/done and close the original
+  // extension message channel. If background reinjects this script, recognize
+  // the completed state before evaluating broad page text and never submit twice.
+  if (isBidDonePage() &&
+    isHighestBidderText(visibleBodyText) &&
+    /\u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059!?/.test(visibleBodyText)) {
+    return {
+      success: true,
+      noBid: true,
+      closeTab: true,
+      bidPrice: numericMaxPrice,
+      stage: 'bid-done-highest'
+    };
+  }
 
   if (isYahooSystemBidFailureText(bodyText)) {
     return buildYahooSystemBidFailure('execute-start-system-error');
