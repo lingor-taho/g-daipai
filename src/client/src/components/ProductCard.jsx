@@ -25,7 +25,7 @@ function BidCountIcon() {
   );
 }
 
-export default function ProductCard({ product }) {
+export default function ProductCard({ product, onOpenDetail }) {
   const taxType = product.taxType || product.tax_type || 'tax_zero';
   const productType = product.productType || product.product_type || (taxType === 'tax_included' ? 'store' : 'normal');
   const productTypeLabel = productType === 'store' ? '商城商品' : '普通商品';
@@ -40,14 +40,27 @@ export default function ProductCard({ product }) {
   return (
     <div style={{ ...cardStyle, margin: '14px 0', overflow: 'hidden', display: 'flex' }}>
       {product.imageUrl && (
-        <img src={product.imageUrl} alt={product.title}
-          style={{ width: 136, height: 136, objectFit: 'cover', flex: '0 0 136px', background: colors.cardSoft }} />
+        <button
+          type="button"
+          onClick={onOpenDetail}
+          aria-label={`查看商品详情：${product.title}`}
+          style={{ width: 136, height: 136, padding: 0, border: 0, flex: '0 0 136px', background: colors.cardSoft, cursor: 'pointer' }}
+        >
+          <img src={product.imageUrl} alt={product.title}
+            style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
+        </button>
       )}
       <div style={{ padding: 12, minWidth: 0, flex: 1 }}>
         <div style={{ display: 'inline-block', color: productType === 'store' ? '#1d4ed8' : colors.accent, background: '#eff6ff', border: `1px solid ${colors.border}`, borderRadius: 6, padding: '2px 7px', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
           {productTypeLabel}
         </div>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, lineHeight: 1.35, color: colors.text }}>{product.title}</div>
+        <button
+          type="button"
+          onClick={onOpenDetail}
+          style={{ display: 'block', width: '100%', padding: 0, border: 0, marginBottom: 8, background: 'transparent', color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: 1.35, textAlign: 'left', cursor: 'pointer' }}
+        >
+          {product.title}
+        </button>
         <div style={{ color: colors.danger, fontSize: 16, fontWeight: 600 }}>
           当前价格: {price}円（{taxLabel}）
           {shippingFeeText ? <span>　运费：{shippingFeeText}</span> : null}

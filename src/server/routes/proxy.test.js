@@ -4,6 +4,8 @@ const {
   parseProductHtml,
   normalizeAuctionUrl,
   extractAuctionIdsFromSearchHtml,
+  extractSearchProductCards,
+  hasNextYahooSearchPage,
   buildYahooSearchUrl
 } = require('./proxy');
 
@@ -98,6 +100,86 @@ async function testParseProductHtmlUsesNextDataItemImage() {
   `, 'x1234567890', 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
 
   assert.equal(product.imageUrl, 'https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/item-main.jpg');
+  assert.deepEqual(product.images, [{
+    url: 'https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/item-main.jpg',
+    thumbnailUrl: 'https://auc-pctr.c.yimg.jp/i/item-thumb.jpg',
+    width: null,
+    height: null
+  }]);
+}
+
+async function testParseProductDetailFromNextData() {
+  const nextData = JSON.stringify({
+    props: {
+      pageProps: {
+        initialState: {
+          item: {
+            detail: {
+              item: {
+                title: '附件商品详情',
+                price: 720,
+                taxinPrice: 792,
+                taxRate: 10,
+                bidorbuy: 2500,
+                taxinBidorbuy: 2750,
+                bids: 7,
+                endTime: '2026-09-05T23:44:16+09:00',
+                status: 'open',
+                conditionName: 'やや傷や汚れあり',
+                chargeForShipping: 'winner',
+                img: [
+                  { image: 'https://img.example/large-1.jpg', thumbnail: 'https://img.example/thumb-1.jpg', width: 1200, height: 900 },
+                  { image: 'https://img.example/large-2.jpg', thumbnail: 'https://img.example/thumb-2.jpg', width: 900, height: 1200 },
+                  { image: 'https://img.example/large-1.jpg', thumbnail: 'https://img.example/thumb-1.jpg' }
+                ],
+                descriptionHtml: '<table><tr><td>商品详细</td></tr></table><br>第二行<img src="https://img.example/description.jpg" onerror="bad()"><iframe src="https://bad.example"></iframe><style>td{color:red}</style>'
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  const product = parseProductHtml(`
+    <html><head><script id="__NEXT_DATA__" type="application/json">${nextData}</script></head></html>
+  `, 'x1234567890', 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
+
+  assert.equal(product.title, '附件商品详情');
+  assert.equal(product.currentPrice, 720);
+  assert.equal(product.bidCount, 7);
+  assert.equal(product.endTime, '2026-09-05T23:44:16+09:00');
+  assert.equal(product.auctionStatus, 'open');
+  assert.equal(product.auctionStatusText, '进行中');
+  assert.equal(product.conditionName, 'やや傷や汚れあり');
+  assert.deepEqual(product.images, [
+    { url: 'https://img.example/large-1.jpg', thumbnailUrl: 'https://img.example/thumb-1.jpg', width: 1200, height: 900 },
+    { url: 'https://img.example/large-2.jpg', thumbnailUrl: 'https://img.example/thumb-2.jpg', width: 900, height: 1200 }
+  ]);
+  assert.equal(product.descriptionText, '商品详细\n\n第二行');
+  assert.equal(product.descriptionText.includes('bad()'), false);
+  assert.deepEqual(product.detailDisplayPrice, {
+    currentPrice: 792,
+    currentPriceBeforeTax: 720,
+    currentPriceText: '792円（税込）',
+    buyoutPrice: 2750,
+    buyoutPriceBeforeTax: 2500,
+    buyoutPriceText: '2,750円（税込）',
+    taxRate: 10
+  });
+  assert.equal(product.descriptionHtml.includes('https://img.example/description.jpg'), true);
+  assert.equal(product.descriptionHtml.includes('onerror'), false);
+  assert.equal(product.descriptionHtml.includes('<iframe'), false);
+}
+
+async function testParseClosedProductStatus() {
+  const product = parseProductHtml(`
+    <script id="__NEXT_DATA__" type="application/json">
+      {"props":{"pageProps":{"initialState":{"item":{"detail":{"item":{"status":"closed"}}}}}}}
+    </script>
+  `, 'x1234567890', 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
+
+  assert.equal(product.auctionStatus, 'closed');
+  assert.equal(product.auctionStatusText, '已结束');
 }
 
 async function testParseProductHtmlUsesNextDataItemEndTime() {
@@ -909,8 +991,103 @@ function testExtractsMultipleAuctionIdsFromProductsList() {
 function testBuildsYahooSearchUrlWithKeyword() {
   assert.equal(
     buildYahooSearchUrl('テスト 商品'),
-    'https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=%E3%83%86%E3%82%B9%E3%83%88%20%E5%95%86%E5%93%81'
+    'https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=%E3%83%86%E3%82%B9%E3%83%88%20%E5%95%86%E5%93%81&b=1&n=50'
   );
+  assert.equal(buildYahooSearchUrl('boy', 2).endsWith('&p=boy&b=51&n=50'), true);
+}
+
+function buildSearchProductCard({
+  auctionId = 'x1230699905',
+  title = 'テスト &amp; 商品',
+  currentPrice = '2,450円',
+  buyoutPrice = '3,200円',
+  shipping = '＋送料185円',
+  bids = '7',
+  remaining = '35分20秒',
+  endTime = '1788702387'
+} = {}) {
+  return `
+    <li class="Product">
+      <div class="Product__image">
+        <a class="Product__imageLink" data-auction-id="${auctionId}" data-auction-img="https://img.example/${auctionId}.jpg?x=1&amp;y=2" href="https://auctions.yahoo.co.jp/jp/auction/${auctionId}">
+          <img class="Product__imageData" src="https://img.example/fallback.jpg">
+        </a>
+      </div>
+      <div class="Product__detail">
+        <div class="Product__bonus" data-auction-endtime="${endTime}" data-auction-buynowprice="3200"></div>
+        <h3 class="Product__title">
+          <a class="Product__titleLink" data-auction-id="${auctionId}" data-auction-title="${title}" data-auction-img="https://img.example/${auctionId}.jpg?x=1&amp;y=2" data-auction-price="2450" href="https://auctions.yahoo.co.jp/jp/auction/${auctionId}">${title}</a>
+        </h3>
+        <div class="Product__priceInfo">
+          <span class="Product__price"><span class="Product__label">現在</span><span class="Product__priceValue u-textRed">${currentPrice}</span></span>
+          <span class="Product__price"><span class="Product__label">即決</span><span class="Product__priceValue">${buyoutPrice}</span></span>
+          <p class="Product__postage">${shipping}</p>
+        </div>
+        <dl class="Product__otherInfo">
+          <div><dd class="Product__bid">${bids}</dd></div>
+          <div><dd class="Product__time">${remaining}</dd></div>
+        </dl>
+      </div>
+    </li>
+  `;
+}
+
+function testExtractsYahooSearchProductSummaries() {
+  const products = extractSearchProductCards(`
+    <a href="https://auctions.yahoo.co.jp/jp/auction/z999999999">outside</a>
+    <div class="Products__list">
+      <ul class="Products__items">
+        ${buildSearchProductCard()}
+        ${buildSearchProductCard()}
+      </ul>
+    </div>
+  `);
+
+  assert.equal(products.length, 1);
+  assert.deepEqual(products[0], {
+    auctionId: 'x1230699905',
+    standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/x1230699905',
+    title: 'テスト & 商品',
+    imageUrl: 'https://img.example/x1230699905.jpg?x=1&y=2',
+    currentPrice: 2450,
+    buyoutPrice: 3200,
+    shippingFeeText: '＋送料185円',
+    bidCount: 7,
+    remainingTimeText: '35分20秒',
+    endTimeEpoch: 1788702387
+  });
+}
+
+function testDetectsYahooSearchNextPageLink() {
+  assert.equal(hasNextYahooSearchPage(`
+    <a href="/some-carousel?b=2">次へ</a>
+    <a class="Pager__next" href="https://auctions.yahoo.co.jp/search/search?p=boy&amp;b=51&amp;n=50">次へ</a>
+  `), true);
+  assert.equal(hasNextYahooSearchPage('<span class="Pager__next">次へ</span>'), false);
+}
+
+async function testSearchProductsReturnsOneListRequestWithoutDetailFetches() {
+  const calls = [];
+  const service = createProductService({
+    httpFetcher: async url => {
+      calls.push(url);
+      return `
+        <div class="Products__list"><ul>${buildSearchProductCard()}</ul></div>
+        <a href="https://auctions.yahoo.co.jp/search/search?p=boy&amp;b=51&amp;n=50">次へ</a>
+      `;
+    },
+    playwrightFetcher: async () => {
+      throw new Error('should not call playwright');
+    }
+  });
+
+  const result = await service.searchProducts('boy', 1);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0], buildYahooSearchUrl('boy', 1));
+  assert.equal(result.data.items.length, 1);
+  assert.equal(result.data.hasMore, true);
+  assert.equal(result.data.nextPage, 2);
 }
 
 async function testFetchProductByKeywordUsesOnlySingleSearchResult() {
@@ -949,7 +1126,7 @@ async function testFetchProductByKeywordUsesOnlySingleSearchResult() {
   assert.equal(result.data.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/x1230699905');
   assert.equal(result.data.title, 'Keyword Product');
   assert.equal(result.data.currentPrice, 2450);
-  assert.equal(calls[0], 'https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=test%20keyword');
+  assert.equal(calls[0], 'https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=test%20keyword&b=1&n=50');
 }
 
 async function testFetchProductByKeywordFailsWhenResultCountIsNotOne() {
@@ -1042,6 +1219,8 @@ async function run() {
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
   await testParseProductHtmlUsesNextDataItemImage();
+  await testParseProductDetailFromNextData();
+  await testParseClosedProductStatus();
   await testParseProductHtmlUsesNextDataItemEndTime();
   await testParseProductTitleWhenYahooPrefixComesFirst();
   await testParseProductTitlePrefersPageDataProductName();
@@ -1076,6 +1255,9 @@ async function run() {
   testExtractsUniqueAuctionIdFromProductsListOnly();
   testExtractsMultipleAuctionIdsFromProductsList();
   testBuildsYahooSearchUrlWithKeyword();
+  testExtractsYahooSearchProductSummaries();
+  testDetectsYahooSearchNextPageLink();
+  await testSearchProductsReturnsOneListRequestWithoutDetailFetches();
   await testFetchProductByKeywordUsesOnlySingleSearchResult();
   await testFetchProductByKeywordFailsWhenResultCountIsNotOne();
   await testFailsWhenServerCannotFetchProductAndNoCacheExists();

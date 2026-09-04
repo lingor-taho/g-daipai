@@ -1,10 +1,13 @@
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
+import { useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getApiErrorMessage, getPluginConfig, getProductInfo, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
+import { getApiErrorMessage, getPluginConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
+import ProductSearchPopup from '../components/ProductSearchPopup';
 import TaskList from './TaskList';
+import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
 import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
 
@@ -140,6 +143,16 @@ export default function Submit() {
   const [websiteRateReloadKey, setWebsiteRateReloadKey] = useState(0);
   const [lastFetchedUrl, setLastFetchedUrl] = useState('');
   const [taskListVersion, setTaskListVersion] = useState(0);
+  const [productSearchVisible, setProductSearchVisible] = useState(false);
+  const [productSearchKeyword, setProductSearchKeyword] = useState('');
+  const [productSearchItems, setProductSearchItems] = useState([]);
+  const [productSearchNextPage, setProductSearchNextPage] = useState(2);
+  const [productSearchHasMore, setProductSearchHasMore] = useState(false);
+  const [productSearchLoadingMore, setProductSearchLoadingMore] = useState(false);
+  const [singleProductDetailVisible, setSingleProductDetailVisible] = useState(false);
+  const productFetchInFlightRef = useRef(false);
+  const productSearchGenerationRef = useRef(0);
+  const productSearchLoadKeyRef = useRef('');
   const [multiBidConfig, setMultiBidConfig] = useState({
     startHours: 0.5,
     intervalMinutes: 5,
@@ -211,6 +224,15 @@ export default function Submit() {
       setWebsiteRateError('');
       setWebsiteRateReloadKey(key => key + 1);
       setLastFetchedUrl('');
+      productSearchGenerationRef.current += 1;
+      setProductSearchVisible(false);
+      setProductSearchKeyword('');
+      setProductSearchItems([]);
+      setProductSearchNextPage(2);
+      setProductSearchHasMore(false);
+      setProductSearchLoadingMore(false);
+      setSingleProductDetailVisible(false);
+      productSearchLoadKeyRef.current = '';
       setTaskListVersion(version => version + 1);
     }
     window.addEventListener('acting-user-change', handleActingUserChange);
@@ -226,57 +248,128 @@ export default function Submit() {
 
   async function handleFetch(targetUrl = url, options = {}) {
     const normalizedInput = String(targetUrl || '').trim();
-    if (!normalizedInput || fetching) return;
+    if (!normalizedInput || productFetchInFlightRef.current) return;
     if (options.skipIfFetched && normalizedInput === lastFetchedUrl) return;
+    setSingleProductDetailVisible(false);
     const inputAuctionId = extractAuctionId(normalizedInput);
 
+    productFetchInFlightRef.current = true;
     setFetching(true);
     try {
-      const res = await getProductInfo(normalizedInput);
-      const data = res.data?.data;
-      const auctionId = data?.auctionId || inputAuctionId;
-      if (!auctionId) {
+      if (!inputAuctionId) {
+        const generation = productSearchGenerationRef.current + 1;
+        productSearchGenerationRef.current = generation;
+        productSearchLoadKeyRef.current = '';
+        const searchRes = await getProductSearchResults(normalizedInput, 1);
+        if (productSearchGenerationRef.current !== generation) return;
+        const searchData = searchRes.data?.data || {};
+        const searchItems = Array.isArray(searchData.items) ? searchData.items : [];
+        if (!searchItems.length) {
+          setProduct(null);
+          setProductSearchVisible(false);
+          Toast.show({ content: '未找到相关商品' });
+          return;
+        }
+        if (searchItems.length === 1 && !searchData.hasMore) {
+          const onlyItem = searchItems[0];
+          setUrl(onlyItem.auctionId);
+          await fetchAndSetProduct(onlyItem.auctionId, onlyItem.auctionId);
+          return;
+        }
         setProduct(null);
-        Toast.show({ content: '服务器网络问题，请稍后重试！' });
+        setProductSearchKeyword(normalizedInput);
+        setProductSearchItems(searchItems);
+        setProductSearchNextPage(Number(searchData.nextPage || 2));
+        setProductSearchHasMore(Boolean(searchData.hasMore));
+        setProductSearchVisible(true);
         return;
       }
-      if (data?.title && data.title !== '商品 ' + auctionId) {
-        const nextProduct = {
-          auctionId,
-          title: data.title || ('商品 ' + auctionId),
-          currentPrice: data.currentPrice || 0,
-          buyoutPrice: data.buyoutPrice ?? data.buyout_price ?? 0,
-          bidCount: Number(data.bidCount ?? data.bid_count ?? 0),
-          buyoutOnly: Boolean(data.buyoutOnly || data.buyout_only),
-          taxType: data.taxType || 'tax_zero',
-          productType: data.productType || data.product_type || (data.taxType === 'tax_included' ? 'store' : 'normal'),
-          shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
-          imageUrl: data.imageUrl || '',
-          endTime: data.endTime || ''
-        };
-        setProduct(nextProduct);
-        setStoreBidPriceMode('tax_before');
-        if (isBuyoutOnlyProduct(nextProduct)) {
-          setBuyoutSelected(true);
-          const buyoutSubmitPrice = getBuyoutSubmitPrice(nextProduct) || 0;
-          setMaxPrice(bidCurrency === 'cny' && websiteRate?.rate
-            ? formatCnyAmount(getYenAsCnyAmount(buyoutSubmitPrice, websiteRate.rate))
-            : String(buyoutSubmitPrice || ''));
-          setStrategy('direct');
-        } else {
-          setBuyoutSelected(false);
-        }
-        setLastFetchedUrl(normalizedInput);
-        Toast.show({ content: '已获取商品信息' });
-      } else {
-        setProduct(null);
-        Toast.show({ content: '服务器网络问题，请稍后重试！' });
-      }
+
+      await fetchAndSetProduct(normalizedInput, inputAuctionId);
     } catch (e) {
       setProduct(null);
+      if (!inputAuctionId) setProductSearchVisible(false);
       Toast.show({ content: e.response?.data?.error || '服务器网络问题，请稍后重试！' });
     } finally {
+      productFetchInFlightRef.current = false;
       setFetching(false);
+    }
+  }
+
+  async function fetchAndSetProduct(normalizedInput, inputAuctionId) {
+    const res = await getProductInfo(normalizedInput);
+    const data = res.data?.data;
+    const auctionId = data?.auctionId || inputAuctionId;
+    if (!auctionId) {
+      setProduct(null);
+      Toast.show({ content: '服务器网络问题，请稍后重试！' });
+      return;
+    }
+    if (data?.title && data.title !== '商品 ' + auctionId) {
+      const nextProduct = {
+        auctionId,
+        title: data.title || ('商品 ' + auctionId),
+        currentPrice: data.currentPrice || 0,
+        buyoutPrice: data.buyoutPrice ?? data.buyout_price ?? 0,
+        bidCount: Number(data.bidCount ?? data.bid_count ?? 0),
+        buyoutOnly: Boolean(data.buyoutOnly || data.buyout_only),
+        taxType: data.taxType || 'tax_zero',
+        productType: data.productType || data.product_type || (data.taxType === 'tax_included' ? 'store' : 'normal'),
+        shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
+        imageUrl: data.imageUrl || '',
+        endTime: data.endTime || ''
+      };
+      setProduct(nextProduct);
+      setStoreBidPriceMode('tax_before');
+      if (isBuyoutOnlyProduct(nextProduct)) {
+        setBuyoutSelected(true);
+        const buyoutSubmitPrice = getBuyoutSubmitPrice(nextProduct) || 0;
+        setMaxPrice(bidCurrency === 'cny' && websiteRate?.rate
+          ? formatCnyAmount(getYenAsCnyAmount(buyoutSubmitPrice, websiteRate.rate))
+          : String(buyoutSubmitPrice || ''));
+        setStrategy('direct');
+      } else {
+        setBuyoutSelected(false);
+      }
+      setLastFetchedUrl(normalizedInput);
+      Toast.show({ content: '已获取商品信息' });
+    } else {
+      setProduct(null);
+      Toast.show({ content: '服务器网络问题，请稍后重试！' });
+    }
+  }
+
+  function closeProductSearch() {
+    productSearchGenerationRef.current += 1;
+    productSearchLoadKeyRef.current = '';
+    setProductSearchVisible(false);
+    setProductSearchLoadingMore(false);
+  }
+
+  async function loadMoreProductSearchResults() {
+    if (!productSearchVisible || productSearchLoadKeyRef.current || !productSearchHasMore) return;
+    const keyword = productSearchKeyword;
+    const page = productSearchNextPage;
+    const generation = productSearchGenerationRef.current;
+    const loadKey = `${generation}:${page}`;
+    productSearchLoadKeyRef.current = loadKey;
+    setProductSearchLoadingMore(true);
+    try {
+      const res = await getProductSearchResults(keyword, page);
+      if (productSearchGenerationRef.current !== generation) return;
+      const data = res.data?.data || {};
+      setProductSearchItems(current => appendUniqueItems(current, data.items || [], 'auctionId'));
+      setProductSearchNextPage(Number(data.nextPage || (page + 1)));
+      setProductSearchHasMore(Boolean(data.hasMore));
+    } catch (e) {
+      if (productSearchGenerationRef.current === generation) {
+        Toast.show({ content: getApiErrorMessage(e, '更多商品加载失败，请稍后重试') });
+      }
+    } finally {
+      if (productSearchLoadKeyRef.current === loadKey) {
+        productSearchLoadKeyRef.current = '';
+        setProductSearchLoadingMore(false);
+      }
     }
   }
 
@@ -285,9 +378,26 @@ export default function Submit() {
     handleFetch(productUrl);
   }
 
+  async function loadSearchProductDetail(item) {
+    try {
+      const res = await getProductInfo(item.auctionId);
+      const data = res.data?.data;
+      if (!data?.auctionId) throw new Error('商品详情数据不完整');
+      return data;
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, '商品详情加载失败，请稍后重试'));
+    }
+  }
+
+  function handleSearchBid(item) {
+    closeProductSearch();
+    handleRebid(item.auctionId);
+  }
+
   function handleUrlChange(value) {
     setUrl(value);
     if (String(value || '').trim() !== lastFetchedUrl) {
+      setSingleProductDetailVisible(false);
       setProduct(null);
     }
   }
@@ -522,7 +632,36 @@ export default function Submit() {
         </Button>
       </div>
 
-      {product && <ProductCard product={product} />}
+      <ProductSearchPopup
+        visible={productSearchVisible}
+        keyword={productSearchKeyword}
+        items={productSearchItems}
+        hasMore={productSearchHasMore}
+        loadingMore={productSearchLoadingMore}
+        onClose={closeProductSearch}
+        onLoadMore={loadMoreProductSearchResults}
+        onLoadDetail={loadSearchProductDetail}
+        onBid={handleSearchBid}
+      />
+
+      {product && (
+        <ProductCard product={product} onOpenDetail={() => setSingleProductDetailVisible(true)} />
+      )}
+
+      {product && (
+        <ProductSearchPopup
+          visible={singleProductDetailVisible}
+          keyword=""
+          items={[]}
+          hasMore={false}
+          loadingMore={false}
+          onClose={() => setSingleProductDetailVisible(false)}
+          onLoadMore={() => {}}
+          onLoadDetail={loadSearchProductDetail}
+          onBid={handleSearchBid}
+          detailOnlyItem={product}
+        />
+      )}
 
       {product && (
         <>

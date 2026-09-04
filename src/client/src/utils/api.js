@@ -96,4 +96,10 @@ export function createGetProductInfo({ apiClient = api } = {}) {
 
 // Product details are resolved by the server so user browsers do not need Yahoo access.
 export const getProductInfo = createGetProductInfo();
+export function createGetProductSearchResults({ apiClient = api } = {}) {
+  return (keyword, page = 1) => apiClient.get('/proxy/search', {
+    params: { keyword: String(keyword || '').trim(), page }
+  });
+}
+export const getProductSearchResults = createGetProductSearchResults();
 

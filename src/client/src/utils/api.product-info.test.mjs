@@ -2,11 +2,31 @@ import assert from 'node:assert/strict';
 import {
   api,
   createGetProductInfo,
+  createGetProductSearchResults,
   getApiErrorMessage,
   isRecoverableNetworkError,
   REQUEST_TIMEOUT_MS,
   shouldRetryRequest
 } from './api.js';
+
+async function testSearchesYahooProductsByKeywordAndPage() {
+  const calls = [];
+  const getProductSearchResults = createGetProductSearchResults({
+    apiClient: {
+      get: async (path, config) => {
+        calls.push({ path, config });
+        return { data: { success: true, data: { items: [] } } };
+      }
+    }
+  });
+
+  await getProductSearchResults('  商品名称  ', 3);
+
+  assert.deepEqual(calls, [{
+    path: '/proxy/search',
+    config: { params: { keyword: '商品名称', page: 3 } }
+  }]);
+}
 
 async function testAlwaysUsesServerProxy() {
   const calls = [];
@@ -124,6 +144,7 @@ function testRetriesSafeRequestsAndExplicitSubmitRetryOnlyOnce() {
   assert.equal(shouldRetryRequest({ method: 'get', __retryCount: 1 }, { code: 'ERR_NETWORK', request: {} }), false);
 }
 
+await testSearchesYahooProductsByKeywordAndPage();
 await testAlwaysUsesServerProxy();
 await testAcceptsThirdPartyAndNumericAuctionUrls();
 await testUsesKeywordWhenInputDoesNotContainAuctionId();
