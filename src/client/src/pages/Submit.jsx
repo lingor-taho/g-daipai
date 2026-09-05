@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
+import useProductFavorites from '../utils/useProductFavorites';
 import ProductSearchPopup from '../components/ProductSearchPopup';
 import TaskList from './TaskList';
 import { appendUniqueItems } from '../utils/pagedList';
@@ -124,6 +125,8 @@ function hasDirectBiddingRecord(tasks, auctionId) {
 }
 
 export default function Submit() {
+  const favoriteProps = useProductFavorites();
+  const [favoritesVisible, setFavoritesVisible] = useState(false);
   const [searchParams] = useSearchParams();
   const [url, setUrl] = useState('');
   const [product, setProduct] = useState(null);
@@ -210,6 +213,7 @@ export default function Submit() {
 
   useEffect(() => {
     function handleActingUserChange(event) {
+      setFavoritesVisible(false);
       const nextScope = event?.detail?.bid_strategy_scope || localStorage.getItem('actingUserBidStrategyScope') || 'all';
       setBidStrategyScope(nextScope);
       setUrl('');
@@ -390,6 +394,7 @@ export default function Submit() {
   }
 
   function handleSearchBid(item) {
+    setFavoritesVisible(false);
     closeProductSearch();
     const productUrl = item.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${item.auctionId}`;
     handleRebid(productUrl);
@@ -609,7 +614,13 @@ export default function Submit() {
   return (
     <>
       <div style={{ ...cardStyle, padding: 14 }}>
-        <div style={{ ...sectionTitleStyle, marginBottom: 10 }}>商品ID / 商品链接 / 商品名称</div>
+        <div style={{ ...sectionTitleStyle, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+          商品ID / 商品链接 / 商品名称
+          {favoriteProps.favorites.length > 0 && (
+            <button type="button" aria-label="打开商品收藏" onClick={() => setFavoritesVisible(true)}
+              style={{ width: 32, height: 32, padding: 0, border: 0, background: 'transparent', color: colors.accent, fontSize: 26, cursor: 'pointer' }}>+</button>
+          )}
+        </div>
         <div style={inputBoxStyle}>
           <Input
             placeholder="粘贴 Yahoo 拍卖商品链接或输入商品名称"
@@ -634,6 +645,7 @@ export default function Submit() {
       </div>
 
       <ProductSearchPopup
+        {...favoriteProps}
         visible={productSearchVisible}
         keyword={productSearchKeyword}
         items={productSearchItems}
@@ -645,12 +657,25 @@ export default function Submit() {
         onBid={handleSearchBid}
       />
 
+      <ProductSearchPopup
+        {...favoriteProps}
+        visible={favoritesVisible}
+        favoritesOnly
+        keyword="收藏"
+        items={favoriteProps.favorites}
+        hasMore={false}
+        loadingMore={false}
+        onClose={() => setFavoritesVisible(false)}
+        onBid={handleSearchBid}
+      />
+
       {product && (
         <ProductCard product={product} onOpenDetail={() => setSingleProductDetailVisible(true)} />
       )}
 
       {product && (
         <ProductSearchPopup
+          {...favoriteProps}
           visible={singleProductDetailVisible}
           keyword=""
           items={[]}

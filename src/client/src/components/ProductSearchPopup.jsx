@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Popup, SpinLoading } from 'antd-mobile';
+import FavoriteButton from './FavoriteButton';
+import { remainingFavoriteDays } from '../utils/productFavorites';
 import { colors, outlineButtonStyle } from '../styles';
 
 const popupStyles = `
@@ -338,8 +340,19 @@ export default function ProductSearchPopup({
   onLoadMore,
   onLoadDetail,
   onBid,
+  favorites = [],
+  onToggleFavorite = () => {},
+  favoritesOnly = false,
   detailOnlyItem = null
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!visible || !favoritesOnly) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, [visible, favoritesOnly]);
+  const isFavorite = item => favorites.some(value => value.auctionId === String(item.auctionId || '').toLowerCase());
   const [selectedItem, setSelectedItem] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -488,10 +501,10 @@ export default function ProductSearchPopup({
               <Button size="small" fill="none" onClick={returnToList}>← 返回</Button>
             ) : null}
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedItem || detailOnly ? '商品详情' : '商品搜索结果'}</div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedItem || detailOnly ? '商品详情' : (favoritesOnly ? '商品收藏' : '商品搜索结果')}</div>
               {!selectedItem && !detailOnly ? (
                 <div style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: colors.muted }}>
-                  “{keyword}”　已显示 {items.length} 条
+                  {favoritesOnly ? `已收藏 ${items.length} 件商品` : `“${keyword}”　已显示 ${items.length} 条`}
                 </div>
               ) : null}
             </div>
@@ -585,7 +598,10 @@ export default function ProductSearchPopup({
                   <div className="product-search-detail-price">
                     当前：{detailProduct.detailDisplayPrice?.currentPriceText || formatJPY(detailProduct.currentPrice)}
                   </div>
-                  <div className="product-search-detail-meta">
+                  <div className="product-search-detail-meta" style={{ position: 'relative', paddingRight: 56 }}>
+                    <div style={{ position: 'absolute', right: 8, top: 8 }}>
+                      <FavoriteButton active={isFavorite(detailProduct)} onClick={() => onToggleFavorite(detailProduct)} />
+                    </div>
                     {Number(detailProduct.detailDisplayPrice?.buyoutPrice || detailProduct.buyoutPrice || 0) > 0 ? (
                       <div className="product-search-detail-meta-row">
                         <span className="product-search-detail-meta-label">即决价</span>
@@ -640,8 +656,8 @@ export default function ProductSearchPopup({
                       <button
                         type="button"
                         className="product-search-result-link product-search-result-image-link"
-                        onClick={() => openDetail(item)}
-                        aria-label={`查看商品详情：${item.title}`}
+                        onClick={() => favoritesOnly ? onBid(item) : openDetail(item)}
+                        aria-label={`${favoritesOnly ? '入札' : '查看商品详情'}：${item.title}`}
                       >
                         {item.imageUrl ? (
                           <img
@@ -659,37 +675,44 @@ export default function ProductSearchPopup({
                         <button
                           type="button"
                           className="product-search-result-link product-search-result-title"
-                          onClick={() => openDetail(item)}
+                          onClick={() => favoritesOnly ? onBid(item) : openDetail(item)}
                         >
                           {item.title}
                         </button>
                         <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.55, color: colors.muted }}>
-                          <div style={{ color: colors.danger, fontWeight: 700 }}>
-                            当前：{formatJPY(item.currentPrice)}
-                            {Number(item.buyoutPrice || 0) > 0 ? `　即決：${formatJPY(item.buyoutPrice)}` : ''}
-                          </div>
-                          <div>{item.shippingFeeText || '运费未显示'}</div>
-                          <div>
-                            入札：{Number(item.bidCount || 0)}
-                            {item.remainingTimeText ? `　剩余：${item.remainingTimeText}` : ''}
-                          </div>
+                          {favoritesOnly ? (
+                            <div>到期：{remainingFavoriteDays(item.endTime, now) === null ? '未知' : `${remainingFavoriteDays(item.endTime, now)}天`}</div>
+                          ) : (<>
+                            <div style={{ color: colors.danger, fontWeight: 700 }}>
+                              当前：{formatJPY(item.currentPrice)}
+                              {Number(item.buyoutPrice || 0) > 0 ? `　即決：${formatJPY(item.buyoutPrice)}` : ''}
+                            </div>
+                            <div>{item.shippingFeeText || '运费未显示'}</div>
+                            <div>
+                              入札：{Number(item.bidCount || 0)}
+                              {item.remainingTimeText ? `　剩余：${item.remainingTimeText}` : ''}
+                            </div>
+                          </>)}
                           <div style={{ color: colors.faint }}>ID：{item.auctionId}</div>
                         </div>
                       </div>
-                      <Button
-                        size="mini"
-                        color="danger"
-                        fill="outline"
-                        onClick={() => onBid(item)}
-                        style={{ ...outlineButtonStyle, flex: '0 0 auto', '--text-color': colors.danger }}
-                      >
-                        入札
-                      </Button>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <FavoriteButton active={isFavorite(item)} onClick={() => onToggleFavorite(item)} />
+                        {!favoritesOnly && <Button
+                          size="mini"
+                          color="danger"
+                          fill="outline"
+                          onClick={() => onBid(item)}
+                          style={{ ...outlineButtonStyle, flex: '0 0 auto', '--text-color': colors.danger }}
+                        >
+                          入札
+                        </Button>}
+                      </div>
                     </div>
                   ))}
                 </div>
                 <div style={{ minHeight: 46, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px 8px', fontSize: 12, color: colors.faint }}>
-                  {loadingMore ? <><SpinLoading style={{ '--size': '18px', marginRight: 8 }} />正在加载更多</> : (hasMore ? '继续向下滚动加载更多' : '没有更多了')}
+                  {loadingMore ? <><SpinLoading style={{ '--size': '18px', marginRight: 8 }} />正在加载更多</> : (items.length === 0 && favoritesOnly ? '暂无收藏商品' : (hasMore ? '继续向下滚动加载更多' : '没有更多了'))}
                 </div>
               </>
             )}

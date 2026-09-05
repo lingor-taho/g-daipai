@@ -23,7 +23,7 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('onClick={() => openDetail(item)}') &&
+  source.includes('onClick={() => favoritesOnly ? onBid(item) : openDetail(item)}') &&
     source.includes('查看商品详情') &&
     source.includes('product-search-result-title'),
   true,
@@ -121,7 +121,7 @@ assert.equal(
 );
 
 assert.equal(
-  /function handleSearchBid\(item\) \{\s*closeProductSearch\(\);\s*const productUrl = item\.standardUrl \|\| `https:\/\/auctions\.yahoo\.co\.jp\/jp\/auction\/\$\{item\.auctionId\}`;\s*handleRebid\(productUrl\);\s*\}/.test(submitSource),
+  /function handleSearchBid\(item\) \{\s*setFavoritesVisible\(false\);\s*closeProductSearch\(\);\s*const productUrl = item\.standardUrl \|\| `https:\/\/auctions\.yahoo\.co\.jp\/jp\/auction\/\$\{item\.auctionId\}`;\s*handleRebid\(productUrl\);\s*\}/.test(submitSource),
   true,
   'Search bid actions should close the popup and fill the standard Yahoo product URL'
 );
