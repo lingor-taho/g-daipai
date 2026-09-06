@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-05
+**最后更新**: 2026-09-06
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -411,6 +411,33 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-06 同捆扫描状态优先于运费
+
+同捆扫描先识别当前可见的拒绝提示，再识别同捆子商品，最后才读取运费。拒绝提示与单件运费同时存在时仍拆组；子商品提示与运费同时存在时不把子商品当主商品推进整组付款。提示优先从可见状态区域、弹窗及旧版关闭按钮所在容器读取；隐藏模板、隐藏父容器和交易消息中的旧提示不覆盖当前状态。主商品现有运费识别、拆组和付款规则不变。
+
+新增回归覆盖拒绝/子商品与数字运费、0円、無料共存，正常主商品运费，隐藏元素/父容器/CSS/aria-hidden/零尺寸提示，交易历史和无 dialog role 的旧版弹窗。更新 yahoo-plugin/content.js 后需手动 reload Chrome 扩展；未部署生产或修改订单。卖家同意后直接进入可付款页面的等待条件缺口尚未在本次修改中处理。
+
+验证命令沿用下条插件检查，重点运行 node yahoo-plugin/content.test.js 和 node scripts/encoding-guard.js。
+
+### 2026-09-06 同捆拒绝后复用普通商品流程
+
+生产商品 c1242486851 已正确识别同捆拒绝并解除同捆，但旧拒绝分支强制查找「取引をはじめる」，使显示「購入手続きする」的普通商品报错。现在拒绝分支只关闭提示并跳过再次申请同捆，之后与普通商品共用单件交易、运费和付款流程。旧版「取引をはじめる」步骤移到共用单件路径；「購入手続きする」继续由既有付款流程识别和点击，不在交易开始阶段提前执行。
+
+回归覆盖普通商品与拒绝同捆商品共用旧版单件入口、免费运费购买入口在交易开始阶段不提前点击且进入待付款、拒绝后忽略残留同捆信息，以及单件入口不匹配购买入口或相似同捆文案。本次仅修改本地插件和测试，未修改生产订单或重试交易。生产更新 yahoo-plugin/background.js 后手动 reload 扩展，API 无需重启，实际 Yahoo 页面效果待部署验证。若已部署上一版临时文案补丁，同时更新 yahoo-plugin/content.js 撤回该补丁。
+
+验证：
+
+```powershell
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/content.js
+node --check yahoo-plugin/background.test.js
+node --check yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/content.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-09-05 用户端浏览器本地商品收藏
 

@@ -6350,8 +6350,8 @@ async function completeNormalBundleRequest(tab) {
   return { success: true, tab };
 }
 
-async function startSingleTransactionAfterBundleRejected(tab, initialState = null) {
-  let state = initialState || await getBundleActionState(tab.id);
+async function closeRejectedBundleNotice(tab, initialState = null) {
+  const state = initialState || await getBundleActionState(tab.id);
   if (!state?.bundleRejected) {
     return { success: true, tab, handled: false };
   }
@@ -6360,21 +6360,21 @@ async function startSingleTransactionAfterBundleRejected(tab, initialState = nul
     const closeResult = await clickBundleActionAndFollowTab(tab, 'close');
     if (!closeResult?.success) return closeResult;
     tab = closeResult.tab;
-    state = await getBundleActionState(tab.id);
   }
 
-  if (!state?.canStartSingleTransaction) {
-    return { success: false, error: 'single transaction start button not found after bundle rejection', tab };
-  }
+  return { success: true, tab, handled: true };
+}
 
-  const startResult = await clickBundleActionAndFollowTab(
+// Legacy single-item entry, shared by ordinary items and rejected bundles.
+async function startNormalSingleTransaction(tab) {
+  const state = await getBundleActionState(tab.id);
+  if (!state?.canStartSingleTransaction) return { success: true, tab };
+  return clickBundleActionAndFollowTab(
     tab,
     'singleStart',
     nextState => nextState.canPlacementOk || nextState.canDecide || nextState.canConfirm ||
       nextState.waitingShipping || nextState.paymentReady || nextState.cancelled
   );
-  if (!startResult?.success) return startResult;
-  return { success: true, tab: startResult.tab, handled: true };
 }
 
 async function completeBidderPaysShippingTransaction(tab) {
@@ -6464,17 +6464,17 @@ async function executeTransactionStartJob(job) {
       await updateTransactionStartStatus({ orderId: job.orderId, status: 'cancelled' });
       return { processedProductIds: [job.productId] };
     }
-    const rejectedStartResult = await startSingleTransactionAfterBundleRejected(tab, initialState);
-    if (!rejectedStartResult?.success) {
+    const rejectedNoticeResult = await closeRejectedBundleNotice(tab, initialState);
+    if (!rejectedNoticeResult?.success) {
       await updateTransactionStartStatus({
         orderId: job.orderId,
-        error: rejectedStartResult?.error || 'single transaction start after bundle rejection failed'
+        error: rejectedNoticeResult?.error || 'bundle rejection notice close failed'
       });
       return { processedProductIds: [job.productId] };
     }
-    tab = rejectedStartResult.tab;
+    tab = rejectedNoticeResult.tab;
 
-    if (info.available && !rejectedStartResult.handled) {
+    if (info.available && !rejectedNoticeResult.handled) {
       if (!info.quantityMatched) {
         await updateTransactionStartStatus({ orderId: job.orderId, error: 'bundle quantity mismatch' });
         return;
@@ -6508,6 +6508,12 @@ async function executeTransactionStartJob(job) {
       });
       return { processedProductIds: bundleProductIds };
     }
+    const singleStartResult = await startNormalSingleTransaction(tab);
+    if (!singleStartResult?.success) {
+      await updateTransactionStartStatus({ orderId: job.orderId, error: singleStartResult?.error || 'single transaction start failed' });
+      return { processedProductIds: [job.productId] };
+    }
+    tab = singleStartResult.tab;
     if (isBidderPaysShippingText(job.shippingFeeText)) {
       const paymentEntryState = await getPaymentPageState(tab.id).catch(() => null);
       if (isDirectCashOnDeliveryPaymentEntry(job, paymentEntryState)) {

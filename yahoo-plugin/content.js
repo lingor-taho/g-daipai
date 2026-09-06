@@ -2191,17 +2191,54 @@ function extractBundleShippingFeeText(text = getBodyText()) {
   return '';
 }
 
+// Read current notices, not hidden popup templates or transaction message history.
+function getBundleNoticeText(fallbackText = '') {
+  const isVisible = element => {
+    for (let node = element; node; node = node.parentElement) {
+      const style = window.getComputedStyle?.(node);
+      if (node.hidden || node.getAttribute?.('aria-hidden') === 'true' ||
+          style?.display === 'none' || style?.visibility === 'hidden' ||
+          Number(style?.opacity ?? 1) === 0) return false;
+    }
+    const rect = element.getBoundingClientRect?.();
+    return !rect || (rect.width > 0 && rect.height > 0);
+  };
+  const outsideMessages = element => !element.closest?.('#messagelist, .acMdMessage, [data-gdaipai-message-v2], [data-gdaipai-message-empty]');
+  const candidates = Array.from(document.querySelectorAll(
+    '.acMdStatusCmt, [role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [id*="modal" i], [id*="dialog" i]'
+  ) || []);
+  // Legacy Yahoo notices may have no dialog role. Locate their close control.
+  for (const control of document.querySelectorAll('button, a, input[type="button"], input[type="submit"]') || []) {
+    if (!/^\s*閉じる\s*$/.test(getRenderedText(control) || String(control.value || '')) || !isVisible(control)) continue;
+    let node = control.parentElement;
+    for (let depth = 0; node && node !== document.body && depth < 6; depth++, node = node.parentElement) {
+      if (/出品者が単品での取引を希望した|この商品を含めたまとめて取引に同意しました/.test(getRenderedText(node))) {
+        candidates.push(node);
+        break;
+      }
+    }
+  }
+  const texts = candidates.filter(element => isVisible(element) && outsideMessages(element))
+    .map(getRenderedText).filter(Boolean);
+  if (texts.length) return texts.join('\n');
+  // innerText excludes hidden descendants; text-only input remains supported.
+  const visibleText = document.body && 'innerText' in document.body
+    ? document.body.innerText : fallbackText;
+  return String(visibleText || '').split(/取引メッセージ|メッセージ|お届け情報|お支払い情報/)[0];
+}
+
 function extractBundleScanResult(text = getBodyText()) {
   const source = String(text || '');
+  const noticeText = getBundleNoticeText(source);
+  if (detectBundleRejected(noticeText)) {
+    return { type: 'bundle_rejected' };
+  }
+  if (/\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(noticeText)) {
+    return { type: 'child_agreed' };
+  }
   const bundleShippingFeeText = extractBundleShippingFeeText(source);
   if (bundleShippingFeeText) {
     return { type: 'shipping_ready', bundleShippingFeeText };
-  }
-  if (detectBundleRejected(source)) {
-    return { type: 'bundle_rejected' };
-  }
-  if (/\u3053\u306e\u5546\u54c1\u3092\u542b\u3081\u305f\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source)) {
-    return { type: 'child_agreed' };
   }
   const canInputTransaction = !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/);
   if (/\u51fa\u54c1\u8005\u304c\u307e\u3068\u3081\u3066\u53d6\u5f15\u306b\u540c\u610f\u3057\u307e\u3057\u305f/.test(source) &&

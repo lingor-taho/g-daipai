@@ -54,6 +54,9 @@ function loadContentForTest(bodyText, pathname = '/jp/auction/x123456789/bid/don
     document: {
       title: 'Yahoo!オークション - 最高級 イタリア製 OLIVER PEOPLES サングラス',
       body: {
+        get innerText() {
+          return options.visibleBodyText ?? (options.getBodyText ? options.getBodyText() : bodyText);
+        },
         get textContent() {
           return options.getBodyText ? options.getBodyText() : bodyText;
         },
@@ -3595,11 +3598,11 @@ function testBundleTransactionActionStateDetectsReviewButtonAsDecide() {
   assert.equal(reviewButton.clicked, true);
 }
 
-function testBundleRejectedStateFindsSingleTransactionStart() {
+function testBundleRejectedStateFindsSingleTransactionStart(label, expected = true) {
   const closeButton = createTestElement('');
   closeButton.value = '\u9589\u3058\u308b';
   closeButton.tagName = 'INPUT';
-  const singleStartButton = createTestElement('\u53d6\u5f15\u3092\u306f\u3058\u3081\u308b');
+  const singleStartButton = createTestElement(label);
   singleStartButton.tagName = 'A';
   singleStartButton.href = '/buyer/edit?aid=w1239811853';
   const api = loadContentForTest(
@@ -3622,9 +3625,9 @@ function testBundleRejectedStateFindsSingleTransactionStart() {
 
   assert.equal(state.bundleRejected, true);
   assert.equal(state.canCloseBundleNotice, true);
-  assert.equal(state.canStartSingleTransaction, true);
-  assert.equal(clickResult.success, true);
-  assert.equal(singleStartButton.clicked, true);
+  assert.equal(state.canStartSingleTransaction, expected);
+  assert.equal(clickResult.success, expected);
+  assert.equal(Boolean(singleStartButton.clicked), expected);
 }
 
 function testBundleTransactionActionStateDetectsPlacementOkModal() {
@@ -3883,6 +3886,53 @@ function testExtractBundleScanResultDetectsBundleRejected() {
   const result = api.extractBundleScanResult();
 
   assert.equal(result.type, 'bundle_rejected');
+}
+
+function testBundleScanNoticePriorityAndVisibility() {
+  const rejected = '取引内容を確認してください。出品者が単品での取引を希望したため、商品ごとに取引を行ってください。';
+  const child = '出品者が、この商品を含めたまとめて取引に同意しました。';
+  for (const shipping of ['送料：500円', '送料：0円', '送料：無料']) {
+    const payment = '支払い金額：4,500円 ' + shipping;
+    for (const [notice, expected] of [[rejected, 'bundle_rejected'], [child, 'child_agreed']]) {
+      const api = loadContentForTest(notice + ' ' + payment, '/buyer/top');
+      const result = api.extractBundleScanResult();
+      assert.equal(result.type, expected);
+      assert.equal(result.bundleShippingFeeText, undefined);
+    }
+    assert.equal(loadContentForTest('出品者がまとめて取引に同意しました。 ' + payment, '/buyer/top').extractBundleScanResult().type, 'shipping_ready');
+  }
+  const payment = '支払い金額：4,500円 送料：500円';
+  for (const noticeText of [rejected, child]) {
+    const notice = createTestElement(noticeText);
+    const options = {
+      visibleBodyText: payment,
+      querySelectorAll(selector) { return selector.startsWith('.acMdStatusCmt,') ? [notice] : []; }
+    };
+    // A visible dialog wins even when the payment region is also present.
+    assert.equal(loadContentForTest(payment, '/buyer/top', options).extractBundleScanResult().type,
+      noticeText === rejected ? 'bundle_rejected' : 'child_agreed');
+    for (const hiddenBy of ['self', 'ancestor', 'css', 'aria', 'zeroRect']) {
+      notice.hidden = hiddenBy === 'self';
+      notice.parentElement = hiddenBy === 'ancestor' ? { hidden: true } : null;
+      notice.getAttribute = name => name === 'aria-hidden' && hiddenBy === 'aria' ? 'true' : '';
+      notice.getBoundingClientRect = () => ({ width: hiddenBy === 'zeroRect' ? 0 : 100, height: 40 });
+      const api = loadContentForTest(noticeText + payment, '/buyer/top', {
+        ...options,
+        getComputedStyle() { return { display: hiddenBy === 'css' ? 'none' : 'block', visibility: 'visible' }; }
+      });
+      assert.equal(api.extractBundleScanResult().type, 'shipping_ready', hiddenBy);
+    }
+    const history = loadContentForTest(payment + ' 取引メッセージ ' + noticeText, '/buyer/top');
+    assert.equal(history.extractBundleScanResult().type, 'shipping_ready');
+  }
+  // Legacy popup with no dialog role: detect it through its close button.
+  const popup = createTestElement(rejected);
+  const close = createTestElement('閉じる');
+  close.parentElement = popup;
+  const legacy = loadContentForTest(payment, '/buyer/top', {
+    querySelectorAll(selector) { return selector === 'button, a, input[type="button"], input[type="submit"]' ? [close] : []; }
+  });
+  assert.equal(legacy.extractBundleScanResult().type, 'bundle_rejected');
 }
 
 function testExtractPendingShipmentScanResultDetectsStorePending() {
@@ -5238,7 +5288,10 @@ async function run() {
   testClickBundleTransactionActionFindsInputRoleButtonParent();
   testBundleTransactionActionStateDetectsDecideButton();
   testBundleTransactionActionStateDetectsReviewButtonAsDecide();
-  testBundleRejectedStateFindsSingleTransactionStart();
+  testBundleRejectedStateFindsSingleTransactionStart('取引をはじめる');
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きする', false);
+  testBundleRejectedStateFindsSingleTransactionStart('まとめて取引をはじめる', false);
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きすることができません', false);
   testBundleTransactionActionStateDetectsPlacementOkModal();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
   testBundleTransactionActionStateDetectsPaymentReadyPage();
@@ -5259,6 +5312,7 @@ async function run() {
   testExtractBundleScanResultKeepsFreePaymentShippingText();
   testExtractBundleScanResultKeepsCodPaymentShippingText();
   testExtractBundleScanResultDetectsBundleRejected();
+  testBundleScanNoticePriorityAndVisibility();
   testExtractPendingShipmentScanResultDetectsStorePending();
   testExtractPendingShipmentScanResultDetectsNormalPending();
   testExtractPendingShipmentScanResultDetectsNormalV2ShippedWithTracking();
