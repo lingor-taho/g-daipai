@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-06
+**最后更新**: 2026-09-07
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -411,6 +411,26 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-07 确认收货 Google 表格读取合并
+
+确认收货领取任务时改为每轮只读取一次表格 C 列的商品 ID 和背景色，在内存中匹配全部待收货商品，下一轮重新读取，不跨轮缓存颜色。无待收货商品时不读取表格；待付款/待结算的补查保持原行为。移除逐商品查询和外层叠加重试。
+
+该批量读取遇到 Google Sheets 429 时立即停止本轮，并对同一表格读取设置 60 秒冷却；冷却期间再次请求直接返回限流错误，不再访问 Google。到期后的新请求才重新读取，不自动重启确认收货。其他读写请求的既有重试规则不变。表格读取失败不返回部分任务，颜色未匹配不确认收货。生产商品 g1242685108 的报错发生在表格查询阶段，排查时仍待收货，未执行修复性确认或修改表格。
+
+本次只修改 API 服务和测试，未部署生产。部署需更新 src/server/routes/plugin.js、src/server/services/googleSheets.js 并重启 API，无需更新 Chrome 插件或数据库。
+
+验证：
+
+```powershell
+node src/server/services/googleSheets.test.js
+node src/server/routes/plugin.test.js
+node --check src/server/services/googleSheets.js
+node --check src/server/routes/plugin.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 
 ### 2026-09-06 同捆扫描状态优先于运费
 

@@ -2563,8 +2563,9 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
   };
 
   const result = await getConfirmReceiptJobs(fakeDb, {
-    async findRowsByProductIdWithAnyColor(productId) {
-      return { matched: productId === 'r111111111' };
+    async findRowsByProductIdsWithAnyColor(productIds) {
+      assert.deepEqual(productIds, ['r111111111']);
+      return { r111111111: { matched: true } };
     }
   });
 
@@ -2587,43 +2588,27 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
   assert.equal(result.jobs[2].orderStatus, ORDER_STATUS_PENDING_SETTLEMENT);
 }
 
-async function testGetConfirmReceiptJobsRetriesSheetMatchOnceBeforeSkipping() {
-  let attempts = 0;
-  const delays = [];
-  const fakeDb = {
-    async getAll(sql) {
-      if (/FROM config/.test(sql)) return [{ key: 'confirm_receipt_color', value: '#ff00ff' }];
-      return [
-        {
-          order_id: 51,
-          order_status: ORDER_STATUS_PENDING_RECEIPT,
-          transaction_url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=e1232797856',
-          bundle_group_id: '',
-          product_id: 'e1232797856',
-          product_url: 'https://auctions.yahoo.co.jp/jp/auction/e1232797856',
-          product_title: 'receipt item',
-          product_type: 'normal'
-        }
-      ];
-    }
-  };
-
-  const result = await getConfirmReceiptJobs(fakeDb, {
-    retryDelayMs: 2000,
-    async sleep(ms) {
-      delays.push(ms);
-    },
-    async findRowsByProductIdWithAnyColor(productId) {
-      attempts += 1;
-      if (attempts === 1) throw new Error('temporary google read failed');
-      return { matched: productId === 'e1232797856', rows: [{ rowNumber: 38 }] };
-    }
-  });
-
-  assert.equal(attempts, 2);
-  assert.deepEqual(delays, [2000]);
-  assert.equal(result.jobs.length, 1);
-  assert.equal(result.jobs[0].productId, 'e1232797856');
+async function testGetConfirmReceiptJobsReadsOneBatchPerRound() {
+  let calls = 0;
+  const rows = Array.from({ length: 100 }, (_, i) => ({ order_id: i + 1, product_id: 'r' + i, order_status: ORDER_STATUS_PENDING_RECEIPT }));
+  const fakeDb = { async getAll(sql) { return /FROM config/.test(sql) ? [] : rows; } };
+  const options = { async findRowsByProductIdsWithAnyColor(ids) {
+    calls++;
+    assert.equal(ids.length, 100);
+    return { r0: { matched: true }, r99: { matched: true } };
+  } };
+  const result = await getConfirmReceiptJobs(fakeDb, options);
+  assert.equal(calls, 1);
+  assert.deepEqual(result.jobs.map(job => job.productId), ['r0', 'r99']);
+  await getConfirmReceiptJobs(fakeDb, options);
+  assert.equal(calls, 2); // A new round must refresh colors.
+  rows.length = 0;
+  await getConfirmReceiptJobs(fakeDb, options);
+  assert.equal(calls, 2);
+  rows.push({ product_id: 'r0', order_status: ORDER_STATUS_PENDING_RECEIPT });
+  await assert.rejects(() => getConfirmReceiptJobs(fakeDb, {
+    async findRowsByProductIdsWithAnyColor() { const e = new Error('quota'); e.googleSheetsStatus = 429; throw e; }
+  }), error => error.statusCode === 429);
 }
 
 async function testGetConfirmReceiptJobsFailsFastOnGoogleSheetsTimeout() {
@@ -2650,7 +2635,7 @@ async function testGetConfirmReceiptJobsFailsFastOnGoogleSheetsTimeout() {
     async sleep(ms) {
       delays.push(ms);
     },
-    async findRowsByProductIdWithAnyColor() {
+    async findRowsByProductIdsWithAnyColor() {
       attempts += 1;
       const timeoutError = new Error('Google Sheets API request timed out after 8000ms');
       timeoutError.googleSheetsTimeout = true;
@@ -3060,7 +3045,7 @@ Promise.all([
   testEnsureScheduledConfirmReceiptRequestSetsFlagAtDefault1801(),
   testCompleteConfirmReceiptIncrementsScanCounter(),
   testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCancelChecks(),
-  testGetConfirmReceiptJobsRetriesSheetMatchOnceBeforeSkipping(),
+  testGetConfirmReceiptJobsReadsOneBatchPerRound(),
   testGetConfirmReceiptJobsFailsFastOnGoogleSheetsTimeout(),
   testUpdateConfirmReceiptStatusCompletesBundleGroup(),
   testUpdateConfirmReceiptStatusFailureClearsFlagAndWritesDetailedAlert(),

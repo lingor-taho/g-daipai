@@ -7,6 +7,7 @@ const {
   buildAppendRowsFormatRequest,
   buildFindRowsByProductIdWithAnyColorPath,
   executeGoogleSheetsRequestWithRetry,
+  findRowsByProductIdsWithAnyColor,
   extractSpreadsheetId,
   fetchWithGoogleSheetsTimeout,
   getGoogleSheetsCredentialPath,
@@ -106,6 +107,39 @@ async function testUpdateRowsByProductIdSkipsWhenUnconfigured() {
       });
     });
   });
+}
+
+async function testReceiptColorBatchAndQuotaCooldown() {
+  let calls = 0, now = 1000;
+  const config = { spreadsheetId: 'receipt-test', sheetName: 'test' };
+  const cell = (id, yellow) => ({ formattedValue: id, userEnteredFormat: { backgroundColor: yellow ? { red: 1, green: 1 } : { red: 1 } } });
+  const options = { config, now: () => now, async request(path) {
+    calls++;
+    assert.match(path, /C%3AC/);
+    return { sheets: [{ data: [{ startRow: 2, rowData: [
+      { values: [cell('a123', true)] }, { values: [cell('b456', false)] }, { values: [cell('a123', true)] }
+    ] }] }] };
+  } };
+  const result = await findRowsByProductIdsWithAnyColor(['a123', 'b456', 'missing', 'a123'], '#ffff00', options);
+  assert.equal(calls, 1);
+  assert.deepEqual(result.a123, { matched: true, rows: [{ rowNumber: 3 }, { rowNumber: 5 }] });
+  assert.equal(result.b456.matched, false);
+  assert.equal(result.missing.matched, false);
+  await findRowsByProductIdsWithAnyColor([], '#ffff00', options);
+  assert.equal(calls, 1);
+  const quota = new Error('quota'); quota.googleSheetsStatus = 429;
+  const limited = { ...options, async request() { calls++; throw quota; } };
+  await assert.rejects(() => findRowsByProductIdsWithAnyColor(['a123'], '#ffff00', limited), /quota/);
+  await assert.rejects(() => findRowsByProductIdsWithAnyColor(['a123'], '#ffff00', options), /quota/);
+  assert.equal(calls, 2);
+  now += 60000;
+  await findRowsByProductIdsWithAnyColor(['a123'], '#ffff00', options);
+  assert.equal(calls, 3);
+  let retryCalls = 0;
+  await assert.rejects(() => executeGoogleSheetsRequestWithRetry(async () => { retryCalls++; throw quota; }, {
+    skipQuotaRetry: true, wait: async () => { throw new Error('must not immediately retry'); }
+  }), /quota/);
+  assert.equal(retryCalls, 1);
 }
 
 async function testGoogleSheetsRetryableFailureRetriesOnce() {
@@ -267,6 +301,7 @@ async function run() {
   await testApplyConfigFromDbOverridesEnv();
   await testMojibakeSheetNameFallsBackToDefault();
   await testUpdateRowsByProductIdSkipsWhenUnconfigured();
+  await testReceiptColorBatchAndQuotaCooldown();
   await testGoogleSheetsRetryableFailureRetriesOnce();
   await testGoogleSheetsRetryStopsAfterSecondFailure();
   await testGoogleSheetsNonRetryableFailureDoesNotRetry();

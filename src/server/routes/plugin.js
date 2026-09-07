@@ -10,7 +10,7 @@ const {
 const {
   appendRows: appendGoogleSheetRows,
   applyGoogleSheetsConfigFromDb,
-  findRowsByProductIdWithAnyColor,
+  findRowsByProductIdsWithAnyColor,
   isGoogleSheetsConfigured,
   updateRowsByProductId
 } = require('../services/googleSheets');
@@ -2577,25 +2577,6 @@ function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
-async function isConfirmReceiptSheetColorMatched(productId, colorHex, options = {}) {
-  const targetProductId = String(productId || '').trim();
-  if (!targetProductId) return false;
-  if (!options.findRowsByProductIdWithAnyColor) await applyGoogleSheetsConfigFromDb(db);
-  const resolver = options.findRowsByProductIdWithAnyColor || findRowsByProductIdWithAnyColor;
-  if (typeof resolver !== 'function') return false;
-  const sleepFn = typeof options.sleep === 'function' ? options.sleep : waitMs;
-  const retryDelayMs = Number.isFinite(Number(options.retryDelayMs)) ? Number(options.retryDelayMs) : 2000;
-  let result;
-  try {
-    result = await resolver(targetProductId, colorHex);
-  } catch (error) {
-    if (error?.googleSheetsTimeout === true) throw error;
-    if (retryDelayMs > 0) await sleepFn(retryDelayMs);
-    result = await resolver(targetProductId, colorHex);
-  }
-  return Boolean(result?.matched || (Array.isArray(result?.rows) && result.rows.length));
-}
-
 async function getConfirmReceiptJobs(database = db, options = {}) {
   const configRows = await database.getAll(
     "SELECT key, value FROM config WHERE key IN ('confirm_receipt_color')"
@@ -2619,6 +2600,21 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC`,
     [ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_PENDING_PAYMENT, ORDER_STATUS_PENDING_SETTLEMENT]
   );
+  const receiptIds = rows.filter(row => row.order_status === ORDER_STATUS_PENDING_RECEIPT).map(row => row.product_id);
+  let sheetMatches = {};
+  if (receiptIds.length) {
+    try {
+      if (!options.findRowsByProductIdsWithAnyColor) await applyGoogleSheetsConfigFromDb(database);
+      const resolver = options.findRowsByProductIdsWithAnyColor || findRowsByProductIdsWithAnyColor;
+      sheetMatches = await resolver(receiptIds, colorHex);
+    } catch (error) {
+      const sheetQueryError = new Error(`Google 表格查询失败：商品ID ${receiptIds[0]}，原因：${error.message || String(error)}`);
+      sheetQueryError.statusCode = error.googleSheetsTimeout ? 504 : (error.googleSheetsStatus === 429 ? 429 : 502);
+      sheetQueryError.productId = receiptIds[0];
+      sheetQueryError.googleSheetsTimeout = error.googleSheetsTimeout === true;
+      throw sheetQueryError;
+    }
+  }
   const jobs = [];
   for (const row of rows) {
     const orderStatus = row.order_status || '';
@@ -2626,16 +2622,7 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
     let sheetMatched = !isReceiptJob;
     let sheetError = '';
     if (isReceiptJob) {
-      try {
-        sheetMatched = await isConfirmReceiptSheetColorMatched(row.product_id, colorHex, options);
-      } catch (error) {
-        const reason = error.message || String(error);
-        const sheetQueryError = new Error(`Google 表格查询失败：商品ID ${row.product_id || '-'}，原因：${reason}`);
-        sheetQueryError.statusCode = error?.googleSheetsTimeout === true ? 504 : 502;
-        sheetQueryError.productId = row.product_id || '';
-        sheetQueryError.googleSheetsTimeout = error?.googleSheetsTimeout === true;
-        throw sheetQueryError;
-      }
+      sheetMatched = sheetMatches[row.product_id]?.matched === true;
     }
     if (!sheetMatched) continue;
     if (!isReceiptJob && !row.transaction_url) continue;

@@ -223,7 +223,7 @@ async function executeGoogleSheetsRequestWithRetry(operation, options = {}) {
   try {
     return await operation();
   } catch (error) {
-    if (!isRetryableGoogleSheetsError(error)) throw error;
+    if (!isRetryableGoogleSheetsError(error) || (options.skipQuotaRetry && error.googleSheetsStatus === 429)) throw error;
     await wait(GOOGLE_SHEETS_RETRY_DELAY_MS);
     return operation();
   }
@@ -254,8 +254,8 @@ async function googleRequestOnce(path, options = {}) {
   return json;
 }
 
-async function googleRequest(path, options = {}) {
-  return executeGoogleSheetsRequestWithRetry(() => googleRequestOnce(path, options));
+async function googleRequest(path, options = {}, retryOptions = {}) {
+  return executeGoogleSheetsRequestWithRetry(() => googleRequestOnce(path, options), retryOptions);
 }
 
 async function getSheetId(spreadsheetId, sheetName) {
@@ -429,23 +429,43 @@ function rowMatchesAnyBackgroundColor(rowData = {}, targetHex = '') {
   });
 }
 
-async function findRowsByProductIdWithAnyColor(productId, targetHex) {
-  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured', matched: false, rows: [] };
-  const path = buildFindRowsByProductIdWithAnyColorPath(getSheetConfig());
-  const data = await googleRequest(path);
-  const matches = [];
+// Only quota failures are retained; successful sheet data is fresh on every batch.
+const receiptReadCooldowns = new Map();
+async function findRowsByProductIdsWithAnyColor(productIds, targetHex, options = {}) {
+  const ids = [...new Set(productIds.map(id => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return {};
+  if (!options.request && !isGoogleSheetsConfigured()) return {};
+  const requestPath = buildFindRowsByProductIdWithAnyColorPath(options.config || getSheetConfig());
+  const now = options.now || Date.now;
+  const cooldown = receiptReadCooldowns.get(requestPath);
+  if (cooldown && cooldown.until > now()) throw cooldown.error;
+  receiptReadCooldowns.delete(requestPath);
+  let data;
+  try {
+    const request = options.request || (path => googleRequest(path, {}, { skipQuotaRetry: true }));
+    data = await request(requestPath);
+  } catch (error) {
+    if (error.googleSheetsStatus === 429) {
+      error.googleSheetsRetryAt = now() + 60000;
+      receiptReadCooldowns.set(requestPath, { until: error.googleSheetsRetryAt, error });
+    }
+    throw error;
+  }
+  const result = Object.fromEntries(ids.map(id => [id, { matched: false, rows: [] }]));
   for (const sheet of data.sheets || []) {
     for (const grid of sheet.data || []) {
       const startRow = Number(grid.startRow || 0);
-      const rows = Array.isArray(grid.rowData) ? grid.rowData : [];
-      rows.forEach((rowData, index) => {
-        if (!rowMatchesProductId(rowData, productId)) return;
-        if (!rowMatchesAnyBackgroundColor(rowData, targetHex)) return;
-        matches.push({ rowNumber: startRow + index + 1 });
-      });
+      for (const [index, rowData] of (grid.rowData || []).entries()) {
+        if (!rowMatchesAnyBackgroundColor(rowData, targetHex)) continue;
+        for (const id of ids) {
+          if (!rowMatchesProductId(rowData, id)) continue;
+          result[id].matched = true;
+          result[id].rows.push({ rowNumber: startRow + index + 1 });
+        }
+      }
     }
   }
-  return { matched: matches.length > 0, rows: matches };
+  return result;
 }
 
 function buildFindRowsByProductIdWithAnyColorPath(config = {}) {
@@ -632,7 +652,7 @@ module.exports = {
   extractSpreadsheetId,
   fetchWithGoogleSheetsTimeout,
   findRowsByProductId,
-  findRowsByProductIdWithAnyColor,
+  findRowsByProductIdsWithAnyColor,
   getGoogleSheetsCredentialPath,
   getGoogleSheetsTimeoutMs,
   getSheetConfig,
