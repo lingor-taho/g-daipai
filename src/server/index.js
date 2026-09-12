@@ -84,7 +84,7 @@ async function sweepPendingTasks() {
     const result = await pluginRoutes.sweepPendingTasks();
     if (result.total > 0) {
       console.log(
-        `Swept ${result.total} task(s): overdue=${result.overdue}, pricedOut=${result.pricedOut}, processingReset=${result.processingReset}`
+        `Swept ${result.total} task(s): pricedOut=${result.pricedOut}, processingReset=${result.processingReset}`
       );
     }
   } catch (err) {

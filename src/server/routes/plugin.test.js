@@ -4,7 +4,6 @@ const {
   isTaskReadyForDispatch,
   chooseNextPluginTask,
   isTaskNeedingEndTimeRefresh,
-  expireOverduePendingTasks,
   failPricedOutPendingTasks,
   resetStaleProcessingTasks,
   heartbeatProcessingTask,
@@ -108,10 +107,12 @@ function testTaskSchemaIncludesBuyoutAutoPaid() {
 
 function testDirectTaskIsReadyImmediately() {
   assert.equal(isTaskReadyForDispatch({ strategy: 'direct', end_time: minutesFromNow(60) }, now), true);
-  assert.equal(isTaskReadyForDispatch({ strategy: 'direct', end_time: minutesFromNow(-1) }, now), false);
+  assert.equal(isTaskReadyForDispatch({ strategy: 'direct', end_time: minutesFromNow(-1) }, now), true);
 }
 
 function testTimedTaskWaitsUntilLeadWindow() {
+  assert.equal(isTaskReadyForDispatch({ strategy: '5min', end_time: minutesFromNow(-1) }, now), true);
+  assert.equal(isTaskReadyForDispatch({ strategy: 'multi_bid', end_time: minutesFromNow(-1) }, now), true);
   assert.equal(getStrategyLeadMs({ strategy: '5min' }), 5 * 60 * 1000);
   assert.equal(isTaskReadyForDispatch({ strategy: '5min', end_time: minutesFromNow(6) }, now), false);
   assert.equal(isTaskReadyForDispatch({ strategy: '5min', end_time: minutesFromNow(5) }, now), true);
@@ -259,25 +260,6 @@ function testChooseRefreshTaskWhenNoExecutableTaskExists() {
   assert.equal(task.id, 2);
 }
 
-async function testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed() {
-  const calls = [];
-  const fakeDb = {
-    async query(sql, params) {
-      calls.push({ sql, params });
-      return { rowCount: 2 };
-    }
-  };
-
-  const count = await expireOverduePendingTasks(fakeDb, now);
-
-  assert.equal(count, 2);
-  assert.match(calls[0].sql, /status = 'pending'/);
-  assert.match(calls[0].sql, /datetime\(p\.end_time\) <= datetime\(\?\)/);
-  assert.doesNotMatch(calls[0].sql, /tasks\.end_time|[^.]end_time IS NOT NULL/);
-  assert.equal(calls[0].params[0], 'Auction ended before plugin execution');
-  assert.equal(calls[0].params[1], new Date(now).toISOString());
-}
-
 async function testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed() {
   const calls = [];
   const fakeDb = {
@@ -384,7 +366,7 @@ async function testClaimReadyPluginTasksClaimsMultipleReadyTasks() {
     async getAll(sql) {
       if (/FROM config/.test(sql)) return [];
       return [
-        { id: 1, status: 'pending', strategy: 'direct', end_time: minutesFromNow(60), created_at: '2026-05-13 01:00:00' },
+        { id: 1, status: 'pending', strategy: 'direct', end_time: minutesFromNow(-1), created_at: '2026-05-13 01:00:00' },
         { id: 2, status: 'pending', strategy: 'direct', end_time: minutesFromNow(60), created_at: '2026-05-13 01:01:00' },
         { id: 3, status: 'pending', strategy: '5min', end_time: minutesFromNow(60), created_at: '2026-05-13 01:02:00' }
       ];
@@ -412,7 +394,8 @@ async function testSweepPendingTasksIncludesProcessingResets() {
 
   const result = await sweepPendingTasks(fakeDb, now);
 
-  assert.deepEqual(result, { overdue: 1, pricedOut: 2, processingReset: 3, total: 6 });
+  assert.equal(fakeDb.calls, 2);
+  assert.deepEqual(result, { pricedOut: 1, processingReset: 2, total: 3 });
 }
 
 async function testSyncBiddingItemsMarksHighestAndOutbidTasks() {
@@ -2956,7 +2939,6 @@ testMultiBidPendingTaskWithRecentTouchStillWaitsForInterval();
 testMultiBidIntervalParsesSqliteUtcTimestamp();
 testChooseNextTaskSkipsFutureTimedTask();
 testChooseRefreshTaskWhenNoExecutableTaskExists();
-testExpireOverduePendingTasksMarksOnlyExpiredPendingTasksFailed();
 testFailPricedOutPendingTasksMarksCurrentPriceAboveMaxFailed();
 testResetStaleProcessingTasksReturnsOldProcessingToPending();
 testHeartbeatProcessingTaskOnlyRefreshesProcessingUpdatedAt();

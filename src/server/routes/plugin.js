@@ -228,7 +228,7 @@ function isTaskNeedingEndTimeRefresh(task) {
 
 function isTaskReadyForDispatch(task, nowMs = Date.now(), config = {}) {
   const endMs = parseTimeMs(task.end_time);
-  if (endMs && endMs <= nowMs) return false;
+  // Cached end times can precede a Yahoo automatic extension. Verify in the plugin.
   if (isMultiBidTask(task)) {
     const currentPrice = Number(task.current_price || 0);
     const maxPrice = Number(task.max_price || 0);
@@ -263,27 +263,6 @@ function chooseNextPluginTask(tasks, nowMs = Date.now(), config = {}) {
     return new Date(a.created_at || 0) - new Date(b.created_at || 0);
   });
   return readyTasks[0] || null;
-}
-
-async function expireOverduePendingTasks(database = db, nowMs = Date.now()) {
-  const nowIso = new Date(nowMs).toISOString();
-  const result = await database.query(
-    `UPDATE tasks
-     SET status = 'failed',
-         is_highest_bidder = 0,
-         error_msg = ?,
-         updated_at = CURRENT_TIMESTAMP
-      WHERE status = 'pending'
-        AND EXISTS (
-          SELECT 1
-          FROM products p
-          WHERE p.product_id = tasks.product_id
-            AND p.end_time IS NOT NULL
-            AND datetime(p.end_time) <= datetime(?)
-        )`,
-    ['Auction ended before plugin execution', nowIso]
-  );
-  return result.rowCount || 0;
 }
 
 async function failPricedOutPendingTasks(database = db) {
@@ -430,10 +409,9 @@ async function claimReadyPluginTasks(limit = 1, database = db, nowMs = Date.now(
 }
 
 async function sweepPendingTasks(database = db, nowMs = Date.now()) {
-  const overdue = await expireOverduePendingTasks(database, nowMs);
   const pricedOut = await failPricedOutPendingTasks(database);
   const processingReset = await resetStaleProcessingTasks(database, nowMs);
-  return { overdue, pricedOut, processingReset, total: overdue + pricedOut + processingReset };
+  return { pricedOut, processingReset, total: pricedOut + processingReset };
 }
 
 async function getMultiBidConfig(database = db) {
@@ -3338,7 +3316,6 @@ module.exports.getPluginDiagnostics = getPluginDiagnostics;
 module.exports.normalizeReceiptColorConfig = normalizeReceiptColorConfig;
 module.exports.getConfirmReceiptJobs = getConfirmReceiptJobs;
 module.exports.updateConfirmReceiptStatus = updateConfirmReceiptStatus;
-module.exports.expireOverduePendingTasks = expireOverduePendingTasks;
 module.exports.failPricedOutPendingTasks = failPricedOutPendingTasks;
 module.exports.resetStaleProcessingTasks = resetStaleProcessingTasks;
 module.exports.heartbeatProcessingTask = heartbeatProcessingTask;

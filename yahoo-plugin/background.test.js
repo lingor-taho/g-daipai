@@ -107,6 +107,44 @@ function loadBackgroundForTest(overrides = {}) {
   return sandbox.globalThis.__G_DAIPAI_BACKGROUND_TEST__;
 }
 
+async function testExpiredCacheRequiresCurrentPageVerification() {
+  const nowMs = Date.parse('2026-09-12T11:44:04Z');
+  class FixedDate extends Date { static now() { return nowMs; } }
+  const task = { id: 8837, strategy: 'direct', product_url: 'https://auctions.yahoo.co.jp/jp/auction/m1243535717', end_time: '2026-09-12T20:41:01+09:00' };
+  for (const testCase of [
+    { name: 'direct extension', endTime: '2026-09-12T20:46:01+09:00', ready: true, status: 'processing' },
+    { name: 'timed extension outside window', strategy: '1min', endTime: '2026-09-12T20:51:01+09:00', ready: false, status: 'pending' },
+    { name: 'timed extension inside window', strategy: '5min', endTime: '2026-09-12T20:46:01+09:00', ready: true, status: 'processing' },
+    { name: 'multi bid extension', strategy: 'multi_bid', endTime: '2026-09-12T20:46:01+09:00', ready: true, status: 'processing' },
+    { name: 'page still ended', endTime: '2026-09-12T20:41:01+09:00', error: /Auction ended according to product page snapshot/, status: 'failed' },
+    { name: 'page time missing', endTime: '', error: /Unable to read current product end time/ },
+    { name: 'page time invalid', endTime: 'invalid', error: /Unable to read current product end time/ }
+  ]) {
+    const updates = [], messages = [];
+    const api = loadBackgroundForTest({
+      disableAutoStart: true, Date: FixedDate,
+      tabs: { async sendMessage(id, message) {
+        messages.push(message.type);
+        assert.equal(message.auctionId, 'm1243535717');
+        return { auctionId: 'm1243535717', currentPrice: 9767, endTime: testCase.endTime };
+      } },
+      fetch: async (url, options = {}) => {
+        if (String(url).includes('/snapshot')) updates.push(JSON.parse(options.body));
+        return { ok: true, async json() { return { success: true }; } };
+      }
+    });
+    const run = () => api.ensureTaskReadyByCurrentEndTime({ id: 42 }, { ...task, strategy: testCase.strategy || task.strategy });
+    if (testCase.error) await assert.rejects(run, testCase.error);
+    else assert.equal(await run(), testCase.ready, testCase.name);
+    assert.deepEqual(messages, ['GET_PRODUCT_SNAPSHOT']);
+    assert.equal(updates.length, testCase.status ? 1 : 0, testCase.name);
+    if (testCase.status) {
+      assert.equal(updates[0].status, testCase.status);
+      assert.equal(updates[0].end_time, testCase.endTime);
+    }
+  }
+}
+
 async function testStartPollingIsIdempotentWithinWorker() {
   let alarmCreates = 0;
   let intervals = 0;
@@ -11445,6 +11483,7 @@ async function run() {
   testYahooMessageJobsUseFortyFiveSecondTimeout();
   testBiddingSyncUsesFiveMinuteTimeoutAndClosesTimedOutTab();
   testPaymentSyntheticClickWaitsTenSecondsForNextState();
+  await testExpiredCacheRequiresCurrentPageVerification();
   await testStartPollingIsIdempotentWithinWorker();
   await testInjectContentScriptMissingTabDoesNotLogExtensionError();
   testMultiBidSuccessKeepsTabOpenForImmediateRebid();

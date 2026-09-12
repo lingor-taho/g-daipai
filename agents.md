@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-07
+**最后更新**: 2026-09-12
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -411,6 +411,28 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-12 缓存结束时间到期后由插件核实
+
+生产商品 m1243535717 的首个任务被 API 根据 products.end_time 标记为“插件执行前已结束”，后续任务的诊断却显示结束时间持续延长。首次判定使用的历史快照未保留，不能精确还原旧时间。现在移除服务端仅凭缓存结束时间将 pending 任务批量判失败的逻辑，缓存到期任务仍可被领取，由插件读取当前商品页后处理。即时拍继续出价，定时拍延长到策略窗口之外则更新快照并返回 pending；多次出价原有间隔和已提交上限限制保留。
+
+插件仅在当前页面读到已到期时间时报告“商品已结束”。缓存到期而当前页时间缺失/无效时，报告读取当前结束时间失败，不使用旧时间判结束。历史 failed/cancelled 任务不自动恢复。本地模拟回归覆盖过期缓存任务领取、即时拍/定时拍/多次出价的延时处理、当前页实际到期和时间读取失败；未操作生产出价或修改历史任务。
+
+部署需更新 src/server/routes/plugin.js、src/server/index.js 并重启 API，同时更新 yahoo-plugin/background.js 并在 Chrome 扩展页 reload。API 和插件两侧必须一起更新，实际 Yahoo 页面效果待部署验证。
+
+验证：
+
+```powershell
+node src/server/routes/plugin.test.js
+node yahoo-plugin/background.test.js
+node --check src/server/routes/plugin.js
+node --check src/server/index.js
+node --check yahoo-plugin/background.js
+node --check yahoo-plugin/background.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
+
 
 ### 2026-09-07 确认收货 Google 表格读取合并
 

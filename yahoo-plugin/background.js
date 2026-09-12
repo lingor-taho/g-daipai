@@ -654,10 +654,15 @@ async function ensureTaskReadyByCurrentEndTime(tab, task) {
     throw new Error('Unable to read product end time');
   }
 
+  // Never classify an auction as ended using the cached deadline as fallback.
+  const pageEndMs = parseTimeMs(snapshot.endTime);
+  const cachedEndMs = parseTimeMs(task.end_time);
+  if (!pageEndMs && cachedEndMs && cachedEndMs <= Date.now()) {
+    throw new Error('Unable to read current product end time');
+  }
   const actualEndTime = snapshot.endTime || task.end_time;
   const changedEndTime = actualEndTime && actualEndTime !== task.end_time;
-  const actualEndMs = parseTimeMs(actualEndTime);
-  if (actualEndMs && actualEndMs <= Date.now()) {
+  if (pageEndMs && pageEndMs <= Date.now()) {
     await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'failed');
     await closeTaskTab(tab.id);
     throw new Error('Auction ended according to product page snapshot');
@@ -7671,6 +7676,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 
 globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
+  ensureTaskReadyByCurrentEndTime,
   isNormalBidCompleteSnapshot,
   shouldKeepTaskTabOpen,
   buildTaskTimeoutError,
