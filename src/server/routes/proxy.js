@@ -431,6 +431,12 @@ function extractLowestStructuredShippingFee(item) {
   return prices.length ? Math.min(...prices) : 0;
 }
 
+function isArrivalShipping(item) {
+  if (/seller/i.test(String(item?.chargeForShipping || ''))) return false;
+  return [item?.shippingInput, item?.shippingUlt?.shippingInputCode]
+    .some(value => /^arrival$/i.test(String(value || '').trim()));
+}
+
 function extractShippingFeeText(html) {
   const postageHtml = extractElementHtmlById(html, 'itemPostage');
   const nextDataItem = extractNextDataItem(html);
@@ -446,6 +452,7 @@ function extractShippingFeeText(html) {
     : '';
   const text = normalizeText([postageHtml, fallbackText].filter(Boolean).join(' '));
   const labelText = normalizeText([postageHtml, fallbackText, shippingInput, shippingCharge].filter(Boolean).join(' '));
+  if (isArrivalShipping(nextDataItem)) return '着払い';
   if (!text && !shippingCharge && !shippingInput) return '';
   if (/seller/i.test(shippingCharge)) return '無料';
   const structuredShippingFee = extractLowestStructuredShippingFee(nextDataItem);
@@ -481,6 +488,8 @@ async function getYahooShippingPrefCode(database = db) {
 
 function buildYahooShipmentUrls(html, auctionId, prefCodeValue = '27') {
   const item = extractNextDataItem(html);
+  // An explicit arrival code means shipping is collected on delivery, not at checkout.
+  if (isArrivalShipping(item)) return [];
   const urls = [];
   const shoppingInfo = item?.aucShoppingItemInfo;
   const sellerId = shoppingInfo?.shoppingSellerId;

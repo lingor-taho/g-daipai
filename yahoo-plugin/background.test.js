@@ -11479,7 +11479,27 @@ function testWorkerIntervalConfigReschedulesPollingTimer() {
   assert.deepEqual(cleared, [1, 2]);
 }
 
+function testHttpProductParserRecognizesArrivalShipping() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  const start = source.indexOf('function extractMeta(html, pattern)');
+  const end = source.indexOf('async function fetchProductInfo(url)', start);
+  const sandbox = {};
+  vm.runInNewContext(source.slice(start, end), sandbox);
+  for (const [item, expected] of [
+    [{ shippingInput: 'ARRIVAL' }, '着払い'],
+    [{ shippingUlt: { shippingInputCode: 'arrival' } }, '着払い'],
+    [{ chargeForShipping: 'seller', shippingInput: 'ARRIVAL' }, ''],
+    [{ shippingInput: 'NOT_ARRIVAL', descriptionHtml: 'ARRIVAL 着払い不可' }, '']
+  ]) {
+    const data = { props: { pageProps: { initialState: { item: { detail: { item } } } } } };
+    const html = `<div id="itemPostage">送料</div><script id="__NEXT_DATA__">${JSON.stringify(data)}</script>`;
+    assert.equal(sandbox.extractProductFromHtml(html, 'r1243992660', '').shippingFeeText, expected);
+  }
+  assert.equal(sandbox.extractProductFromHtml('<div id="itemPostage">送料 600円</div><script id="__NEXT_DATA__">broken</script>', 'x1234567890', '').shippingFeeText, '600円');
+}
+
 async function run() {
+  testHttpProductParserRecognizesArrivalShipping();
   testYahooMessageJobsUseFortyFiveSecondTimeout();
   testBiddingSyncUsesFiveMinuteTimeoutAndClosesTimedOutTab();
   testPaymentSyntheticClickWaitsTenSecondsForNextState();

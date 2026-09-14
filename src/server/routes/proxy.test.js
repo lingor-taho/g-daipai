@@ -569,6 +569,96 @@ async function testParseShippingFeeFromItemPostage() {
   assert.equal(productDescriptionShipping.shippingFeeText, '落札者負担');
 }
 
+function arrivalProductHtml(item, postage = '送料') {
+  return `<html><head><title>Arrival shipping fixture</title></head><body>
+    <div id="itemPostage">${postage}</div>
+    <script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      props: { pageProps: { initialState: { item: { detail: { item: { price: 5850, ...item } } } } } }
+    })}</script></body></html>`;
+}
+
+async function testArrivalShippingBeforeHydration() {
+  for (const item of [
+    { shippingInput: 'ARRIVAL' },
+    { shippingInput: ' arrival ' },
+    { shippingUlt: { shippingInputCode: 'arrival' } },
+    { shippingInput: 'ARRIVAL', shippingUlt: { shippingInputCode: 'arrival' }, shipping: { methods: [{ name: 'ゆうパック', shippingFee: 600 }] } }
+  ]) {
+    const product = parseProductHtml(arrivalProductHtml({ chargeForShipping: 'winner', ...item }), 'r1243992660', 'https://auctions.yahoo.co.jp/jp/auction/r1243992660');
+    assert.equal(product.shippingFeeText, '着払い');
+  }
+  const unrelated = parseProductHtml(arrivalProductHtml({ chargeForShipping: 'winner', shippingInput: 'NOT_ARRIVAL', descriptionHtml: 'ARRIVAL 着払い不可' }), 'x1234567890', 'https://auctions.yahoo.co.jp/jp/auction/x1234567890');
+  assert.equal(unrelated.shippingFeeText, '落札者負担');
+}
+
+async function testFetchPreservesArrivalShippingAcrossFetchPaths() {
+  for (const browserFallback of [false, true]) {
+    for (const id of ['r1243992660', 'l1244119177']) {
+      let shipmentCalls = 0;
+      const html = arrivalProductHtml({
+        chargeForShipping: 'winner', shippingInput: 'ARRIVAL',
+        shippingUlt: { shippingInputCode: 'arrival' },
+        shipping: { methods: [{ id: 'YUPACK', name: 'ゆうパック' }] }
+      });
+      const service = createProductService({
+        httpFetcher: async url => {
+          if (url.includes('/shipments/')) {
+            shipmentCalls++;
+            return JSON.stringify({ lowestPrice: 600 });
+          }
+          if (browserFallback) throw new Error('HTTP unavailable');
+          return html;
+        },
+        playwrightFetcher: async () => {
+          assert.equal(browserFallback, true);
+          return html;
+        }
+      });
+      const result = await service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/' + id);
+      assert.equal(result.data.shippingFeeText, '着払い');
+      assert.equal(result.source, browserFallback ? 'playwright' : 'http');
+      assert.equal(shipmentCalls, 0);
+    }
+  }
+}
+
+async function testArrivalFixKeepsOtherShippingRules() {
+  for (const [item, postage, expected] of [
+    [{ chargeForShipping: 'winner' }, '送料600円 着払い不可', '600円'],
+    [{ chargeForShipping: 'seller' }, '送料 無料 着払い不可', '無料'],
+    [{ chargeForShipping: 'seller', shippingInput: 'ARRIVAL' }, '送料', '無料'],
+    [{ chargeForShipping: 'winner', shipping: { methods: [{ shippingFee: 430 }, { shippingFee: 600 }] } }, '送料 着払い不可', '430円'],
+    [{ chargeForShipping: 'winner', shippingInput: '取引ナビ開始時に入力', descriptionHtml: '送料600円 着払い不可 ARRIVAL' }, '送料', '落札者負担'],
+    [{ chargeForShipping: 'winner', shippingInput: 'PREPAY' }, '送料600円', '600円'],
+    [{ chargeForShipping: 'winner' }, '送料 着払い', '着払い'],
+    [{}, '送料0円', '0円']
+  ]) {
+    assert.equal(parseProductHtml(arrivalProductHtml(item, postage), 'x1234567890', '').shippingFeeText, expected);
+  }
+  for (const browserFallback of [false, true]) {
+    for (const shopping of [false, true]) {
+      let lookups = 0;
+      const html = arrivalProductHtml({ chargeForShipping: 'winner', ...(shopping
+        ? { aucShoppingItemInfo: { shoppingSellerId: 'test-store', postageSetId: 2 } }
+        : { shipping: { methods: [{ name: 'ゆうパック' }] } }) }, '送料600円 着払い不可');
+      const service = createProductService({
+        httpFetcher: async url => {
+          if (url.includes('/shipments/')) {
+            lookups++;
+            return JSON.stringify({ lowestPrice: 430, methods: [{ shippingPrice: 430 }] });
+          }
+          if (browserFallback) throw new Error('Use browser fallback');
+          return html;
+        },
+        playwrightFetcher: async () => html
+      });
+      const result = await service.fetchProduct('https://auctions.yahoo.co.jp/jp/auction/x1234567890');
+      assert.equal(result.data.shippingFeeText, '430円');
+      assert.equal(lookups, 1);
+    }
+  }
+}
+
 async function testParseShippingFeeUsesLowestStructuredShippingMethod() {
   const product = parseProductHtml(`
     <html>
@@ -1237,6 +1327,9 @@ async function run() {
   await testParseStoreTaxTypeFromTaxIncludedLabel();
   await testParseProductTypeFromPriceTaxLabel();
   await testParseShippingFeeFromItemPostage();
+  await testArrivalShippingBeforeHydration();
+  await testFetchPreservesArrivalShippingAcrossFetchPaths();
+  await testArrivalFixKeepsOtherShippingRules();
   await testParseShippingFeeUsesLowestStructuredShippingMethod();
   await testSellerPaidShippingBeatsCurrentPriceNearFreeShippingTitle();
   await testWinnerPaidShippingBeatsCurrentPriceNearShippingTitle();

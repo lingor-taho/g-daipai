@@ -854,7 +854,16 @@ function extractProductFromHtml(html, auctionId, standardUrl) {
     .replace(/\s+/g, ' ')
     .trim();
   const shippingPrice = postageText.match(/([\d,]+)\s*円/);
-  const shippingFeeText = /着払い/.test(postageText) ? '着払い'
+  let arrivalShipping = false;
+  try {
+    const nextData = JSON.parse(extractMeta(html, /<script\b[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i));
+    const item = nextData?.props?.pageProps?.initialState?.item?.detail?.item ||
+      nextData?.props?.initialState?.item?.detail?.item ||
+      nextData?.props?.pageProps?.initialState?.detail?.item;
+    arrivalShipping = !/seller/i.test(String(item?.chargeForShipping || '')) && [item?.shippingInput, item?.shippingUlt?.shippingInputCode]
+      .some(value => /^arrival$/i.test(String(value || '').trim()));
+  } catch (_) {}
+  const shippingFeeText = arrivalShipping || /着払い/.test(postageText) ? '着払い'
     : /落札者負担/.test(postageText) ? '落札者負担'
       : /無料/.test(postageText) ? '無料'
         : shippingPrice ? `${shippingPrice[1].replace(/,/g, '')}円` : '';

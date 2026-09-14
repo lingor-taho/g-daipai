@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-12
+**最后更新**: 2026-09-14
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -411,6 +411,28 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-14 商品到付运费 ARRIVAL 识别修复
+
+商品 r1243992660、l1244119177 的 Yahoo 数据同时包含 `shippingInput: ARRIVAL`、`shippingUlt.shippingInputCode: arrival` 和 `chargeForShipping: winner`。首屏运费文字尚未渲染时，旧解析遗漏到付编码，返回“落札者負担”；后台批处理“运费更新”复用该解析，因此也会写入错误标签。CSV 导出没有回写数据库，与本问题无关。
+
+服务端商品解析、插件页面解析和插件 HTTP 商品抓取补上两个字段的到付识别（忽略大小写和首尾空格），仅明确 ARRIVAL 编码且非 seller 承担时优先于买家承担和数字运费。服务端 HTTP / 浏览器备用抓取仅在该结构条件成立时跳过运费报价查询，避免后续数字报价覆盖到付含义。原有日文文字、数字金额和免费运费的优先级不变，商品描述排除规则继续保留；不改 CSV、结算计算或订单状态流转。
+
+同日复核已收窄初版过宽的日文关键词优先级：运费区域“送料600円 着払い不可”和 seller 承担下的否定提示不能因本次修复覆盖数字/免费结果。新增普通固定运费、0円、免费、待卖家报价、描述干扰、seller 与 ARRIVAL 冲突以及个人/商城报价接口在 HTTP 和浏览器备用路径中的回归；未扩大修改既有非 ARRIVAL 文案解析。
+
+当前为本地修复，未部署生产或修改生产数据库。更新 `src/server/routes/proxy.js` 并重启 API 后，批处理“运费更新”可重新识别这两件商品；插件同时更新 `yahoo-plugin/background.js`、`yahoo-plugin/content.js` 并在 Chrome 扩展页 reload。已有数据库记录不会仅因更新代码自动改变。真实 Yahoo HTML 的只读解析验证已返回“着払い”；生产批处理和 Chrome 实际执行仍待用户更新后验证。
+
+验证：
+
+```powershell
+node src/server/routes/proxy.test.js
+node src/server/routes/admin.orders.test.js
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node src/admin/src/ordersCsv.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-09-12 缓存结束时间到期后由插件核实
 

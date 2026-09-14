@@ -788,6 +788,50 @@ function testProductDataExtractsFreeShippingFromNextData() {
   assert.equal(product.shippingFeeText, '無料');
 }
 
+function testProductDataRecognizesStructuredArrivalShipping() {
+  for (const [item, expected] of [
+    [{ shippingInput: 'ARRIVAL' }, '着払い'],
+    [{ shippingInput: ' arrival ' }, '着払い'],
+    [{ shippingUlt: { shippingInputCode: 'arrival' } }, '着払い'],
+    [{ shippingInput: 'NOT_ARRIVAL', descriptionHtml: 'ARRIVAL 着払い不可' }, '落札者負担']
+  ]) {
+    const nextData = createTestElement(JSON.stringify({
+      props: { pageProps: { initialState: { item: { detail: { item: { chargeForShipping: 'winner', ...item } } } } } }
+    }));
+    const api = loadContentForTest('送料 おすすめ商品', '/jp/auction/r1243992660', {
+      querySelector(selector) {
+        if (selector === 'script#__NEXT_DATA__') return nextData;
+        if (selector === '#itemPostage') return createTestElement('送料');
+        return null;
+      }
+    });
+    assert.equal(api.extractProductData().shippingFeeText, expected);
+  }
+}
+
+function testArrivalFixPreservesOtherProductShipping() {
+  for (const [item, postage, expected] of [
+    [{ chargeForShipping: 'winner' }, '送料600円 着払い不可', '600円'],
+    [{ chargeForShipping: 'seller' }, '送料', '無料'],
+    [{ chargeForShipping: 'seller', shippingInput: 'ARRIVAL' }, '送料', '無料'],
+    [{ chargeForShipping: 'winner', shippingInput: '取引ナビ開始時に入力', descriptionHtml: '送料600円 着払い不可 ARRIVAL' }, '送料', '落札者負担'],
+    [{ chargeForShipping: 'winner', shippingInput: 'PREPAY' }, '送料430円', '430円'],
+    [{}, '送料0円', '0円'],
+    [{}, '送料 無料', '無料'],
+    [{ chargeForShipping: 'winner' }, '送料 着払い', '着払い']
+  ]) {
+    const nextData = createTestElement(JSON.stringify({ props: { pageProps: { initialState: { item: { detail: { item } } } } } }));
+    const api = loadContentForTest('送料 おすすめ商品', '/jp/auction/x1234567890', {
+      querySelector(selector) {
+        if (selector === 'script#__NEXT_DATA__') return nextData;
+        if (selector === '#itemPostage') return createTestElement(postage);
+        return null;
+      }
+    });
+    assert.equal(api.extractProductData().shippingFeeText, expected);
+  }
+}
+
 function testProductDataDoesNotUseRecommendationFreeShippingForBidderPays() {
   const nextData = createTestElement(JSON.stringify({
     props: {
@@ -5189,6 +5233,8 @@ async function run() {
   testProductDataPrefersPageDataProductName();
   testProductDataExtractsTaxType();
   testProductDataExtractsShippingFeeText();
+  testProductDataRecognizesStructuredArrivalShipping();
+  testArrivalFixPreservesOtherProductShipping();
   testProductDataPrefersRenderedShippingAmount();
   testProductDataPrefersCashOnDeliveryOverBidderPays();
   testProductDataExtractsFreeShippingFromNextData();

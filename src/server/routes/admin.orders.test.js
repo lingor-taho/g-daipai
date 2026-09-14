@@ -1288,6 +1288,38 @@ async function testRefreshProductShippingFeeWritesProductsOnly() {
   assert.equal(productInsert.params[9], '送料 880円');
 }
 
+async function testShippingRefreshPreservesArrivalFromYahooData() {
+  const { createProductService } = require('./proxy');
+  for (const id of ['r1243992660', 'l1244119177']) {
+    const writes = [];
+    const fakeDb = {
+      async getOne() { return { count: 1 }; },
+      async query(sql, params) { writes.push({ sql, params }); return { rowCount: 1 }; }
+    };
+    const item = {
+      title: 'Arrival shipping product', price: 5850, chargeForShipping: 'winner',
+      shippingInput: 'ARRIVAL', shippingUlt: { shippingInputCode: 'arrival' },
+      shipping: { methods: [{ id: 'YUPACK', name: 'ゆうパック' }] }
+    };
+    const data = { props: { pageProps: { initialState: { item: { detail: { item } } } } } };
+    const service = createProductService({
+      httpFetcher: async url => {
+        assert.equal(url, `https://auctions.yahoo.co.jp/jp/auction/${id}`);
+        return `<div id="itemPostage">送料</div><script id="__NEXT_DATA__">${JSON.stringify(data)}</script>`;
+      },
+      playwrightFetcher: async () => { throw new Error('Unexpected browser fallback'); }
+    });
+    const result = await refreshProductShippingFee(fakeDb, service, id);
+    assert.equal(result.success, true);
+    assert.equal(result.shippingFeeText, '着払い');
+    assert.equal(writes.length, 1);
+    assert.match(writes[0].sql, /INSERT INTO products/);
+    assert.doesNotMatch(writes[0].sql, /UPDATE orders|UPDATE tasks/);
+    assert.equal(writes[0].params[0], id);
+    assert.equal(writes[0].params[9], '着払い');
+  }
+}
+
 async function testRefreshProductTypeWritesProductsOnly() {
   const calls = [];
   const fakeDb = {
@@ -1462,6 +1494,7 @@ Promise.all([
   testMarkProductOrdersForResyncPrefersExistingOrderTasks(),
   testMarkTrackingRescanByProductIdMarksPendingReceiptOrders(),
   testRefreshProductShippingFeeWritesProductsOnly(),
+  testShippingRefreshPreservesArrivalFromYahooData(),
   testRefreshProductTypeWritesProductsOnly(),
   testRollbackOrderSettlementClearsFinanceFieldsAndRestoresPendingPayment(),
   testRollbackOrderSettlementRejectsAlreadyPaidOrder()

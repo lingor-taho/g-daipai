@@ -167,9 +167,12 @@ function extractProductData() {
       ? bodyText.slice(postageIndex, postageIndex + 300)
       : '';
     const sourceText = `${postageText} ${fallbackText}`;
+    const labelText = `${postageText} ${fallbackText} ${shippingInput} ${shippingCharge}`;
+    const arrivalShipping = !/seller/i.test(shippingCharge) && [shippingInput, nextDataItem?.shippingUlt?.shippingInputCode]
+      .some(value => /^arrival$/i.test(String(value || '').trim()));
+    if (arrivalShipping) return '\u7740\u6255\u3044';
     const priceMatch = sourceText.match(/\u9001\u6599[^\d]{0,40}([\d,]+)\s*\u5186/);
     if (priceMatch?.[1]) return priceMatch[1].replace(/,/g, '') + '\u5186';
-    const labelText = `${postageText} ${fallbackText} ${shippingInput} ${shippingCharge}`;
     if (/\u7740\u6255\u3044/.test(labelText)) return '\u7740\u6255\u3044';
     if (/seller/i.test(shippingCharge)) return '\u7121\u6599';
     if (/\u7121\u6599/.test(labelText)) return '\u7121\u6599';
