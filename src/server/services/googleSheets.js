@@ -349,40 +349,105 @@ async function ensureRemarkColumn(spreadsheetId, sheetName) {
   return { updated: true, inserted: shouldInsert };
 }
 
-async function appendRows({ rows, backgroundColor = null }) {
-  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
+function productIdsFromSheetCell(cell = {}) {
+  const texts = [cell.formattedValue, cell.userEnteredValue?.stringValue,
+    cell.userEnteredValue?.numberValue, cell.userEnteredValue?.formulaValue,
+    cell.effectiveValue?.stringValue, cell.effectiveValue?.numberValue, cell.hyperlink,
+    ...(cell.textFormatRuns || []).map(run => run.format?.link?.uri)];
+  const ids = new Set();
+  for (const value of texts) {
+    const text = String(value ?? '').trim().toLowerCase();
+    if (/^[a-z]?\d{8,10}$/.test(text)) ids.add(text);
+    for (const match of text.matchAll(/https?:\/\/(?:page\.)?auctions\.yahoo\.co\.jp\/jp\/auction\/([a-z]?\d{8,10})(?=[/?#\s"'&)]|$)/g)) ids.add(match[1]);
+  }
+  return ids;
+}
+
+const sheetAppendLocks = new Map();
+async function appendRows(payload, options = {}) {
+  if (!options.request && !isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
+  const config = options.config || getSheetConfig();
+  const key = JSON.stringify([config.spreadsheetId, config.sheetName]);
+  const previous = sheetAppendLocks.get(key) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => appendRowsChecked(payload, config, options));
+  sheetAppendLocks.set(key, pending);
+  try { return await pending; } finally {
+    if (sheetAppendLocks.get(key) === pending) sheetAppendLocks.delete(key);
+  }
+}
+
+async function appendRowsChecked({ rows, productIds, backgroundColor = null }, config, options) {
   if (!Array.isArray(rows) || !rows.length) return { skipped: true, reason: 'no rows' };
-  const { spreadsheetId, sheetName } = getSheetConfig();
-  await ensureHeaderRow(spreadsheetId, sheetName);
-  await applySheetBaseStyle(spreadsheetId, sheetName).catch(error => {
-    console.warn('[Google Sheets] apply style skipped:', error.message || error);
+  const ids = (productIds || []).map(id => String(id || '').trim().toLowerCase());
+  if (ids.length !== rows.length || ids.some((id, index) =>
+    !/^[a-z]?\d{8,10}$/.test(id) || !productIdsFromSheetCell({ userEnteredValue: { stringValue: rows[index][2] } }).has(id))) {
+    throw new Error('Google Sheets append requires a valid matching product ID for every row');
+  }
+  const { spreadsheetId, sheetName } = config;
+  const request = options.request || googleRequest;
+  const range = `'${sheetName.replace(/'/g, "''")}'!C:C`;
+  const data = await request(`${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(formattedValue,userEnteredValue,effectiveValue,hyperlink,textFormatRuns))))`, {}, { skipQuotaRetry: true });
+  if (!Array.isArray(data.sheets) || !data.sheets.length) throw new Error('Google Sheets duplicate check returned no sheet data');
+  const existing = new Set();
+  for (const sheet of data.sheets) for (const grid of sheet.data || []) {
+    for (const row of grid.rowData || []) for (const id of productIdsFromSheetCell(row.values?.[0])) existing.add(id);
+  }
+  const existingRows = ids.filter(id => existing.has(id)).length;
+  const seen = new Set(existing);
+  const missingRows = rows.filter((row, index) => {
+    if (seen.has(ids[index])) return false;
+    seen.add(ids[index]);
+    return true;
   });
-  const appendResult = await googleRequest(
+  if (!missingRows.length) return {
+    skipped: false, alreadyExists: true, existingRows, appendedRows: 0,
+    reason: '已有数据，未重复追加，已完成补表格标记'
+  };
+  if (options.prepareSheet) await options.prepareSheet();
+  else {
+    await ensureHeaderRow(spreadsheetId, sheetName);
+    await applySheetBaseStyle(spreadsheetId, sheetName).catch(error => {
+      console.warn('[Google Sheets] apply style skipped:', error.message || error);
+    });
+  }
+  // Appends are not idempotent: an uncertain failure must be checked before another attempt.
+  const appendRequest = options.appendRequest || googleRequestOnce;
+  const appendResult = await appendRequest(
     `${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!A:K`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&includeValuesInResponse=false`,
     {
       method: 'POST',
-      body: JSON.stringify({ values: rows })
+      body: JSON.stringify({ values: missingRows })
     }
   );
-  if (rows.length) {
+  if (Number(appendResult.updates?.updatedRows) !== missingRows.length) {
+    throw new Error('Google Sheets append result uncertain; run backfill to check existing rows');
+  }
+  let formatWarning = '';
+  try {
     const updatedRange = appendResult.updates?.updatedRange || '';
     const match = updatedRange.match(/![A-Z]+(\d+):[A-Z]+(\d+)/);
     if (match) {
       const startRowIndex = Number(match[1]) - 1;
       const endRowIndex = Number(match[2]);
-      const sheetId = await getSheetId(spreadsheetId, sheetName);
-      await googleRequest(`${spreadsheetId}:batchUpdate`, {
+      const sheetId = await (options.getSheetId || getSheetId)(spreadsheetId, sheetName);
+      await request(`${spreadsheetId}:batchUpdate`, {
         method: 'POST',
         body: JSON.stringify({
           requests: [buildAppendRowsFormatRequest({ sheetId, startRowIndex, endRowIndex, backgroundColor })]
         })
       });
     }
+  } catch (error) {
+    formatWarning = `数据已写入，但格式设置失败：${error.message || error}`;
+    console.warn('[Google Sheets]', formatWarning);
   }
   return {
     skipped: false,
     updatedRange: appendResult.updates?.updatedRange || '',
-    appendedRows: rows.length,
+    appendedRows: missingRows.length,
+    existingRows,
+    formatWarning,
+    reason: [existingRows ? `已有 ${existingRows} 条，跳过重复追加` : '', formatWarning].filter(Boolean).join('；'),
     lastColumn: toColumnLetters(REMARK_COLUMN_INDEX)
   };
 }
@@ -639,6 +704,7 @@ async function applySheetBaseStyle(spreadsheetId, sheetName) {
 }
 
 module.exports = {
+  productIdsFromSheetCell,
   appendRows,
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,

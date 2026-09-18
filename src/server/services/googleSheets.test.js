@@ -1,6 +1,8 @@
 const assert = require('assert/strict');
 const path = require('path');
 const {
+  appendRows,
+  productIdsFromSheetCell,
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,
   buildEnsureRemarkColumnRequest,
@@ -289,7 +291,94 @@ function testFindRowsByProductIdWithAnyColorPathReadsOnlyColumnC() {
   assert.match(path, /backgroundColor/);
 }
 
+function testSheetProductIdsMatchExactly() {
+  for (const cell of [
+    { formattedValue: 'R1243992660' },
+    { userEnteredValue: { formulaValue: '=HYPERLINK("https://auctions.yahoo.co.jp/jp/auction/r1243992660","商品")' } },
+    { hyperlink: 'https://page.auctions.yahoo.co.jp/jp/auction/r1243992660?x=1', formattedValue: '商品' },
+    { textFormatRuns: [{ format: { link: { uri: 'https://auctions.yahoo.co.jp/jp/auction/r1243992660' } } }] }
+  ]) assert.deepEqual([...productIdsFromSheetCell(cell)], ['r1243992660']);
+  assert.deepEqual([...productIdsFromSheetCell({ userEnteredValue: { numberValue: 1240369268 } })], ['1240369268']);
+  for (const text of ['备注 r1243992660', 'r12439926600', 'https://example.com/r1243992660']) {
+    assert.equal(productIdsFromSheetCell({ formattedValue: text }).has('r1243992660'), false);
+  }
+}
+
+async function testAppendChecksExistingRowsAndUncertainResults() {
+  const ids = ['r1243992660', 'l1244119177'];
+  const rows = ids.map(id => ['', '', `https://auctions.yahoo.co.jp/jp/auction/${id}`, 'title']);
+  let present = [ids[0]];
+  let appendCalls = 0;
+  let readError = null;
+  let uncertain = false;
+  let formatFailure = false;
+  const appended = [];
+  const options = {
+    config: { spreadsheetId: 'test-only', sheetName: 'orders' },
+    prepareSheet: async () => {},
+    getSheetId: async () => 1,
+    request: async (url, requestOptions) => {
+      if (url.endsWith(':batchUpdate')) {
+        if (formatFailure) throw new Error('format failed');
+        return {};
+      }
+      if (readError) throw readError;
+      assert.ok(decodeURIComponent(url).includes("'orders'!C:C"));
+      return { sheets: [{ data: [{ rowData: present.map(id => ({ values: [{ formattedValue: id }] })) }] }] };
+    },
+    appendRequest: async (url, requestOptions) => {
+      appendCalls++;
+      const values = JSON.parse(requestOptions.body).values;
+      appended.push(values);
+      present.push(...values.map(row => row[2].split('/').pop()));
+      if (uncertain) throw Object.assign(new Error('response lost after append'), { googleSheetsNetworkError: true });
+      return { updates: { updatedRows: values.length, updatedRange: 'orders!A2:K3' } };
+    }
+  };
+  const partial = await appendRows({ rows, productIds: ids, backgroundColor: '#ffff00' }, options);
+  assert.equal(partial.existingRows, 1);
+  assert.equal(partial.appendedRows, 1);
+  assert.deepEqual(appended[0], [rows[1]]);
+  const existing = await appendRows({ rows, productIds: ids }, options);
+  assert.equal(existing.alreadyExists, true);
+  assert.equal(existing.skipped, false);
+  assert.equal(existing.appendedRows, 0);
+  assert.equal(appendCalls, 1);
+
+  present = [];
+  readError = new Error('read failed');
+  await assert.rejects(appendRows({ rows, productIds: ids }, options), /read failed/);
+  assert.equal(appendCalls, 1);
+  readError = null;
+  uncertain = true;
+  await assert.rejects(appendRows({ rows, productIds: ids }, options), /response lost/);
+  assert.equal(appendCalls, 2, 'never blindly retry an uncertain append');
+  uncertain = false;
+  assert.equal((await appendRows({ rows, productIds: ids }, options)).alreadyExists, true);
+  assert.equal(appendCalls, 2);
+
+  present = [];
+  formatFailure = true;
+  const formatted = await appendRows({ rows, productIds: ids }, options);
+  assert.equal(formatted.appendedRows, 2);
+  assert.match(formatted.formatWarning, /format failed/);
+  assert.equal(formatted.skipped, false);
+  formatFailure = false;
+
+  present = [];
+  const beforeConcurrent = appendCalls;
+  const results = await Promise.all([
+    appendRows({ rows, productIds: ids }, options),
+    appendRows({ rows, productIds: ids }, options)
+  ]);
+  assert.equal(appendCalls, beforeConcurrent + 1);
+  assert.equal(results[1].alreadyExists, true);
+  await assert.rejects(appendRows({ rows, productIds: [ids[1], ids[0]] }, options), /matching product ID/);
+}
+
 async function run() {
+  testSheetProductIdsMatchExactly();
+  await testAppendChecksExistingRowsAndUncertainResults();
   testCredentialPathUsesGoogleApplicationCredentials();
   testCredentialPathIsEmptyWithoutFileEnv();
   testExtractSpreadsheetIdFromUrl();

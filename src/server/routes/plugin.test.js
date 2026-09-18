@@ -36,6 +36,7 @@ const {
   updateScanStatus,
   buildDaipaiSheetRow,
   getOrdersForSheetAppend,
+  appendPendingReceiptOrderToGoogleSheet,
   getGoogleSheetAlertOrder,
   getOrderForSheetUpdate,
   addGoogleSheetFailureAlert,
@@ -1846,6 +1847,64 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
   assert.equal(calls.length, 3);
 }
 
+async function testSheetAppendCompletionAndFailures() {
+  for (const outcome of ['existing', 'partial', 'read-failed', 'unconfigured', 'db-failed']) {
+    let marked = false;
+    let alerts = [{ orderId: 14, id: 'google-sheet-14' }, { orderId: 99, id: 'google-sheet-99' }];
+    let appendCalls = 0;
+    const orders = [
+      { id: 13, product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
+      { id: 14, product_id: 's1113817953', order_status: ORDER_STATUS_PENDING_RECEIPT }
+    ];
+    const database = {
+      async getOne(sql) {
+        if (/SELECT id, bundle_group_id/.test(sql)) return { id: 14, bundle_group_id: 'bundle-a' };
+        if (/COALESCE\(bundle_shipping_fee_text/.test(sql)) return { yes: 1 };
+        if (/SELECT value FROM config/.test(sql)) return { value: JSON.stringify(alerts) };
+        return null;
+      },
+      async getAll(sql) { return /FROM orders/.test(sql) ? (marked ? [] : orders) : []; },
+      async query(sql, params) {
+        if (/UPDATE orders/.test(sql)) {
+          assert.match(sql, /google_sheet_appended_at = CURRENT_TIMESTAMP/);
+          assert.doesNotMatch(sql, /SET order_status|payable_cny/);
+          assert.deepEqual(params, [13, 14]);
+          if (outcome === 'db-failed') throw new Error('database unavailable');
+          marked = true;
+        } else {
+          assert.match(sql, /INSERT OR REPLACE INTO config/);
+          alerts = JSON.parse(params[1]);
+        }
+        return { rowCount: 1 };
+      }
+    };
+    const sheets = {
+      applyConfig: async () => {},
+      isConfigured: () => outcome !== 'unconfigured',
+      appendRows: async payload => {
+        appendCalls++;
+        assert.deepEqual(payload.productIds, ['c1135451955', 's1113817953']);
+        assert.equal(payload.rows.length, 2);
+        if (outcome === 'read-failed') throw new Error('sheet read failed');
+        return { skipped: false, alreadyExists: outcome === 'existing', appendedRows: outcome === 'existing' ? 0 : 1 };
+      }
+    };
+    if (outcome.endsWith('failed')) {
+      await assert.rejects(appendPendingReceiptOrderToGoogleSheet(14, database, sheets), /failed|unavailable/);
+      assert.equal(marked, false);
+      assert.ok(alerts.some(alert => alert.orderId === 14));
+    } else {
+      await appendPendingReceiptOrderToGoogleSheet(14, database, sheets);
+      assert.equal(marked, outcome !== 'unconfigured');
+      if (marked) {
+        assert.deepEqual(alerts.map(alert => alert.orderId), [99]);
+        await appendPendingReceiptOrderToGoogleSheet(14, database, sheets);
+        assert.equal(appendCalls, 1, 'completed orders are not processed again');
+      }
+    }
+  }
+}
+
 function testGoogleSheetAlertUsesRequestedBundleMainOrder() {
   const mainOrder = getGoogleSheetAlertOrder(14, [
     { id: 13, product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
@@ -3007,6 +3066,7 @@ Promise.all([
   Promise.resolve().then(testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching),
   testGetOrdersForSheetAppendReturnsWholeBundleGroup(),
   Promise.resolve().then(testGoogleSheetAlertUsesRequestedBundleMainOrder),
+  testSheetAppendCompletionAndFailures(),
   testGoogleSheetFailureAlertPersistsAndDeduplicatesByMainOrder(),
   testGetOrderForSheetUpdateUsesProductSnapshotFields(),
   testUpdateScanStatusMarksShippingWorkflowAsCancelled(),

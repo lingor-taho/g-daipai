@@ -3656,7 +3656,9 @@ router.post('/receipt-sheet-backfill/run', async (req, res) => {
         orderId: row.order_id,
         productId: row.product_id,
         success: !appendResult?.skipped,
-        skipped: appendResult?.skipped === true,
+        skipped: appendResult?.skipped === true || appendResult?.alreadyExists === true,
+        alreadyExists: appendResult?.alreadyExists === true,
+        existingRows: appendResult?.existingRows || 0,
         reason: appendResult?.reason || '',
         appendedRows: appendResult?.appendedRows || 0,
         updatedRange: appendResult?.updatedRange || ''

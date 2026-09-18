@@ -1646,17 +1646,22 @@ function getGoogleSheetAlertOrder(orderId, orders = []) {
     || null;
 }
 
-async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
-  await applyGoogleSheetsConfigFromDb(database);
-  if (!isGoogleSheetsConfigured()) return { skipped: true, reason: 'google sheets not configured' };
+async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db, sheets = {
+  applyConfig: applyGoogleSheetsConfigFromDb,
+  isConfigured: isGoogleSheetsConfigured,
+  appendRows: appendGoogleSheetRows
+}) {
+  await sheets.applyConfig(database);
+  if (!sheets.isConfigured()) return { skipped: true, reason: 'google sheets not configured' };
   const { orders, isBundle, bundleGroupId } = await getOrdersForSheetAppend(orderId, database);
   if (!orders.length) return { skipped: true, reason: 'no appendable orders' };
   const baseConfig = await getSheetFinanceBaseConfig(database);
   const rows = orders.map(order => buildDaipaiSheetRow(order, baseConfig));
   let appendResult;
   try {
-    appendResult = await appendGoogleSheetRows({
+    appendResult = await sheets.appendRows({
       rows,
+      productIds: orders.map(order => order.product_id),
       backgroundColor: isBundle ? getBundleSheetColor(bundleGroupId) : null
     });
   } catch (error) {
@@ -1681,6 +1686,14 @@ async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db) {
        WHERE id IN (${placeholders})`,
       ids
     );
+    // Only resolve alerts after the verified append/existing-row result is persisted.
+    try {
+      const alerts = await getGoogleSheetAlerts(database);
+      const remaining = alerts.filter(alert => !ids.some(id => Number(id) === Number(alert.orderId)));
+      if (remaining.length !== alerts.length) await saveGoogleSheetAlerts(database, remaining);
+    } catch (error) {
+      console.warn('[Google Sheets] completed marker saved, alert cleanup failed:', error.message || error);
+    }
   }
   return appendResult;
 }
