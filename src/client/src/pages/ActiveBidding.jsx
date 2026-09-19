@@ -201,8 +201,21 @@ export default function ActiveBidding() {
                       style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 6, fontSize: 12, color: colors.muted, whiteSpace: 'nowrap' }}
                     >
                       <BidCountIcon />
-                      <span aria-hidden="true">→</span>
-                      <Tag color={outbid ? 'danger' : 'primary'}>
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        style={{ display: 'block', flex: '0 0 14px' }}
+                      >
+                        <path d="M4 12h16m-6-6 6 6-6 6" />
+                      </svg>
+                      <Tag color={outbid ? 'danger' : 'primary'} style={{ flexShrink: 0 }}>
                         {formatJPY(item.user_max_price || item.max_price)}
                       </Tag>
                     </div>
