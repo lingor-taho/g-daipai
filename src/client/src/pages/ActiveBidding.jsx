@@ -211,6 +211,14 @@ export default function ActiveBidding() {
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
+                    {item.strategy === 'direct' ? (
+                      <>
+                        <span style={{ color: colors.danger, fontWeight: 600 }}>
+                          最高出价：{formatJPY(item.user_max_price || item.max_price)}
+                        </span>
+                        <br />
+                      </>
+                    ) : null}
                     当前价格：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
                     {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
                     <br />

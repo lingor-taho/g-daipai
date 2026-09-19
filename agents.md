@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-18
+**最后更新**: 2026-09-19
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -413,6 +413,20 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-19 用户端入札中显示即时拍最高出价
+
+即时拍商品在商品 ID 下方新增红色“最高出价”。沿用入札中接口按当前用户和商品选取最新任务的规则，金额与任务列表一致，优先显示 `user_max_price`，旧数据回退 `max_price`，以日元展示；其他策略不显示该行。仅修改用户端展示，API、数据库和插件无需更新。当前为本地修改，部署时重新构建并发布用户端静态文件。
+
+验证：
+
+```powershell
+node src/client/src/pages/ActiveBidding.display.test.mjs
+node src/server/routes/task.test.js
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 2026-09-18 待收货补表格按商品 ID 查重
 
