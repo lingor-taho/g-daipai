@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import { useNavigate } from 'react-router-dom';
 import { getActiveBiddingTaskList } from '../utils/api';
+import { BidCountIcon } from '../components/ProductCard';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
@@ -183,15 +184,30 @@ export default function ActiveBidding() {
           return (
             <List.Item key={item.id} style={itemCardStyle}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                {item.product_image_url ? (
-                  <img
-                    src={item.product_image_url}
-                    alt={title}
-                    style={imageThumbStyle}
-                  />
-                ) : (
-                  <div style={imageThumbStyle} />
-                )}
+                <div style={{ flex: '0 0 auto', minWidth: imageThumbStyle.width }}>
+                  {item.product_image_url ? (
+                    <img
+                      src={item.product_image_url}
+                      alt={title}
+                      style={{ ...imageThumbStyle, display: 'block' }}
+                    />
+                  ) : (
+                    <div style={imageThumbStyle} />
+                  )}
+                  {item.strategy === 'direct' ? (
+                    <div
+                      aria-label={`最高出价：${formatJPY(item.user_max_price || item.max_price)}`}
+                      title="最高出价"
+                      style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 6, fontSize: 12, color: colors.muted, whiteSpace: 'nowrap' }}
+                    >
+                      <BidCountIcon />
+                      <span aria-hidden="true">→</span>
+                      <Tag color={outbid ? 'danger' : 'primary'}>
+                        {formatJPY(item.user_max_price || item.max_price)}
+                      </Tag>
+                    </div>
+                  ) : null}
+                </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
                     {outbid ? (
@@ -211,14 +227,6 @@ export default function ActiveBidding() {
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
-                    {item.strategy === 'direct' ? (
-                      <>
-                        <span style={{ color: colors.danger, fontWeight: 600 }}>
-                          最高出价：{formatJPY(item.user_max_price || item.max_price)}
-                        </span>
-                        <br />
-                      </>
-                    ) : null}
                     当前价格：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
                     {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
                     <br />

@@ -8,7 +8,7 @@ function getDisplayPrice(price, taxType) {
   return Math.floor(value * 1.1);
 }
 
-function BidCountIcon() {
+export function BidCountIcon() {
   return (
     <svg
       aria-hidden="true"
