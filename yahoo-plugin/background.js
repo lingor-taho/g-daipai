@@ -954,6 +954,16 @@ async function fetchTransactionStartJobs(options = {}) {
   return Array.isArray(data.jobs) ? data.jobs : [];
 }
 
+async function isTransactionStartEligible(orderId, productIds = []) {
+  const res = await apiFetch('/api/plugin/transaction-start/eligibility', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId, productIds })
+  });
+  const data = await res.json();
+  return data?.eligible === true;
+}
+
 async function updateTransactionStartStatus(payload) {
   await apiFetch('/api/plugin/transaction-start/status', {
     method: 'POST',
@@ -1699,7 +1709,7 @@ async function sendYahooTradeMessage(tabOrId, messageText) {
       if (visible) return { ...lastResult, verified: true };
       break;
     }
-    if (!/message (textarea|submit button) not found/.test(String(lastResult?.error || ''))) return lastResult;
+    if (!/message (textarea|submit button) not found|message submit button disabled/.test(String(lastResult?.error || ''))) return lastResult;
     await sleep(MESSAGE_EXTRACT_POLL_MS);
   }
   if (storePageSeen) {
@@ -6459,6 +6469,9 @@ async function executeTransactionStartJob(job) {
   let tab = null;
   const beforeTabIds = await getTabIds();
   try {
+    if (!await isTransactionStartEligible(job.orderId)) {
+      return { processedProductIds: [job.productId] };
+    }
     tab = await openTransactionPage(job, beforeTabIds);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(error => {
       console.error('[Yahoo Bid] Failed to extract transaction start info:', error);
@@ -6473,6 +6486,9 @@ async function executeTransactionStartJob(job) {
       return;
     }
     const info = response.info || {};
+    if (!await isTransactionStartEligible(job.orderId, info.available ? info.productIds || [] : [])) {
+      return { processedProductIds: [job.productId] };
+    }
     const initialState = await getBundleActionState(tab.id).catch(() => null);
     if (initialState?.cancelled) {
       await updateTransactionStartStatus({ orderId: job.orderId, status: 'cancelled' });
@@ -6494,6 +6510,9 @@ async function executeTransactionStartJob(job) {
         return;
       }
       const bundleProductIds = info.productIds || [];
+      if (!await isTransactionStartEligible(job.orderId, bundleProductIds)) {
+        return { processedProductIds: [job.productId] };
+      }
       const result = await completeNormalBundleRequest(tab);
       if (!result?.success) {
         await postTransactionStartDiagnostic(job, result?.tab || tab, result?.error || 'normal bundle request failed', 'error', {
@@ -6521,6 +6540,9 @@ async function executeTransactionStartJob(job) {
         bundleGroupId
       });
       return { processedProductIds: bundleProductIds };
+    }
+    if (!await isTransactionStartEligible(job.orderId)) {
+      return { processedProductIds: [job.productId] };
     }
     const singleStartResult = await startNormalSingleTransaction(tab);
     if (!singleStartResult?.success) {
@@ -7372,11 +7394,7 @@ async function executeYahooMessageJob(job) {
     }).catch(() => {});
     return { success: false, error: error?.message || String(error || 'message job failed') };
   } finally {
-    if (tab?._gdaipaiCreatedTabIds) {
-      await closeTabsForTransactionFlow(tab._gdaipaiCreatedTabIds).catch(() => {});
-    } else if (tab?.id) {
-      await closeTaskTab(tab.id).catch(() => {});
-    }
+    await closeTabsForTransactionFlow(tab, beforeTabIds).catch(() => {});
   }
 }
 
@@ -7453,17 +7471,15 @@ async function syncMonitorYahooPages() {
 
 async function runWorkflowAction() {
   if (workflowRunning) return;
-  await refreshPluginConfig();
-  if (await pauseIdleWorkForOpenManualPin()) {
-    return;
-  }
-  const messageJobCount = await runYahooMessageJobs();
-  if (messageJobCount > 0) return;
-  const now = Date.now();
-  if (now - lastWorkflowSyncAt < idleSyncIntervalMs) return;
   workflowRunning = true;
-  lastWorkflowSyncAt = now;
   try {
+    await refreshPluginConfig();
+    if (await pauseIdleWorkForOpenManualPin()) return;
+    const messageJobCount = await runYahooMessageJobs();
+    if (messageJobCount > 0) return;
+    const now = Date.now();
+    if (now - lastWorkflowSyncAt < idleSyncIntervalMs) return;
+    lastWorkflowSyncAt = now;
     await executeNextWorkflowAction();
   } finally {
     workflowRunning = false;

@@ -26,6 +26,7 @@ const {
   BID_STRATEGY_SCOPE_BLOCKED
 } = require('../../shared/domainConstants.cjs');
 const { upsertProductSnapshot } = require('../services/productRepository');
+const { setOrderPaused } = require('../services/orderPause');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
@@ -813,6 +814,7 @@ router.get('/won', async (req, res) => {
          o.handling_fee,
          o.jpy_to_cny_rate,
          o.order_status,
+         o.paused_at,
          o.shipping_company,
          o.shipped_at,
          o.tracking_number,
@@ -842,6 +844,20 @@ router.get('/won', async (req, res) => {
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/task/won/:orderId/resume - 当前用户恢复自己暂停的落札订单
+router.post('/won/:orderId/resume', async (req, res) => {
+  try {
+    res.json({ success: true, ...(await setOrderPaused(db, {
+      orderId: req.params.orderId,
+      pause: false,
+      userId: req.actingUser.id,
+      source: 'user_order_resume'
+    })) });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '订单恢复失败' });
   }
 });
 

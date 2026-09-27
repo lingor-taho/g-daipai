@@ -51,6 +51,7 @@ const {
   applySheetUserFinance
 } = require('../../shared/payableRules.cjs');
 const { upsertProductSnapshot } = require('../services/productRepository');
+const { expirePausedOrders, checkTransactionStartEligibility } = require('../services/orderPause');
 
 const DEFAULT_MULTI_BID_START_HOURS = 0.5;
 const DEFAULT_MULTI_BID_INTERVAL_MINUTES = 5;
@@ -1250,6 +1251,7 @@ async function syncBiddingItems(items, database = db) {
 }
 
 async function getTransactionStartJobs(database = db, options = {}) {
+  await expirePausedOrders(database, options.nowMs ?? Date.now());
   const includeAfterCutoff = options.includeAfterCutoff ? 1 : 0;
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
@@ -1977,36 +1979,43 @@ async function getYahooMessageJobs(database = db, limit = 3) {
      INNER JOIN orders o ON o.id = m.order_id
      INNER JOIN tasks t ON t.id = o.task_id
      LEFT JOIN products p ON p.product_id = COALESCE(o.product_id, t.product_id)
-     WHERE m.fetch_status = 'pending'
-        OR m.send_status = 'pending'
+     WHERE (m.fetch_status = 'pending' OR m.send_status = 'pending')
+       AND COALESCE(m.fetch_status, 'idle') <> 'processing'
+       AND COALESCE(m.send_status, 'idle') <> 'processing'
      ORDER BY datetime(COALESCE(m.send_requested_at, m.fetch_requested_at, m.created_at)) ASC, m.id ASC
      LIMIT ?`,
     [safeLimit]
   );
+  const claimedJobs = [];
   for (const job of jobs) {
     if (job.sendStatus === 'pending') {
-      await database.query(
+      const claim = await database.query(
         `UPDATE yahoo_trade_messages
          SET send_status = 'processing',
              send_started_at = CURRENT_TIMESTAMP,
              send_error = NULL
-         WHERE id = ? AND send_status = 'pending'`,
+         WHERE id = ? AND send_status = 'pending'
+           AND COALESCE(fetch_status, 'idle') <> 'processing'`,
         [job.messageId]
       );
+      if (claim.rowCount !== 1) continue;
       job.jobType = 'send';
     } else {
-      await database.query(
+      const claim = await database.query(
         `UPDATE yahoo_trade_messages
          SET fetch_status = 'processing',
              fetch_started_at = CURRENT_TIMESTAMP,
              fetch_error = NULL
-         WHERE id = ? AND fetch_status = 'pending'`,
+         WHERE id = ? AND fetch_status = 'pending'
+           AND COALESCE(send_status, 'idle') <> 'processing'`,
         [job.messageId]
       );
+      if (claim.rowCount !== 1) continue;
       job.jobType = 'fetch';
     }
+    claimedJobs.push(job);
   }
-  return { jobs, total: jobs.length };
+  return { jobs: claimedJobs, total: claimedJobs.length };
 }
 
 const EMPTY_YAHOO_TRADE_MESSAGE_HTML = '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>';
@@ -3029,6 +3038,14 @@ router.get('/transaction-start/jobs', async (req, res) => {
     jobs: result.logJobs || result.jobs
   }).catch(() => null);
   res.json({ success: true, ...result });
+});
+
+router.post('/transaction-start/eligibility', async (req, res) => {
+  try {
+    res.json({ success: true, ...(await checkTransactionStartEligibility(db, req.body || {})) });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '交易开始状态检查失败' });
+  }
 });
 
 router.post('/transaction-start/status', async (req, res) => {

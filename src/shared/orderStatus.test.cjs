@@ -1,6 +1,7 @@
 const assert = require('assert');
 const {
   ORDER_STATUS_PENDING_PAYMENT,
+  ORDER_STATUS_PAUSED,
   ORDER_STATUS_WAITING_SHIPPING,
   ORDER_STATUS_PENDING_BUNDLE,
   ORDER_STATUS_BUNDLE_COMPLETED,
@@ -14,6 +15,8 @@ const {
 } = require('./domainConstants.cjs');
 
 assert.equal(ORDER_STATUS_PENDING_PAYMENT, 'pending_payment');
+assert.equal(ORDER_STATUS_PAUSED, 'paused');
+assert.equal(ORDER_STATUS_LABELS[ORDER_STATUS_PAUSED], '暂停');
 assert.equal(ORDER_STATUS_WAITING_SHIPPING, 'waiting_shipping');
 assert.equal(ORDER_STATUS_PENDING_BUNDLE, 'pending_bundle');
 assert.equal(ORDER_STATUS_BUNDLE_COMPLETED, 'bundle_completed');

@@ -6,6 +6,8 @@ import { authHeaders, fetchAdminJson } from './utils/auth';
 import { formatManualOrderImportFlag } from './manualOrderImportState';
 import { buildOrdersCsv, needsCsvShippingInput } from './ordersCsv';
 
+const DEFAULT_PAUSE_MESSAGE = 'お世話になります。明日入札予定です。取り置きお願い致します。';
+
 function formatJPY(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') return '';
   return `${Number(value || 0).toLocaleString('ja-JP')}円`;
@@ -127,6 +129,10 @@ function renderStatusChangeSource(row: any) {
     admin_store_bundle_backfill: '商城同捆补录',
     admin_transaction_start_reset: '后台初始化',
     admin_order_status_refresh: '后台状态刷新',
+    admin_order_pause: '后台暂停',
+    admin_order_resume: '后台恢复',
+    user_order_resume: '用户恢复',
+    transaction_start_pause_expired: '暂停满24小时恢复',
     unlogged_existing_status: '未记录状态'
   };
   const source = row.latest_status_change_source;
@@ -161,6 +167,7 @@ function renderProductTypeTag(productType: string | null | undefined) {
 }
 
 function renderOrderStatus(status: string | null | undefined) {
+  if (status === 'paused') return <Tag color="red">暂停</Tag>;
   if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
   if (status === 'pending_shipment') return <Tag color="lime">待发货</Tag>;
@@ -255,6 +262,13 @@ export default function OrdersPage() {
   const [statusLogRows, setStatusLogRows] = useState<any[]>([]);
   const [storeBundleOpen, setStoreBundleOpen] = useState(false);
   const [storeBundleSubmitting, setStoreBundleSubmitting] = useState(false);
+  const [pauseEditorOrder, setPauseEditorOrder] = useState<any>(null);
+  const [pauseSubmitting, setPauseSubmitting] = useState(false);
+  const [pauseMessageText, setPauseMessageText] = useState(DEFAULT_PAUSE_MESSAGE);
+  const [pauseMessageSending, setPauseMessageSending] = useState(false);
+  const [pauseSendStatus, setPauseSendStatus] = useState('idle');
+  const [pauseSendError, setPauseSendError] = useState('');
+  const [pauseLastMessageSentAt, setPauseLastMessageSentAt] = useState<string | null>(null);
   const [csvShippingOpen, setCsvShippingOpen] = useState(false);
   const [csvShippingRows, setCsvShippingRows] = useState<any[]>([]);
   const [csvShippingOverrides, setCsvShippingOverrides] = useState<Record<string, number | null>>({});
@@ -289,6 +303,24 @@ export default function OrdersPage() {
       .then(data => setUsers(Array.isArray(data.items) ? data.items : []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const orderId = pauseEditorOrder?.id;
+    if (!orderId) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const data = await fetchAdminJson(`/api/admin/messages/${orderId}/send-status`);
+        if (!active) return;
+        setPauseSendStatus(data.sendStatus || 'idle');
+        setPauseSendError(data.sendError || '');
+        setPauseLastMessageSentAt(data.lastMessageSentAt || null);
+      } catch { /* Keep the current status until the next refresh. */ }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [pauseEditorOrder?.id]);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)');
@@ -566,14 +598,70 @@ export default function OrdersPage() {
     setStoreBundleOpen(true);
   }
 
+  function openOrderStatusAction(row: any) {
+    if (row?.product_type === 'store') {
+      openStoreBundleBackfill(row);
+      return;
+    }
+    if (row?.product_type !== 'normal' || ![null, undefined, '', 'paused'].includes(row?.order_status)) return;
+    setPauseEditorOrder(row);
+    setPauseMessageText(DEFAULT_PAUSE_MESSAGE);
+    setPauseSendStatus('idle');
+    setPauseSendError('');
+    setPauseLastMessageSentAt(null);
+  }
+
+  async function submitPauseChange() {
+    if (!pauseEditorOrder?.id) return;
+    const pause = pauseEditorOrder.order_status !== 'paused';
+    setPauseSubmitting(true);
+    try {
+      const data = await fetchAdminJson(`/api/admin/orders/${pauseEditorOrder.id}/${pause ? 'pause' : 'resume'}`, { method: 'POST' });
+      const next = { ...pauseEditorOrder, order_status: data.orderStatus, paused_at: data.pausedAt };
+      setPauseEditorOrder(next);
+      setCurrentRows(rows => rows.map(row => row.id === next.id ? next : row));
+      setReloadKey(key => key + 1);
+      message.success(pause ? '订单已暂停' : '订单已恢复');
+    } catch (error: any) {
+      message.error(error.message || '订单状态更新失败');
+      setPauseEditorOrder(null);
+      setReloadKey(key => key + 1);
+    } finally {
+      setPauseSubmitting(false);
+    }
+  }
+
+  async function submitPauseMessage() {
+    const text = pauseMessageText.trim();
+    if (!pauseEditorOrder?.id || !text) {
+      message.warning('请输入消息内容');
+      return;
+    }
+    setPauseMessageSending(true);
+    try {
+      await fetchAdminJson(`/api/admin/messages/${pauseEditorOrder.id}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      });
+      setPauseSendStatus('pending');
+      setPauseSendError('');
+      message.success('已提交消息发送任务');
+    } catch (error: any) {
+      message.error(error.message || '消息发送提交失败');
+    } finally {
+      setPauseMessageSending(false);
+    }
+  }
+
   function renderOrderStatusTrigger(row: any) {
     return (
       <span
         onDoubleClick={event => {
           event.stopPropagation();
-          openStoreBundleBackfill(row);
+          openOrderStatusAction(row);
         }}
-        title={row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : '商城商品才支持同捆补录'}
+        title={row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : '双击管理普通商品暂停与消息'}
         style={{ display: 'inline-block', minWidth: 48, cursor: 'default' }}
       >
         {renderOrderStatus(row.order_status) || '-'}
@@ -659,8 +747,8 @@ export default function OrdersPage() {
       width: 90,
       onCell: (row: any) => ({
         ...noWrapCell,
-        onDoubleClick: () => openStoreBundleBackfill(row),
-        title: row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : undefined
+        onDoubleClick: () => openOrderStatusAction(row),
+        title: row?.product_type === 'store' ? '双击可打开商城同捆已付款补录' : '双击管理普通商品暂停与消息'
       }),
       render: (_: any, row: any) => renderOrderStatusTrigger(row)
     },
@@ -796,6 +884,34 @@ export default function OrdersPage() {
             确定后：主商品改为待发货，子商品改为同捆完了；同组写入同一个 bundle_group_id，主商品同捆运费使用输入值，子商品同捆运费为 0円。
           </Typography.Text>
         </Form>
+      </Modal>
+
+      <Modal
+        open={!!pauseEditorOrder}
+        title={`订单暂停与消息：${pauseEditorOrder?.product_id || '-'}`}
+        footer={null}
+        onCancel={() => setPauseEditorOrder(null)}
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Button loading={pauseSubmitting} onClick={submitPauseChange}>
+            {pauseEditorOrder?.order_status === 'paused' ? '恢复' : '暂停'}
+          </Button>
+          {pauseEditorOrder?.order_status === 'paused' ? (
+            <Typography.Text type="secondary">暂停时间：{formatDateTime(pauseEditorOrder.paused_at)}；满24小时后在下一次交易开始时恢复</Typography.Text>
+          ) : null}
+          <Input.TextArea
+            aria-label="Yahoo消息内容"
+            rows={4}
+            value={pauseMessageText}
+            onChange={event => setPauseMessageText(event.target.value)}
+          />
+          <Button type="primary" loading={pauseMessageSending} disabled={pauseSendStatus === 'pending' || pauseSendStatus === 'processing'} onClick={submitPauseMessage}>发送消息</Button>
+          {pauseSendStatus === 'pending' || pauseSendStatus === 'processing' ? <Typography.Text type="secondary">Yahoo 消息发送中</Typography.Text> : null}
+          {pauseSendStatus === 'failed' ? <Typography.Text type="danger">发送失败：{pauseSendError || '请稍后重试'}</Typography.Text> : null}
+          {pauseSendStatus === 'idle' && pauseLastMessageSentAt ? <Typography.Text type="success">最近一次 Yahoo 消息已发送：{formatDateTime(pauseLastMessageSentAt)}</Typography.Text> : null}
+          {pauseSendStatus === 'idle' && !pauseLastMessageSentAt ? <Typography.Text type="secondary">消息由插件发送，提交后请等待发送结果。</Typography.Text> : null}
+        </Space>
       </Modal>
 
       <Modal

@@ -6,6 +6,7 @@ import { buildMessageReadCsv } from './messageReadCsv';
 const MESSAGE_PROCESSING_TIMEOUT_MS = 30000;
 
 const ORDER_STATUS_OPTIONS = [
+  { value: 'paused', label: '暂停' },
   { value: 'pending_payment', label: '待支付' },
   { value: 'waiting_shipping', label: '等待运费' },
   { value: 'pending_bundle', label: '待同捆' },
@@ -123,6 +124,7 @@ function renderProductTypeTag(productType: string | null | undefined) {
 }
 
 function renderOrderStatus(status: string | null | undefined) {
+  if (status === 'paused') return <Tag color="red">暂停</Tag>;
   if (status === 'pending_settlement') return <Tag color="blue">待结算</Tag>;
   if (status === 'pending_payment') return <Tag color="gold">待支付</Tag>;
   if (status === 'pending_shipment') return <Tag color="lime">待发货</Tag>;

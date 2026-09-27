@@ -95,6 +95,7 @@ ensureColumn('orders', 'tax_included_final_price', 'INTEGER');
 ensureColumn('orders', 'has_user_finance_override', 'INTEGER');
 ensureColumn('orders', 'settled_at', 'DATETIME');
 ensureColumn('orders', 'updated_at', 'DATETIME');
+ensureColumn('orders', 'paused_at', 'DATETIME');
 db.prepare("UPDATE orders SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL").run();
 ensureColumn('orders', 'bundle_shipping_fee_text', 'VARCHAR(64)');
 ensureColumn('orders', 'payment_shipping_mode', 'VARCHAR(32)');

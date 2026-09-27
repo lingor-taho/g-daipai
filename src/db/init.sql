@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS orders (
   has_user_finance_override INTEGER,
   total_amount_cny DECIMAL(10,2),
   order_status VARCHAR(32),
+  paused_at DATETIME,
   bundle_shipping_fee_text VARCHAR(64),
   payment_shipping_mode VARCHAR(32),
   payment_shipping_fee_jpy INTEGER,

@@ -53,6 +53,7 @@ const {
   writeOrderStatusAuditLogs,
   backfillMissingOrderStatusAuditLogs
 } = require('../services/orderStatusAudit');
+const { setOrderPaused } = require('../services/orderPause');
 const {
   applyGoogleSheetsConfig,
   applyGoogleSheetsConfigFromDb,
@@ -655,6 +656,7 @@ function normalizeMessagesPage(value, fallback = 1) {
 }
 
 const ADMIN_MESSAGE_ORDER_STATUSES = new Set([
+  'paused',
   'pending_payment',
   'waiting_shipping',
   'pending_bundle',
@@ -793,16 +795,30 @@ async function requestYahooMessageSend(database, orderId, messageText) {
     error.statusCode = 400;
     throw error;
   }
+  const pending = await database.getOne(
+    `SELECT send_status FROM yahoo_trade_messages WHERE order_id = ?`,
+    [Number(orderId)]
+  );
+  if (pending && ['pending', 'processing'].includes(pending.send_status)) {
+    const error = new Error('该订单已有消息正在发送，请等待结果后再发送');
+    error.statusCode = 409;
+    throw error;
+  }
   const result = await requestYahooMessageFetch(database, orderId);
-  await database.query(
+  const sendUpdate = await database.query(
     `UPDATE yahoo_trade_messages
      SET send_status = 'pending',
          send_text = ?,
          send_requested_at = CURRENT_TIMESTAMP,
          send_error = NULL
-     WHERE order_id = ?`,
+     WHERE order_id = ? AND COALESCE(send_status, 'idle') NOT IN ('pending', 'processing')`,
     [text, result.orderId]
   );
+  if (!sendUpdate.rowCount) {
+    const error = new Error('该订单已有消息正在发送，请等待结果后再发送');
+    error.statusCode = 409;
+    throw error;
+  }
   return { ...result, sendRequested: true };
 }
 
@@ -1545,6 +1561,45 @@ router.post('/messages/:orderId/send', async (req, res) => {
     res.json(await requestYahooMessageSend(db, req.params.orderId, req.body?.message));
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'message send request failed' });
+  }
+});
+
+router.get('/messages/:orderId/send-status', async (req, res) => {
+  const orderId = Number(req.params.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) return res.status(400).json({ error: 'valid order id is required' });
+  try {
+    const row = await db.getOne(
+      `SELECT send_status, send_error, last_message_sent_at
+       FROM yahoo_trade_messages WHERE order_id = ?`,
+      [orderId]
+    );
+    res.json({ sendStatus: row?.send_status || 'idle', sendError: row?.send_error || null, lastMessageSentAt: row?.last_message_sent_at || null });
+  } catch (error) {
+    res.status(500).json({ error: error.message || '消息状态查询失败' });
+  }
+});
+
+router.post('/orders/:orderId/pause', async (req, res) => {
+  try {
+    res.json({ success: true, ...(await setOrderPaused(db, {
+      orderId: req.params.orderId,
+      pause: true,
+      source: 'admin_order_pause'
+    })) });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '订单暂停失败' });
+  }
+});
+
+router.post('/orders/:orderId/resume', async (req, res) => {
+  try {
+    res.json({ success: true, ...(await setOrderPaused(db, {
+      orderId: req.params.orderId,
+      pause: false,
+      source: 'admin_order_resume'
+    })) });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '订单恢复失败' });
   }
 });
 

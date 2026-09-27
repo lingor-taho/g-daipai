@@ -40,6 +40,7 @@ const {
   requestScan,
   requestPayment,
   requestYahooMessageFetch,
+  requestYahooMessageSend,
   clearPaymentAlertAndContinue,
   normalizeOrderStatusRefreshTarget,
   normalizePositiveIntegerConfig,
@@ -251,6 +252,19 @@ async function testRequestYahooMessageFetchAllowsExistingOrderWithoutSuccessfulT
   assert.match(insert.sql, /message_html = NULL/);
   assert.match(insert.sql, /updated_at = NULL/);
   assert.deepEqual(insert.params, [77, 's1235672175']);
+}
+
+async function testRequestYahooMessageSendDoesNotReplacePendingText() {
+  let wrote = false;
+  const fakeDb = {
+    async getOne() { return { send_status: 'pending' }; },
+    async query() { wrote = true; return { rowCount: 1 }; }
+  };
+  await assert.rejects(
+    requestYahooMessageSend(fakeDb, 77, 'second message'),
+    { statusCode: 409 }
+  );
+  assert.equal(wrote, false);
 }
 
 async function testConfirmManualOrderImportSkipsUnassignedItems() {
@@ -1473,6 +1487,7 @@ testParseNormalBundleRepairProductIdsKeepsFirstAsMain();
 
 Promise.all([
   testRequestYahooMessageFetchAllowsExistingOrderWithoutSuccessfulTask(),
+  testRequestYahooMessageSendDoesNotReplacePendingText(),
   testUpdateOrderRemarkStoresTrimmedRemark(),
   testUpdateOrderRemarkRejectsMissingOrder(),
   testRequestScanSetsCounterToConfiguredEveryRuns(),

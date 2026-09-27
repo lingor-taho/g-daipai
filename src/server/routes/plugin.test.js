@@ -43,6 +43,7 @@ const {
   getGoogleSheetAlerts,
   getPaymentJobs,
   getConfirmReceiptJobs,
+  getYahooMessageJobs,
   updateYahooMessageStatus,
   normalizeYahooTradeMessageHtml,
   summarizePaymentError,
@@ -1007,6 +1008,7 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   const fakeDb = {
     async getAll(sql, params) {
       queries.push({ sql, params, type: 'getAll' });
+      if (/SELECT id, paused_at FROM orders/.test(sql)) return [];
       return [
         { order_id: 1, product_id: 's1', product_type: 'store', transaction_url: '', shipping_fee_text: '\u7121\u6599' },
         { order_id: 2, product_id: 'n1', product_type: 'normal', transaction_url: '', shipping_fee_text: '\u843d\u672d\u8005\u8ca0\u62c5' },
@@ -1029,16 +1031,16 @@ async function testGetTransactionStartJobsHandlesStoreAndMissingUrl() {
   assert.equal(result.jobs[0].transactionUrl, '');
   assert.equal(result.jobs[1].productId, 'n2');
   assert.equal(result.jobs[2].productId, 'n3');
-  assert.match(queries[0].sql, /LEFT JOIN products p ON p\.product_id = t\.product_id/);
-  assert.match(queries[0].sql, /p\.product_url AS product_url/);
-  assert.match(queries[0].sql, /p\.product_title AS product_title/);
-  assert.match(queries[0].sql, /p\.product_type AS product_type/);
-  assert.match(queries[0].sql, /p\.shipping_fee_text AS shipping_fee_text/);
-  assert.doesNotMatch(queries[0].sql, /t\.(product_url|product_title|product_type|shipping_fee_text)/);
-  assert.doesNotMatch(queries[0].sql, /t\.status = 'success'/);
-  assert.doesNotMatch(queries[0].sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
-  assert.doesNotMatch(queries[0].sql, /SELECT t2\.shipping_fee_text/);
-  assert.equal(queries[0].params, undefined);
+  const jobsQuery = queries.find(call => /LEFT JOIN products p ON p\.product_id = t\.product_id/.test(call.sql));
+  assert.match(jobsQuery.sql, /p\.product_url AS product_url/);
+  assert.match(jobsQuery.sql, /p\.product_title AS product_title/);
+  assert.match(jobsQuery.sql, /p\.product_type AS product_type/);
+  assert.match(jobsQuery.sql, /p\.shipping_fee_text AS shipping_fee_text/);
+  assert.doesNotMatch(jobsQuery.sql, /t\.(product_url|product_title|product_type|shipping_fee_text)/);
+  assert.doesNotMatch(jobsQuery.sql, /t\.status = 'success'/);
+  assert.doesNotMatch(jobsQuery.sql, /datetime\(COALESCE\(o\.won_at, o\.created_at\)\) < datetime\('now', 'start of day', \?\)/);
+  assert.doesNotMatch(jobsQuery.sql, /SELECT t2\.shipping_fee_text/);
+  assert.equal(jobsQuery.params, undefined);
   const storeUpdate = queries.find(call => /UPDATE orders/.test(call.sql));
   assert.equal(storeUpdate.params[0], ORDER_STATUS_PENDING_PAYMENT);
 }
@@ -1055,7 +1057,7 @@ async function testGetTransactionStartJobsCanIncludeAfterCutoffForManualRun() {
   const result = await getTransactionStartJobs(fakeDb, { includeAfterCutoff: true, transactionStartHour: 3 });
 
   assert.equal(result.total, 0);
-  assert.equal(calls[0].params, undefined);
+  assert.equal(calls[1].params, undefined);
 }
 
 async function testSaveTransactionStartRunLogWritesJsonConfig() {
@@ -2944,6 +2946,30 @@ async function testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating() {
   assert.equal(calls.length, 0);
 }
 
+async function testYahooMessageJobsOnlyReturnSuccessfullyClaimedRows() {
+  let claimCount = 0;
+  const database = {
+    async getAll(sql) {
+      assert.match(sql, /COALESCE\(m\.fetch_status, 'idle'\) <> 'processing'/);
+      assert.match(sql, /COALESCE\(m\.send_status, 'idle'\) <> 'processing'/);
+      return [{ messageId: 7, orderId: 22, sendStatus: 'pending', fetchStatus: 'idle' }];
+    },
+    async query(sql) {
+      assert.match(sql, /send_status = 'pending'/);
+      assert.match(sql, /COALESCE\(fetch_status, 'idle'\) <> 'processing'/);
+      claimCount += 1;
+      return { rowCount: claimCount === 1 ? 1 : 0 };
+    }
+  };
+
+  const first = await getYahooMessageJobs(database);
+  const second = await getYahooMessageJobs(database);
+  assert.equal(first.total, 1);
+  assert.equal(first.jobs[0].jobType, 'send');
+  assert.equal(second.total, 0);
+  assert.deepEqual(second.jobs, []);
+}
+
 function testNormalizeYahooTradeMessageHtmlDropsTransactionInfoWithoutMessageMarkup() {
   const html = '<div><ul><li>購入日時<br>2026年7月9日 10時2分</li><li>注文番号<br>otakara-reuse-10046903</li></ul></div>';
   const result = normalizeYahooTradeMessageHtml(html);
@@ -3099,6 +3125,7 @@ Promise.all([
   testUpdatePaymentStatusFailureWritesConciseAlert(),
   testUpdatePaymentStatusMarksCancelled(),
   testUpdatePaymentStatusRejectsInvalidStatusWithoutUpdating(),
+  testYahooMessageJobsOnlyReturnSuccessfullyClaimedRows(),
   testNormalizeYahooTradeMessageHtmlDropsTransactionInfoWithoutMessageMarkup(),
   testNormalizeYahooTradeMessageHtmlKeepsStoreMessageWithOrderNumber(),
   testNormalizeYahooTradeMessageHtmlKeepsNormalV2MessageMarker(),

@@ -51,7 +51,14 @@ function loadBackgroundForTest(overrides = {}) {
     Date: overrides.Date || Date,
     URL,
     URLSearchParams,
-    fetch: overrides.fetch || (async () => ({ async json() { return { task: null }; } })),
+    fetch: async (...args) => {
+      if (String(args[0]).includes('/api/plugin/transaction-start/eligibility')) {
+        return { async json() { return { success: true, eligible: overrides.transactionStartEligible !== false }; } };
+      }
+      return overrides.fetch
+        ? overrides.fetch(...args)
+        : { async json() { return { task: null }; } };
+    },
     chrome: {
       alarms: {
         create(...args) { return alarms.create ? alarms.create(...args) : undefined; },
@@ -501,6 +508,32 @@ function testYahooTradeMessageSendScopesNormalV2Composer() {
   assert.equal(normalV2Textarea.value, 'hello v2');
   assert.equal(wrongTextarea.value, '');
   assert.ok(events.includes('button:click'));
+}
+
+async function testYahooTradeMessageSendWaitsForReactToEnableButton() {
+  let sendAttempts = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    scripting: {
+      async executeScript({ func }) {
+        if (func?.name === 'runYahooTradeMessageSendFromPage') {
+          sendAttempts += 1;
+          return [{ result: sendAttempts === 1
+            ? { success: false, error: 'message submit button disabled' }
+            : { success: true, pageType: 'normal-v2' } }];
+        }
+        if (func?.name === 'isYahooTradeSentMessageVisibleFromPage') {
+          return [{ result: { success: true } }];
+        }
+        return [{ result: null }];
+      }
+    }
+  });
+
+  const result = await api.sendYahooTradeMessage(2, 'お世話になります。');
+  assert.equal(result.success, true);
+  assert.equal(result.verified, true);
+  assert.equal(sendAttempts, 2);
 }
 
 function testYahooTradeMessageExtractionSkipsStoreLegalLinks() {
@@ -1195,6 +1228,55 @@ function testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab() {
   const sendBranch = executeSource.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
   assert.ok(sendBranch);
   assert.match(sendBranch[1], /prepareYahooMessagePage\(tab, job\)/);
+}
+
+async function testYahooMessageCleanupKeepsPreexistingYahooTab() {
+  const tabs = new Map([
+    [1, { id: 1, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=other', status: 'complete' }]
+  ]);
+  const removed = [];
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    setTimeout(fn, ms) { return ms === 45000 ? 1 : fn(); },
+    tabs: {
+      async query() { return [...tabs.values()]; },
+      async create({ url }) {
+        const tab = { id: 2, url, status: 'complete' };
+        tabs.set(tab.id, tab);
+        return tab;
+      },
+      async get(id) {
+        if (!tabs.has(id)) throw new Error(`No tab with id: ${id}`);
+        return tabs.get(id);
+      },
+      async sendMessage() { return { success: true, state: { canStart: true } }; },
+      async remove(id) { removed.push(id); tabs.delete(id); }
+    },
+    scripting: {
+      async executeScript({ func, files }) {
+        if (files) return [];
+        const name = func?.name;
+        if (name === 'getYahooMessageNavigationStateFromPage') return [{ result: { messageReady: true } }];
+        if (name === 'runYahooTradeMessageSendFromPage') return [{ result: { success: true, pageType: 'normal-v2' } }];
+        if (name === 'isYahooTradeSentMessageVisibleFromPage') return [{ result: { success: true } }];
+        if (name === 'extractYahooTradeMessageFromPage') return [{ result: { success: true, messageHtml: '<div>sent</div>' } }];
+        return [{ result: false }];
+      }
+    },
+    fetch: async () => ({ ok: true, async json() { return { success: true }; } })
+  });
+
+  const result = await api.executeYahooMessageJob({
+    orderId: 22,
+    productId: 'p1235176030',
+    jobType: 'send',
+    sendText: 'お世話になります。',
+    transactionUrl: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=p1235176030'
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(removed, [2]);
+  assert.equal(tabs.has(1), true);
 }
 
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
@@ -4009,6 +4091,25 @@ async function testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisable
   assert.equal(requestedUrls.some(url => url.includes('/api/plugin/transaction-start/jobs')), true);
   assert.deepEqual(completedActions, ['transaction_start']);
   assert.equal(createdTransactionTab, false);
+}
+
+async function testRunTransactionStartSkipsOrderPausedAfterBatchFetch() {
+  let openedTransactionPage = false;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    transactionStartEligible: false,
+    tabs: {
+      async create() { openedTransactionPage = true; return { id: 1 }; }
+    },
+    fetch: async url => {
+      if (String(url).includes('/api/plugin/transaction-start/jobs')) {
+        return { async json() { return { jobs: [{ orderId: 1, productId: 'n100000001', productType: 'normal' }] }; } };
+      }
+      return { async json() { return { success: true }; } };
+    }
+  });
+  await api.runTransactionStartJobs();
+  assert.equal(openedTransactionPage, false);
 }
 
 async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping() {
@@ -11454,6 +11555,34 @@ async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {
   assert.equal(calls.filter(call => call.url.includes('/api/plugin/idle-action/next')).length, 1);
 }
 
+async function testRunWorkflowActionDoesNotOverlapMessageClaim() {
+  let finishMessageFetch;
+  let messageFetchCount = 0;
+  const messageResponse = new Promise(resolve => { finishMessageFetch = resolve; });
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    fetch: async url => {
+      const value = String(url);
+      if (value.includes('/api/plugin/config')) {
+        return { ok: true, async json() { return { idleSyncIntervalMinutes: 60 }; } };
+      }
+      if (value.includes('/api/plugin/yahoo-messages/jobs')) {
+        messageFetchCount += 1;
+        return messageResponse;
+      }
+      return { ok: true, async json() { return { success: true, action: 'none' }; } };
+    }
+  });
+
+  const firstRun = api.runWorkflowAction();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(messageFetchCount, 1);
+  await api.runWorkflowAction();
+  assert.equal(messageFetchCount, 1);
+  finishMessageFetch({ ok: true, async json() { return { jobs: [] }; } });
+  await firstRun;
+}
+
 function testWorkerIntervalConfigReschedulesPollingTimer() {
   const intervals = [];
   const cleared = [];
@@ -11517,6 +11646,7 @@ testYahooTradeMessageExtractionReadsNormalV2ThreadWithoutComposer();
 testYahooTradeMessageExtractionReadsNormalV2NextDataWithoutOpeningTab();
 testYahooMessageNavigationDetectsNormalV2Thread();
 testYahooTradeMessageSendScopesNormalV2Composer();
+await testYahooTradeMessageSendWaitsForReactToEnableButton();
 testYahooTradeMessageExtractionSkipsStoreLegalLinks();
 testYahooTradeMessageExtractionDoesNotFallbackToStoreLegalLinks();
 testYahooTradeMessageExtractionReadsStoreDisabledPostingThread();
@@ -11536,6 +11666,7 @@ await testPrepareYahooMessagePageOpensMessageTabBeforeReading();
 await testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence();
 testSendYahooMessageJobFetchesLatestMessagesAfterSend();
 testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
+await testYahooMessageCleanupKeepsPreexistingYahooTab();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick();
@@ -11618,6 +11749,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunPaymentJobsReportsEmptyQueue();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
+  await testRunTransactionStartSkipsOrderPausedAfterBatchFetch();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected();
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true);
@@ -11739,6 +11871,7 @@ testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
   await testRunWorkflowActionRunsManualImportSeparatelyFromScan();
   await testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType();
   await testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle();
+  await testRunWorkflowActionDoesNotOverlapMessageClaim();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }

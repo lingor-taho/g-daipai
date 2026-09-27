@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-19
+**最后更新**: 2026-09-27
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -23,6 +23,8 @@ Yahoo 日本拍卖代拍系统。中国用户通过 Web 提交商品 URL、最�
 生产侧已连续运行稳定；用户端商品名称多结果搜索已支持 Yahoo 列表分页弹层和选中后详情确认，并支持按用户隔离的浏览器本地商品收藏。当前后续重点是三表模型收尾、用户本地商品缓存提速，以及 Windows Chrome 小窗口下 PIN/文字验证码截图稳定性。
 
 2026-09-18 本地已完成待收货 Google 表格追加/补写前查重，待用户部署 API 和后台后验证；历史重复行保持不动。
+
+2026-09-27 本地已完成普通商品落札订单暂停、24 小时后在交易开始领取时恢复、后台 Yahoo 消息发送及用户端恢复入口；尚未部署生产或操作真实 Yahoo 订单。
 
 ---
 
@@ -112,6 +114,27 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0. 普通商品暂停功能生产验证
+
+先部署 API（启动时为 `orders` 增加 `paused_at`）、后台、用户端及 Chrome 扩展，并在服务器 Chrome 中 reload 扩展。用普通商品验证后台暂停、用户端恢复、消息发送状态及暂停未满 24 小时不执行交易开始；到期恢复需在下一次交易开始领取时验证。商城商品与其他非空状态不能暂停。消息发送修复后，先在 Yahoo 对应订单的消息页确认失败那次没有送达，再发一次，避免重复发送。
+
+验证：
+
+```powershell
+node src/server/services/orderPause.test.js
+node src/shared/orderStatus.test.cjs
+node src/server/routes/plugin.test.js
+node src/server/routes/admin.orders.test.js
+node src/server/routes/task.test.js
+node yahoo-plugin/background.test.js
+node src/admin/src/Orders.display.test.js
+node src/client/src/pages/WonItems.display.test.mjs
+npm run build --prefix src/admin
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 1. 三表模型收尾和冗余字段删除
 
@@ -338,6 +361,7 @@ git diff --check
 `orders.order_status` 常用值：
 
 - `pending_payment`: 待付款。
+- `paused`: 普通商品交易开始前暂停；`orders.paused_at` 单独记录暂停时间，交易开始领取时满 24 小时恢复为空。
 - `waiting_shipping`: 等待卖家给运费。
 - `pending_bundle`: 同捆流程中。
 - `bundle_completed`: 同捆完成。
@@ -413,6 +437,16 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-27 普通商品落札订单暂停
+
+后台订单状态列双击：商城商品仍打开原同捆补录；普通商品仅空状态/暂停状态打开暂停与消息窗口。暂停后 `orders.order_status='paused'` 并写 `paused_at`；后台或用户端恢复时同时清空状态和时间，记录状态日志。窗口默认消息保留 `お世話になります。明日入札予定です。取り置きお願い致します。`，发送复用 Yahoo 消息队列，显示提交中、成功或失败，阻止同一订单的待发消息被下一条覆盖。用户端落札商品图片下方旗子右侧显示暂停图标：仅暂停时为红色且可点击恢复，其他状态为灰色不可点。
+
+每次交易开始领取订单时，API 先恢复 `paused_at` 已满 24 小时的暂停订单，再沿用原“只领取空状态”规则；不新增排程。插件每件操作前复核订单状态，普通同捆操作前还检查组内是否有暂停订单。此功能不改变出价池、扫描、付款或已处于其他状态的订单。当前仅本地代码，未部署生产；真实 Yahoo 消息与订单执行效果待部署验证。
+
+同日修复后台暂停弹窗发送消息时报 `No tab with id` 的标签页竞争：消息任务原先在清理时误传标签页 ID 数组且没有传入任务开始前的标签页集合，可能关闭其他已打开的 Yahoo 交易页；消息领取又在工作流互斥区外，允许两轮工作流交错。现按任务开始前快照只清理本轮标签页，消息领取也纳入工作流互斥，API 领取消息任务时以条件更新的 `rowCount` 确认唯一领取，并跳过正在处理的消息行。附件中的新版普通商品消息页仍使用现有 `textarea[placeholder="入力してください"]` 和“送信”按钮路径；输入文字后若 React 尚未启用发送按钮，短轮询等待按钮启用。本地模拟覆盖发送完成后的标签页清理、并发领取、工作流互斥及按钮延迟启用。真实 Yahoo 页面发送仍需在扩展 reload 后验证，不根据失败标记盲目重发。
+
+验证命令见“当前主计划”第 0 项。
 
 ### 2026-09-19 用户端入札中显示即时拍最高出价
 

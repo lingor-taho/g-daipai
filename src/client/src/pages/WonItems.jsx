@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
-import { deleteWonItemRemark, getWonTaskList, saveWonItemRemark } from '../utils/api';
+import { deleteWonItemRemark, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
@@ -255,6 +255,15 @@ function RemarkFlag({ active }) {
   );
 }
 
+function PauseIcon({ active }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="6" y="4" width="4" height="16" rx="1" fill={active ? colors.danger : colors.faint} />
+      <rect x="14" y="4" width="4" height="16" rx="1" fill={active ? colors.danger : colors.faint} />
+    </svg>
+  );
+}
+
 export default function WonItems() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
@@ -266,6 +275,7 @@ export default function WonItems() {
   const [remarkText, setRemarkText] = useState('');
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkDeleting, setRemarkDeleting] = useState(false);
+  const [resumingOrderId, setResumingOrderId] = useState(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
   const requestGenerationRef = useRef(0);
@@ -376,6 +386,23 @@ export default function WonItems() {
     setRemarkText(item.user_remark || '');
   }
 
+  async function handleResumeOrder(item) {
+    if (item.order_status !== 'paused' || !item.order_id || resumingOrderId) return;
+    setResumingOrderId(item.order_id);
+    try {
+      await resumeWonOrder(item.order_id);
+      setItems(current => current.map(row => row.order_id === item.order_id
+        ? { ...row, order_status: null, paused_at: null }
+        : row));
+      Toast.show({ content: '订单已恢复' });
+    } catch (error) {
+      Toast.show({ content: error.response?.data?.error || '订单恢复失败，请刷新后重试' });
+      refreshLoadedItems();
+    } finally {
+      setResumingOrderId(null);
+    }
+  }
+
   async function handleSaveRemark() {
     const normalizedRemark = remarkText.trim();
     if (!normalizedRemark) {
@@ -463,15 +490,27 @@ export default function WonItems() {
                   ) : (
                     <div style={imageThumbStyle} />
                   )}
-                  <button
-                    type="button"
-                    aria-label={item.user_remark ? '修改商品备注' : '添加商品备注'}
-                    title={item.user_remark ? '修改商品备注' : '添加商品备注'}
-                    onClick={() => openRemarkEditor(item)}
-                    style={{ border: 0, background: 'transparent', padding: '5px 8px 0', lineHeight: 0, cursor: 'pointer' }}
-                  >
-                    <RemarkFlag active={Boolean(String(item.user_remark || '').trim())} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      aria-label={item.user_remark ? '修改商品备注' : '添加商品备注'}
+                      title={item.user_remark ? '修改商品备注' : '添加商品备注'}
+                      onClick={() => openRemarkEditor(item)}
+                      style={{ border: 0, background: 'transparent', padding: '5px 4px 0', lineHeight: 0, cursor: 'pointer' }}
+                    >
+                      <RemarkFlag active={Boolean(String(item.user_remark || '').trim())} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={item.order_status === 'paused' ? '恢复订单' : '订单未暂停'}
+                      title={item.order_status === 'paused' ? '点击恢复订单' : '订单未暂停'}
+                      disabled={item.order_status !== 'paused' || Boolean(resumingOrderId)}
+                      onClick={() => handleResumeOrder(item)}
+                      style={{ border: 0, background: 'transparent', padding: '5px 4px 0', lineHeight: 0, cursor: item.order_status === 'paused' ? 'pointer' : 'default' }}
+                    >
+                      <PauseIcon active={item.order_status === 'paused'} />
+                    </button>
+                  </div>
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
