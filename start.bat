@@ -29,66 +29,36 @@ type nul > "%ROOT%\server-start.log"
 type nul > "%ROOT%\server-start.err.log"
 start "g-daipai-api-watch" /b cmd /c ""%ROOT%\scripts\api-watch.bat" "%ROOT%""
 
-echo [3/4] Build and start Client: http://localhost:3035
+echo [3/4] Check build and start Client: http://localhost:3035
 type nul > "%ROOT%\client-build.log"
 type nul > "%ROOT%\client-start.log"
-call npm run build --prefix "%CLIENT_DIR%" > "%ROOT%\client-build.log" 2>&1
+node "%ROOT%\scripts\build-if-needed.js" client > "%ROOT%\client-build.log" 2>&1
 if errorlevel 1 (
   echo Client build failed. Trying to serve the existing dist directory.
   echo Check %ROOT%\client-build.log
 )
+type "%ROOT%\client-build.log"
 start "g-daipai-client" /b cmd /c "cd /d %ROOT% && node scripts\serve-client-dist.js <NUL > %ROOT%\client-start.log 2>&1"
 
-echo [4/4] Build and start Admin Report: http://localhost:8000/#/login
+echo [4/4] Check build and start Admin Report: http://localhost:8000/#/login
 type nul > "%ROOT%\admin-start.log"
-echo       Building admin static files. This usually takes 10-60 seconds...
-echo       Build progress will be shown below.
-call npm run build --prefix "%ADMIN_DIR%"
+echo       Unchanged builds will be reused. Build progress is shown when needed.
+node "%ROOT%\scripts\build-if-needed.js" admin
 if errorlevel 1 (
   echo Admin build failed. Trying to serve the existing dist directory.
 ) else (
-  echo Admin build completed. Starting static report service...
+  echo Admin static files ready. Starting static report service...
 )
 start "g-daipai-admin" /b cmd /c "cd /d %ROOT% && set STATIC_DIST_DIR=%ADMIN_DIR%\dist&& set STATIC_PORT=8000&& set STATIC_SERVER_NAME=Admin&& node scripts\serve-client-dist.js <NUL > %ROOT%\admin-start.log 2>&1"
 
-echo Waiting for services to listen (up to 20 seconds)...
-for /l %%s in (1,1,20) do (
-  <nul set /p "=."
-  timeout /t 1 /nobreak > nul
-)
-echo.
-
-set API_OK=0
-set CLIENT_OK=0
-set ADMIN_OK=0
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3034" ^| findstr "LISTEN"') do set API_OK=1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3035" ^| findstr "LISTEN"') do set CLIENT_OK=1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000" ^| findstr "LISTEN"') do set ADMIN_OK=1
-
-echo.
-if "%API_OK%"=="1" (
-  echo API Server OK: http://localhost:3034
+echo Checking service readiness (returns immediately when ready; maximum 20 seconds)...
+node "%ROOT%\scripts\wait-for-services.js"
+if errorlevel 1 (
+  echo Some services are NOT ready. Check the logs listed above.
 ) else (
-  echo API Server NOT running.
-  echo Check %ROOT%\server-start.log
-  echo Check %ROOT%\server-start.err.log
+  echo Services are running.
 )
-
-if "%CLIENT_OK%"=="1" (
-  echo Client OK: http://localhost:3035
-) else (
-  echo Client NOT running. Check %ROOT%\client-start.log
-)
-
-if "%ADMIN_OK%"=="1" (
-  echo Admin Report OK: http://localhost:8000/#/login
-) else (
-  echo Admin Report NOT running. Check %ROOT%\admin-start.log
-)
-
-echo.
-echo.
-echo Services are running. Keep this window open.
+echo Keep this window open.
 echo Press Ctrl+C or close this window to stop.
 echo.
 

@@ -8,6 +8,7 @@ const npmCommand = 'npm';
 
 const steps = [
   ['Full project encoding guard', process.execPath, ['scripts/encoding-guard.js'], rootDir],
+  ['Startup build cache and readiness tests', process.execPath, ['scripts/startup.test.js'], rootDir],
   ['Google Sheets config tests', process.execPath, ['src/server/services/googleSheets.test.js'], rootDir],
   ['Online users service tests', process.execPath, ['src/server/services/onlineUsers.test.js'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],

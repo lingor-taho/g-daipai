@@ -28,6 +28,8 @@ Yahoo 日本拍卖代拍系统。中国用户通过 Web 提交商品 URL、最�
 
 2026-09-28 本地将 Yahoo 消息拆为独立执行线，按插件工作轮询领取，后台有待处理消息时每 2 秒刷新结果；API、后台及插件需一起部署，生产实际耗时待验证。
 
+2026-09-28 本地启动脚本已改为前端按需构建和 HTTP 就绪检查；首次建立构建记录后，未变化的前端跳过编译，服务全部就绪立即结束等待。服务器启动耗时待部署验证。
+
 ---
 
 ## 当前架构
@@ -298,7 +300,23 @@ git diff --check
 
 ### 5. 后台静态部署与剩余间歇性 HTTP 502 收敛
 
-2026-08-31 已完成本地后台静态化：`start.bat` 先执行 `npm run build --prefix src/admin`，再以现有 `scripts/serve-client-dist.js` 提供 `src/admin/dist` 到原8000端口，继续把 `/api` 转发到3034。脚本支持 `STATIC_DIST_DIR` / `STATIC_PORT`，用户端3035保持原行为。后台为 hash 路由，`/#/...` 地址不变。
+2026-08-31 已完成本地后台静态化，以 `scripts/serve-client-dist.js` 提供 `src/admin/dist` 到原8000端口，继续把 `/api` 转发到3034。2026-09-28 起 `start.bat` 通过 `scripts/build-if-needed.js` 分别检查后台和用户端，仅输入或产物变化、首次无构建记录时执行构建。脚本支持 `STATIC_DIST_DIR` / `STATIC_PORT`，用户端仍为3035，后台 hash 路由 `/#/...` 地址不变。
+
+本次部署需同步 `start.bat`、`scripts/build-if-needed.js`、`scripts/wait-for-services.js`。首次启动各构建一次，在各自 dist 中写入 `.startup-build.json`，后续相同输入与产物直接复用。用内容摘要检查前端源码、共享源码、配置、依赖清单/锁文件、npm 安装锁记录及常见构建环境变量；不遍历 node_modules，不以文件时间作为变化依据。编译失败不写成功记录，下次启动重试。源码、配置或依赖变更只重建受影响前端，共享输入变更会重建两端。
+
+就绪检查同时请求3034 `/health`、3035与8000首页，每轮检查后全部正常就立即继续；最多20秒，超时列出未就绪服务及日志位置。该20秒是故障等待上限，不再固定等待。部署验证连续启动两次：第二次应显示 `Build unchanged`，就绪检查按实际耗时返回。需要强制构建时执行 `node scripts/build-if-needed.js client --force` 或 `node scripts/build-if-needed.js admin --force`。
+
+启动专项验证：
+
+```powershell
+node scripts/startup.test.js
+node scripts/build-if-needed.js client
+node scripts/build-if-needed.js client
+node scripts/build-if-needed.js admin
+node scripts/build-if-needed.js admin
+node scripts/encoding-guard.js
+git diff --check
+```
 
 用户提供的 Nginx 配置未包含8000后台 upstream；直接访问 `43.165.177.49:8000` 不经过 Nginx。因此生产更新后 Nginx 无需改动，只需重新运行 `start.bat`；切换时后台会短暂中断，已打开页面应 Ctrl+F5。未构建成功时脚本保留已有 `src/admin/dist` 作为临时回退；构建输出直接显示在启动窗口，不能把失败构建当成成功发布。
 
@@ -458,6 +476,12 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-09-28 启动按需构建与即时就绪检查
+
+`start.bat` 的两端构建改为内容摘要缓存：首次构建成功后记录输入及 dist 摘要，未变化时直接启动静态服务；产物缺失或被修改会重新构建，失败或构建期间源码变化不会留下成功记录。排除 Umi 生成目录、日志和 node_modules，显式纳入 npm 安装锁记录与共享源码。原固定等待20秒和仅检查端口监听，改为并行 HTTP 探测，全部就绪立刻返回，达到20秒上限报告未就绪项目。未就绪时不再统一输出“服务已运行”。
+
+本地专项测试覆盖跳过构建、源码/共享文件/配置/依赖/环境变化、缺失产物、失败后重试及立即就绪、延迟就绪、错误响应和请求挂起。验证命令见第5项，已加入 `npm run regression`。只涉及启动流程；未执行完整启动脚本或重启现有服务，生产需更新后验证。
 
 ### 2026-09-28 消息独立执行与结果刷新
 
