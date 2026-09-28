@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
 import { buildMessageReadCsv } from './messageReadCsv';
 
-const MESSAGE_PROCESSING_TIMEOUT_MS = 30000;
+const MESSAGE_PROCESSING_TIMEOUT_MS = 180000;
+const MESSAGE_REFRESH_INTERVAL_MS = 2000;
 
 const ORDER_STATUS_OPTIONS = [
   { value: 'paused', label: '暂停' },
@@ -59,14 +60,13 @@ function canRequestMessageUpdate(row: any) {
   return true;
 }
 
-function isMessageFetchInProgress(row: any, updatingOrderId: number | null) {
+function isMessageFetchInProgress(row: any, updatingOrderId: number | null, nowMs = Date.now()) {
   if (updatingOrderId === row.order_id) return true;
-  if (row.fetch_status === 'pending') return true;
-  if (row.fetch_status !== 'processing') return false;
-  const raw = String(row.fetch_started_at || '').trim();
+  if (!['pending', 'processing'].includes(row.fetch_status)) return false;
+  const raw = String((row.fetch_status === 'pending' ? row.fetch_requested_at : row.fetch_started_at) || '').trim();
   const startedAt = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') + 'Z' : raw);
   if (Number.isNaN(startedAt.getTime())) return false;
-  return Date.now() - startedAt.getTime() <= MESSAGE_PROCESSING_TIMEOUT_MS;
+  return nowMs - startedAt.getTime() <= MESSAGE_PROCESSING_TIMEOUT_MS;
 }
 
 function shouldShowMessageFetchError(row: any) {
@@ -146,16 +146,29 @@ export default function MessageReadPage() {
   const [selected, setSelected] = useState<any>(null);
   const [sendText, setSendText] = useState('');
   const [sending, setSending] = useState(false);
+  const [messageClock, setMessageClock] = useState(Date.now);
   const [selectedRowKeys, setSelectedRowKeys] = useState<(string | number)[]>([]);
   const [selectedRowsByKey, setSelectedRowsByKey] = useState<Record<string, any>>({});
+  const activeQuery = useRef({ next: pagination, values: {} as any });
+  const loadSequence = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
 
   function clearSelection() {
     setSelectedRowKeys([]);
     setSelectedRowsByKey({});
   }
 
-  async function load(next = pagination, values = form.getFieldsValue()) {
-    setLoading(true);
+  async function load(next = pagination, values = form.getFieldsValue(), silent = false) {
+    if (silent && loadController.current) return;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const sequence = ++loadSequence.current;
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    if (!silent) {
+      activeQuery.current = { next, values };
+      setLoading(true);
+    }
     try {
       const params = new URLSearchParams();
       params.set('current', String(next.current || 1));
@@ -171,9 +184,11 @@ export default function MessageReadPage() {
       if (range[0]) params.set('wonFrom', formatDateOnly(range[0]));
       if (range[1]) params.set('wonTo', formatDateOnly(range[1]));
       if (orderStatus) params.set('orderStatus', orderStatus);
-      const data = await fetchAdminJson(`/api/admin/messages?${params.toString()}`);
+      const data = await fetchAdminJson(`/api/admin/messages?${params.toString()}`, { signal: controller.signal });
+      if (sequence !== loadSequence.current) return;
       const nextItems = data.items || [];
       setItems(nextItems);
+      setSelected((current: any) => current ? nextItems.find((row: any) => row.order_id === current.order_id) || current : null);
       setSelectedRowsByKey(previous => {
         const next = { ...previous };
         nextItems.forEach((row: any) => {
@@ -188,9 +203,13 @@ export default function MessageReadPage() {
         total: Number(data.total || 0)
       });
     } catch (error: any) {
-      message.error(error.message || '消息列表加载失败');
+      if (!silent && sequence === loadSequence.current) message.error(error.name === 'AbortError' ? '消息列表请求超时，请重试' : error.message || '消息列表加载失败');
     } finally {
-      setLoading(false);
+      window.clearTimeout(timeout);
+      if (sequence === loadSequence.current) {
+        loadController.current = null;
+        if (!silent) setLoading(false);
+      }
     }
   }
 
@@ -199,7 +218,7 @@ export default function MessageReadPage() {
     try {
       await fetchAdminJson(`/api/admin/messages/${row.order_id}/update`, { method: 'POST' });
       message.success('已提交消息抓取任务');
-      await load(pagination);
+      await load(activeQuery.current.next, activeQuery.current.values);
     } catch (error: any) {
       message.error(error.message || '消息抓取提交失败');
     } finally {
@@ -222,7 +241,7 @@ export default function MessageReadPage() {
       });
       setSendText('');
       message.success('已提交消息发送任务');
-      await load(pagination);
+      await load(activeQuery.current.next, activeQuery.current.values);
     } catch (error: any) {
       message.error(error.message || '消息发送提交失败');
     } finally {
@@ -268,7 +287,25 @@ export default function MessageReadPage() {
 
   useEffect(() => {
     load({ current: 1, pageSize: 20, total: 0 }, {});
+    return () => {
+      loadSequence.current += 1;
+      loadController.current?.abort();
+      loadController.current = null;
+    };
   }, []);
+
+  const hasPendingMessages = items.some(row =>
+    ['pending', 'processing'].includes(row.fetch_status) || ['pending', 'processing'].includes(row.send_status)
+  );
+  useEffect(() => {
+    if (!hasPendingMessages) return;
+    const timer = window.setInterval(() => {
+      setMessageClock(Date.now());
+      const query = activeQuery.current;
+      load(query.next, query.values, true);
+    }, MESSAGE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [hasPendingMessages]);
 
   return (
     <Card title="查询订单">
@@ -354,10 +391,10 @@ export default function MessageReadPage() {
             width: 130,
             render: (_, row: any) => {
               if (!canRequestMessageUpdate(row)) return '-';
-              const fetching = isMessageFetchInProgress(row, updatingOrderId);
+              const fetching = isMessageFetchInProgress(row, updatingOrderId, messageClock);
               return (
                 <Button size="small" loading={fetching} onClick={() => requestUpdate(row)}>
-                  {fetching ? '消息抓取中' : '消息更新'}
+                  {fetching ? (row.fetch_status === 'pending' ? '等待插件读取' : '消息抓取中') : '消息更新'}
                 </Button>
               );
             }
@@ -535,7 +572,7 @@ export default function MessageReadPage() {
             placeholder="输入要发送到 Yahoo 取引連絡 的消息"
             autoSize={{ minRows: 2, maxRows: 5 }}
           />
-          <Button type="primary" loading={sending} onClick={sendMessage}>发送</Button>
+          <Button type="primary" loading={sending || ['pending', 'processing'].includes(selected?.send_status)} onClick={sendMessage}>发送</Button>
         </Space.Compact>
         {selected?.send_status === 'failed' ? (
           <Typography.Text type="danger">{selected.send_error || '发送失败'}</Typography.Text>

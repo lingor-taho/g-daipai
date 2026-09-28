@@ -572,7 +572,7 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   if (Number(config.manualOrderImportPending || 0) > 0) {
     return { action: 'manual_order_import', today, manualOrderImportPending: Number(config.manualOrderImportPending || 0) };
   }
-  if (Number(config.yahooMessagePending || 0) > 0) {
+  if (!config.separateMessages && Number(config.yahooMessagePending || 0) > 0) {
     return { action: 'yahoo_message', today, yahooMessagePending: Number(config.yahooMessagePending || 0) };
   }
   const transactionStartHour = clampHour(config.transactionStartHour, DEFAULT_TRANSACTION_START_HOUR);
@@ -916,6 +916,7 @@ router.get('/tasks', async (req, res) => {
 
 router.get('/idle-action/next', async (req, res) => {
   const config = await getIdleActionConfig();
+  config.separateMessages = req.query.separateMessages === '1';
   res.json({ success: true, ...getNextIdleAction(config), config });
 });
 
@@ -1964,8 +1965,23 @@ async function getManualOrderImportJob(database = db) {
   };
 }
 
+let lastYahooMessageClaimMs = 0;
+
 async function getYahooMessageJobs(database = db, limit = 3) {
   const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit || 3))));
+  // Covers interrupted workers and lost status callbacks. Never resend automatically.
+  await database.query(
+    `UPDATE yahoo_trade_messages
+     SET fetch_status = 'failed', fetch_error = '消息读取超时，请重新读取'
+     WHERE fetch_status = 'processing'
+       AND (fetch_started_at IS NULL OR datetime(fetch_started_at) <= datetime('now', '-3 minutes'))`
+  );
+  await database.query(
+    `UPDATE yahoo_trade_messages
+     SET send_status = 'failed', send_error = '消息发送结果未确认，请先到 Yahoo 核对是否送达，再决定是否重发'
+     WHERE send_status = 'processing'
+       AND (send_started_at IS NULL OR datetime(send_started_at) <= datetime('now', '-3 minutes'))`
+  );
   const jobs = await database.getAll(
     `SELECT m.id AS messageId,
             m.order_id AS orderId,
@@ -1988,15 +2004,17 @@ async function getYahooMessageJobs(database = db, limit = 3) {
   );
   const claimedJobs = [];
   for (const job of jobs) {
+    lastYahooMessageClaimMs = Math.max(Date.now(), lastYahooMessageClaimMs + 1);
+    const startedAt = new Date(lastYahooMessageClaimMs).toISOString();
     if (job.sendStatus === 'pending') {
       const claim = await database.query(
         `UPDATE yahoo_trade_messages
          SET send_status = 'processing',
-             send_started_at = CURRENT_TIMESTAMP,
+             send_started_at = ?,
              send_error = NULL
          WHERE id = ? AND send_status = 'pending'
            AND COALESCE(fetch_status, 'idle') <> 'processing'`,
-        [job.messageId]
+        [startedAt, job.messageId]
       );
       if (claim.rowCount !== 1) continue;
       job.jobType = 'send';
@@ -2004,16 +2022,16 @@ async function getYahooMessageJobs(database = db, limit = 3) {
       const claim = await database.query(
         `UPDATE yahoo_trade_messages
          SET fetch_status = 'processing',
-             fetch_started_at = CURRENT_TIMESTAMP,
+             fetch_started_at = ?,
              fetch_error = NULL
          WHERE id = ? AND fetch_status = 'pending'
            AND COALESCE(send_status, 'idle') <> 'processing'`,
-        [job.messageId]
+        [startedAt, job.messageId]
       );
       if (claim.rowCount !== 1) continue;
       job.jobType = 'fetch';
     }
-    claimedJobs.push(job);
+    claimedJobs.push({ ...job, startedAt });
   }
   return { jobs: claimedJobs, total: claimedJobs.length };
 }
@@ -2039,6 +2057,9 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
     throw error;
   }
   const jobType = payload.jobType === 'send' ? 'send' : 'fetch';
+  const startedAt = String(payload.startedAt || '').trim();
+  const claimGuard = startedAt ? ` AND ${jobType}_status = 'processing' AND ${jobType}_started_at = ?` : '';
+  const claimParams = startedAt ? [startedAt] : [];
   const errorText = String(payload.error || '').trim();
   if (jobType === 'send') {
     if (errorText) {
@@ -2047,8 +2068,8 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
          SET send_status = 'failed',
              send_error = ?,
              updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
-         WHERE order_id = ?`,
-        [errorText, orderId]
+         WHERE order_id = ?${claimGuard}`,
+        [errorText, orderId, ...claimParams]
       );
       return { updated: result.rowCount || 0 };
     }
@@ -2062,8 +2083,8 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
            message_html = COALESCE(NULLIF(?, ''), message_html),
            fetch_status = CASE WHEN NULLIF(?, '') IS NULL THEN fetch_status ELSE 'idle' END,
            updated_at = CASE WHEN NULLIF(?, '') IS NULL THEN updated_at ELSE CURRENT_TIMESTAMP END
-       WHERE order_id = ?`,
-      [messageHtml, messageHtml, messageHtml, orderId]
+       WHERE order_id = ?${claimGuard}`,
+      [messageHtml, messageHtml, messageHtml, orderId, ...claimParams]
     );
     return { updated: result.rowCount || 0 };
   }
@@ -2072,8 +2093,8 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
       `UPDATE yahoo_trade_messages
        SET fetch_status = 'failed',
            fetch_error = ?
-       WHERE order_id = ?`,
-      [errorText, orderId]
+       WHERE order_id = ?${claimGuard}`,
+      [errorText, orderId, ...claimParams]
     );
     return { updated: result.rowCount || 0 };
   }
@@ -2089,8 +2110,8 @@ async function updateYahooMessageStatus(payload = {}, database = db) {
          fetch_error = NULL,
          message_html = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE order_id = ?`,
-    [messageHtml, orderId]
+     WHERE order_id = ?${claimGuard}`,
+    [messageHtml, orderId, ...claimParams]
   );
   return { updated: result.rowCount || 0 };
 }

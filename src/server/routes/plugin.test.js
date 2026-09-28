@@ -2955,6 +2955,7 @@ async function testYahooMessageJobsOnlyReturnSuccessfullyClaimedRows() {
       return [{ messageId: 7, orderId: 22, sendStatus: 'pending', fetchStatus: 'idle' }];
     },
     async query(sql) {
+      if (sql.includes("'-3 minutes'")) return { rowCount: 0 };
       assert.match(sql, /send_status = 'pending'/);
       assert.match(sql, /COALESCE\(fetch_status, 'idle'\) <> 'processing'/);
       claimCount += 1;
@@ -2966,6 +2967,7 @@ async function testYahooMessageJobsOnlyReturnSuccessfullyClaimedRows() {
   const second = await getYahooMessageJobs(database);
   assert.equal(first.total, 1);
   assert.equal(first.jobs[0].jobType, 'send');
+  assert.ok(first.jobs[0].startedAt);
   assert.equal(second.total, 0);
   assert.deepEqual(second.jobs, []);
 }

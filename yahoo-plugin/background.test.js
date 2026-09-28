@@ -51,6 +51,7 @@ function loadBackgroundForTest(overrides = {}) {
     Date: overrides.Date || Date,
     URL,
     URLSearchParams,
+    AbortController,
     fetch: async (...args) => {
       if (String(args[0]).includes('/api/plugin/transaction-start/eligibility')) {
         return { async json() { return { success: true, eligible: overrides.transactionStartEligible !== false }; } };
@@ -1249,6 +1250,10 @@ async function testYahooMessageCleanupKeepsPreexistingYahooTab() {
         if (!tabs.has(id)) throw new Error(`No tab with id: ${id}`);
         return tabs.get(id);
       },
+      async update(id, changes) {
+        Object.assign(tabs.get(id), changes);
+        return tabs.get(id);
+      },
       async sendMessage() { return { success: true, state: { canStart: true } }; },
       async remove(id) { removed.push(id); tabs.delete(id); }
     },
@@ -1277,6 +1282,149 @@ async function testYahooMessageCleanupKeepsPreexistingYahooTab() {
   assert.equal(result.success, true);
   assert.deepEqual(removed, [2]);
   assert.equal(tabs.has(1), true);
+}
+
+async function testYahooMessageTabsAreIsolatedFromConcurrentWorkflow() {
+  const tabs = new Map([[1, { id: 1, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=existing', status: 'complete' }]]);
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async query() { return [...tabs.values()].reverse(); },
+      async create({ url }) {
+        const tab = { id: 2, url: 'about:blank', pendingUrl: url, status: 'complete' };
+        tabs.set(2, tab);
+        await api.closeTabsForScanFlow(null, new Set([1]));
+        assert.equal(tabs.has(2), true, 'new message marker protects the tab before create resolves');
+        return tab;
+      },
+      async update(id, changes) { Object.assign(tabs.get(id), changes); return tabs.get(id); },
+      async get(id) { if (!tabs.has(id)) throw new Error('tab closed'); return tabs.get(id); },
+      async remove(id) { tabs.delete(id); }
+    },
+    scripting: { async executeScript() { return [{ result: { complete: true } }]; } }
+  });
+  const context = { tabIds: new Set(), closed: false };
+  const messageTab = await api.openYahooMessageTransactionPage({ orderId: 22, transactionUrl: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=message' }, context);
+  for (const [id, openerTabId] of [[3, undefined], [4, 2], [5, 3], [6, 4]]) {
+    tabs.set(id, { id, openerTabId, url: `https://contact.auctions.yahoo.co.jp/trade/top?aid=${id}`, status: 'complete' });
+  }
+  const original = new Set([1, 2, 3]);
+  const workflowTab = await api.switchToNewestNewTab(original, tabs.get(3));
+  assert.equal(workflowTab.id, 5, 'workflow must skip newer message children');
+  const nextMessageTab = await api.switchToNewestNewTab(original, messageTab);
+  assert.equal(nextMessageTab.id, 6, 'message must follow only its own opener tree');
+  await api.closeTabsForScanFlow(workflowTab, new Set([1]));
+  assert.equal(tabs.has(6), true, 'scan cleanup must preserve active message tab');
+  assert.equal(tabs.has(4), true, 'scan cleanup must preserve message popup');
+  assert.equal(tabs.has(5), false);
+  tabs.set(7, { id: 7, url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=other-flow', status: 'complete' });
+  await api.closeTabsForTransactionFlow(null, new Set([1, 7]));
+  assert.equal(tabs.has(6), true, 'transaction cleanup must preserve active message tab');
+  await api.closeYahooMessageTabs(context);
+  assert.deepEqual([...tabs.keys()].sort(), [1, 7], 'message cleanup must preserve unrelated new tabs');
+}
+
+async function testYahooMessageReadsBeforeFullPageLoadCompletes() {
+  let current;
+  let fullLoadWaits = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: {
+      async create({ url }) { current = { id: 9, url, status: 'loading' }; return current; },
+      async update(_id, changes) { Object.assign(current, changes); return current; },
+      async get() { return current; },
+      onUpdatedAddListener() { fullLoadWaits += 1; }
+    },
+    scripting: {
+      async executeScript({ func }) {
+        assert.equal(func.name, 'isYahooMessageDocumentReady');
+        return [{ result: true }];
+      }
+    }
+  });
+  const tab = await api.openYahooMessageTransactionPage({ orderId: 22, transactionUrl: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=message' }, { tabIds: new Set(), closed: false });
+  assert.equal(tab.status, 'loading');
+  assert.equal(fullLoadWaits, 0, 'readable message data must not wait for all images/resources');
+}
+
+async function testYahooMessageTimeoutClosesLateTabWithoutSending() {
+  let finishCreate;
+  let timeoutJob;
+  const created = new Promise(resolve => { finishCreate = resolve; });
+  const tabs = new Map();
+  const reports = [];
+  let navigations = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    setTimeout(fn, ms) { if (ms === 45000) timeoutJob = fn; return 1; },
+    tabs: {
+      async query() { return [...tabs.values()]; },
+      async create() { return created; },
+      async get(id) { if (!tabs.has(id)) throw new Error('closed'); return tabs.get(id); },
+      async update() { navigations += 1; },
+      async remove(id) { tabs.delete(id); }
+    },
+    fetch: async (_url, options) => {
+      reports.push(JSON.parse(options.body));
+      return { ok: true, async json() { return { updated: 1 }; } };
+    }
+  });
+  const run = api.executeYahooMessageJob({ orderId: 22, jobType: 'send', sendText: 'test', startedAt: 'claim' });
+  timeoutJob();
+  assert.equal((await run).success, false);
+  const tab = { id: 8, url: 'about:blank#gdaipai-message-22', status: 'complete' };
+  tabs.set(8, tab);
+  finishCreate(tab);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(tabs.size, 0);
+  assert.equal(navigations, 0, 'expired send must not resume navigation or sending');
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].startedAt, 'claim');
+  assert.match(reports[0].error, /timeout/);
+}
+
+async function testMessageMouseFallbackDoesNotStealWorkflowFocus() {
+  let current;
+  let finishWorkflow;
+  let workflowClaims = 0;
+  let focused = 0;
+  const waiting = [];
+  const workflowResponse = new Promise(resolve => { finishWorkflow = resolve; });
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    setTimeout(fn, ms) { if (ms === 250) waiting.push(fn); return 1; },
+    tabs: {
+      async create({ url }) { current = { id: 2, url, status: 'complete' }; return current; },
+      async update(_id, changes) { if (changes.active) focused += 1; Object.assign(current, changes); return current; },
+      async get() { return current; },
+      async query() { return current ? [current] : []; }
+    },
+    scripting: {
+      async executeScript({ func }) {
+        if (func?.name === 'getYahooTradeMessageSendPointsFromPage') return [{ result: { success: true, button: { x: 10, y: 10 }, textarea: { x: 20, y: 20 } } }];
+        return [{ result: {} }];
+      }
+    },
+    fetch: async url => {
+      if (String(url).includes('/idle-action/next')) { workflowClaims += 1; return workflowResponse; }
+      return { ok: true, async json() { return {}; } };
+    }
+  });
+  const owner = { tabIds: new Set(), closed: false };
+  const tab = await api.openYahooMessageTransactionPage({ orderId: 22, transactionUrl: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=message' }, owner);
+  const workflow = api.runWorkflowAction();
+  await new Promise(resolve => setImmediate(resolve));
+  const fallback = api.dispatchTrustedYahooMessageSend(tab, 'text');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(focused, 0, 'message fallback must not switch focus during an order workflow');
+  assert.equal(waiting.length, 1);
+  owner.closed = true;
+  waiting.shift()();
+  assert.equal((await fallback).success, false);
+  await api.runWorkflowAction();
+  assert.equal(workflowClaims, 1, 'timed-out message must not release another workflow lock');
+  finishWorkflow({ ok: true, async json() { return { action: 'none' }; } });
+  await workflow;
 }
 
 function testBidProgressMessageExtendsActiveMultiBidTimeout() {
@@ -11526,9 +11674,12 @@ async function testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmit
   assert.equal(payload.items[0].taxType, 'tax_zero');
 }
 
-async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {
+async function testYahooMessagesRunWhileWorkflowIsBusy() {
   const calls = [];
+  let finishWorkflow;
+  const workflowResponse = new Promise(resolve => { finishWorkflow = resolve; });
   const api = loadBackgroundForTest({
+    disableAutoStart: true,
     fetch: async (url, options = {}) => {
       const value = String(url);
       calls.push({ url: value, body: options.body || '' });
@@ -11539,7 +11690,8 @@ async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {
         return { ok: true, async json() { return { success: true, jobs: [] }; } };
       }
       if (value.includes('/api/plugin/idle-action/next')) {
-        return { ok: true, async json() { return { success: true, action: 'none' }; } };
+        assert.ok(value.includes('separateMessages=1'));
+        return workflowResponse;
       }
       if (value.includes('/api/plugin/idle-action/complete')) {
         return { ok: true, async json() { return { success: true }; } };
@@ -11548,14 +11700,18 @@ async function testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle() {
     }
   });
 
-  await api.runWorkflowAction();
-  await api.runWorkflowAction();
+  const workflow = api.runWorkflowAction();
+  await new Promise(resolve => setImmediate(resolve));
+  await api.runYahooMessageJobs();
+  await api.runYahooMessageJobs();
 
   assert.equal(calls.filter(call => call.url.includes('/api/plugin/yahoo-messages/jobs')).length, 2);
   assert.equal(calls.filter(call => call.url.includes('/api/plugin/idle-action/next')).length, 1);
+  finishWorkflow({ ok: true, async json() { return { action: 'none' }; } });
+  await workflow;
 }
 
-async function testRunWorkflowActionDoesNotOverlapMessageClaim() {
+async function testYahooMessagesDoNotOverlapTheirOwnClaim() {
   let finishMessageFetch;
   let messageFetchCount = 0;
   const messageResponse = new Promise(resolve => { finishMessageFetch = resolve; });
@@ -11574,10 +11730,10 @@ async function testRunWorkflowActionDoesNotOverlapMessageClaim() {
     }
   });
 
-  const firstRun = api.runWorkflowAction();
+  const firstRun = api.runYahooMessageJobs();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(messageFetchCount, 1);
-  await api.runWorkflowAction();
+  await api.runYahooMessageJobs();
   assert.equal(messageFetchCount, 1);
   finishMessageFetch({ ok: true, async json() { return { jobs: [] }; } });
   await firstRun;
@@ -11667,6 +11823,10 @@ await testPrepareYahooMessagePageRunsStoreCloseThenSingleSequence();
 testSendYahooMessageJobFetchesLatestMessagesAfterSend();
 testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab();
 await testYahooMessageCleanupKeepsPreexistingYahooTab();
+await testYahooMessageTabsAreIsolatedFromConcurrentWorkflow();
+await testYahooMessageReadsBeforeFullPageLoadCompletes();
+await testYahooMessageTimeoutClosesLateTabWithoutSending();
+await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   testBidProgressMessageExtendsActiveMultiBidTimeout();
   await testBundleStartWaitsForDecideButtonState();
   await testBundleStartTradePageWaitsForRenderedButtonBeforeJsClick();
@@ -11870,8 +12030,8 @@ await testYahooMessageCleanupKeepsPreexistingYahooTab();
   await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();
   await testRunWorkflowActionRunsManualImportSeparatelyFromScan();
   await testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType();
-  await testRunWorkflowActionChecksYahooMessagesBeforeIdleThrottle();
-  await testRunWorkflowActionDoesNotOverlapMessageClaim();
+  await testYahooMessagesRunWhileWorkflowIsBusy();
+  await testYahooMessagesDoNotOverlapTheirOwnClaim();
   await testBuyoutPendingFinalStaysBiddingForWonSync();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }

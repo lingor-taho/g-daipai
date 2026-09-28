@@ -15,6 +15,7 @@ const MESSAGE_JOB_TIMEOUT_MS = 45000;
 const MESSAGE_EXTRACT_RENDER_WAIT_MS = 8000;
 const MESSAGE_EXTRACT_POLL_MS = 500;
 const MESSAGE_NAVIGATION_WAIT_MS = 12000;
+const MESSAGE_API_TIMEOUT_MS = 8000;
 const BIDDING_SYNC_MAX_PAGES = 50;
 const BIDDING_SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS = 8000;
@@ -37,6 +38,8 @@ let lastWorkflowSyncAt = 0;
 const activeBidRuns = new Map();
 let monitorRunning = false;
 let workflowRunning = false;
+let yahooMessagesRunning = false;
+const yahooMessageTabOwners = new Map();
 let manualVerificationFlowActive = false;
 let manualVerificationTabId = null;
 const ignoredManualVerificationTabIds = new Set();
@@ -925,7 +928,7 @@ async function syncBiddingItems(items) {
 
 async function fetchNextIdleAction() {
   try {
-    const res = await apiFetch('/api/plugin/idle-action/next');
+    const res = await apiFetch('/api/plugin/idle-action/next?separateMessages=1');
     return await res.json();
   } catch (e) {
     logBackgroundIssue('[Yahoo Bid] Failed to fetch idle action:', e);
@@ -1065,17 +1068,126 @@ async function updatePaymentStatus(payload) {
 }
 
 async function fetchYahooMessageJobs() {
-  const res = await apiFetch('/api/plugin/yahoo-messages/jobs');
-  const data = await res.json();
+  const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1');
   return Array.isArray(data.jobs) ? data.jobs : [];
 }
 
 async function updateYahooMessageStatus(payload) {
-  await apiFetch('/api/plugin/yahoo-messages/status', {
+  await yahooMessageApiJson('/api/plugin/yahoo-messages/status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {})
   });
+}
+
+async function yahooMessageApiJson(path, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MESSAGE_API_TIMEOUT_MS);
+  try {
+    const res = await apiFetch(path, { ...options, signal: controller.signal });
+    if (!res.ok) throw new Error(`message API failed: HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function getYahooMessageTabOwner(tab) {
+  if (!tab?.id) return null;
+  const owner = yahooMessageTabOwners.get(tab.id) || yahooMessageTabOwners.get(tab.openerTabId);
+  if (owner) {
+    owner.tabIds.add(tab.id);
+    yahooMessageTabOwners.set(tab.id, owner);
+  }
+  return owner || null;
+}
+
+function isYahooMessageTab(tab) {
+  return Boolean(getYahooMessageTabOwner(tab)) || [tab?.url, tab?.pendingUrl]
+    .some(url => /^about:blank#gdaipai-message-/i.test(String(url || '')));
+}
+
+function rememberYahooMessageTabTree(tabs) {
+  // A query can return a child before its opener. Resolve the whole tree first.
+  for (let pass = 0; pass < tabs.length; pass += 1) {
+    const before = yahooMessageTabOwners.size;
+    for (const tab of tabs) getYahooMessageTabOwner(tab);
+    if (yahooMessageTabOwners.size === before) break;
+  }
+}
+
+chrome.tabs.onCreated?.addListener(tab => {
+  const owner = getYahooMessageTabOwner(tab);
+  if (owner?.closed) closeTabIfExists(tab.id).catch(() => {});
+});
+
+function assertYahooMessageActive(context) {
+  if (context?.closed) throw new Error('message job timeout after 45s');
+}
+
+async function closeYahooMessageTabs(context) {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  rememberYahooMessageTabTree(tabs);
+  for (const id of context.tabIds) {
+    const tab = await chrome.tabs.get(id).catch(() => null);
+    // Leave a login/PIN page for the existing manual verification workflow.
+    if (!tab || isManualVerificationTab(tab)) continue;
+    await closeTabIfExists(id);
+  }
+}
+
+async function waitForYahooMessageDocument(tabId, context) {
+  const deadline = Date.now() + MESSAGE_NAVIGATION_WAIT_MS;
+  while (Date.now() < deadline) {
+    assertYahooMessageActive(context);
+    const tab = await chrome.tabs.get(tabId);
+    if (isManualVerificationTab(tab)) throw new Error('Yahoo 需要登录或验证，完成验证后请重新读取消息');
+    if (tab.status === 'complete' && !/^about:blank/i.test(tab.url || '')) return tab;
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: function isYahooMessageDocumentReady() {
+        return /(^|\.)yahoo\.co\.jp$/.test(location.hostname) &&
+          (document.readyState !== 'loading' || Boolean(document.querySelector('script#__NEXT_DATA__, #messagelist')));
+      }
+    }).catch(() => null);
+    if (result?.[0]?.result === true) return tab;
+    await sleep(250);
+  }
+  throw new Error('Yahoo 消息页面加载超时');
+}
+
+async function openYahooMessageTransactionPage(job, context) {
+  const tab = await chrome.tabs.create({ url: `about:blank#gdaipai-message-${job.orderId}`, active: false });
+  context.tabIds.add(tab.id);
+  yahooMessageTabOwners.set(tab.id, context);
+  assertYahooMessageActive(context);
+  await chrome.tabs.update(tab.id, { url: job.transactionUrl || 'https://auctions.yahoo.co.jp/my/won', active: false });
+  if (job.transactionUrl) await waitForYahooMessageDocument(tab.id, context);
+  else await waitForTabComplete(tab.id, MESSAGE_NAVIGATION_WAIT_MS);
+  assertYahooMessageActive(context);
+  let current = await chrome.tabs.get(tab.id);
+  if (isManualVerificationTab(current)) throw new Error('Yahoo 需要登录或验证，完成验证后请重新读取消息');
+  if (!job.transactionUrl) {
+    await sleep(3000);
+    await injectContentScript(tab.id);
+    const previousIds = await getTabIds();
+    assertYahooMessageActive(context);
+    const result = await chrome.tabs.sendMessage(tab.id, { type: 'CLICK_TRANSACTION_CONTACT', productId: job.productId });
+    if (!result?.success) throw new Error(result?.error || 'transaction contact button not found');
+    assertYahooMessageActive(context);
+    if (result.href) {
+      await chrome.tabs.update(tab.id, { url: result.href, active: false });
+    } else {
+      await sleep(500);
+      current = await switchToNewestNewTab(previousIds, current);
+    }
+    await waitForYahooMessageDocument(current.id, context);
+    assertYahooMessageActive(context);
+    current = await chrome.tabs.get(current.id);
+    if (isManualVerificationTab(current)) throw new Error('Yahoo 需要登录或验证，完成验证后请重新读取消息');
+  }
+  return current;
 }
 
 function extractYahooTradeMessageFromPage() {
@@ -1328,6 +1440,7 @@ async function getYahooMessageNavigationState(tabId) {
 }
 
 async function clickYahooMessageNavigationAction(tab, action) {
+  assertYahooMessageActive(getYahooMessageTabOwner(tab));
   const previousTabIds = await getTabIds();
   const previousUrl = String(tab?.url || '');
   const result = await chrome.scripting.executeScript({
@@ -1338,13 +1451,16 @@ async function clickYahooMessageNavigationAction(tab, action) {
   });
   const clickResult = result?.[0]?.result || { success: false, error: 'Yahoo message navigation click returned no result' };
   if (!clickResult.success) return { ...clickResult, tab };
+  assertYahooMessageActive(getYahooMessageTabOwner(tab));
   if (clickResult.href) {
     await chrome.tabs.update(tab.id, { url: clickResult.href, active: false });
   }
   await sleep(action === 'closeBundleNotice' ? 800 : 1200);
   let nextTab = await switchToNewestNewTab(previousTabIds, tab).catch(() => tab);
   if (!nextTab?.id) nextTab = tab;
-  await waitForTransactionPageInteractive(nextTab.id).catch(() => {});
+  const messageOwner = getYahooMessageTabOwner(nextTab);
+  if (messageOwner) await waitForYahooMessageDocument(nextTab.id, messageOwner);
+  else await waitForTransactionPageInteractive(nextTab.id).catch(() => {});
   const refreshed = await chrome.tabs.get(nextTab.id).catch(() => nextTab);
   refreshed._gdaipaiCreatedTabIds = [...new Set([
     ...(tab?._gdaipaiCreatedTabIds || []),
@@ -1360,6 +1476,7 @@ async function prepareYahooMessagePage(tab, job = {}) {
   let storeBundleNoticeSeen = false;
   let transitions = 0;
   while (Date.now() - startedAt <= MESSAGE_NAVIGATION_WAIT_MS && transitions < 4) {
+    assertYahooMessageActive(getYahooMessageTabOwner(current));
     const state = await getYahooMessageNavigationState(current.id).catch(() => null);
     if (!state) {
       await sleep(MESSAGE_EXTRACT_POLL_MS);
@@ -1598,7 +1715,20 @@ async function dispatchTrustedYahooMessageSend(tab, messageText) {
   if (!pointResult?.success) return pointResult || { success: false, error: 'message send point not found' };
   const target = { tabId };
   let diagnostics = await getTrustedInputDiagnostics(tabId, 'yahooMessageSend', 'debuggerMouse', pointResult.button);
+  const messageOwner = yahooMessageTabOwners.get(tabId);
+  let ownsWorkflowLock = false;
   try {
+    if (messageOwner) {
+      // Only this foreground fallback shares the workflow lock: Win32 PIN input
+      // must keep its focus. Ordinary message reads and DOM sends stay independent.
+      while (workflowRunning || manualVerificationFlowActive) {
+        assertYahooMessageActive(messageOwner);
+        await sleep(250);
+      }
+      assertYahooMessageActive(messageOwner);
+      workflowRunning = true;
+      ownsWorkflowLock = true;
+    }
     await chrome.tabs.update(tabId, { active: true }).catch(() => null);
     if (tab?.windowId && chrome.windows?.update) {
       await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
@@ -1651,6 +1781,10 @@ async function dispatchTrustedYahooMessageSend(tab, messageText) {
       clickCount: 1
     });
     await chrome.debugger.detach(target).catch(() => null);
+    if (ownsWorkflowLock) {
+      workflowRunning = false;
+      ownsWorkflowLock = false;
+    }
     diagnostics = await getTrustedInputDiagnostics(tabId, 'yahooMessageSend', 'debuggerMouse', pointResult.button).catch(() => diagnostics);
     await postPluginDiagnostic({
       type: 'trusted_input',
@@ -1663,6 +1797,8 @@ async function dispatchTrustedYahooMessageSend(tab, messageText) {
   } catch (e) {
     await chrome.debugger.detach(target).catch(() => null);
     return { success: false, error: e.message || 'trusted Yahoo message send failed', diagnostics };
+  } finally {
+    if (ownsWorkflowLock) workflowRunning = false;
   }
 }
 
@@ -1670,6 +1806,7 @@ async function extractYahooTradeMessages(tabId, options = {}) {
   const startedAt = Date.now();
   let lastResult = { success: false, error: 'message extraction returned no result' };
   while (Date.now() - startedAt <= MESSAGE_EXTRACT_RENDER_WAIT_MS) {
+    assertYahooMessageActive(yahooMessageTabOwners.get(tabId));
     const injectionResult = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
@@ -1690,6 +1827,7 @@ async function sendYahooTradeMessage(tabOrId, messageText) {
   let lastResult = { success: false, error: 'message send returned no result' };
   let storePageSeen = false;
   while (Date.now() - startedAt <= MESSAGE_EXTRACT_RENDER_WAIT_MS) {
+    assertYahooMessageActive(yahooMessageTabOwners.get(tabId));
     const injectionResult = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
@@ -1713,6 +1851,7 @@ async function sendYahooTradeMessage(tabOrId, messageText) {
     await sleep(MESSAGE_EXTRACT_POLL_MS);
   }
   if (storePageSeen) {
+    assertYahooMessageActive(yahooMessageTabOwners.get(tabId));
     const trustedResult = await dispatchTrustedYahooMessageSend(tabOrId, messageText);
     if (!trustedResult?.success) return trustedResult;
     const visible = await waitForYahooSentMessageVisible(tabId, messageText, MESSAGE_EXTRACT_RENDER_WAIT_MS);
@@ -2682,6 +2821,7 @@ async function waitForPaymentStateAcrossTabs(tab, predicate, previousIds, timeou
     if (original?.id) candidates.set(original.id, original);
 
     const tabs = await chrome.tabs.query({}).catch(() => []);
+    rememberYahooMessageTabTree(tabs);
     for (const candidate of tabs) {
       if (!candidate?.id || !isLikelyYahooTransactionCleanupTab(candidate)) continue;
       if (candidate.id === originalTabId || created.has(candidate.id) || !previous.has(candidate.id)) {
@@ -4954,12 +5094,14 @@ function buildManualVerificationId(type, tab, context = {}) {
 
 async function getOpenManualPinTabs() {
   const tabs = await chrome.tabs.query({}).catch(() => []);
-  return tabs.filter(isLikelyManualPinTab);
+  rememberYahooMessageTabTree(tabs);
+  return tabs.filter(tab => !isYahooMessageTab(tab) && isLikelyManualPinTab(tab));
 }
 
 async function getOpenManualVerificationTabs() {
   const tabs = await chrome.tabs.query({}).catch(() => []);
-  return tabs.filter(tab => isManualVerificationTab(tab) && !ignoredManualVerificationTabIds.has(tab.id));
+  rememberYahooMessageTabTree(tabs);
+  return tabs.filter(tab => !isYahooMessageTab(tab) && isManualVerificationTab(tab) && !ignoredManualVerificationTabIds.has(tab.id));
 }
 
 async function getManualVerificationLockedTab() {
@@ -5552,10 +5694,12 @@ async function refreshManualPinPageBeforeAnswer(tab) {
 async function findManualVerificationTransitionTab(current, previousTabIds = new Set(), options = {}) {
   const currentTab = current?.id ? await chrome.tabs.get(current.id).catch(() => current) : current;
   const tabs = await chrome.tabs.query({}).catch(() => []);
+  rememberYahooMessageTabTree(tabs);
   const previous = previousTabIds instanceof Set ? previousTabIds : new Set(previousTabIds || []);
   const candidates = [];
   if (currentTab?.id && isManualVerificationTab(currentTab)) candidates.push(currentTab);
   for (const tab of tabs) {
+    if (isYahooMessageTab(tab)) continue;
     if (!tab?.id || !isManualVerificationTab(tab)) continue;
     if (!candidates.some(candidate => candidate.id === tab.id)) candidates.push(tab);
   }
@@ -5815,12 +5959,16 @@ async function getTabIds() {
 }
 
 async function switchToNewestNewTab(previousIds, fallbackTab, options = {}) {
+  const messageOwner = getYahooMessageTabOwner(fallbackTab);
+  assertYahooMessageActive(messageOwner);
   const isCandidate = typeof options.isCandidate === 'function'
     ? options.isCandidate
-    : isLikelyYahooTransactionCleanupTab;
+    : tab => isLikelyYahooTransactionCleanupTab(tab, Boolean(messageOwner));
   const tabs = await chrome.tabs.query({});
+  rememberYahooMessageTabTree(tabs);
   const newTabs = tabs
-    .filter(tab => tab.id && !previousIds.has(tab.id) && isCandidate(tab))
+    .filter(tab => tab.id && !previousIds.has(tab.id) && isCandidate(tab) &&
+      (messageOwner ? getYahooMessageTabOwner(tab) === messageOwner : !isYahooMessageTab(tab)))
     .sort((a, b) => (b.id || 0) - (a.id || 0));
   if (!newTabs.length) return fallbackTab;
   const nextTab = newTabs[0];
@@ -5829,8 +5977,11 @@ async function switchToNewestNewTab(previousIds, fallbackTab, options = {}) {
   if (fallbackTab?.id && fallbackTab.id !== nextTab.id) {
     await closeTabIfExists(fallbackTab.id);
   }
-  if (nextTab.id) await waitForTabComplete(nextTab.id).catch(() => {});
-  await sleep(1500);
+  if (messageOwner) await waitForYahooMessageDocument(nextTab.id, messageOwner);
+  else {
+    if (nextTab.id) await waitForTabComplete(nextTab.id).catch(() => {});
+    await sleep(1500);
+  }
   await injectContentScript(nextTab.id).catch(() => {});
   nextTab._gdaipaiCreatedTabIds = [...created];
   return nextTab;
@@ -5860,7 +6011,8 @@ function isLikelyYahooTransactionTab(tab) {
     /:\/\/account\.edit\.yahoo\.co\.jp\//i.test(url);
 }
 
-function isLikelyYahooTransactionCleanupTab(tab) {
+function isLikelyYahooTransactionCleanupTab(tab, includeMessageTabs = false) {
+  if (!includeMessageTabs && isYahooMessageTab(tab)) return false;
   const url = String(tab?.url || '');
   return !url ||
     /^about:blank/i.test(url) ||
@@ -6176,6 +6328,7 @@ async function waitForBundleActionStateAcrossTabs(tab, predicate, previousIds, t
     if (original?.id) candidates.set(original.id, original);
 
     const tabs = await chrome.tabs.query({}).catch(() => []);
+    rememberYahooMessageTabTree(tabs);
     for (const candidate of tabs) {
       if (!candidate?.id || !isLikelyYahooTransactionCleanupTab(candidate)) continue;
       if (candidate.id === originalTabId || created.has(candidate.id) || !previous.has(candidate.id)) {
@@ -6607,6 +6760,7 @@ async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
   const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
   if (tab?.id && !isManualVerificationTab(tab)) ids.add(tab.id);
   const tabs = await chrome.tabs.query({}).catch(() => []);
+  rememberYahooMessageTabTree(tabs);
   for (const candidate of tabs) {
     if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
     if (managedTaskTabs.has(candidate.id)) continue;
@@ -6614,6 +6768,7 @@ async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
     if (isLikelyYahooTransactionCleanupTab(candidate)) ids.add(candidate.id);
   }
   for (const id of ids) {
+    if (yahooMessageTabOwners.has(id)) continue;
     if (managedTaskTabs.has(id)) continue;
     const current = await chrome.tabs.get(id).catch(() => null);
     if (current && isManualVerificationTab(current)) continue;
@@ -6626,6 +6781,7 @@ async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
   const ids = new Set(tab?._gdaipaiCreatedTabIds || []);
   if (tab?.id && !isManualVerificationTab(tab)) ids.add(tab.id);
   const tabs = await chrome.tabs.query({}).catch(() => []);
+  rememberYahooMessageTabTree(tabs);
   for (const candidate of tabs) {
     if (!candidate?.id || beforeTabIds.has(candidate.id)) continue;
     if (managedTaskTabs.has(candidate.id)) continue;
@@ -6633,6 +6789,7 @@ async function closeTabsForScanFlow(tab, beforeTabIds = new Set()) {
     if (isLikelyYahooTransactionCleanupTab(candidate)) ids.add(candidate.id);
   }
   for (const id of ids) {
+    if (yahooMessageTabOwners.has(id)) continue;
     if (managedTaskTabs.has(id)) continue;
     const current = await chrome.tabs.get(id).catch(() => null);
     if (current && isManualVerificationTab(current)) continue;
@@ -7352,19 +7509,29 @@ async function executeConfirmReceiptJob(job) {
 }
 
 async function executeYahooMessageJob(job) {
-  const beforeTabIds = await getTabIds();
+  const context = { tabIds: new Set(), closed: false, finished: false };
+  const cleanup = async () => {
+    await closeYahooMessageTabs(context).catch(() => {});
+    if (context.finished) {
+      for (const id of context.tabIds) yahooMessageTabOwners.delete(id);
+    }
+  };
   let tab = null;
   try {
-    const result = await withTimeout((async () => {
-      tab = await openTransactionPage(job, beforeTabIds);
+    const operation = (async () => {
+      tab = await openYahooMessageTransactionPage(job, context);
+      assertYahooMessageActive(context);
       if (job.jobType === 'send') {
         tab = await prepareYahooMessagePage(tab, job);
+        assertYahooMessageActive(context);
         const sendResult = await sendYahooTradeMessage(tab, job.sendText || '');
         if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
         const extractResult = await extractYahooTradeMessages(tab.id);
+        assertYahooMessageActive(context);
         await updateYahooMessageStatus({
           orderId: job.orderId,
           productId: job.productId,
+          startedAt: job.startedAt,
           jobType: 'send',
           messageHtml: extractResult?.success ? extractResult.messageHtml : ''
         });
@@ -7376,34 +7543,60 @@ async function executeYahooMessageJob(job) {
         extractResult = await extractYahooTradeMessages(tab.id);
       }
       if (!extractResult?.success) throw new Error(extractResult?.error || 'message extraction failed');
+      assertYahooMessageActive(context);
       await updateYahooMessageStatus({
         orderId: job.orderId,
         productId: job.productId,
+        startedAt: job.startedAt,
         jobType: 'fetch',
         messageHtml: extractResult.messageHtml
       });
       return { success: true };
-    })(), MESSAGE_JOB_TIMEOUT_MS, () => new Error('message job timeout after 45s'));
+    })().finally(async () => {
+      context.finished = true;
+      if (context.closed) await cleanup();
+    });
+    const result = await withTimeout(operation, MESSAGE_JOB_TIMEOUT_MS, () => {
+      context.closed = true;
+      return new Error('message job timeout after 45s');
+    });
     return result;
   } catch (error) {
+    context.closed = true;
+    await cleanup();
     await updateYahooMessageStatus({
       orderId: job.orderId,
       productId: job.productId,
+      startedAt: job.startedAt,
       jobType: job.jobType === 'send' ? 'send' : 'fetch',
       error: error?.message || String(error || 'message job failed')
     }).catch(() => {});
     return { success: false, error: error?.message || String(error || 'message job failed') };
   } finally {
-    await closeTabsForTransactionFlow(tab, beforeTabIds).catch(() => {});
+    context.closed = true;
+    await cleanup();
   }
 }
 
 async function runYahooMessageJobs() {
-  const jobs = await fetchYahooMessageJobs();
-  for (const job of jobs) {
-    await executeYahooMessageJob(job);
+  if (yahooMessagesRunning) return 0;
+  yahooMessagesRunning = true;
+  let processed = 0;
+  try {
+    // Claim only when ready to execute: queued messages should not age as processing.
+    while (processed < 3) {
+      if (manualVerificationFlowActive || (await getOpenManualVerificationTabs()).length) break;
+      const jobs = await fetchYahooMessageJobs();
+      if (!jobs.length) break;
+      for (const job of jobs) {
+        await executeYahooMessageJob(job);
+        processed += 1;
+      }
+    }
+    return processed;
+  } finally {
+    yahooMessagesRunning = false;
   }
-  return jobs.length;
 }
 
 async function runConfirmReceiptJobs() {
@@ -7475,8 +7668,6 @@ async function runWorkflowAction() {
   try {
     await refreshPluginConfig();
     if (await pauseIdleWorkForOpenManualPin()) return;
-    const messageJobCount = await runYahooMessageJobs();
-    if (messageJobCount > 0) return;
     const now = Date.now();
     if (now - lastWorkflowSyncAt < idleSyncIntervalMs) return;
     lastWorkflowSyncAt = now;
@@ -7681,6 +7872,7 @@ async function pollBidPool() {
 
 async function pollAndExecute() {
   pollBidPool().catch(error => console.error('[Yahoo Bid] Bid pool failed:', error?.message || error));
+  runYahooMessageJobs().catch(error => console.error('[Yahoo Bid] Yahoo messages failed:', error?.message || error));
   syncMonitorYahooPages().catch(error => console.error('[Yahoo Bid] Monitor sync failed:', error?.message || error));
   runWorkflowAction().catch(error => console.error('[Yahoo Bid] Workflow action failed:', error?.message || error));
 }
@@ -7782,7 +7974,10 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   prepareYahooMessagePage,
   extractYahooTradeMessages,
   sendYahooTradeMessage,
+  dispatchTrustedYahooMessageSend,
   executeYahooMessageJob,
+  openYahooMessageTransactionPage,
+  closeYahooMessageTabs,
   runYahooMessageJobs,
   runConfirmReceiptJobs,
   getConfirmReceiptPageState,

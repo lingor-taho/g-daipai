@@ -782,7 +782,10 @@ async function requestYahooMessageFetch(database, orderId) {
        fetch_status = 'pending',
        fetch_requested_at = CURRENT_TIMESTAMP,
        fetch_error = NULL,
-       updated_at = NULL`,
+       updated_at = NULL
+     WHERE COALESCE(yahoo_trade_messages.fetch_status, 'idle') <> 'processing'
+        OR yahoo_trade_messages.fetch_started_at IS NULL
+        OR datetime(yahoo_trade_messages.fetch_started_at) <= datetime('now', '-3 minutes')`,
     [order.order_id, order.product_id]
   );
   return { success: true, orderId: order.order_id, productId: order.product_id };

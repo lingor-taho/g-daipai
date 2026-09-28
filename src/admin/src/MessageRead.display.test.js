@@ -125,11 +125,11 @@ assert.equal(
 }
 
 assert.equal(
-  source.includes('MESSAGE_PROCESSING_TIMEOUT_MS = 30000') &&
+  source.includes('MESSAGE_PROCESSING_TIMEOUT_MS = 180000') &&
     source.includes('isMessageFetchInProgress') &&
     source.includes('fetch_started_at'),
   true,
-  'MessageRead should let stuck message processing rows become clickable after 30 seconds'
+  'MessageRead should allow retry after the server processing lease expires'
 );
 
 assert.equal(
