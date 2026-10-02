@@ -111,6 +111,7 @@ function loadBackgroundForTest(overrides = {}) {
   if ('PointerEvent' in overrides) sandbox.PointerEvent = overrides.PointerEvent;
   if ('MouseEvent' in overrides) sandbox.MouseEvent = overrides.MouseEvent;
   if ('Event' in overrides) sandbox.Event = overrides.Event;
+  if ('HTMLInputElement' in overrides) sandbox.HTMLInputElement = overrides.HTMLInputElement;
   vm.runInNewContext(code, sandbox);
   return sandbox.globalThis.__G_DAIPAI_BACKGROUND_TEST__;
 }
@@ -12036,7 +12037,8 @@ await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   testWorkerIntervalConfigReschedulesPollingTimer();
 }
 
-run().catch(err => {
+module.exports = { loadBackgroundForTest };
+if (require.main === module) run().catch(err => {
   console.error(err);
   process.exit(1);
 });

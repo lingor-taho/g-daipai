@@ -17,6 +17,7 @@ const {
 const {
   saveCaptchaChallenge,
   getCaptchaChallenge,
+  claimEmailVerification,
   closeCaptchaChallenge
 } = require('../services/manualCaptcha');
 const {
@@ -3202,6 +3203,8 @@ router.get('/manual-captcha/current', async (req, res) => {
     found: true,
     id: challenge.id,
     type: challenge.type || 'captcha',
+    phase: challenge.phase || '',
+    tabId: challenge.tabId || null,
     answered: !!challenge.answer,
     answer: challenge.answer || '',
     pageUrl: challenge.pageUrl || '',
@@ -3210,6 +3213,15 @@ router.get('/manual-captcha/current', async (req, res) => {
     createdAt: challenge.createdAt || '',
     answeredAt: challenge.answeredAt || ''
   });
+});
+
+router.post('/manual-captcha/email/claim', async (req, res) => {
+  try {
+    const result = await claimEmailVerification(db, req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'email verification claim failed' });
+  }
 });
 
 router.post('/manual-captcha/close', async (req, res) => {

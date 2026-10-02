@@ -70,6 +70,8 @@ export default function AdminLayout() {
   const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
   const [captchaChallenge, setCaptchaChallenge] = useState<any>(null);
   const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [emailContinuePending, setEmailContinuePending] = useState(false);
+  const emailContinuePendingRef = useRef(false);
   const [submittedCaptchaId, setSubmittedCaptchaIdState] = useState('');
   const [submittedCaptchaType, setSubmittedCaptchaTypeState] = useState('');
   const [passedCaptchaType, setPassedCaptchaTypeState] = useState('');
@@ -238,6 +240,29 @@ export default function AdminLayout() {
     }
   }
 
+  async function continueEmailVerification() {
+    if (!captchaChallenge?.id || emailContinuePendingRef.current) return;
+    emailContinuePendingRef.current = true;
+    setEmailContinuePending(true);
+    const id = captchaChallenge.id;
+    try {
+      const result = await fetchAdminJson('/api/admin/manual-captcha/continue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      setSubmittedCaptcha(id, 'email');
+      setCaptchaChallenge((current: any) => current?.id === id
+        ? { ...current, answeredAt: result.answeredAt, phase: 'requested' }
+        : current);
+    } catch (e: any) {
+      message.error(e.message || '继续邮箱验证失败');
+    } finally {
+      emailContinuePendingRef.current = false;
+      setEmailContinuePending(false);
+    }
+  }
+
   async function closeCaptchaChallenge() {
     if (!captchaChallenge?.id) return;
     try {
@@ -397,13 +422,16 @@ export default function AdminLayout() {
             ) : null}
             {manualVerificationView.visible ? (
               <Alert
-                type={manualVerificationView.status === 'passed' ? 'success' : 'warning'}
+                type={manualVerificationView.status === 'passed' ? 'success' : manualVerificationView.status === 'error' ? 'error' : 'warning'}
                 showIcon
                 message={
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                    <Typography.Text strong>
-                      {manualVerificationView.title}
-                    </Typography.Text>
+                    <Space wrap>
+                      <Typography.Text strong>{manualVerificationView.title}</Typography.Text>
+                      {manualVerificationView.showContinue ? (
+                        <Button type="primary" size="small" loading={emailContinuePending} onClick={continueEmailVerification}>继续</Button>
+                      ) : null}
+                    </Space>
                     {captchaChallenge ? (
                       <Space wrap align="start">
                         {!isPinChallenge && manualVerificationView.showInput ? (

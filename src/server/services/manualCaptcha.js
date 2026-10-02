@@ -11,7 +11,7 @@ function normalizeCaptchaAnswer(value) {
 
 function normalizeCaptchaChallenge(payload = {}) {
   const id = normalizeCaptchaId(payload.id);
-  const type = payload.type === 'pin' ? 'pin' : 'captcha';
+  const type = ['pin', 'email'].includes(payload.type) ? payload.type : 'captcha';
   const imageDataUrl = String(payload.imageDataUrl || '').trim();
   if (!id) {
     const error = new Error('captcha id is required');
@@ -31,6 +31,10 @@ function normalizeCaptchaChallenge(payload = {}) {
     pageUrl: String(payload.pageUrl || '').slice(0, 1000),
     productId: String(payload.productId || '').trim().slice(0, 32),
     source: String(payload.source || '').trim().slice(0, 64),
+    ...(type === 'email' ? {
+      phase: payload.phase === 'error' ? 'error' : 'waiting',
+      tabId: Number.isSafeInteger(payload.tabId) ? payload.tabId : null
+    } : {}),
     createdAt: new Date().toISOString(),
     answer: '',
     answeredAt: '',
@@ -41,6 +45,12 @@ function normalizeCaptchaChallenge(payload = {}) {
 async function saveCaptchaChallenge(database, payload) {
   const challenge = normalizeCaptchaChallenge(payload);
   const current = await getCaptchaChallenge(database);
+  if (payload.expectedId && current?.id !== normalizeCaptchaId(payload.expectedId)) {
+    const error = new Error('verification challenge changed');
+    error.statusCode = 409;
+    throw error;
+  }
+  if (current?.id === challenge.id && current.type === 'email') return current;
   const next = current?.id === challenge.id && current.answeredAt
     ? {
         ...challenge,
@@ -48,6 +58,18 @@ async function saveCaptchaChallenge(database, payload) {
         answeredAt: current.answeredAt || ''
       }
     : challenge;
+  if (payload.expectedId) {
+    const result = await database.query(
+      `UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ? AND value = ?`,
+      [JSON.stringify(next), MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(current)]
+    );
+    if (!result.rowCount) {
+      const error = new Error('verification challenge changed');
+      error.statusCode = 409;
+      throw error;
+    }
+    return next;
+  }
   await database.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at)
      VALUES (?, ?, CURRENT_TIMESTAMP)`,
@@ -85,17 +107,61 @@ async function answerCaptchaChallenge(database, payload = {}) {
     error.statusCode = 404;
     throw error;
   }
+  if (challenge.type === 'email') {
+    const error = new Error('use continue for email verification');
+    error.statusCode = 400;
+    throw error;
+  }
   const next = {
     ...challenge,
     answer,
     answeredAt: new Date().toISOString()
   };
-  await database.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at)
-     VALUES (?, ?, CURRENT_TIMESTAMP)`,
-    [MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(next)]
+  const result = await database.query(
+    `UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ? AND value = ?`,
+    [JSON.stringify(next), MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(challenge)]
   );
+  if (!result.rowCount) {
+    const error = new Error('verification challenge changed');
+    error.statusCode = 409;
+    throw error;
+  }
   return next;
+}
+
+// The request and claim are separate: replaying either HTTP request never replays Yahoo actions.
+async function requestEmailVerification(database, payload = {}) {
+  const challenge = await getCaptchaChallenge(database);
+  if (!challenge || challenge.id !== normalizeCaptchaId(payload.id) || challenge.type !== 'email') {
+    const error = new Error('email verification challenge not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (challenge.answeredAt) return challenge;
+  const next = { ...challenge, answer: 'continue', answeredAt: new Date().toISOString(), phase: 'requested' };
+  const result = await database.query(
+    `UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ? AND value = ?`,
+    [JSON.stringify(next), MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(challenge)]
+  );
+  if (!result.rowCount) {
+    const error = new Error('verification challenge changed');
+    error.statusCode = 409;
+    throw error;
+  }
+  return next;
+}
+
+async function claimEmailVerification(database, payload = {}) {
+  const challenge = await getCaptchaChallenge(database);
+  if (!challenge || challenge.id !== normalizeCaptchaId(payload.id) || challenge.type !== 'email' || challenge.phase !== 'requested') {
+    return { claimed: false };
+  }
+  const next = { ...challenge, phase: 'processing' };
+  const result = await database.query(
+    `UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ? AND value = ?`,
+    [JSON.stringify(next), MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(challenge)]
+  );
+  return { claimed: !!result.rowCount };
 }
 
 async function closeCaptchaChallenge(database, id) {
@@ -107,12 +173,11 @@ async function closeCaptchaChallenge(database, id) {
     ...challenge,
     closedAt: new Date().toISOString()
   };
-  await database.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at)
-     VALUES (?, ?, CURRENT_TIMESTAMP)`,
-    [MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(next)]
+  const result = await database.query(
+    `UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ? AND value = ?`,
+    [JSON.stringify(next), MANUAL_CAPTCHA_CONFIG_KEY, JSON.stringify(challenge)]
   );
-  return { closed: 1 };
+  return { closed: result.rowCount ? 1 : 0 };
 }
 
 module.exports = {
@@ -121,5 +186,7 @@ module.exports = {
   saveCaptchaChallenge,
   getCaptchaChallenge,
   answerCaptchaChallenge,
+  requestEmailVerification,
+  claimEmailVerification,
   closeCaptchaChallenge
 };

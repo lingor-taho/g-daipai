@@ -30,6 +30,15 @@ function getManualVerificationDisplayState(challenge, options = {}) {
   }
 
   const isPin = challenge.type === 'pin';
+  if (challenge.type === 'email') {
+    return {
+      visible: true,
+      status: challenge.phase === 'error' ? 'error' : 'continue',
+      showInput: false,
+      showContinue: true,
+      title: challenge.message || '需要邮箱验证码。'
+    };
+  }
   return {
     visible: true,
     status: 'input',

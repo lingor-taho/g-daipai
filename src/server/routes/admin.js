@@ -64,6 +64,7 @@ const {
 const {
   getCaptchaChallenge,
   answerCaptchaChallenge,
+  requestEmailVerification,
   closeCaptchaChallenge
 } = require('../services/manualCaptcha');
 const { getOnlineUsers } = require('../services/onlineUsers');
@@ -3207,6 +3208,15 @@ router.post('/manual-captcha/answer', async (req, res) => {
     res.json({ success: true, id: challenge.id, answeredAt: challenge.answeredAt });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'captcha answer failed' });
+  }
+});
+
+router.post('/manual-captcha/continue', async (req, res) => {
+  try {
+    const challenge = await requestEmailVerification(db, req.body || {});
+    res.json({ success: true, id: challenge.id, answeredAt: challenge.answeredAt });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || 'email verification continue failed' });
   }
 });
 

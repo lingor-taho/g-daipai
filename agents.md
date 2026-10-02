@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-09-28
+**最后更新**: 2026-10-02
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -29,6 +29,8 @@ Yahoo 日本拍卖代拍系统。中国用户通过 Web 提交商品 URL、最�
 2026-09-28 本地将 Yahoo 消息拆为独立执行线，按插件工作轮询领取，后台有待处理消息时每 2 秒刷新结果；API、后台及插件需一起部署，生产实际耗时待验证。
 
 2026-09-28 本地启动脚本已改为前端按需构建和 HTTP 就绪检查；首次建立构建记录后，未变化的前端跳过编译，服务全部就绪立即结束等待。服务器启动耗时待部署验证。
+
+2026-10-02 本地已接入 PIN 前的邮箱验证码：后台显示“需要邮箱验证码。”及“继续”，插件从同一 Chrome 已登录的 Gmail 读取新验证码。每次点击仅刷新 Yahoo 一次、填入并提交一次；邮件等待 60 秒，提交后进入文字验证码页等待 30 秒，失败由用户再次点击继续。API、后台和插件需一起部署，真实 Gmail/Yahoo 页面待验证。
 
 ---
 
@@ -118,6 +120,32 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0a. PIN 前邮箱验证码生产验证
+
+部署 API、后台静态文件和完整 `yahoo-plugin`（包含新增 Gmail host permission），在服务器 Chrome reload 扩展并确认允许访问 `mail.google.com`。Gmail 使用同一 Chrome 默认账号 `/mail/u/0/`，需要已登录且与 Yahoo 页面展示的邮箱匹配；不接入 Gmail API 或新增邮箱凭据。
+
+邮箱验证页按 DOM 提示区分，不再仅凭 `/config/login?src=auc` 当作 PIN。后台显示“需要邮箱验证码。”及“继续”；每轮先读取 Gmail 当前 Yahoo 邮件标识，防止同一分钟的旧邮件被误取，再仅刷新 Yahoo 一次。读取只接受本轮新增、Yahoo 登录发件人、收件邮箱匹配且时间有效的最新邮件；Gmail 准备上限 15 秒，Yahoo 刷新起最多等邮件 60 秒，不点击 Yahoo 再发送链接。
+
+邮箱码只填入、提交一次，不使用 PIN 键盘 fallback。30 秒只从邮箱码实际点击登录后计时，用于等待本次 Yahoo tab 或其新增子 tab 进入 `/ncaptcha` 文字验证码页，不限制人工文字验证码或后续 PIN 的等待。进入文字验证码页后复用截图、人工提交和原 PIN 流程。原有小窗口白图问题仍按第 3 项处理，本次没有修改截图方式。
+
+60 秒无新验证码时显示“60秒未收到验证码，请重试”；填入/提交失败、Yahoo 报错或提交后 30 秒未进入文字验证码页时显示“gmail验证码填入错误，请重试”。两种错误后都保留“继续”，新一轮必须再次点击，不自动刷新或重新提交。重复点击和并发领取由条件更新保护；插件重启遇到已领取的邮箱验证也转为错误等待再次点击，不重放结果未知的操作。验证码直接从 Gmail 填入 Yahoo，不写入后台、数据库或日志；标签页清理只处理本轮 Gmail tab，随后恢复 Yahoo 焦点。
+
+本地模拟已覆盖单次刷新/提交、60 秒及独立 30 秒超时、提交拒绝、失败等待新点击、并发处理共享、旧邮件/错误账号/错误发件人过滤、Gmail 会话最新邮件、迟到 tab 清理及插件恢复。真实 Gmail DOM、邮件正文格式和 Yahoo 提交仍须部署实测；页面结构不匹配时失败退出，不盲目提交或自动尝试多种方式。
+
+验证：
+
+```powershell
+node src/server/services/manualCaptcha.test.js
+node src/server/routes/plugin.test.js
+node src/server/routes/admin.orders.test.js
+node src/admin/src/manualVerificationState.test.js
+node yahoo-plugin/emailVerification.test.js
+node yahoo-plugin/background.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 0. 普通商品暂停功能生产验证
 
@@ -476,6 +504,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-02 PIN 前邮箱验证码按次执行
+
+新增邮箱验证类型及后台“继续”入口，邮箱码与 PIN 分离识别和输入。继续请求和插件领取分成两个一次性步骤，重复请求不重放 Yahoo 操作；失败发布新验证标识，必须由用户再次点击。每轮仅一次 Yahoo 刷新和一次邮箱码提交，刷新起等邮件 60 秒、提交登录后等文字验证码页 30 秒，之后沿用人工文字验证码及 PIN 流程。验证状态仍存现有 config，无新增数据库列；状态回写采用条件更新，过期回调不能覆盖新验证。Gmail 新权限及真实页面验收见当前主计划 0a。本地修改尚未部署生产或读取真实邮箱。
 
 ### 2026-09-28 启动按需构建与即时就绪检查
 

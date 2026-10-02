@@ -46,3 +46,14 @@ testAnsweredPinShowsConfirmingInsteadOfInput();
 testLocallySubmittedPinShowsConfirmingBeforeNextPoll();
 testNewPinChallengeShowsInputAgainAfterFailure();
 testSubmittedCaptchaCanShowPassedNoticeAfterChallengeCloses();
+
+for (const message of ['需要邮箱验证码。', '60秒未收到验证码，请重试', 'gmail验证码填入错误，请重试']) {
+  const view = getManualVerificationDisplayState({ id: 'email-2', type: 'email', message, phase: message === '需要邮箱验证码。' ? 'waiting' : 'error' }, { submittedChallengeId: 'email-1' });
+  assert.equal(view.title, message);
+  assert.equal(view.showInput, false);
+  assert.equal(view.showContinue, true);
+}
+const pendingEmail = getManualVerificationDisplayState({ id: 'email-1', type: 'email', answeredAt: 'now', phase: 'processing' });
+assert.equal(pendingEmail.status, 'confirming');
+assert.equal(Boolean(pendingEmail.showContinue), false);
+assert.equal(getManualVerificationDisplayState(null, { passedChallengeType: 'email' }).visible, false);

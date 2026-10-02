@@ -15,6 +15,9 @@ const steps = [
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],
   ['Yahoo plugin content tests', process.execPath, ['yahoo-plugin/content.test.js'], rootDir],
   ['Yahoo plugin background tests', process.execPath, ['yahoo-plugin/background.test.js'], rootDir],
+  ['Yahoo email verification tests', process.execPath, ['yahoo-plugin/emailVerification.test.js'], rootDir],
+  ['Manual verification service tests', process.execPath, ['src/server/services/manualCaptcha.test.js'], rootDir],
+  ['Admin manual verification display tests', process.execPath, ['src/admin/src/manualVerificationState.test.js'], rootDir],
   ['Yahoo plugin encoding guard', process.execPath, ['yahoo-plugin/encoding.test.js'], rootDir],
   ['Admin build', npmCommand, ['run', 'build'], adminDir],
   ['Client build', npmCommand, ['run', 'build'], clientDir]
