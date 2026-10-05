@@ -15,6 +15,7 @@ const statusColors: Record<string, string> = {
 };
 
 const statusLabels: Record<string, string> = {
+  preparation_pending: '等待补全商品信息',
   pending: '队列中',
   processing: '执行中',
   bidding: '已出价',
@@ -58,6 +59,44 @@ function formatDateTime(value: string | null | undefined) {
 export default function TasksPage() {
   const [stats, setStats] = useState<any>(null);
   const [statsError, setStatsError] = useState('');
+  const [queueVisible, setQueueVisible] = useState(false);
+  const [queuePage, setQueuePage] = useState(1);
+  const [queueData, setQueueData] = useState<any>({ items: [], total: 0 });
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState('');
+  const queueCount = (stats?.pending || 0) + (stats?.preparation?.pending || 0);
+
+  useEffect(() => {
+    if (stats && queueCount === 0) setQueueVisible(false);
+  }, [queueCount, stats]);
+
+  useEffect(() => {
+    if (!queueVisible) return;
+    let active = true;
+    let inFlight = false;
+    const controller = new AbortController();
+    async function refreshQueue() {
+      if (inFlight) return;
+      inFlight = true;
+      setQueueLoading(true);
+      try {
+        const result = await fetchAdminJson(`/api/admin/tasks/queue?current=${queuePage}&pageSize=10`, { signal: controller.signal });
+        if (!active) return;
+        setQueueData(result);
+        setQueueError('');
+        if (!result.total) setQueueVisible(false);
+        else if (!result.items.length && queuePage > 1) setQueuePage(Math.ceil(result.total / 10));
+      } catch (error: any) {
+        if (active) setQueueError(error.message || '队列详情加载失败');
+      } finally {
+        inFlight = false;
+        if (active) setQueueLoading(false);
+      }
+    }
+    refreshQueue();
+    const timer = window.setInterval(refreshQueue, 5000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
+  }, [queueVisible, queuePage]);
 
   async function fetchStats() {
     try {
@@ -90,7 +129,7 @@ export default function TasksPage() {
         </a>
       )
     },
-    { title: '当前价', dataIndex: 'current_price', render: (_: any, row: any) => formatJPY(row.current_price) },
+    { title: '当前价', dataIndex: 'current_price', render: (_: any, row: any) => row.status === 'preparation_pending' ? '-' : formatJPY(row.current_price) },
     { title: '最高价', dataIndex: 'max_price', render: (_: any, row: any) => formatJPY(row.max_price) },
     { title: '策略', dataIndex: 'strategy', render: (_: any, row: any) => strategyLabels[row.strategy] || row.strategy || '即时拍' },
     {
@@ -128,7 +167,15 @@ export default function TasksPage() {
         <Col xs={12} md={8} xl={4}><Card><Statistic title="已建出价任务" value={stats?.total || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-            <Statistic style={{ flexShrink: 0 }} title="队列中" value={(stats?.pending || 0) + preparation.pending} />
+            <Statistic style={{ flexShrink: 0 }} title="队列中" value={queueCount}
+              formatter={value => <button type="button" disabled={queueCount === 0}
+                aria-label={queueVisible ? '收起队列详情' : '展开队列详情'} aria-expanded={queueVisible}
+                aria-controls="task-queue-details"
+                onClick={() => { setQueuePage(1); setQueueVisible(visible => !visible); }}
+                style={{ padding: 0, border: 0, background: 'transparent', font: 'inherit',
+                  color: queueCount > 0 ? '#1677ff' : 'inherit', cursor: queueCount > 0 ? 'pointer' : 'default' }}>
+                {Number(value || 0).toLocaleString('en-US')}
+              </button>} />
             <div style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'nowrap' }}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>待补全 {preparation.pending}</Typography.Text><br />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>待出价 {stats?.pending || 0}</Typography.Text>
@@ -148,6 +195,14 @@ export default function TasksPage() {
         <Col xs={12} md={8} xl={4}><Card><Statistic title="成功" value={stats?.success || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="出价失败" value={stats?.failed || 0} /></Card></Col>
       </Row>
+
+      {queueVisible && <Card id="task-queue-details" title="队列任务详情">
+        {queueError && <Alert type="error" showIcon message="队列详情加载失败" description={queueError} />}
+        <ProTable columns={columns} dataSource={queueData.items} rowKey="queue_key"
+          loading={queueLoading} search={false} options={false} scroll={{ x: 1100 }}
+          pagination={{ current: queuePage, pageSize: 10, total: queueData.total,
+            showSizeChanger: false, onChange: page => setQueuePage(page) }} />
+      </Card>}
 
       <Card>
         <Typography.Text type="secondary">下一条待执行</Typography.Text>

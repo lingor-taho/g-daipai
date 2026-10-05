@@ -2,6 +2,7 @@
 const router = express.Router();
 const db = require('../models');
 const { getBatchPreparationStats } = require('../services/batchTaskQueue');
+const { getAdminTaskQueue } = require('../services/adminTaskQueue');
 const bcrypt = require('bcryptjs');
 const fs = require('fs/promises');
 const authMiddleware = require('../middleware/auth');
@@ -1447,6 +1448,34 @@ router.get('/accounts/stats', async (req, res) => {
   res.json({ stats });
 });
 
+function mapAdminTaskListItem(item, multiBidConfig, nowMs) {
+  return {
+    ...item,
+    max_price: item.bid_mode === 'buyout'
+      ? Number(item.user_max_price || item.buyout_price || item.max_price || 0)
+      : item.max_price,
+    next_execute_at: item.status === 'preparation_pending'
+      ? null : getNextExecuteAt(item, multiBidConfig, nowMs)
+  };
+}
+
+// 队列详情包含所有待出价任务（包括尚未到时的定时任务）及等待补全行。
+router.get('/tasks/queue', async (req, res, next) => {
+  try {
+    const current = Number(req.query.current || 1);
+    const pageSize = Number(req.query.pageSize || 10);
+    if (!Number.isSafeInteger(current) || current < 1 ||
+        !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
+        !Number.isSafeInteger((current - 1) * pageSize)) {
+      return res.status(400).json({ error: '分页参数无效' });
+    }
+    const result = await getAdminTaskQueue(db, { pageSize, offset: (current - 1) * pageSize });
+    const multiBidConfig = await getPluginMultiBidConfig();
+    const nowMs = Date.now();
+    res.json({ ...result, items: result.items.map(item => mapAdminTaskListItem(item, multiBidConfig, nowMs)) });
+  } catch (error) { next(error); }
+});
+
 // 任务看板
 router.get('/tasks', async (req, res) => {
   const { current = 1, pageSize = 10 } = req.query;
@@ -1455,13 +1484,7 @@ router.get('/tasks', async (req, res) => {
   const items = await db.getAll(tasksQuery.sql, tasksQuery.params);
   const multiBidConfig = await getPluginMultiBidConfig();
   const nowMs = Date.now();
-  const mappedItems = items.map(item => ({
-    ...item,
-    max_price: item.bid_mode === 'buyout'
-      ? Number(item.user_max_price || item.buyout_price || item.max_price || 0)
-      : item.max_price,
-    next_execute_at: getNextExecuteAt(item, multiBidConfig, nowMs)
-  }));
+  const mappedItems = items.map(item => mapAdminTaskListItem(item, multiBidConfig, nowMs));
   const countResult = await db.getOne('SELECT COUNT(*) as total FROM tasks');
   const statusRows = await db.getAll(
     'SELECT status, COUNT(*) as count FROM tasks GROUP BY status'

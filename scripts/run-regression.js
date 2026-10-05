@@ -20,6 +20,7 @@ const steps = [
   ['Client submission display tests', process.execPath, ['src/client/src/pages/Submit.display.test.mjs'], rootDir],
   ['Client bid price tests', process.execPath, ['src/client/src/utils/bidPrice.test.mjs'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],
+  ['Admin queue detail tests', process.execPath, ['src/server/services/adminTaskQueue.test.js'], rootDir],
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],
   ['Yahoo plugin content tests', process.execPath, ['yahoo-plugin/content.test.js'], rootDir],
   ['Yahoo plugin background tests', process.execPath, ['yahoo-plugin/background.test.js'], rootDir],
