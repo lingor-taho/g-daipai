@@ -70,8 +70,9 @@ async function run() {
     assert.deepEqual(f.queue.listResults(7), []);
     const preparation = await getBatchPreparationStats(f.database);
     assert.equal(preparation.pending, 2);
-    assert.equal(preparation.failed, 1);
-    assert.equal(preparation.items.length, 3);
+    assert.equal(preparation.items.length, 2);
+    assert.ok(preparation.items.every(item => item.status === 'pending'));
+    assert.ok(preparation.items.every(item => !Object.hasOwn(item, 'error_msg')));
     await f.queue.processPending();
     assert.equal(f.calls.length, 2);
     assert.equal(f.raw.prepare('SELECT status FROM batch_task_submissions').get().status, 'completed');
@@ -81,7 +82,8 @@ async function run() {
     assert.equal(result.items.length, 1, 'Only submission failures are returned');
     assert.equal(result.items[0].line, 2);
     assert.equal(result.items[0].status, 'submit_failed');
-    assert.equal((await getBatchPreparationStats(f.database)).pending, 0);
+    assert.deepEqual(await getBatchPreparationStats(f.database), { pending: 0, processing: 0, items: [] },
+      'Admin preparation must disappear even while a client submission error is still undismissed');
     f.raw.prepare("UPDATE tasks SET status = 'bidding' WHERE product_id = 'd1246248584'").run();
     assert.deepEqual(f.queue.listResults(7)[0], result);
     f.raw.prepare("UPDATE tasks SET status = 'failed', error_msg = 'outbid after bid' WHERE product_id = 'e1246602869'").run();
@@ -182,6 +184,8 @@ async function run() {
     await revoked.queue.processPending();
     assert.equal(revoked.calls.length, 0);
     assert.equal(revoked.queue.listResults(7)[0].submit_failed_count, 1);
+    assert.deepEqual(await getBatchPreparationStats(revoked.database), { pending: 0, processing: 0, items: [] },
+      'All-failed submissions are reported only to the client, without lingering admin preparation rows');
   } finally { revoked.close(); }
   let activeFetches = 0, maxFetches = 0;
   const starts = [];

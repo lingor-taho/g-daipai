@@ -105,18 +105,19 @@ export default function TasksPage() {
     { title: '商品结束时间', dataIndex: 'end_time', render: (_: any, row: any) => formatDateTime(row.end_time) }
   ];
 
-  const preparation = stats?.preparation || { pending: 0, processing: 0, failed: 0, items: [] };
+  const preparation = stats?.preparation || { pending: 0, processing: 0, items: [] };
+  const activePreparationItems = (preparation.items || []).filter((item: any) =>
+    item.status === 'pending' || item.status === 'processing');
   const preparationColumns = [
     { title: '批次 / 行号', render: (_: any, row: any) => `#${row.batch_id} / 第 ${row.line_number} 行` },
     { title: '提交用户', dataIndex: 'username' },
     { title: '商品ID', dataIndex: 'product_id' },
     { title: '税前最高价', dataIndex: 'max_price', render: (_: any, row: any) => formatJPY(row.max_price) },
     { title: '状态', render: (_: any, row: any) => (
-      <Tag color={row.status === 'failed' ? 'red' : row.status === 'processing' ? 'orange' : 'default'}>
-        {row.status === 'failed' ? '商品准备失败' : row.status === 'processing' ? '正在补全商品信息' : '等待补全商品信息'}
+      <Tag color={row.status === 'processing' ? 'orange' : 'default'}>
+        {row.status === 'processing' ? '正在补全商品信息' : '等待补全商品信息'}
       </Tag>
     ) },
-    { title: '错误信息', dataIndex: 'error_msg', render: (_: any, row: any) => row.error_msg || '-' },
     { title: '接收时间', dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) }
   ];
 
@@ -175,12 +176,12 @@ export default function TasksPage() {
         </div>
       </Card>
 
-      {(preparation.items?.length > 0) && <Card title="批量商品准备进度">
+      {(activePreparationItems.length > 0) && <Card title="批量商品准备进度">
         <Typography.Paragraph type="secondary">
-          待补全 {preparation.pending} 件，正在补全 {preparation.processing} 件，准备失败 {preparation.failed} 件。
-          每件商品补全后立即进入下方出价任务列表，同时继续准备下一件。准备失败可在错误信息中查看原因。
+          待补全 {preparation.pending} 件，正在补全 {preparation.processing} 件。
+          每件商品补全后立即进入下方出价任务列表，同时继续准备下一件；全部处理结束后自动隐藏此区域。
         </Typography.Paragraph>
-        <ProTable columns={preparationColumns} dataSource={preparation.items} rowKey="id"
+        <ProTable columns={preparationColumns} dataSource={activePreparationItems} rowKey="id"
           search={false} options={false} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} />
       </Card>}
 

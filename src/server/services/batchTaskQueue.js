@@ -14,17 +14,17 @@ function queueError(message, statusCode = 400) {
 
 async function getBatchPreparationStats(database) {
   const rows = await database.getAll(`SELECT status, COUNT(*) AS count FROM batch_task_submission_items
-    WHERE status IN ('pending', 'processing', 'failed') GROUP BY status`);
-  const stats = { pending: 0, processing: 0, failed: 0 };
+    WHERE status IN ('pending', 'processing') GROUP BY status`);
+  const stats = { pending: 0, processing: 0 };
   for (const row of rows) stats[row.status] = row.count;
   const items = await database.getAll(`SELECT i.id, i.batch_id, i.line_number, i.product_id, i.max_price,
-      i.status, i.error_msg, b.created_at, u.username
+      i.status, b.created_at, u.username
     FROM batch_task_submission_items i
     JOIN batch_task_submissions b ON b.id = i.batch_id
     LEFT JOIN users u ON u.id = b.user_id
-    WHERE i.status IN ('pending', 'processing') OR (i.status = 'failed' AND b.dismissed_at IS NULL)
-    ORDER BY CASE i.status WHEN 'processing' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-      CASE WHEN i.status = 'failed' THEN -i.batch_id ELSE i.batch_id END, i.line_number LIMIT 50`);
+    WHERE i.status IN ('pending', 'processing')
+    ORDER BY CASE i.status WHEN 'processing' THEN 0 ELSE 1 END,
+      i.batch_id, i.line_number LIMIT 50`);
   return { ...stats, items };
 }
 
