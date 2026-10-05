@@ -84,6 +84,7 @@ async function actingUserMiddleware(req, res, next) {
 
 module.exports = {
   normalizeLevel,
+  getClientUser,
   getAllowedActingUsers,
   resolveActingUserId,
   actingUserMiddleware

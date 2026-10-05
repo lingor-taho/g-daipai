@@ -1,12 +1,13 @@
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
-import { useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getPluginConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import useProductFavorites from '../utils/useProductFavorites';
 import ProductSearchPopup from '../components/ProductSearchPopup';
+import BatchSubmitPopup from '../components/BatchSubmitPopup';
 import TaskList from './TaskList';
 import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
@@ -146,6 +147,9 @@ export default function Submit() {
   const [websiteRateReloadKey, setWebsiteRateReloadKey] = useState(0);
   const [lastFetchedUrl, setLastFetchedUrl] = useState('');
   const [taskListVersion, setTaskListVersion] = useState(0);
+  const [batchSubmitVisible, setBatchSubmitVisible] = useState(false);
+  const closeBatchSubmit = useCallback(() => setBatchSubmitVisible(false), []);
+  const refreshBatchTasks = useCallback(() => setTaskListVersion(version => version + 1), []);
   const [productSearchVisible, setProductSearchVisible] = useState(false);
   const [productSearchKeyword, setProductSearchKeyword] = useState('');
   const [productSearchItems, setProductSearchItems] = useState([]);
@@ -621,15 +625,19 @@ export default function Submit() {
               style={{ width: 32, height: 32, padding: 0, border: 0, background: 'transparent', color: colors.accent, fontSize: 26, cursor: 'pointer' }}>+</button>
           )}
         </div>
-        <div style={inputBoxStyle}>
-          <Input
-            placeholder="粘贴 Yahoo 拍卖商品链接或输入商品名称"
-            value={url}
-            onChange={handleUrlChange}
-            onBlur={handleUrlBlur}
-            onEnterPress={() => handleFetch(url)}
-            clearable
-          />
+        <div style={{ ...inputBoxStyle, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Input
+              placeholder="粘贴 Yahoo 拍卖商品链接或输入商品名称"
+              value={url}
+              onChange={handleUrlChange}
+              onBlur={handleUrlBlur}
+              onEnterPress={() => handleFetch(url)}
+              clearable
+            />
+          </div>
+          <Button size="small" fill="outline" color="primary" onClick={() => setBatchSubmitVisible(true)}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>批量添加</Button>
         </div>
         <Button
           onClick={() => handleFetch(url)}
@@ -643,6 +651,8 @@ export default function Submit() {
           {fetching ? '获取中...' : '获取商品信息'}
         </Button>
       </div>
+
+      <BatchSubmitPopup visible={batchSubmitVisible} onClose={closeBatchSubmit} onSubmitted={refreshBatchTasks} bidBlocked={isBidBlockedUser} />
 
       <ProductSearchPopup
         {...favoriteProps}

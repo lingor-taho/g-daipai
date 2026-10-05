@@ -407,6 +407,8 @@ db.prepare(`
 
 repairStaleTaskForeignKeyReferences();
 
+require('../services/batchTaskQueue').ensureBatchTaskQueueSchema(db);
+
 module.exports = {
   db,
   async query(text, params) {

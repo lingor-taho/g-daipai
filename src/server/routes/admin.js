@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
 const db = require('../models');
+const { getBatchPreparationStats } = require('../services/batchTaskQueue');
 const bcrypt = require('bcryptjs');
 const fs = require('fs/promises');
 const authMiddleware = require('../middleware/auth');
@@ -1476,6 +1477,7 @@ router.get('/tasks', async (req, res) => {
   for (const row of statusRows) {
     queue[row.status] = row.count;
   }
+  queue.preparation = await getBatchPreparationStats(db);
   res.json({ items: mappedItems, total: queue.total, queue });
 });
 
@@ -1503,6 +1505,7 @@ router.get('/tasks/stats', async (req, res) => {
   const loginStatus = await db.getOne("SELECT value, updated_at FROM config WHERE key = 'yahoo_login_status'");
   const loginMessage = await db.getOne("SELECT value FROM config WHERE key = 'yahoo_login_message'");
   stats.yahooLogin = buildYahooLoginStatus(loginStatus, loginMessage);
+  stats.preparation = await getBatchPreparationStats(db);
   res.json(stats);
 });
 

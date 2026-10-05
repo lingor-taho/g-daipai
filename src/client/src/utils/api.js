@@ -32,15 +32,15 @@ export function shouldRetryRequest(config = {}, error) {
   return ['get', 'head', 'options'].includes(method) || config.__allowRetry === true;
 }
 
-function createClientRequestId() {
+export function createClientRequestId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 api.interceptors.request.use(cfg => {
-  const token = localStorage.getItem('token');
+  const token = cfg.__batchContext ? cfg.__batchContext.token : localStorage.getItem('token');
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
-  const actingUserId = localStorage.getItem('actingUserId');
+  const actingUserId = cfg.__batchContext ? cfg.__batchContext.actingUserId : localStorage.getItem('actingUserId');
   if (actingUserId) cfg.headers['X-Acting-User-Id'] = actingUserId;
   return cfg;
 });
@@ -71,6 +71,14 @@ export const submitTask = (data) => api.post('/task/submit', {
   ...data,
   client_request_id: data?.client_request_id || createClientRequestId()
 }, { __allowRetry: true });
+export const enqueueBatchTasks = (data, context) => api.post('/task/batch-submit', data, {
+  __allowRetry: true,
+  __batchContext: context
+});
+export const getBatchTaskResults = (context) => api.get('/task/batch-results', { __batchContext: context });
+export const dismissBatchTaskResult = (id, context) => api.post(`/task/batch-results/${id}/dismiss`, {}, {
+  __allowRetry: true, __batchContext: context
+});
 export const getTaskList = (params) => api.get('/task/list', { params });
 export const getActiveBiddingTaskList = (params) => api.get('/task/bidding', { params });
 export const getWonTaskList = (params) => api.get('/task/won', { params });

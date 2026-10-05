@@ -117,12 +117,14 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
     window.addEventListener(USER_ACTIVE_EVENT, refreshFirstPage);
     document.addEventListener('visibilitychange', refreshFirstPage);
     window.addEventListener('focus', refreshFirstPage);
+    window.addEventListener('batch-tasks-updated', refreshFirstPage);
     const interval = setInterval(refreshFirstPage, 10000);
     return () => {
       window.removeEventListener('acting-user-change', handleActingUserChange);
       window.removeEventListener(USER_ACTIVE_EVENT, refreshFirstPage);
       document.removeEventListener('visibilitychange', refreshFirstPage);
       window.removeEventListener('focus', refreshFirstPage);
+      window.removeEventListener('batch-tasks-updated', refreshFirstPage);
       clearInterval(interval);
     };
   }, [refreshFirstPage, resetTasks]);

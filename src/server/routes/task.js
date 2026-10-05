@@ -3,7 +3,8 @@ const router = express.Router();
 const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
-const { actingUserMiddleware } = require('../services/actingUser');
+const { actingUserMiddleware, resolveActingUserId, getClientUser } = require('../services/actingUser');
+const { createBatchTaskQueue } = require('../services/batchTaskQueue');
 const { getWebsiteRate } = require('../services/websiteRate');
 const { getCaptchaChallenge } = require('../services/manualCaptcha');
 const {
@@ -471,25 +472,99 @@ function buildActiveBiddingTaskListQuery(input) {
   };
 }
 
-// POST /api/task/submit - 提交竞拍任务
-router.post('/submit', async (req, res) => {
-  const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = req.body;
+// Serialize both entry points by product, including concurrent network retries.
+const submissionLocks = new Map();
+
+function submitError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function withProductSubmissionLock(productId, action) {
+  const previous = submissionLocks.get(productId) || Promise.resolve();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const tail = previous.then(() => gate);
+  submissionLocks.set(productId, tail);
+  await previous;
+  try { return await action(); } finally {
+    release();
+    if (submissionLocks.get(productId) === tail) submissionLocks.delete(productId);
+  }
+}
+
+async function fetchBatchProduct(fetchProduct, url, timeoutMs = 75000) {
+  let timer;
   try {
-    const input = buildSubmitTaskInput(req.user, req.body);
-    input.userId = req.actingUser.id;
+    return await Promise.race([
+      fetchProduct(url),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(submitError('商品信息获取超时，请稍后重试', 504)), timeoutMs);
+      })
+    ]);
+  } catch (error) {
+    if (error.statusCode === 504) throw error;
+    throw submitError('无法获取商品信息，商品可能不存在或 Yahoo 暂时不可访问，请核对后重试', 502);
+  } finally { clearTimeout(timer); }
+}
+
+function validateBatchProduct(result, productId, nowMs = Date.now()) {
+  const product = result?.data;
+  if (!result?.success || result.source === 'cache-fallback' || product?.auctionId !== productId) {
+    throw submitError('无法确认最新商品信息，请稍后重试', 502);
+  }
+  if (/closed|ended|sold|cancel|suspend/.test(product.auctionStatus || '') || Date.parse(product.endTime) <= nowMs) {
+    throw submitError('商品已结束或已取消，不能提交');
+  }
+  if (product.auctionStatus !== 'open' || !Number.isFinite(Date.parse(product.endTime)) ||
+      !product.title || product.title === `商品 ${productId}` ||
+      !Number.isFinite(Number(product.currentPrice)) || Number(product.currentPrice) <= 0 ||
+      !['tax_zero', 'tax_included'].includes(product.taxType) ||
+      !['normal', 'store'].includes(product.productType)) {
+    throw submitError('商品信息不完整或无法确认可出价状态，请核对后重试');
+  }
+  if (product.buyoutOnly) throw submitError('该商品仅支持即决购买，请使用单商品入口');
+  return product;
+}
+
+async function submitAuctionTask(context, body, {
+  database = db,
+  fetchProduct = productService.fetchProduct,
+  strictBatch = false
+} = {}) {
+  if (strictBatch) {
+    const { normalizeBatchProduct, normalizeBatchPrice } = require('../../shared/batchBid.cjs');
+    let parsed, maxPrice;
+    try {
+      parsed = normalizeBatchProduct(body.product_url);
+      maxPrice = normalizeBatchPrice(body.max_price);
+    } catch (error) { throw submitError(error.message); }
+    const requestId = String(body.client_request_id || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(requestId)) throw submitError('缺少有效的提交标识，请重新打开批量添加');
+    // Batch callers cannot supply snapshots, change strategy, or enable buyout.
+    body = { product_url: parsed.standardUrl, max_price: maxPrice, client_request_id: requestId, strategy: 'direct', bid_mode: 'bid' };
+  }
+  const productId = buildSubmitTaskInput(context.user, body).productId;
+  return withProductSubmissionLock(productId, async () => {
+    const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = body;
+    const input = buildSubmitTaskInput(context.user, body);
+    input.userId = context.actingUser.id;
+    const batchTaxExcludedMaxPrice = strictBatch ? input.maxPrice : null;
     const clientRequestId = String(client_request_id || '').trim() || null;
-    const existingRequest = await findTaskByClientRequestId(db, input.userId, clientRequestId);
+    const existingRequest = await findTaskByClientRequestId(database, input.userId, clientRequestId);
     if (existingRequest) {
-      return res.json({ success: true, task_id: existingRequest.id, product_id: existingRequest.product_id, duplicate: true });
+      if (existingRequest.product_id !== input.productId) throw submitError('提交标识已用于其他商品，请重新提交', 409);
+      return { success: true, task_id: existingRequest.id, product_id: existingRequest.product_id, duplicate: true };
     }
     const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
-    assertBidStrategyAllowed({ loginUser: req.user, actingUser: req.actingUser }, incomingStrategy);
-    const existingTask = await db.getOne(
+    assertBidStrategyAllowed({ loginUser: context.user, actingUser: context.actingUser }, incomingStrategy);
+    const existingTask = await database.getOne(
       'SELECT id, user_id FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1',
       [input.productId]
     );
     assertProductSubmissionOwner(existingTask, input.userId);
-    const activeAutomaticTask = await db.getOne(
+    const activeAutomaticTask = await database.getOne(
       `SELECT id, strategy, status
        FROM tasks
        WHERE product_id = ?
@@ -505,9 +580,20 @@ router.post('/submit', async (req, res) => {
     assertNoActiveAutomaticStrategy(activeAutomaticTask);
 
     let productInfo = null;
-    if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
+    if (strictBatch) {
+      const pending = await database.getOne(
+        "SELECT id FROM tasks WHERE product_id = ? AND user_id = ? AND status IN ('pending', 'processing') LIMIT 1",
+        [input.productId, input.userId]
+      );
+      if (pending) throw submitError('该商品已有排队中或执行中的任务，请等待结果', 409);
+      productInfo = validateBatchProduct(await fetchBatchProduct(fetchProduct, input.standardUrl), input.productId);
+      // Keep Yahoo's pretax bid exactly equal to the batch input, even for non-round prices.
+      input.maxPrice = productInfo.taxType === 'tax_included' && input.maxPrice >= 10
+        ? Math.ceil(input.maxPrice * 1.1 - 1e-6)
+        : input.maxPrice;
+    } else if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
       try {
-        const result = await productService.fetchProduct(input.standardUrl);
+        const result = await fetchProduct(input.standardUrl);
         productInfo = result.data || null;
       } catch (_) {}
     }
@@ -525,10 +611,10 @@ router.post('/submit', async (req, res) => {
     const userMaxPrice = input.bidMode === 'buyout'
       ? buyoutPrices.userMaxPrice
       : input.maxPrice;
-    const bidMaxPrice = input.bidMode === 'buyout'
+    const bidMaxPrice = strictBatch ? batchTaxExcludedMaxPrice : input.bidMode === 'buyout'
       ? buyoutPrices.bidMaxPrice
       : calculateBidMaxPrice(userMaxPrice, resolvedTaxType);
-    const multiBidMinPrice = await getMultiBidMinPrice();
+    const multiBidMinPrice = await getMultiBidMinPrice(database);
     validateMultiBidUserMaxPrice(incomingStrategy, userMaxPrice, multiBidMinPrice);
     const multiBidIncrement = validateMultiBidIncrement(incomingStrategy, userMaxPrice, multi_bid_increment);
     if (input.bidMode === 'buyout' && buyoutPrices.buyoutPrice <= 0) {
@@ -575,7 +661,7 @@ router.post('/submit', async (req, res) => {
       finalBidMaxPrice = YAHOO_LOW_PRICE_INITIAL_BID;
     }
 
-    await upsertProductSnapshot(db, buildSubmitProductSnapshot({
+    await upsertProductSnapshot(database, buildSubmitProductSnapshot({
       input,
       productInfo,
       productTitle: product_title,
@@ -589,9 +675,9 @@ router.post('/submit', async (req, res) => {
       endTime
     }), { source: 'fetch' });
 
-    await db.query(
+    const inserted = await database.getOne(
       `INSERT INTO tasks (user_id, product_id, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, client_request_id, pending_followup_max_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) RETURNING id, product_id`,
       [
         input.userId,
         input.productId,
@@ -606,8 +692,55 @@ router.post('/submit', async (req, res) => {
         followupMaxPrice
       ]
     );
-    const inserted = await db.getOne('SELECT id, product_id FROM tasks WHERE id = last_insert_rowid()');
-    res.json({ success: true, task_id: inserted.id, product_id: inserted.product_id });
+    return { success: true, task_id: inserted.id, product_id: inserted.product_id };
+  });
+}
+
+// POST /api/task/submit - 提交竞拍任务
+async function readBatchSubmissionContext(loginUserId, actingUserId, database = db) {
+  const user = await getClientUser(loginUserId, database);
+  const resolved = await resolveActingUserId(loginUserId, actingUserId, database);
+  return { user, actingUser: resolved.actingUser };
+}
+
+const batchTaskQueue = createBatchTaskQueue({
+  raw: db.raw,
+  onItemProcessed: ({ batchId, line, outcome, elapsedMs }) => {
+    console.log(`[Batch preparation] batch=${batchId} line=${line} outcome=${outcome} elapsedMs=${elapsedMs}`);
+  },
+  submitTask: (context, body) => submitAuctionTask(context, body, { strictBatch: true }),
+  readContext: readBatchSubmissionContext
+});
+
+router.post('/batch-submit', (req, res) => {
+  try {
+    assertBidStrategyAllowed({ loginUser: req.user, actingUser: req.actingUser }, 'direct');
+    res.json(batchTaskQueue.enqueue({ user: req.user, actingUser: req.actingUser }, req.body));
+  } catch (err) { res.status(err.statusCode || 500).json({ error: err.message }); }
+});
+
+router.get('/batch-results', (req, res) => {
+  try { res.json({ success: true, data: batchTaskQueue.listResults(req.actingUser.id) }); }
+  catch (err) { res.status(err.statusCode || 500).json({ error: err.message }); }
+});
+
+router.post('/batch-results/:id/dismiss', (req, res) => {
+  try { res.json(batchTaskQueue.dismiss(req.actingUser.id, Number(req.params.id))); }
+  catch (err) { res.status(err.statusCode || 500).json({ error: err.message }); }
+});
+
+router.post('/submit', async (req, res) => {
+  try {
+    res.json(await submitAuctionTask({ user: req.user, actingUser: req.actingUser }, req.body));
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+// Each batch row has its own outcome; product details stay on the server.
+router.post('/batch-submit-item', async (req, res) => {
+  try {
+    res.json(await submitAuctionTask({ user: req.user, actingUser: req.actingUser }, req.body, { strictBatch: true }));
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
@@ -1038,3 +1171,8 @@ module.exports.normalizeBidStrategyScope = normalizeBidStrategyScope;
 module.exports.assertBidStrategyAllowed = assertBidStrategyAllowed;
 module.exports.buildClientManualVerificationAlert = buildClientManualVerificationAlert;
 module.exports.getClientSiteConfig = getClientSiteConfig;
+module.exports.submitAuctionTask = submitAuctionTask;
+module.exports.validateBatchProduct = validateBatchProduct;
+module.exports.fetchBatchProduct = fetchBatchProduct;
+module.exports.batchTaskQueue = batchTaskQueue;
+module.exports.readBatchSubmissionContext = readBatchSubmissionContext;

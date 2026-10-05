@@ -8,6 +8,7 @@ import WonItems from './pages/WonItems';
 import Statistics from './pages/Statistics';
 import { installUserActivityListeners } from './utils/activity';
 import ManualVerificationAlert from './components/ManualVerificationAlert';
+import BatchSubmitResults from './components/BatchSubmitResults';
 import UserNav from './components/UserNav';
 import UserFooter from './components/UserFooter';
 import { pageStyle } from './styles';
@@ -23,6 +24,7 @@ function ProtectedLayout() {
   return token ? (
     <div style={isPurchasePage ? { minHeight: '100vh', background: '#fff' } : pageStyle}>
       {!isPurchasePage && <ManualVerificationAlert />}
+      <BatchSubmitResults />
       {!isPurchasePage && <UserNav />}
       <Outlet />
       {!isPurchasePage && <UserFooter />}

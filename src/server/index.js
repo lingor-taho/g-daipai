@@ -130,6 +130,7 @@ async function runScheduledMaintenance() {
 
 app.listen(config.port, () => {
   console.log(`API Server running on port ${config.port}`);
+  taskRoutes.batchTaskQueue.start();
   sweepPendingTasks();
   const sweepTimer = setInterval(sweepPendingTasks, PENDING_TASK_SWEEP_INTERVAL_MS);
   sweepTimer.unref?.();

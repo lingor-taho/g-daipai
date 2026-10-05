@@ -105,13 +105,44 @@ export default function TasksPage() {
     { title: '商品结束时间', dataIndex: 'end_time', render: (_: any, row: any) => formatDateTime(row.end_time) }
   ];
 
+  const preparation = stats?.preparation || { pending: 0, processing: 0, failed: 0, items: [] };
+  const preparationColumns = [
+    { title: '批次 / 行号', render: (_: any, row: any) => `#${row.batch_id} / 第 ${row.line_number} 行` },
+    { title: '提交用户', dataIndex: 'username' },
+    { title: '商品ID', dataIndex: 'product_id' },
+    { title: '税前最高价', dataIndex: 'max_price', render: (_: any, row: any) => formatJPY(row.max_price) },
+    { title: '状态', render: (_: any, row: any) => (
+      <Tag color={row.status === 'failed' ? 'red' : row.status === 'processing' ? 'orange' : 'default'}>
+        {row.status === 'failed' ? '商品准备失败' : row.status === 'processing' ? '正在补全商品信息' : '等待补全商品信息'}
+      </Tag>
+    ) },
+    { title: '错误信息', dataIndex: 'error_msg', render: (_: any, row: any) => row.error_msg || '-' },
+    { title: '接收时间', dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) }
+  ];
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {statsError && <Alert type="error" showIcon message="队列统计加载失败" description={statsError} />}
       <Row gutter={[12, 12]}>
-        <Col xs={12} md={8} xl={4}><Card><Statistic title="总任务" value={stats?.total || 0} /></Card></Col>
-        <Col xs={12} md={8} xl={4}><Card><Statistic title="队列中" value={stats?.pending || 0} /></Card></Col>
-        <Col xs={12} md={8} xl={4}><Card><Statistic title="执行中" value={stats?.processing || 0} /></Card></Col>
+        <Col xs={12} md={8} xl={4}><Card><Statistic title="已建出价任务" value={stats?.total || 0} /></Card></Col>
+        <Col xs={12} md={8} xl={4}><Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <Statistic style={{ flexShrink: 0 }} title="队列中" value={(stats?.pending || 0) + preparation.pending} />
+            <div style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'nowrap' }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>待补全 {preparation.pending}</Typography.Text><br />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>待出价 {stats?.pending || 0}</Typography.Text>
+            </div>
+          </div>
+        </Card></Col>
+        <Col xs={12} md={8} xl={4}><Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <Statistic style={{ flexShrink: 0 }} title="执行中" value={(stats?.processing || 0) + preparation.processing} />
+            <div style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'nowrap' }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>补全中 {preparation.processing}</Typography.Text><br />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>出价中 {stats?.processing || 0}</Typography.Text>
+            </div>
+          </div>
+        </Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="已出价" value={stats?.bidding || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="成功" value={stats?.success || 0} /></Card></Col>
         <Col xs={12} md={8} xl={4}><Card><Statistic title="出价失败" value={stats?.failed || 0} /></Card></Col>
@@ -137,17 +168,28 @@ export default function TasksPage() {
               <Typography.Text>{formatJPY(stats.nextTask.max_price)}</Typography.Text>
             </Space>
           ) : (
-            <Typography.Text>暂无队列任务</Typography.Text>
+            <Typography.Text>{preparation.pending + preparation.processing > 0
+              ? `还有 ${preparation.pending + preparation.processing} 件正在排队补全商品信息，每件补全后立即加入出价队列`
+              : '暂无队列任务'}</Typography.Text>
           )}
         </div>
       </Card>
+
+      {(preparation.items?.length > 0) && <Card title="批量商品准备进度">
+        <Typography.Paragraph type="secondary">
+          待补全 {preparation.pending} 件，正在补全 {preparation.processing} 件，准备失败 {preparation.failed} 件。
+          每件商品补全后立即进入下方出价任务列表，同时继续准备下一件。准备失败可在错误信息中查看原因。
+        </Typography.Paragraph>
+        <ProTable columns={preparationColumns} dataSource={preparation.items} rowKey="id"
+          search={false} options={false} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} />
+      </Card>}
 
       <ProTable
         columns={columns}
         request={async (params: any) => {
           try {
             const data = await fetchAdminJson('/api/admin/tasks?' + new URLSearchParams(params));
-            setStats(data.queue || stats);
+            setStats((previous: any) => data.queue ? { ...previous, ...data.queue } : previous);
             return { data: data.items || [], total: data.total || 0 };
           } catch {
             return { data: [], total: 0 };
