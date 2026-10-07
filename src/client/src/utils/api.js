@@ -86,6 +86,7 @@ export const resumeWonOrder = (orderId) => api.post(`/task/won/${orderId}/resume
 export const saveWonItemRemark = (orderId, remark) => api.put(`/task/won/${orderId}/remark`, { remark });
 export const deleteWonItemRemark = (orderId) => api.delete(`/task/won/${orderId}/remark`);
 export const getWonStats = (params) => api.get('/task/won-stats', { params });
+export const getBiddingFailureAnalysis = (params) => api.get('/task/bidding-analysis', { params });
 export const getTaskDetail = (id) => api.get(`/task/${id}`);
 export const cancelTask = (id) => api.patch(`/task/${id}/cancel`);
 export const getTaskStats = () => api.get('/task/stats');

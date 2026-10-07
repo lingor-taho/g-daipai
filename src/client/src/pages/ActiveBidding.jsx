@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import { useNavigate } from 'react-router-dom';
-import { getActiveBiddingTaskList } from '../utils/api';
+import { getActiveBiddingTaskList, getBiddingFailureAnalysis } from '../utils/api';
 import { BidCountIcon } from '../components/ProductCard';
 import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
+import BidPriceTimeline from '../components/BidPriceTimeline';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
@@ -71,6 +72,8 @@ function TimeIcon({ color = 'currentColor' }) {
 
 export default function ActiveBidding() {
   const navigate = useNavigate();
+  const [analysisMode, setAnalysisMode] = useState(false);
+  const requestRef = useRef(0);
   const [detailItem, setDetailItem] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +82,7 @@ export default function ActiveBidding() {
   const pageSize = 10;
 
   const resetItems = useCallback(async () => {
+    const requestId = ++requestRef.current;
     if (document.visibilityState === 'hidden' || isUserIdle()) {
       setLoading(false);
       return;
@@ -86,55 +90,62 @@ export default function ActiveBidding() {
     setLoading(true);
     try {
       const actingUserKey = localStorage.getItem('actingUserId') || 'self';
-      const res = await runDeduped(`ActiveBidding:getActiveBiddingTaskList:${actingUserKey}:1`, () => getActiveBiddingTaskList({ page: 1, limit: pageSize }));
-      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const fetchList = analysisMode ? getBiddingFailureAnalysis : getActiveBiddingTaskList;
+      const res = await runDeduped(`ActiveBidding:${analysisMode ? 'analysis' : 'active'}:${actingUserKey}:1`, () => fetchList({ page: 1, limit: pageSize }));
+      if (requestRef.current !== requestId || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
       setItems(res.data?.data || []);
       setTotal(Number(res.data?.total || 0));
       setPage(1);
     } catch (e) {
-      Toast.show({ content: e.response?.data?.error || '入札中商品加载失败' });
+      if (requestRef.current !== requestId) return;
+      Toast.show({ content: e.response?.data?.error || (analysisMode ? '失败分析加载失败' : '入札中商品加载失败') });
       setItems([]);
       setTotal(0);
       setPage(0);
     } finally {
-      setLoading(false);
+      if (requestRef.current === requestId) setLoading(false);
     }
-  }, []);
+  }, [analysisMode]);
 
   const loadMore = useCallback(async () => {
+    const requestId = requestRef.current;
     const nextPage = page + 1;
     try {
       const actingUserKey = localStorage.getItem('actingUserId') || 'self';
-      const res = await getActiveBiddingTaskList({ page: nextPage, limit: pageSize });
-      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      const fetchList = analysisMode ? getBiddingFailureAnalysis : getActiveBiddingTaskList;
+      const res = await fetchList({ page: nextPage, limit: pageSize });
+      if (requestRef.current !== requestId || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
       setItems(current => appendUniqueItems(current, res.data?.data || [], 'product_id'));
       setTotal(Number(res.data?.total || 0));
       setPage(Number(res.data?.page || nextPage));
     } catch (e) {
-      Toast.show({ content: e.response?.data?.error || '更多入札中商品加载失败' });
+      if (requestRef.current !== requestId) return;
+      Toast.show({ content: e.response?.data?.error || (analysisMode ? '更多失败分析加载失败' : '更多入札中商品加载失败') });
       throw e;
     }
-  }, [page]);
+  }, [page, analysisMode]);
 
   const refreshLoadedItems = useCallback(async () => {
     if (document.visibilityState === 'hidden' || isUserIdle()) return;
     const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+    const requestId = requestRef.current;
     const refreshLimit = Math.min(Math.max(page, 1) * pageSize, 100);
     try {
       const res = await runDeduped(
-        `ActiveBidding:refresh:${actingUserKey}:${refreshLimit}`,
-        () => getActiveBiddingTaskList({ page: 1, limit: refreshLimit })
+        `ActiveBidding:refresh:${analysisMode ? 'analysis' : 'active'}:${actingUserKey}:${refreshLimit}`,
+        () => (analysisMode ? getBiddingFailureAnalysis : getActiveBiddingTaskList)({ page: 1, limit: refreshLimit })
       );
-      if ((localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
+      if (requestRef.current !== requestId || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
       const refreshedItems = res.data?.data || [];
       setItems(refreshedItems);
       setTotal(Number(res.data?.total || 0));
       setPage(Math.max(1, Math.ceil(refreshedItems.length / pageSize)));
     } catch (_) {}
-  }, [page]);
+  }, [page, analysisMode]);
 
   useEffect(() => {
     resetItems();
+    return () => { requestRef.current += 1; };
   }, [resetItems]);
 
   useEffect(() => {
@@ -142,6 +153,7 @@ export default function ActiveBidding() {
       setItems([]);
       setTotal(0);
       setPage(0);
+      setDetailItem(null);
       resetItems();
     };
     window.addEventListener('acting-user-change', handleActingUserChange);
@@ -162,7 +174,17 @@ export default function ActiveBidding() {
         style={listStyle}
         header={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
-            <span>入札中</span>
+            <button type="button" onClick={() => {
+              requestRef.current += 1;
+              setAnalysisMode(value => !value);
+              setItems([]);
+              setTotal(0);
+              setPage(0);
+              setDetailItem(null);
+              setLoading(true);
+            }} style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' }}>
+              {analysisMode ? '失败分析 → 返回' : '入札中'}
+            </button>
             <Button size="mini" fill="outline" style={outlineButtonStyle} onClick={resetItems}>刷新</Button>
           </div>
         }
@@ -174,14 +196,14 @@ export default function ActiveBidding() {
         )}
         {!loading && items.length === 0 && (
           <div style={{ padding: 24 }}>
-            <Empty description="暂无入札中商品" />
+            <Empty description={analysisMode ? '暂无已到期未落札商品' : '暂无入札中商品'} />
           </div>
         )}
         {!loading && items.map(item => {
           const title = item.product_title || `商品 ${item.product_id}`;
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
           const outbid = isOutbidItem(item);
-          const canRebid = item.strategy === 'direct';
+          const canRebid = !analysisMode && item.strategy === 'direct';
           const displayPrice = getDisplayPrice(item);
           return (
             <List.Item key={item.id} style={itemCardStyle}>
@@ -221,14 +243,16 @@ export default function ActiveBidding() {
                         <path d="M4 12h16m-6-6 6 6-6 6" />
                       </svg>
                       <Tag color={outbid ? 'danger' : 'primary'} style={{ flexShrink: 0 }}>
-                        {formatJPY(item.user_max_price || item.max_price)}
+                        {formatJPY(analysisMode ? item.final_bid : item.user_max_price || item.max_price)}
                       </Tag>
                     </div>
                   ) : null}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                    {outbid ? (
+                    {analysisMode ? (
+                      <Tag color="danger">未落札</Tag>
+                    ) : outbid ? (
                       <Tag color="danger">高値更新</Tag>
                     ) : (
                       <Tag color="primary">最高价入札中</Tag>
@@ -245,6 +269,15 @@ export default function ActiveBidding() {
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
+                    {analysisMode ? (
+                      <>
+                        最终出价 <span style={{ color: colors.text, fontWeight: 600 }}>{formatJPY(item.final_bid)}</span>
+                        {' / '}落札价 <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
+                        <BidPriceTimeline currentPrice={displayPrice} bids={item.bid_history || []} />
+                        <div style={{ marginTop: 4 }}>商品结束时间：{formatBeijingTime(item.end_time) || '-'}</div>
+                      </>
+                    ) : (
+                      <>
                     当前价格：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
                     {item.shipping_fee_text ? <span>　运费：{item.shipping_fee_text}</span> : null}
                     <br />
@@ -264,6 +297,8 @@ export default function ActiveBidding() {
                         最近更新时间：{formatBeijingTime(item.updated_at)}
                       </>
                     ) : null}
+                      </>
+                    )}
                   </div>
                 </div>
                 {canRebid ? (
@@ -286,7 +321,7 @@ export default function ActiveBidding() {
         ) : null}
       </List>
       <ProductItemDetailPopup item={detailItem} onClose={() => setDetailItem(null)}
-        onBid={item => navigate(getRebidSubmitPath(item))} />
+        onBid={analysisMode ? undefined : item => navigate(getRebidSubmitPath(item))} />
     </>
   );
 }

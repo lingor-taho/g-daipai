@@ -7,6 +7,8 @@ const { actingUserMiddleware, resolveActingUserId, getClientUser } = require('..
 const { createBatchTaskQueue } = require('../services/batchTaskQueue');
 const { getWebsiteRate } = require('../services/websiteRate');
 const { getCaptchaChallenge } = require('../services/manualCaptcha');
+const { getFailureAnalysis } = require('../services/failureAnalysis');
+const { getTaskSubmissionHistory } = require('../services/taskSubmissionHistory');
 const {
   normalizeTaxType,
   normalizeProductType,
@@ -997,7 +999,9 @@ router.get('/won', async (req, res) => {
        LIMIT ? OFFSET ?`,
       [input.userId, input.userId, ...searchFilter.params, input.limit, input.offset]
     );
-    res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
+    const histories = await getTaskSubmissionHistory(db, input.userId, [...new Set(tasks.map(task => task.product_id))]);
+    const data = tasks.map(task => ({ ...task, bid_history: histories.get(task.product_id) || [] }));
+    res.json({ success: true, data, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1064,6 +1068,17 @@ router.get('/bidding', async (req, res) => {
     res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Expired submitted products absent from this user's won and active bidding lists.
+router.get('/bidding-analysis', async (req, res) => {
+  try {
+    const input = buildActiveBiddingTaskListInput(req.user, req.query);
+    input.userId = req.actingUser.id;
+    res.json(await getFailureAnalysis(db, input));
+  } catch (error) {
+    res.status(500).json({ error: error.message || '失败分析加载失败' });
   }
 });
 

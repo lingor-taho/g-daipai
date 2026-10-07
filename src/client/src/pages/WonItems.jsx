@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
+import BidPriceTimeline from '../components/BidPriceTimeline';
 import { Button, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
 import { deleteWonItemRemark, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
@@ -558,6 +559,7 @@ export default function WonItems() {
                       </>
                     ) : null}
                   </div>
+                  <BidPriceTimeline currentPrice={finalPrice} bids={item.bid_history || []} endpointLabel="落札价" />
                   {item.seller_message_html ? (
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
                       <Button

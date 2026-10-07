@@ -12,6 +12,8 @@ const steps = [
   ['Google Sheets config tests', process.execPath, ['src/server/services/googleSheets.test.js'], rootDir],
   ['Online users service tests', process.execPath, ['src/server/services/onlineUsers.test.js'], rootDir],
   ['Task route tests', process.execPath, ['src/server/routes/task.test.js'], rootDir],
+  ['Expired bidding failure analysis', process.execPath, ['src/server/services/failureAnalysis.test.js'], rootDir],
+  ['Bid price timeline markers', process.execPath, ['src/client/src/utils/bidPriceTimeline.test.mjs'], rootDir],
   ['90-day statistics API tests', process.execPath, ['src/server/routes/task.won-stats.test.js'], rootDir],
   ['Statistics chart calculations', process.execPath, ['src/client/src/utils/statisticsChart.test.mjs'], rootDir],
   ['Batch bid input tests', process.execPath, ['src/shared/batchBid.test.cjs'], rootDir],
