@@ -4,6 +4,8 @@ import { getWonStats } from '../utils/api';
 import { USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { buildWonStatsCsv, downloadCsv } from '../utils/wonStats';
+import DailyStatisticsChart from '../components/DailyStatisticsChart';
+import { isStatisticsDateTick } from '../utils/statisticsChart';
 import { cardStyle, colors, outlineButtonStyle, sectionTitleStyle } from '../styles';
 
 function formatJPY(value) {
@@ -46,11 +48,16 @@ export default function Statistics() {
   const [loading, setLoading] = useState(true);
   const [activeDate, setActiveDate] = useState('');
   const chartScrollRef = useRef(null);
+  const requestRef = useRef(0);
 
   const fetchStats = useCallback(() => {
+    const requestId = ++requestRef.current;
+    const actingUserKey = localStorage.getItem('actingUserId') || 'self';
+    const isCurrent = () => requestRef.current === requestId && (localStorage.getItem('actingUserId') || 'self') === actingUserKey;
     setLoading(true);
-    runDeduped('Statistics:getWonStats', () => getWonStats({ days: 30 }))
+    runDeduped(`Statistics:getWonStats:90:${actingUserKey}`, () => getWonStats({ days: 90 }))
       .then(res => {
+        if (!isCurrent()) return;
         const data = res.data?.data || {};
         const nextDaily = data.daily || [];
         setDaily(nextDaily);
@@ -59,12 +66,13 @@ export default function Statistics() {
         setActiveDate(nextDaily[nextDaily.length - 1]?.date || '');
       })
       .catch(e => {
+        if (!isCurrent()) return;
         Toast.show({ content: e.response?.data?.error || '统计数据加载失败' });
         setDaily([]);
         setItems([]);
         setPerformance(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (isCurrent()) setLoading(false); });
   }, []);
 
   useEffect(() => {
@@ -73,6 +81,7 @@ export default function Statistics() {
     window.addEventListener(USER_ACTIVE_EVENT, fetchStats);
     window.addEventListener('focus', fetchStats);
     return () => {
+      requestRef.current += 1;
       window.removeEventListener('acting-user-change', fetchStats);
       window.removeEventListener(USER_ACTIVE_EVENT, fetchStats);
       window.removeEventListener('focus', fetchStats);
@@ -105,7 +114,7 @@ export default function Statistics() {
       <div style={{ ...cardStyle, padding: 14, marginBottom: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
           <div>
-            <div style={sectionTitleStyle}>近30天落札统计</div>
+            <div style={sectionTitleStyle}>近90天落札统计</div>
             <div style={{ fontSize: 12, color: colors.muted, marginTop: 4 }}>
               合计 {formatJPY(totalAmount)} / {totalCount} 件
             </div>
@@ -140,11 +149,11 @@ export default function Statistics() {
             <div ref={chartScrollRef} style={{ overflowX: 'auto', paddingBottom: 4 }}>
               <div
                 style={{
-                  minWidth: 720,
+                  minWidth: 960,
                   height: 250,
                   display: 'grid',
-                  gridTemplateColumns: `repeat(${daily.length}, minmax(16px, 1fr))`,
-                  gap: 6,
+                  gridTemplateColumns: `repeat(${daily.length}, minmax(6px, 1fr))`,
+                  gap: 3,
                   alignItems: 'end',
                   borderLeft: `1px solid ${colors.border}`,
                   borderBottom: `1px solid ${colors.border}`,
@@ -154,7 +163,7 @@ export default function Statistics() {
                   position: 'relative'
                 }}
               >
-                {daily.map(item => {
+                {daily.map((item, index) => {
                   const amount = Number(item.total_amount || 0);
                   const height = amount > 0 ? Math.max(8, Math.round((amount / maxAmount) * 190)) : 2;
                   const selected = item.date === activeDate;
@@ -180,8 +189,8 @@ export default function Statistics() {
                     >
                       <span
                         style={{
-                          width: '100%',
-                          maxWidth: 24,
+                          width: '60%',
+                          maxWidth: 8,
                           height,
                           borderRadius: '5px 5px 0 0',
                           background: selected ? colors.accent : colors.accent2,
@@ -189,8 +198,8 @@ export default function Statistics() {
                           transition: 'height 160ms ease, background 120ms ease, box-shadow 120ms ease'
                         }}
                       />
-                      <span style={{ fontSize: 10, color: selected ? colors.text : colors.muted, height: 12, fontWeight: selected ? 700 : 400 }}>
-                        {formatShortDate(item.date)}
+                      <span style={{ fontSize: 10, color: selected ? colors.text : colors.muted, height: 12, fontWeight: selected ? 700 : 400, whiteSpace: 'nowrap', alignSelf: index === 0 ? 'flex-start' : index === daily.length - 1 ? 'flex-end' : 'center' }}>
+                        {isStatisticsDateTick(index, daily.length) ? formatShortDate(item.date) : ''}
                       </span>
                     </button>
                   );
@@ -201,7 +210,7 @@ export default function Statistics() {
             {performance && (
               <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
                 <div style={insightStyle}>
-                  您近30天总共出价 <strong>{performance.bidProductCount || 0}</strong> 个商品，拍到 <strong>{performance.wonProductCount || 0}</strong> 个商品，中标率为 <strong>{formatPercent(performance.winRate)}</strong>。
+                  您近90天总共出价 <strong>{performance.bidProductCount || 0}</strong> 个商品，拍到 <strong>{performance.wonProductCount || 0}</strong> 个商品，中标率为 <strong>{formatPercent(performance.winRate)}</strong>。
                 </div>
                 <div style={insightStyle}>
                   总共提交 <strong>{performance.taskCount || 0}</strong> 次任务，有效出价比为 <strong>{formatPercent(performance.effectiveBidRate)}</strong>。
@@ -216,7 +225,7 @@ export default function Statistics() {
                       （{formatJPY(topProduct.finalPrice)}），总共提交任务 <strong>{topProduct.taskCount || 0}</strong> 次，恭喜您。
                     </>
                   ) : (
-                    <>近30天暂无拍到商品，继续关注合适商品。</>
+                    <>近90天暂无拍到商品，继续关注合适商品。</>
                   )}
                 </div>
               </div>
@@ -224,6 +233,12 @@ export default function Statistics() {
           </>
         )}
       </div>
+      {!loading && daily.length > 0 ? (
+        <>
+          <DailyStatisticsChart daily={daily} kind="activity" />
+          <DailyStatisticsChart daily={daily} kind="harvest" />
+        </>
+      ) : null}
     </>
   );
 }

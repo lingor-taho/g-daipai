@@ -362,11 +362,11 @@ function testProductTypeFallsBackToTaxLabel() {
   assert.equal(normalizeProductType('', 'tax_included'), 'store');
 }
 
-function testWonStatsInputDefaultsToThirtyDays() {
+function testWonStatsInputDefaultsToNinetyDays() {
   const input = buildWonStatsInput({ id: 9 }, {});
 
   assert.equal(input.userId, 9);
-  assert.equal(input.days, 30);
+  assert.equal(input.days, 90);
   assert.throws(() => buildWonStatsInput(null, {}), /not logged in/);
 }
 
@@ -735,7 +735,7 @@ testNormalizeUserRemark();
 testActiveBiddingTaskListUsesAuthenticatedUserIdAndCapsLimit();
 testActiveBiddingQueryIncludesHighestAndOutbidStatuses();
 testProductTypeFallsBackToTaxLabel();
-testWonStatsInputDefaultsToThirtyDays();
+testWonStatsInputDefaultsToNinetyDays();
 testWonStatsQueriesUseWonDateAndExportFields();
 testWonStatsPerformanceQueryUsesThirtyDayTaskAndWonCounts();
 testStoreUserMaxPriceConvertsToTaxExcludedBidMax();

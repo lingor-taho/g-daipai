@@ -311,7 +311,7 @@ function buildActiveBiddingTaskListInput(user, query = {}) {
 
 function buildWonStatsInput(user, query = {}) {
   if (!user?.id) throw new Error('not logged in');
-  const days = Math.min(Math.max(parseInt(query.days || '30', 10) || 30, 1), 90);
+  const days = Math.min(Math.max(parseInt(query.days || '90', 10) || 90, 1), 90);
   return { userId: user.id, days };
 }
 
@@ -330,6 +330,35 @@ function buildWonStatsSummaryQuery(input) {
        ORDER BY won_date ASC`,
     params: [input.userId, input.days]
   };
+}
+
+function buildWonStatsTaskDailyQuery(input) {
+  return {
+    sql: `SELECT date(t.created_at, 'localtime') AS task_date, COUNT(*) AS task_count
+          FROM tasks t
+          WHERE t.user_id = ?
+            AND date(t.created_at, 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
+          GROUP BY task_date
+          ORDER BY task_date ASC`,
+    params: [input.userId, input.days]
+  };
+}
+
+function buildWonStatsDailyRows(days, summaryRows, taskRows, now = new Date()) {
+  const summaryByDate = new Map(summaryRows.map(row => [row.won_date, row]));
+  const tasksByDate = new Map(taskRows.map(row => [row.task_date, row]));
+  return buildRecentDateKeys(days, now).map(date => {
+    const row = summaryByDate.get(date);
+    const taskCount = Number(tasksByDate.get(date)?.task_count || 0);
+    const wonCount = Number(row?.item_count || 0);
+    return {
+      date,
+      total_amount: Number(row?.total_amount || 0),
+      item_count: wonCount,
+      task_count: taskCount,
+      harvest_rate: taskCount > 0 ? wonCount / taskCount : null
+    };
+  });
 }
 
 function buildWonStatsExportQuery(input) {
@@ -858,21 +887,15 @@ router.get('/won-stats', async (req, res) => {
     const summaryQuery = buildWonStatsSummaryQuery(input);
     const exportQuery = buildWonStatsExportQuery(input);
     const performanceQuery = buildWonStatsPerformanceQuery(input);
-    const [summaryRows, exportRows, performanceRow] = await Promise.all([
+    const taskDailyQuery = buildWonStatsTaskDailyQuery(input);
+    const [summaryRows, exportRows, performanceRow, taskRows] = await Promise.all([
       db.getAll(summaryQuery.sql, summaryQuery.params),
       db.getAll(exportQuery.sql, exportQuery.params),
-      db.getOne(performanceQuery.sql, performanceQuery.params)
+      db.getOne(performanceQuery.sql, performanceQuery.params),
+      db.getAll(taskDailyQuery.sql, taskDailyQuery.params)
     ]);
 
-    const summaryByDate = new Map(summaryRows.map(row => [row.won_date, row]));
-    const daily = buildRecentDateKeys(input.days).map(date => {
-      const row = summaryByDate.get(date);
-      return {
-        date,
-        total_amount: Number(row?.total_amount || 0),
-        item_count: Number(row?.item_count || 0)
-      };
-    });
+    const daily = buildWonStatsDailyRows(input.days, summaryRows, taskRows);
 
     const bidProductCount = Number(performanceRow?.bid_product_count || 0);
     const wonProductCount = Number(performanceRow?.won_product_count || 0);
@@ -1146,6 +1169,8 @@ module.exports.normalizeUserRemark = normalizeUserRemark;
 module.exports.updateUserOrderRemark = updateUserOrderRemark;
 module.exports.buildWonStatsInput = buildWonStatsInput;
 module.exports.buildWonStatsSummaryQuery = buildWonStatsSummaryQuery;
+module.exports.buildWonStatsTaskDailyQuery = buildWonStatsTaskDailyQuery;
+module.exports.buildWonStatsDailyRows = buildWonStatsDailyRows;
 module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;
 module.exports.buildWonStatsPerformanceQuery = buildWonStatsPerformanceQuery;
 module.exports.buildRecentDateKeys = buildRecentDateKeys;
