@@ -343,7 +343,8 @@ export default function ProductSearchPopup({
   favorites = [],
   onToggleFavorite = () => {},
   favoritesOnly = false,
-  detailOnlyItem = null
+  detailOnlyItem = null,
+  detailAction = 'close'
 }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -720,7 +721,7 @@ export default function ProductSearchPopup({
 
           {selectedItem ? (
             <div className="product-search-detail-footer">
-              {detailOnly ? (
+              {detailOnly && detailAction === 'close' ? (
                 <Button
                   block
                   color="danger"

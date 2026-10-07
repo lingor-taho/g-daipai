@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
 import { Button, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
 import { deleteWonItemRemark, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
@@ -266,6 +267,7 @@ function PauseIcon({ active }) {
 
 export default function WonItems() {
   const navigate = useNavigate();
+  const [detailItem, setDetailItem] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -481,6 +483,8 @@ export default function WonItems() {
             <List.Item key={item.order_id || item.id} style={getWonItemStyle(item)}>
               <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ width: imageThumbStyle.width, flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <button type="button" aria-label={`查看商品详情：${title}`} onClick={() => setDetailItem(item)}
+                    style={{ display: 'block', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' }}>
                   {item.product_image_url ? (
                     <img
                       src={item.product_image_url}
@@ -490,6 +494,7 @@ export default function WonItems() {
                   ) : (
                     <div style={imageThumbStyle} />
                   )}
+                  </button>
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     <button
                       type="button"
@@ -574,6 +579,7 @@ export default function WonItems() {
           <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
         ) : null}
       </List>
+      <ProductItemDetailPopup item={detailItem} onClose={() => setDetailItem(null)} />
       {remarkEditor ? (
         <div
           role="dialog"

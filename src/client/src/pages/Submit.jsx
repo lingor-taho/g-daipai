@@ -624,6 +624,8 @@ export default function Submit() {
             <button type="button" aria-label="打开商品收藏" onClick={() => setFavoritesVisible(true)}
               style={{ width: 32, height: 32, padding: 0, border: 0, background: 'transparent', color: colors.accent, fontSize: 26, cursor: 'pointer' }}>+</button>
           )}
+          <Button size="small" fill="outline" color="primary" onClick={() => setBatchSubmitVisible(true)}
+            style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>批量添加</Button>
         </div>
         <div style={{ ...inputBoxStyle, display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -636,8 +638,6 @@ export default function Submit() {
               clearable
             />
           </div>
-          <Button size="small" fill="outline" color="primary" onClick={() => setBatchSubmitVisible(true)}
-            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>批量添加</Button>
         </div>
         <Button
           onClick={() => handleFetch(url)}

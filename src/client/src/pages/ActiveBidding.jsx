@@ -3,6 +3,7 @@ import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, Toast } from 'an
 import { useNavigate } from 'react-router-dom';
 import { getActiveBiddingTaskList } from '../utils/api';
 import { BidCountIcon } from '../components/ProductCard';
+import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
@@ -70,6 +71,7 @@ function TimeIcon({ color = 'currentColor' }) {
 
 export default function ActiveBidding() {
   const navigate = useNavigate();
+  const [detailItem, setDetailItem] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -185,6 +187,8 @@ export default function ActiveBidding() {
             <List.Item key={item.id} style={itemCardStyle}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <div style={{ flex: '0 0 auto', minWidth: imageThumbStyle.width }}>
+                  <button type="button" aria-label={`查看商品详情：${title}`} onClick={() => setDetailItem(item)}
+                    style={{ display: 'block', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' }}>
                   {item.product_image_url ? (
                     <img
                       src={item.product_image_url}
@@ -194,6 +198,7 @@ export default function ActiveBidding() {
                   ) : (
                     <div style={imageThumbStyle} />
                   )}
+                  </button>
                   {item.strategy === 'direct' ? (
                     <div
                       aria-label={`最高出价：${formatJPY(item.user_max_price || item.max_price)}`}
@@ -280,6 +285,8 @@ export default function ActiveBidding() {
           <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
         ) : null}
       </List>
+      <ProductItemDetailPopup item={detailItem} onClose={() => setDetailItem(null)}
+        onBid={item => navigate(getRebidSubmitPath(item))} />
     </>
   );
 }

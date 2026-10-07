@@ -76,7 +76,7 @@ assert.equal(
 
 assert.equal(
   source.includes('selectedItem && !detailOnly') &&
-    source.includes("detailOnly ? (") &&
+    source.includes("detailOnly && detailAction === 'close' ? (") &&
     source.includes('onClick={handleClose}') &&
     />\s*关闭\s*<\/Button>/.test(source),
   true,
