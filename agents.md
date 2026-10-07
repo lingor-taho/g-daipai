@@ -42,6 +42,8 @@ Yahoo 日本拍卖代拍系统。中国用户通过 Web 提交商品 URL、最�
 
 2026-10-07 用户端入札中、落札商品列表图片可点击打开现有商品详情弹层，复用多图轮播、完整商品说明及收藏；入札中底部“去竞拍”跳转原提交页并带入商品，落札商品底部“关闭”。通过 ProductItemDetailPopup 共用列表字段转换和原商品详情加载入口，ProductSearchPopup 的 detailAction 默认仍为关闭，原单商品详情行为不变。仅需更新用户端静态文件。验证：`node src/client/src/pages/ActiveBidding.display.test.mjs`、`node src/client/src/pages/WonItems.display.test.mjs`、`node src/client/src/components/ProductSearchPopup.display.test.mjs`、`npm run build --prefix src/client`、`node scripts/encoding-guard.js`、`git diff --check`。尚未部署生产。
 
+2026-10-07 本地商品详情“拍卖次数”大于 0 时可点击，在原弹层内抓取并展示 Yahoo 入札记录，支持返回详情；0 次保持文本且不发起抓取。API 和用户端需一起更新，真实 Yahoo 记录页尚待部署验证（见当前主计划 0c）。
+
 ## 当前架构
 
 ```text
@@ -128,6 +130,28 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0c. 商品详情拍卖记录生产验证
+
+部署 API（含 `src/server/services/yahooBidHistory.js`）和用户端静态文件，重启 API。商品详情共用入口覆盖提交、搜索、入札中和落札商品页面；拍卖次数为 0 不可点击且不抓取，大于 0 点击后在原弹层的 div 内显示记录。顶部“返回商品详情”恢复原内容和滚动位置，记录视图不显示竞拍按钮；返回后恢复原详情底部按钮。返回或关闭取消客户端请求，迟到响应不能覆盖详情。
+
+新增只读 `GET /api/proxy/bid-history?auctionId=...`，URL 固定构造为 Yahoo 的 `bid_hist?aID=...`；只有相同商品、Yahoo 同源记录页链接可用于翻页或“すべての入札履歴”。不猜测翻页参数，按抓取页中的有效链接展示。复用现有 HTTP/独立浏览器备用抓取器，仅记录页启用 UTF-8/EUC-JP/Shift_JIS 解码，原商品抓取规则保持不变。返回结构化表头、行和分页链接，竞拍者显示名/评价、入札额、数量、时间按 Yahoo 原文展示，不执行 Yahoo HTML。登录、访问限制或页面结构不识别时显示加载失败；明确无入札才显示无记录。没有新增 Yahoo 登录凭据或插件任务。
+
+本地解析与抓取专项覆盖普通/自动入札表格、旧版嵌套布局、最高额标记、分页链接去重与跨商品/站外地址拒绝、日文编码、空记录及登录页拒绝、HTTP 失败后的浏览器备用路径。独立模拟 API 的 390 像素浏览器验证了 0 次无请求、加载/翻页/返回详情、原竞拍按钮、错误重试、空记录及返回后迟到响应隔离。实际记录页在本地网络未能访问，模拟页面不替代真实 Yahoo 验收；部署后以有入札商品验证表格和分页，0 次商品确认不发请求。
+
+验证命令：
+
+```powershell
+node src/server/services/yahooBidHistory.test.js
+node src/server/routes/proxy.test.js
+node src/client/src/utils/api.product-info.test.mjs
+node src/client/src/components/ProductSearchPopup.display.test.mjs
+node src/client/src/pages/ActiveBidding.display.test.mjs
+node src/client/src/pages/WonItems.display.test.mjs
+npm run build --prefix src/client
+node scripts/encoding-guard.js
+git diff --check
+```
 
 ### 0b. 用户端批量即时拍生产验证
 
@@ -562,6 +586,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-07 商品详情拍卖记录
+
+拍卖次数大于 0 时在原弹层内查看 Yahoo 记录，0 次跳过抓取；支持返回详情、刷新、页面提供的翻页/全部记录链接及错误重试。API 只读抓取结构化表格，原商品抓取默认路径和插件任务不变。验证、部署范围及真实页面待验收边界见当前主计划 0c。
 
 ### 2026-10-05 后台队列详情展开
 

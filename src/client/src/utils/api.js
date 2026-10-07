@@ -111,4 +111,9 @@ export function createGetProductSearchResults({ apiClient = api } = {}) {
   });
 }
 export const getProductSearchResults = createGetProductSearchResults();
+export const getProductBidHistory = (auctionId, pageUrl, signal) => api.get('/proxy/bid-history', {
+  params: { auctionId, ...(pageUrl ? { pageUrl } : {}) },
+  signal,
+  timeout: 60000
+});
 

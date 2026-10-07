@@ -8,6 +8,7 @@ const {
   normalizeTaxType
 } = require('../../shared/priceRules.cjs');
 const db = require('../models');
+const { createBidHistoryService, decodeYahooHtml } = require('../services/yahooBidHistory');
 
 const router = express.Router();
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -794,7 +795,7 @@ function isUsefulProduct(product, auctionId) {
   );
 }
 
-function httpFetchHtml(url, timeoutMs = 10000) {
+function httpFetchHtml(url, timeoutMs = 10000, decodeCharset = false) {
   return new Promise((resolve, reject) => {
     const request = https.get(url, {
       agent: httpsAgent,
@@ -807,7 +808,7 @@ function httpFetchHtml(url, timeoutMs = 10000) {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         const redirectUrl = new URL(response.headers.location, url).toString();
-        httpFetchHtml(redirectUrl, timeoutMs).then(resolve, reject);
+        httpFetchHtml(redirectUrl, timeoutMs, decodeCharset).then(resolve, reject);
         return;
       }
 
@@ -817,6 +818,13 @@ function httpFetchHtml(url, timeoutMs = 10000) {
         return;
       }
 
+      if (decodeCharset) {
+        const chunks = [];
+        response.on('data', chunk => chunks.push(chunk));
+        response.on('end', () => resolve(decodeYahooHtml(Buffer.concat(chunks), response.headers['content-type'])));
+        response.on('error', reject);
+        return;
+      }
       let data = '';
       response.setEncoding('utf8');
       response.on('data', chunk => data += chunk);
@@ -1017,6 +1025,18 @@ function createProductService({
 }
 
 const productService = createProductService();
+const bidHistoryService = createBidHistoryService({
+  httpFetcher: url => httpFetchHtml(url, 10000, true),
+  playwrightFetcher: playwrightFetchHtml
+});
+
+router.get('/bid-history', async (req, res) => {
+  try {
+    res.json(await bidHistoryService.fetchBidHistory(req.query.auctionId, req.query.pageUrl));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message || '拍卖记录加载失败' });
+  }
+});
 
 router.get('/fetch', async (req, res) => {
   const { url, keyword } = req.query;

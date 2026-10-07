@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Popup, SpinLoading } from 'antd-mobile';
 import FavoriteButton from './FavoriteButton';
+import BidHistoryPanel from './BidHistoryPanel';
 import { remainingFavoriteDays } from '../utils/productFavorites';
 import { colors, outlineButtonStyle } from '../styles';
 
@@ -365,6 +366,28 @@ export default function ProductSearchPopup({
   const detailRequestRef = useRef(0);
   const detailOnlyLoadKeyRef = useRef('');
   const detailOnly = Boolean(detailOnlyItem);
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const detailScrollTopRef = useRef(0);
+
+  useEffect(() => {
+    setHistoryVisible(false);
+  }, [visible, keyword, selectedItem?.auctionId]);
+
+  function openBidHistory() {
+    if (!(Number(detailProduct?.bidCount || 0) > 0)) return;
+    detailScrollTopRef.current = scrollContainerRef.current?.scrollTop || 0;
+    setHistoryVisible(true);
+    requestAnimationFrame(() => {
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    });
+  }
+
+  function returnToDetail() {
+    setHistoryVisible(false);
+    requestAnimationFrame(() => {
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = detailScrollTopRef.current;
+    });
+  }
 
   useEffect(() => {
     detailRequestRef.current += 1;
@@ -498,11 +521,13 @@ export default function ProductSearchPopup({
       >
         <div style={{ height: 'min(84vh, 820px)', display: 'flex', flexDirection: 'column', color: colors.text }}>
           <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: `1px solid ${colors.border}`, background: colors.card }}>
-            {selectedItem && !detailOnly ? (
+            {historyVisible ? (
+              <Button size="small" fill="none" onClick={returnToDetail}>← 返回商品详情</Button>
+            ) : selectedItem && !detailOnly ? (
               <Button size="small" fill="none" onClick={returnToList}>← 返回</Button>
             ) : null}
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedItem || detailOnly ? '商品详情' : (favoritesOnly ? '商品收藏' : '商品搜索结果')}</div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{historyVisible ? '拍卖记录' : selectedItem || detailOnly ? '商品详情' : (favoritesOnly ? '商品收藏' : '商品搜索结果')}</div>
               {!selectedItem && !detailOnly ? (
                 <div style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: colors.muted }}>
                   {favoritesOnly ? `已收藏 ${items.length} 件商品` : `“${keyword}”　已显示 ${items.length} 条`}
@@ -517,6 +542,10 @@ export default function ProductSearchPopup({
             onScroll={handleScroll}
             style={{ minHeight: 0, flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}
           >
+            {historyVisible && detailProduct ? (
+              <BidHistoryPanel key={detailProduct.auctionId} auctionId={detailProduct.auctionId} title={detailProduct.title} />
+            ) : null}
+            <div style={{ display: historyVisible ? 'none' : undefined }}>
             {selectedItem ? (
               detailLoading ? (
                 <div className="product-search-detail-state">
@@ -615,7 +644,12 @@ export default function ProductSearchPopup({
                     </div>
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">拍卖次数</span>
-                      <span>{Number(detailProduct.bidCount || 0)}</span>
+                      {Number(detailProduct.bidCount || 0) > 0 ? (
+                        <button type="button" onClick={openBidHistory} aria-label={`查看拍卖记录，共 ${Number(detailProduct.bidCount || 0)} 次`}
+                          style={{ justifySelf: 'start', padding: 0, border: 0, background: 'transparent', font: 'inherit', color: colors.accent, textDecoration: 'underline', cursor: 'pointer' }}>
+                          {Number(detailProduct.bidCount || 0)}
+                        </button>
+                      ) : <span>0</span>}
                     </div>
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">截止时间</span>
@@ -717,9 +751,10 @@ export default function ProductSearchPopup({
                 </div>
               </>
             )}
+            </div>
           </div>
 
-          {selectedItem ? (
+          {selectedItem && !historyVisible ? (
             <div className="product-search-detail-footer">
               {detailOnly && detailAction === 'close' ? (
                 <Button

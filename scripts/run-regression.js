@@ -18,6 +18,7 @@ const steps = [
   ['Acting user permission tests', process.execPath, ['src/server/services/actingUser.test.js'], rootDir],
   ['Batch client scheduling tests', process.execPath, ['src/client/src/utils/batchSubmit.test.mjs'], rootDir],
   ['Client submission display tests', process.execPath, ['src/client/src/pages/Submit.display.test.mjs'], rootDir],
+  ['Yahoo bid history parsing and fetch tests', process.execPath, ['src/server/services/yahooBidHistory.test.js'], rootDir],
   ['Client bid price tests', process.execPath, ['src/client/src/utils/bidPrice.test.mjs'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],
   ['Admin queue detail tests', process.execPath, ['src/server/services/adminTaskQueue.test.js'], rootDir],
