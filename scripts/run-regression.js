@@ -7,6 +7,9 @@ const clientDir = path.join(rootDir, 'src', 'client');
 const npmCommand = 'npm';
 
 const steps = [
+  ['Auction history chart calculations', process.execPath, ['src/client/src/utils/auctionHistoryChart.test.mjs'], rootDir],
+  ['Auction history queue tests', process.execPath, ['src/server/services/auctionHistory.test.js'], rootDir],
+  ['Auction history plugin tests', process.execPath, ['yahoo-plugin/auctionHistory.test.js'], rootDir],
   ['Full project encoding guard', process.execPath, ['scripts/encoding-guard.js'], rootDir],
   ['Startup build cache and readiness tests', process.execPath, ['scripts/startup.test.js'], rootDir],
   ['Google Sheets config tests', process.execPath, ['src/server/services/googleSheets.test.js'], rootDir],

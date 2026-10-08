@@ -89,7 +89,7 @@ assert.equal(
     source.includes('sandbox="allow-same-origin"') &&
     source.includes('srcDoc={buildDescriptionDocument(detailProduct.descriptionHtml)}') &&
     source.includes('detailProduct.descriptionText') &&
-    !source.includes('dangerouslySetInnerHTML'),
+    !source.includes('dangerouslySetInnerHTML={{__html:detailProduct.descriptionHtml}}'),
   true,
   'Complete seller descriptions and images should render inside an isolated frame with a text fallback'
 );

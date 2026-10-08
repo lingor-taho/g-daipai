@@ -8059,6 +8059,68 @@ async function runWorkflowAction() {
   }
 }
 
+async function executeAuctionHistoryJob(job) {
+  let tab;
+  const rows = [];
+  let firstPageRows;
+  let expired = false;
+  let error = '';
+  try {
+    tab = await chrome.tabs.create({url:`https://auctions.yahoo.co.jp/jp/show/bid_hist?aID=${encodeURIComponent(job.productId)}&apg=1&typ=log`,active:false});
+    const deadline = Date.now() + 8 * 60 * 1000;
+    const visited = new Set();
+    for (let page = 0; page < 500; page++) {
+      if (Date.now() > deadline) throw new Error('history collection timed out');
+      await waitForTabComplete(tab.id, 20000);
+      let result;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await chrome.scripting.executeScript({target:{tabId:tab.id},files:['auctionHistory.js']});
+        result = (await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>globalThis.readAuctionHistoryPage()}))[0]?.result;
+        if (result && (!result.error || result.error === 'login required')) break;
+        await new Promise(resolve => setTimeout(resolve,500));
+      }
+      if (!result || result.error) throw new Error(result?.error || 'history page unavailable');
+      if (result.expired) {
+        if (page !== 0) throw new Error('later history page unavailable');
+        expired = true; break;
+      }
+      if (!firstPageRows) firstPageRows = result.rows;
+      rows.push(...result.rows);
+      if (!result.nextUrl) {
+        if (rows.length && !rows.some(row=>row.start)) throw new Error('auction start missing');
+        break;
+      }
+      if (visited.has(result.nextUrl) || page === 499) throw new Error('history pagination incomplete');
+      visited.add(result.nextUrl);
+      await chrome.tabs.update(tab.id,{url:result.nextUrl});
+    }
+  } catch (e) {
+    error = e.message || 'history collection failed';
+    console.warn('[Yahoo Bid] Auction history failed:',job.productId,error);
+  } finally {
+    if (tab?.id) await closeTabIfExists(tab.id);
+  }
+  const response = await apiFetch('/api/plugin/auction-history/status',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...job,expired,error,rows,firstPageRows:firstPageRows || []})
+  });
+  if (!response.ok) throw new Error('history result was not saved');
+  return !error;
+}
+
+async function runAuctionHistoryJobs() {
+  // Bounded batch; re-check workflow priority between products.
+  for (let count = 0; count < 5; count++) {
+    if (await pauseIdleWorkForOpenManualPin()) return;
+    if (count && (await fetchNextIdleAction())?.action !== 'auction_history') return;
+    const response = await apiFetch('/api/plugin/auction-history/jobs');
+    if (!response.ok) throw new Error('history queue unavailable');
+    const {job} = await response.json();
+    if (!job) return;
+    if (!await executeAuctionHistoryJob(job)) return;
+  }
+}
+
 async function executeNextWorkflowAction() {
   const idleAction = await fetchNextIdleAction();
   if (idleAction?.action === 'transaction_start') {
@@ -8074,6 +8136,8 @@ async function executeNextWorkflowAction() {
     await runConfirmReceiptJobs();
   } else if (idleAction?.action === 'scan') {
     await runScanJobs();
+  } else if (idleAction?.action === 'auction_history') {
+    await runAuctionHistoryJobs();
   } else if (idleAction?.action === 'payment') {
     await runPaymentJobs();
   }

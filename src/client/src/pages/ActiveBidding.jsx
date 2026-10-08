@@ -5,6 +5,7 @@ import { getActiveBiddingTaskList, getBiddingFailureAnalysis } from '../utils/ap
 import { BidCountIcon } from '../components/ProductCard';
 import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
 import BidPriceTimeline from '../components/BidPriceTimeline';
+import AuctionHistoryChart, { AuctionHistoryChartButton } from '../components/AuctionHistoryChart';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { getAuctionProductUrl, getRebidSubmitPath } from '../utils/rebid';
@@ -75,6 +76,7 @@ export default function ActiveBidding() {
   const [analysisMode, setAnalysisMode] = useState(false);
   const requestRef = useRef(0);
   const [detailItem, setDetailItem] = useState(null);
+  const [historyChartItem, setHistoryChartItem] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -221,6 +223,7 @@ export default function ActiveBidding() {
                     <div style={imageThumbStyle} />
                   )}
                   </button>
+                  {analysisMode ? <div style={{textAlign:'center'}}><AuctionHistoryChartButton item={item} onClick={() => setHistoryChartItem(item)} /></div> : null}
                   {!analysisMode && item.strategy === 'direct' ? (
                     <div
                       aria-label={`最高出价：${formatJPY(item.user_max_price || item.max_price)}`}
@@ -320,6 +323,7 @@ export default function ActiveBidding() {
           <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
         ) : null}
       </List>
+      <AuctionHistoryChart item={historyChartItem} onClose={() => setHistoryChartItem(null)} />
       <ProductItemDetailPopup item={detailItem} onClose={() => setDetailItem(null)}
         onBid={analysisMode ? undefined : item => navigate(getRebidSubmitPath(item))} />
     </>

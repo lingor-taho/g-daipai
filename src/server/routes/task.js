@@ -33,6 +33,17 @@ const { setOrderPaused } = require('../services/orderPause');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
 
+router.get('/auction-history/:productId', async (req,res) => {
+  const productId = String(req.params.productId);
+  if (!/^[a-zA-Z]?\d{8,10}$/.test(productId)) return res.status(400).json({error:'商品ID无效'});
+  if (req.query.format === 'chart') {
+    const product = await db.getOne('SELECT auction_history_data FROM products WHERE product_id=?',[productId]);
+    return res.json({data:product?.auction_history_data || ''});
+  }
+  const product = await db.getOne('SELECT auction_history_html FROM products WHERE product_id=?',[productId]);
+  res.json({html:product?.auction_history_html || '', expired:product?.auction_history_html === '数据已过期'});
+});
+
 /**
  * 从任意 URL 中提取 Yahoo Auction ID
  * 格式: https://auctions.yahoo.co.jp/jp/auction/u1192398549
@@ -956,6 +967,7 @@ router.get('/won', async (req, res) => {
          p.product_url AS product_url,
          p.product_title AS product_title,
          p.product_image_url AS product_image_url,
+         CASE WHEN LENGTH(COALESCE(p.auction_history_data, '')) > 0 THEN 1 ELSE 0 END AS has_auction_history,
          p.current_price AS current_price,
          p.buyout_price AS buyout_price,
          COALESCE(p.tax_type, 'tax_zero') AS tax_type,

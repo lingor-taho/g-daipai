@@ -69,6 +69,7 @@ export default function MultiBidSettingsPage() {
   const [requesting, setRequesting] = useState(false);
   const [requestingConfirmReceipt, setRequestingConfirmReceipt] = useState(false);
   const [requestingScan, setRequestingScan] = useState(false);
+  const [requestingHistory, setRequestingHistory] = useState(false);
   const [googleConfigEditable, setGoogleConfigEditable] = useState(false);
 
   useEffect(() => {
@@ -87,6 +88,7 @@ export default function MultiBidSettingsPage() {
           transactionStartHour: data.transactionStartHour ?? 1,
           confirmReceiptHour: data.confirmReceiptHour ?? 18,
           confirmReceiptColor: data.confirmReceiptColor || '#ffff00',
+          auctionHistoryTime: data.auctionHistoryTime ?? '01:20',
           scanStartHour: data.scanStartHour ?? 1,
           scanEndHour: data.scanEndHour ?? 20,
           scanEveryIdleRuns: data.scanEveryIdleRuns ?? 5,
@@ -174,6 +176,7 @@ export default function MultiBidSettingsPage() {
           transactionStartHour: 1,
           confirmReceiptHour: 18,
           confirmReceiptColor: '#ffff00',
+          auctionHistoryTime: '01:20',
           scanStartHour: 1,
           scanEndHour: 20,
           scanEveryIdleRuns: 5,
@@ -357,6 +360,22 @@ export default function MultiBidSettingsPage() {
           </Form.Item>
           <Form.Item label="手动执行确认收货">
             <Button loading={requestingConfirmReceipt} onClick={handleRequestConfirmReceipt}>加入执行队列</Button>
+          </Form.Item>
+        </Card>
+
+        <Card title="拍卖记录任务" style={{ marginTop: 16 }}>
+          <Form.Item name="auctionHistoryTime" label="每日执行时间（北京时间）" rules={[{required:true,pattern:/^([01]\d|2[0-3]):[0-5]\d$/,message:'请输入 HH:mm'}]}>
+            <Input type="time" step={60} />
+          </Form.Item>
+          <Form.Item label="手动执行拍卖记录读取">
+            <Button loading={requestingHistory} onClick={async () => {
+              setRequestingHistory(true);
+              try {
+                await fetchAdminJson('/api/admin/auction-history/request', {method:'POST',headers:authHeaders()});
+                message.success('拍卖记录已加入执行队列');
+              } catch (e: any) { message.error(e.message || '执行失败'); }
+              finally { setRequestingHistory(false); }
+            }}>加入执行队列</Button>
           </Form.Item>
         </Card>
 

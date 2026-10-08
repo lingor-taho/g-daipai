@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS products (
   product_type VARCHAR(32) DEFAULT 'normal',
   shipping_fee_text VARCHAR(64),
   end_time DATETIME,
+  auction_history_html TEXT,
+  auction_history_data TEXT,
   last_fetched_at DATETIME,
   last_scanned_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

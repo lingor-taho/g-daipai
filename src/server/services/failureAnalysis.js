@@ -13,6 +13,7 @@ async function getFailureAnalysis(database, { userId, page = 1, limit = 10 }) {
   const total = Number(totalRow?.total || 0);
   const items = await database.getAll(`SELECT t.id, t.product_id, t.max_price, t.user_max_price, t.strategy,
       t.status, t.created_at, p.product_url, p.product_title, p.product_image_url,
+      CASE WHEN LENGTH(COALESCE(p.auction_history_data, '')) > 0 THEN 1 ELSE 0 END AS has_auction_history,
       p.current_price, p.end_time AS end_time, COALESCE(p.tax_type, 'tax_zero') AS tax_type,
       bi.status AS bidding_status
     FROM tasks t

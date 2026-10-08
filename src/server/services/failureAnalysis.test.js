@@ -7,12 +7,12 @@ async function run() {
   raw.exec(`CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER, product_id TEXT, max_price INTEGER,
     user_max_price INTEGER, strategy TEXT, status TEXT, created_at TEXT, pending_followup_max_price INTEGER, client_request_id TEXT);
     CREATE TABLE products (product_id TEXT PRIMARY KEY, product_url TEXT, product_title TEXT, product_image_url TEXT,
-      current_price INTEGER, tax_type TEXT, end_time TEXT);
+      current_price INTEGER, tax_type TEXT, end_time TEXT, auction_history_data TEXT);
     CREATE TABLE bidding_items (product_id TEXT PRIMARY KEY, status TEXT);`);
   const db = { getAll: async (sql, params = []) => raw.prepare(sql).all(...params), getOne: async (sql, params = []) => raw.prepare(sql).get(...params) };
   const expired = raw.prepare("SELECT datetime('now', '-1 day') AS time").get().time;
   const future = raw.prepare("SELECT datetime('now', '+1 day') AS time").get().time;
-  const product = raw.prepare('INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const product = raw.prepare('INSERT INTO products(product_id,product_url,product_title,product_image_url,current_price,tax_type,end_time) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const task = raw.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   let nextId = 1;
   function addProduct(id, end = expired, price = 3500, tax = 'tax_zero') {
@@ -49,10 +49,15 @@ async function run() {
     addProduct('split-pending', expired, 6000, 'tax_included');
     addTask('split-pending', 6600, 'pending', 1, null, 9900);
 
+    raw.prepare("UPDATE products SET auction_history_data='[]' WHERE product_id='history'").run();
+    raw.prepare("UPDATE products SET auction_history_data='数据已过期' WHERE product_id='split'").run();
     const result = await getFailureAnalysis(db, { userId: 1, limit: 100 });
     assert.equal(result.total, 5);
     assert.deepEqual(new Set(result.data.map(item => item.product_id)), new Set(['history', 'expired-pending', 'split', 'split-pending', 'cancelled-only']));
     const history = result.data.find(item => item.product_id === 'history');
+    assert.equal(history.has_auction_history,1);
+    assert.equal(result.data.find(item=>item.product_id==='split').has_auction_history,1);
+    assert.equal(result.data.find(item=>item.product_id==='expired-pending').has_auction_history,0);
     assert.equal(history.current_price, 3500);
     assert.equal(history.final_bid, 2000);
     const multiBid = result.data.find(item => item.product_id === 'expired-pending');

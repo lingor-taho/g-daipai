@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
 const db = require('../models');
+const auctionHistory = require('../services/auctionHistory');
 const { getBatchPreparationStats } = require('../services/batchTaskQueue');
 const { getAdminTaskQueue } = require('../services/adminTaskQueue');
 const bcrypt = require('bcryptjs');
@@ -2624,6 +2625,7 @@ async function getMultiBidConfig() {
     transactionStartHour: Number(values.transaction_start_hour ?? 1),
     confirmReceiptHour: Number(values.confirm_receipt_hour ?? DEFAULT_CONFIRM_RECEIPT_HOUR),
     confirmReceiptColor: normalizeReceiptColorConfig(values.confirm_receipt_color, DEFAULT_CONFIRM_RECEIPT_COLOR),
+    auctionHistoryTime: auctionHistory.get(db, 'auction_history_time', '01:20'),
     scanStartHour: Number(values.scan_start_hour ?? 1),
     scanEndHour: Number(values.scan_end_hour ?? 20),
     scanEveryIdleRuns: Number(values.scan_every_idle_runs ?? 5),
@@ -2647,6 +2649,8 @@ function normalizeYahooShippingPrefCode(value, fallback = '27') {
   return /^(0[1-9]|[1-3][0-9]|4[0-7])$/.test(text) ? text : fallback;
 }
 
+router.post('/auction-history/request', (req,res) => res.json(auctionHistory.request(db)));
+
 router.get('/multi-bid-config', async (req, res) => {
   res.json(await getMultiBidConfig());
 });
@@ -2662,6 +2666,8 @@ router.put('/multi-bid-config', async (req, res) => {
   const transactionStartHour = Number(req.body.transactionStartHour ?? 1);
   const confirmReceiptHour = Number(req.body.confirmReceiptHour ?? DEFAULT_CONFIRM_RECEIPT_HOUR);
   const confirmReceiptColor = normalizeReceiptColorConfig(req.body.confirmReceiptColor ?? DEFAULT_CONFIRM_RECEIPT_COLOR, '');
+  const auctionHistoryTime = String(req.body.auctionHistoryTime ?? auctionHistory.get(db,'auction_history_time','01:20'));
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(auctionHistoryTime)) return res.status(400).json({error:'拍卖记录时间格式须为 HH:mm'});
   const scanStartHour = Number(req.body.scanStartHour ?? 1);
   const scanEndHour = Number(req.body.scanEndHour ?? 20);
   const scanEveryIdleRuns = Number(req.body.scanEveryIdleRuns ?? 5);
@@ -2815,7 +2821,8 @@ router.put('/multi-bid-config', async (req, res) => {
     );
     applyGoogleSheetsConfig({ googleSheetId, googleSheetName, googleCredentialPath });
   }
-  res.json({ success: true, workerIntervalMs, clientNoticeText, clientNoticeMarquee: clientNoticeMarquee === '1', startHours, intervalMinutes, idleSyncIntervalMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds, googleSheetName });
+  auctionHistory.set(db, 'auction_history_time', auctionHistoryTime);
+  res.json({ auctionHistoryTime, success: true, workerIntervalMs, clientNoticeText, clientNoticeMarquee: clientNoticeMarquee === '1', startHours, intervalMinutes, idleSyncIntervalMinutes, multiBidMinPrice, transactionStartHour, confirmReceiptHour, confirmReceiptColor, scanStartHour, scanEndHour, scanEveryIdleRuns, paymentJobLimit: paymentJobLimitMax, paymentJobLimitMin, paymentJobLimitMax, paymentPageStaySeconds, googleSheetName });
 });
 
 router.post('/transaction-start/request', async (req, res) => {
@@ -3320,6 +3327,7 @@ router.get('/idle-flags', async (req, res) => {
     transactionStartHour,
     transactionStartLastRunDate,
     transactionStartLastRunLog,
+    auctionHistoryFlag: Number(auctionHistory.get(db,'auction_history_requested','0')),
     confirmReceiptFlag,
     confirmReceiptRequested: confirmReceiptRequested ? 1 : 0,
     confirmReceiptHour,

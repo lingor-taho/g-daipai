@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Popup, SpinLoading } from 'antd-mobile';
 import FavoriteButton from './FavoriteButton';
+import { api, getApiErrorMessage } from '../utils/api';
 import { remainingFavoriteDays } from '../utils/productFavorites';
 import { colors, outlineButtonStyle } from '../styles';
 
@@ -356,6 +357,23 @@ export default function ProductSearchPopup({
   const isFavorite = item => favorites.some(value => value.auctionId === String(item.auctionId || '').toLowerCase());
   const [selectedItem, setSelectedItem] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const [history, setHistory] = useState({loading:false,html:'',message:''});
+  useEffect(() => { setHistoryVisible(false); }, [visible, selectedItem?.auctionId]);
+  useEffect(() => {
+    if (!historyVisible || !visible || !selectedItem?.auctionId) return;
+    const controller = new AbortController();
+    const account = localStorage.getItem('actingUserId');
+    setHistory({loading:true,html:'',message:''});
+    api.get(`/task/auction-history/${encodeURIComponent(selectedItem.auctionId)}`,{signal:controller.signal})
+      .then(({data}) => {
+        if (controller.signal.aborted || account !== localStorage.getItem('actingUserId')) return;
+        setHistory({loading:false,html:data.expired ? '' : data.html,message:data.expired ? '数据已过期' : data.html ? '' : '拍卖记录尚未采集'});
+      }).catch(error => {
+        if (!controller.signal.aborted) setHistory({loading:false,html:'',message:getApiErrorMessage(error,'拍卖记录读取失败')});
+      });
+    return () => controller.abort();
+  }, [historyVisible,visible,selectedItem?.auctionId]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -498,11 +516,12 @@ export default function ProductSearchPopup({
       >
         <div style={{ height: 'min(84vh, 820px)', display: 'flex', flexDirection: 'column', color: colors.text }}>
           <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: `1px solid ${colors.border}`, background: colors.card }}>
-            {selectedItem && !detailOnly ? (
+            {historyVisible ? <Button size="small" fill="none" onClick={() => setHistoryVisible(false)}>← 返回商品详情</Button> : null}
+            {selectedItem && !detailOnly && !historyVisible ? (
               <Button size="small" fill="none" onClick={returnToList}>← 返回</Button>
             ) : null}
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedItem || detailOnly ? '商品详情' : (favoritesOnly ? '商品收藏' : '商品搜索结果')}</div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{historyVisible ? '拍卖记录' : selectedItem || detailOnly ? '商品详情' : (favoritesOnly ? '商品收藏' : '商品搜索结果')}</div>
               {!selectedItem && !detailOnly ? (
                 <div style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: colors.muted }}>
                   {favoritesOnly ? `已收藏 ${items.length} 件商品` : `“${keyword}”　已显示 ${items.length} 条`}
@@ -517,7 +536,11 @@ export default function ProductSearchPopup({
             onScroll={handleScroll}
             style={{ minHeight: 0, flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}
           >
-            {selectedItem ? (
+            {historyVisible ? (
+              <div style={{padding:14,overflowX:'auto'}}>
+                {history.loading ? <SpinLoading /> : history.message ? <div>{history.message}</div> : <div dangerouslySetInnerHTML={{__html:history.html}} />}
+              </div>
+            ) : selectedItem ? (
               detailLoading ? (
                 <div className="product-search-detail-state">
                   <SpinLoading style={{ '--size': '30px' }} />
@@ -526,6 +549,7 @@ export default function ProductSearchPopup({
               ) : detailError ? (
                 <div className="product-search-detail-state">
                   <div>{detailError}</div>
+                  <Button size="small" fill="outline" onClick={() => setHistoryVisible(true)}>拍卖次数 {Number(selectedItem?.bidCount || 0)} · 查看已保存拍卖记录</Button>
                   <Button size="small" color="primary" fill="outline" onClick={() => loadDetail(selectedItem)}>
                     重新加载
                   </Button>
@@ -615,7 +639,7 @@ export default function ProductSearchPopup({
                     </div>
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">拍卖次数</span>
-                      <span>{Number(detailProduct.bidCount || 0)}</span>
+                      <button type="button" style={{padding:0,border:0,background:'transparent',color:colors.text,cursor:'pointer',textDecoration:'underline'}} onClick={() => setHistoryVisible(true)} aria-label="查看拍卖记录">{Number(detailProduct.bidCount || 0)}</button>
                     </div>
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">截止时间</span>
@@ -719,7 +743,7 @@ export default function ProductSearchPopup({
             )}
           </div>
 
-          {selectedItem ? (
+          {selectedItem && !historyVisible ? (
             <div className="product-search-detail-footer">
               {detailOnly && detailAction === 'close' ? (
                 <Button

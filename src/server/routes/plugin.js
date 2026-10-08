@@ -2,6 +2,7 @@
 const router = express.Router();
 const { execFile } = require('child_process');
 const db = require('../models');
+const auctionHistory = require('../services/auctionHistory');
 const { isYahooLoginError } = require('../services/yahooLoginStatus');
 const {
   getOrderStatusAuditRows,
@@ -570,9 +571,6 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   const now = new Date(nowMs);
   const nowHour = config.nowHour ?? now.getHours();
   const today = config.today || getLocalDateKey(nowMs);
-  if (Number(config.manualOrderImportPending || 0) > 0) {
-    return { action: 'manual_order_import', today, manualOrderImportPending: Number(config.manualOrderImportPending || 0) };
-  }
   if (!config.separateMessages && Number(config.yahooMessagePending || 0) > 0) {
     return { action: 'yahoo_message', today, yahooMessagePending: Number(config.yahooMessagePending || 0) };
   }
@@ -603,6 +601,8 @@ function getNextIdleAction(config = {}, nowMs = Date.now()) {
   if (confirmReceiptRequested || shouldAutoRequestConfirmReceipt({ ...config, confirmReceiptHour }, nowMs)) {
     return { action: 'confirm_receipt', today };
   }
+  if (Number(config.manualOrderImportPending || 0) > 0) return { action: 'manual_order_import', today };
+  if (Number(config.auctionHistoryRequested || 0) === 1) return { action: 'auction_history', today };
   return { action: 'none', today };
 }
 
@@ -644,7 +644,7 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
   } else if (action === 'yahoo_message') {
     // Message reading/sending is an explicit queue and must not consume the D-scan counter.
   } else if (action === 'manual_order_import') {
-    // Import is its own workflow step and must not consume the D-scan counter.
+    await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   } else {
     await saveConfigValue(database, 'scan_idle_counter', getNextScanIdleCounter(action, config));
   }
@@ -652,6 +652,7 @@ async function completeIdleAction(action, database = db, nowMs = Date.now()) {
 }
 
 async function getIdleActionConfig(database = db, nowMs = Date.now()) {
+  if (database.raw) auctionHistory.schedule(database, nowMs);
   await ensureScheduledTransactionStartRequest(database, nowMs);
   await ensureScheduledConfirmReceiptRequest(database, nowMs);
   const rows = await database.getAll(
@@ -699,6 +700,7 @@ async function getIdleActionConfig(database = db, nowMs = Date.now()) {
   }
   return {
     manualOrderImportPending,
+    auctionHistoryRequested: database.raw ? Number(auctionHistory.get(database, 'auction_history_requested', '0')) : 0,
     yahooMessagePending,
     transactionStartHour: Number(values.transaction_start_hour ?? DEFAULT_TRANSACTION_START_HOUR),
     transactionStartHourUpdatedAt: updatedAt.transaction_start_hour || '',
@@ -913,6 +915,14 @@ router.get('/tasks', async (req, res) => {
     tasks,
     bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit
   });
+});
+
+router.get('/auction-history/jobs', (req, res) => {
+  res.json({success:true, job:auctionHistory.next(db)});
+});
+router.post('/auction-history/status', (req, res) => {
+  try { res.json(auctionHistory.finish(db, req.body)); }
+  catch (error) { res.status(400).json({error:error.message}); }
 });
 
 router.get('/idle-action/next', async (req, res) => {

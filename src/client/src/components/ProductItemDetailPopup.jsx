@@ -32,6 +32,7 @@ export default function ProductItemDetailPopup({ item, onClose, onBid }) {
         auctionId: item.product_id,
         standardUrl: getAuctionProductUrl(item),
         title: item.product_title,
+        bidCount: Number(item.bid_count || 0),
         imageUrl: item.product_image_url
       } : null}
     />

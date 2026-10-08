@@ -134,6 +134,9 @@ db.prepare(`
   )
 `).run();
 
+ensureColumn('products', 'auction_history_html', 'TEXT');
+ensureColumn('products', 'auction_history_data', 'TEXT');
+
 db.prepare(`
   CREATE INDEX IF NOT EXISTS idx_products_end_time
   ON products(end_time)

@@ -813,6 +813,7 @@ export default function OrdersPage() {
             <Typography.Text>导入flag：{renderManualOrderImportFlag(idleFlags)}</Typography.Text>
             <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
             <Typography.Text>确认收货flag：{idleFlags?.confirmReceiptFlag ?? '-'}</Typography.Text>
+            <Typography.Text>拍卖记录flag：{idleFlags?.auctionHistoryFlag ?? '-'}</Typography.Text>
             <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
           </Space>
         ) : null}

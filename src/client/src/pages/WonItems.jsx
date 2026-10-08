@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
 import BidPriceTimeline from '../components/BidPriceTimeline';
+import AuctionHistoryChart, { AuctionHistoryChartButton } from '../components/AuctionHistoryChart';
 import { Button, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
 import { deleteWonItemRemark, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
@@ -269,6 +270,7 @@ function PauseIcon({ active }) {
 export default function WonItems() {
   const navigate = useNavigate();
   const [detailItem, setDetailItem] = useState(null);
+  const [historyChartItem, setHistoryChartItem] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -516,6 +518,7 @@ export default function WonItems() {
                     >
                       <PauseIcon active={item.order_status === 'paused'} />
                     </button>
+                    <AuctionHistoryChartButton item={item} onClick={() => setHistoryChartItem(item)} />
                   </div>
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
@@ -581,6 +584,7 @@ export default function WonItems() {
           <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
         ) : null}
       </List>
+      <AuctionHistoryChart item={historyChartItem} onClose={() => setHistoryChartItem(null)} />
       <ProductItemDetailPopup item={detailItem} onClose={() => setDetailItem(null)} />
       {remarkEditor ? (
         <div

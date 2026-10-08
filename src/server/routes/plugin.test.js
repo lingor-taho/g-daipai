@@ -617,6 +617,7 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   assert.equal(ORDER_STATUS_PENDING_BUNDLE, 'pending_bundle');
   assert.equal(getNextIdleAction({
     manualOrderImportPending: 1,
+    separateMessages: true,
     yahooMessagePending: 1,
     transactionStartRequested: 1,
     scanIdleCounter: 0,
@@ -625,7 +626,7 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
     scanEndHour: 2,
     nowHour: 10,
     today: '2026-06-01'
-  }).action, 'manual_order_import');
+  }).action, 'transaction_start');
   assert.equal(getNextIdleAction({
     yahooMessagePending: 1,
     transactionStartRequested: 1,
@@ -661,6 +662,18 @@ function testIdleActionChoosesTransactionStartBeforeScan() {
   }).action, 'scan');
 }
 
+function testAuctionHistoryWorkflowPriority() {
+  const nowMs = Date.parse('2026-10-08T00:00:00+08:00');
+  const base = {separateMessages:true,nowHour:0,today:'2026-10-08',scanStartHour:0,scanEndHour:23,
+    scanEveryIdleRuns:10,scanIdleCounter:2,manualOrderImportPending:1,auctionHistoryRequested:1};
+  assert.equal(getNextIdleAction({...base,transactionStartRequested:1,paymentRequested:1,confirmReceiptRequested:1},nowMs).action,'transaction_start');
+  assert.equal(getNextIdleAction({...base,scanIdleCounter:10,paymentRequested:1,confirmReceiptRequested:1},nowMs).action,'scan');
+  assert.equal(getNextIdleAction({...base,paymentRequested:1,confirmReceiptRequested:1},nowMs).action,'payment');
+  assert.equal(getNextIdleAction({...base,confirmReceiptRequested:1},nowMs).action,'confirm_receipt');
+  assert.equal(getNextIdleAction(base,nowMs).action,'manual_order_import');
+  assert.equal(getNextIdleAction({...base,manualOrderImportPending:0},nowMs).action,'auction_history');
+}
+
 function testManualScanRequestBypassesScanWindow() {
   assert.equal(getNextIdleAction({
     transactionStartHour: 1,
@@ -675,7 +688,7 @@ function testManualScanRequestBypassesScanWindow() {
   }).action, 'scan');
 }
 
-function testManualOrderImportCompletesWithoutClearingScanCounter() {
+function testManualOrderImportAdvancesScanCounter() {
   const saved = [];
   const fakeDb = {
     async getAll() {
@@ -691,7 +704,7 @@ function testManualOrderImportCompletesWithoutClearingScanCounter() {
   };
 
   return completeIdleAction('manual_order_import', fakeDb, Date.parse('2026-06-23T09:00:00+08:00')).then(() => {
-    assert.equal(saved.some(call => call.params?.[0] === 'scan_idle_counter'), false);
+    assert.equal(saved.some(call => call.params?.[0] === 'scan_idle_counter'), true);
   });
 }
 
@@ -3048,6 +3061,7 @@ testNormalizeYahooWonTimeTextInfersCurrentYear();
 testNormalizeYahooWonTimeTextUsesPreviousYearForFutureMonthDay();
 testShouldSplitDirectBidByYahooLowPriceRule();
 testIdleActionChoosesTransactionStartBeforeScan();
+testAuctionHistoryWorkflowPriority();
 testManualScanRequestBypassesScanWindow();
 testTransactionStartReadyOneMinuteAfterConfiguredHour();
 testTransactionStartScheduleFollowsChangedHourSlots();
@@ -3107,7 +3121,7 @@ Promise.all([
   testGetPaymentJobsIncludesBundleFinalPriceTotal(),
   testGetPaymentJobsUsesCashOnDeliveryShippingOverride(),
   Promise.resolve().then(testPaymentJobLimitRangeAndRandomSelection),
-  testManualOrderImportCompletesWithoutClearingScanCounter(),
+  testManualOrderImportAdvancesScanCounter(),
   testYahooMessageCompletesWithoutClearingScanCounter(),
   testEnsureScheduledTransactionStartRequestSetsFlagWhenHourReached(),
   testEnsureScheduledTransactionStartRequestWaitsOneMinuteAfterHour(),
