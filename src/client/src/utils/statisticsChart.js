@@ -4,7 +4,8 @@ export function isStatisticsDateTick(index, length) {
 
 export function buildLineChartPoints(daily, field, maxValue, width = 900, height = 190) {
   return daily.map((item, index) => {
-    const value = item[field] == null ? null : Number(item[field]);
+    const rawValue = Number(item[field] ?? 0);
+    const value = Number.isFinite(rawValue) ? rawValue : 0;
     return {
       date: item.date,
       value,

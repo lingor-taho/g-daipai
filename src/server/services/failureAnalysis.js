@@ -26,13 +26,12 @@ async function getFailureAnalysis(database, { userId, page = 1, limit = 10 }) {
     LIMIT ? OFFSET ?`, [userId, limit, (page - 1) * limit]);
   if (items.length === 0) return { success: true, data: [], total, page, limit };
   const productIds = items.map(item => item.product_id);
-  const byProduct = await getTaskSubmissionHistory(database, userId, productIds, { includeCancelled: true });
+  const byProduct = await getTaskSubmissionHistory(database, userId, productIds);
   return {
     success: true,
     data: items.map(item => {
-      const submissions = byProduct.get(item.product_id) || [];
-      const bid_history = submissions.filter(bid => bid.status !== 'cancelled');
-      return { ...item, bid_history, final_bid: Math.max(0, ...submissions.map(bid => bid.amount)) };
+      const bid_history = byProduct.get(item.product_id) || [];
+      return { ...item, bid_history, final_bid: Math.max(0, ...bid_history.map(bid => bid.amount)) };
     }),
     total, page, limit
   };

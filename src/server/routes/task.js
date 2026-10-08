@@ -361,7 +361,7 @@ function buildWonStatsDailyRows(days, summaryRows, taskRows, now = new Date()) {
       item_count: wonCount,
       task_count: taskCount,
       bid_product_count: bidProductCount,
-      harvest_rate: bidProductCount > 0 ? wonCount / bidProductCount : null
+      harvest_rate: bidProductCount > 0 ? wonCount / bidProductCount : 0
     };
   });
 }

@@ -57,7 +57,7 @@ async function run() {
     assert.equal(data.daily.at(-2).bid_product_count, 1);
     assert.equal(data.daily.at(-2).item_count, 0);
     assert.equal(data.daily.at(-2).harvest_rate, 0);
-    assert.equal(data.daily[1].harvest_rate, null, 'No submissions means undefined ratio, rather than an invented zero');
+    assert.equal(data.daily[1].harvest_rate, 0, 'No submissions are displayed as zero to keep the line continuous');
     assert.equal(data.daily.reduce((sum, row) => sum + row.task_count, 0), 8);
     assert.equal(data.performance.taskCount, 8);
     assert.equal(data.items.length, 3, 'CSV continues to use the selected 90-day won range');
@@ -67,7 +67,7 @@ async function run() {
     assert.equal(other.daily.at(-1).total_amount, 99999);
     const empty = await request(3);
     assert.equal(empty.daily.length, 90);
-    assert.ok(empty.daily.every(row => row.task_count === 0 && row.item_count === 0 && row.harvest_rate === null));
+    assert.ok(empty.daily.every(row => row.task_count === 0 && row.item_count === 0 && row.harvest_rate === 0));
     const today = data.daily.at(-1).date;
     const overflow = buildWonStatsDailyRows(1, [{ won_date: today, item_count: 3 }], [{ task_date: today, task_count: 4, bid_product_count: 1 }]);
     assert.equal(overflow[0].harvest_rate, 3, 'Daily event-date ratio must preserve values above 100%');

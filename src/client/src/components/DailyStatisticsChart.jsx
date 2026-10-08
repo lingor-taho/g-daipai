@@ -8,7 +8,7 @@ function shortDate(date) {
 }
 
 function percent(value) {
-  return value == null ? '—' : `${(value * 100).toFixed(1).replace(/\.0$/, '')}%`;
+  return `${(Number(value || 0) * 100).toFixed(1).replace(/\.0$/, '')}%`;
 }
 
 export default function DailyStatisticsChart({ daily, kind }) {
@@ -77,7 +77,7 @@ export default function DailyStatisticsChart({ daily, kind }) {
         </div>
       </div>
       <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: colors.muted }}>
-        {harvest ? '每日落札数 ÷ 当日出价商品数，同日同一商品只计一次；无出价商品日显示 —。超过 100% 用顶端三角标记，点击查看实际比例。' : '按任务提交日期统计，包含成功、失败、终止及其他状态的全部任务。'}
+        {harvest ? '每日落札数 ÷ 当日出价商品数，同日同一商品只计一次；无数据日按 0% 显示并连续连线。超过 100% 用顶端三角标记，点击查看实际比例。' : '按任务提交日期统计，包含成功、失败、终止及其他状态的全部任务。'}
       </div>
     </div>
   );

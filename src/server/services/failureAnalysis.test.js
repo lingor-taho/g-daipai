@@ -26,7 +26,7 @@ async function run() {
   try {
     addProduct('history');
     addTask('history', 1000);
-    addTask('history', 2000, 'cancelled');
+    addTask('history', 90000, 'cancelled');
     addTask('history', 2000);
     addTask('history', 2000);
     addTask('history', 99999, 'success', 2);
@@ -62,7 +62,7 @@ async function run() {
     assert.ok(history.bid_history.every(item => item.status !== 'cancelled'));
     const cancelledOnly = result.data.find(item => item.product_id === 'cancelled-only');
     assert.deepEqual(cancelledOnly.bid_history, [], 'Terminated-only products have no chart triangles or times');
-    assert.equal(cancelledOnly.final_bid, 8000, 'Textual highest submitted price remains unchanged');
+    assert.equal(cancelledOnly.final_bid, 0, 'Textual highest bid uses the same non-terminated history as the chart');
     assert.equal(result.data.find(item => item.product_id === 'split').bid_history.length, 1, 'Automatic followup is not another user submission');
     assert.equal(result.data.find(item => item.product_id === 'split').final_bid, 11000);
     assert.equal(result.data.find(item => item.product_id === 'split-pending').final_bid, 9900);

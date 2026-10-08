@@ -1,5 +1,6 @@
 import { buildBidPriceMarkers, formatBidSubmissionTime } from '../utils/bidPriceTimeline';
 import { colors } from '../styles';
+import { formatBeijingDateTime } from '../utils/datetime';
 
 export default function BidPriceTimeline({ currentPrice, bids = [], endpointLabel = '当前' }) {
   const markers = buildBidPriceMarkers(bids, currentPrice);
@@ -37,7 +38,7 @@ export default function BidPriceTimeline({ currentPrice, bids = [], endpointLabe
           <g key={marker.task_id || index} tabIndex="0" aria-label={`第 ${index + 1} 次提交：${marker.amount.toLocaleString('ja-JP')}円${marker.overflow ? `，高于${endpointLabel}价格` : ''}`}>
             {marker.lane > 0 ? <line x1={x} x2={x} y1={y} y2={baseline} stroke={colors.accent} strokeWidth="0.75" strokeDasharray="2 2" /> : null}
             <path d={`M${x} ${y - 6}l-4 6h8Z`} fill={marker.overflow ? colors.danger : colors.accent} stroke={colors.card} strokeWidth="1" strokeLinejoin="round" />
-            <title>{`第 ${index + 1} 次提交：${marker.amount.toLocaleString('ja-JP')}円${marker.created_at ? `（${marker.created_at}）` : ''}`}</title>
+            <title>{`第 ${index + 1} 次提交：${marker.amount.toLocaleString('ja-JP')}円${marker.created_at ? `（北京时间 ${formatBeijingDateTime(marker.created_at)}）` : ''}`}</title>
           </g>
         );
       })}
