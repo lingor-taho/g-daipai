@@ -50,9 +50,11 @@ async function run() {
     assert.equal(data.daily.at(-1).date, dates.today);
     assert.equal(data.daily.at(-1).task_count, 6, 'Every status and repeat-product submission must count');
     assert.equal(data.daily.at(-1).item_count, 3, 'Wins use won date, including earlier submitted tasks');
-    assert.equal(data.daily.at(-1).harvest_rate, 0.5);
+    assert.equal(data.daily.at(-1).bid_product_count, 1, 'Repeated submissions for one product count once in the harvest denominator');
+    assert.equal(data.daily.at(-1).harvest_rate, 3);
     assert.equal(data.daily.at(-1).total_amount, 6000);
     assert.equal(data.daily.at(-2).task_count, 1);
+    assert.equal(data.daily.at(-2).bid_product_count, 1);
     assert.equal(data.daily.at(-2).item_count, 0);
     assert.equal(data.daily.at(-2).harvest_rate, 0);
     assert.equal(data.daily[1].harvest_rate, null, 'No submissions means undefined ratio, rather than an invented zero');
@@ -67,7 +69,7 @@ async function run() {
     assert.equal(empty.daily.length, 90);
     assert.ok(empty.daily.every(row => row.task_count === 0 && row.item_count === 0 && row.harvest_rate === null));
     const today = data.daily.at(-1).date;
-    const overflow = buildWonStatsDailyRows(1, [{ won_date: today, item_count: 3 }], [{ task_date: today, task_count: 1 }]);
+    const overflow = buildWonStatsDailyRows(1, [{ won_date: today, item_count: 3 }], [{ task_date: today, task_count: 4, bid_product_count: 1 }]);
     assert.equal(overflow[0].harvest_rate, 3, 'Daily event-date ratio must preserve values above 100%');
     assert.equal(buildWonStatsInput({ id: 1 }, { days: 1000 }).days, 90);
     assert.equal(buildWonStatsInput({ id: 1 }, { days: 30 }).days, 30, 'Explicit historical API ranges stay supported');

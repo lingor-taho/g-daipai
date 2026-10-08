@@ -336,7 +336,8 @@ function buildWonStatsSummaryQuery(input) {
 
 function buildWonStatsTaskDailyQuery(input) {
   return {
-    sql: `SELECT date(t.created_at, 'localtime') AS task_date, COUNT(*) AS task_count
+    sql: `SELECT date(t.created_at, 'localtime') AS task_date, COUNT(*) AS task_count,
+                 COUNT(DISTINCT t.product_id) AS bid_product_count
           FROM tasks t
           WHERE t.user_id = ?
             AND date(t.created_at, 'localtime') >= date('now', 'localtime', '-' || (? - 1) || ' days')
@@ -352,13 +353,15 @@ function buildWonStatsDailyRows(days, summaryRows, taskRows, now = new Date()) {
   return buildRecentDateKeys(days, now).map(date => {
     const row = summaryByDate.get(date);
     const taskCount = Number(tasksByDate.get(date)?.task_count || 0);
+    const bidProductCount = Number(tasksByDate.get(date)?.bid_product_count || 0);
     const wonCount = Number(row?.item_count || 0);
     return {
       date,
       total_amount: Number(row?.total_amount || 0),
       item_count: wonCount,
       task_count: taskCount,
-      harvest_rate: taskCount > 0 ? wonCount / taskCount : null
+      bid_product_count: bidProductCount,
+      harvest_rate: bidProductCount > 0 ? wonCount / bidProductCount : null
     };
   });
 }

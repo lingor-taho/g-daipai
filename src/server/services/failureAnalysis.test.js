@@ -28,6 +28,7 @@ async function run() {
     addTask('history', 1000);
     addTask('history', 2000, 'cancelled');
     addTask('history', 2000);
+    addTask('history', 2000);
     addTask('history', 99999, 'success', 2);
     raw.prepare('INSERT INTO bidding_items VALUES (?, ?)').run('history', 'stale');
     addProduct('future', future); addTask('future', 1500);
@@ -41,6 +42,7 @@ async function run() {
     addProduct('unknown-end', null); addTask('unknown-end', 3000);
     addProduct('bad-end', 'unknown'); addTask('bad-end', 3000);
     addTask('missing-product', 3000);
+    addProduct('cancelled-only'); addTask('cancelled-only', 8000, 'cancelled');
     addProduct('split', expired, 7000, 'tax_included');
     const original = addTask('split', 6600);
     addTask('split', 11000, 'failed', 1, `followup-${original}`);
@@ -48,8 +50,8 @@ async function run() {
     addTask('split-pending', 6600, 'pending', 1, null, 9900);
 
     const result = await getFailureAnalysis(db, { userId: 1, limit: 100 });
-    assert.equal(result.total, 4);
-    assert.deepEqual(new Set(result.data.map(item => item.product_id)), new Set(['history', 'expired-pending', 'split', 'split-pending']));
+    assert.equal(result.total, 5);
+    assert.deepEqual(new Set(result.data.map(item => item.product_id)), new Set(['history', 'expired-pending', 'split', 'split-pending', 'cancelled-only']));
     const history = result.data.find(item => item.product_id === 'history');
     assert.equal(history.current_price, 3500);
     assert.equal(history.final_bid, 2000);
@@ -57,6 +59,10 @@ async function run() {
     assert.equal(multiBid.current_price, 2000);
     assert.deepEqual(multiBid.bid_history.map(item => item.amount), [9000], 'Multi-bid execution uses the submitted limit, not the current auction price');
     assert.deepEqual(history.bid_history.map(item => item.amount), [1000, 2000, 2000]);
+    assert.ok(history.bid_history.every(item => item.status !== 'cancelled'));
+    const cancelledOnly = result.data.find(item => item.product_id === 'cancelled-only');
+    assert.deepEqual(cancelledOnly.bid_history, [], 'Terminated-only products have no chart triangles or times');
+    assert.equal(cancelledOnly.final_bid, 8000, 'Textual highest submitted price remains unchanged');
     assert.equal(result.data.find(item => item.product_id === 'split').bid_history.length, 1, 'Automatic followup is not another user submission');
     assert.equal(result.data.find(item => item.product_id === 'split').final_bid, 11000);
     assert.equal(result.data.find(item => item.product_id === 'split-pending').final_bid, 9900);
@@ -68,16 +74,17 @@ async function run() {
     const wonHistory = await getTaskSubmissionHistory(db, 2, ['history']);
     assert.deepEqual(wonHistory.get('history').map(item => item.amount), [99999], 'Won history includes successful submissions and excludes other accounts');
     assert.equal((await getTaskSubmissionHistory(db, 2, [])).size, 0);
+    assert.deepEqual((await getTaskSubmissionHistory(db, 1, ['history'])).get('history').map(item => item.amount), [1000, 2000, 2000], 'Shared won-chart history omits terminated tasks');
 
     for (let i = 0; i < 21; i++) { addProduct(`extra-${i}`); addTask(`extra-${i}`, 100 + i); }
     const first = await getFailureAnalysis(db, { userId: 1, page: 1, limit: 10 });
     const second = await getFailureAnalysis(db, { userId: 1, page: 2, limit: 10 });
     const third = await getFailureAnalysis(db, { userId: 1, page: 3, limit: 10 });
-    assert.equal(first.total, 25);
+    assert.equal(first.total, 26);
     assert.equal(first.data.length, 10);
     assert.equal(second.data.length, 10);
-    assert.equal(third.data.length, 5);
-    assert.equal(new Set([...first.data, ...second.data, ...third.data].map(item => item.product_id)).size, 25);
+    assert.equal(third.data.length, 6);
+    assert.equal(new Set([...first.data, ...second.data, ...third.data].map(item => item.product_id)).size, 26);
     assert.equal((await getFailureAnalysis(db, { userId: 3 })).total, 0);
     // Route wiring can be exercised without initializing any workspace database.
     const modelPath = require.resolve('../models');

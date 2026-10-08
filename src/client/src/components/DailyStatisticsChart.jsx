@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { buildLineChartPoints, buildLineChartSegments, isStatisticsDateTick } from '../utils/statisticsChart';
 import { cardStyle, colors, sectionTitleStyle } from '../styles';
 
@@ -13,6 +13,15 @@ function percent(value) {
 
 export default function DailyStatisticsChart({ daily, kind }) {
   const [activeDate, setActiveDate] = useState('');
+  const chartScrollRef = useRef(null);
+  useEffect(() => {
+    const node = chartScrollRef.current;
+    if (!node || !daily.length) return;
+    const frame = requestAnimationFrame(() => {
+      node.scrollLeft = node.scrollWidth - node.clientWidth;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [daily, kind]);
   const harvest = kind === 'harvest';
   const field = harvest ? 'harvest_rate' : 'task_count';
   const maxValue = harvest ? 1 : Math.max(4, Math.ceil(Math.max(...daily.map(item => Number(item.task_count || 0)), 0) / 4) * 4);
@@ -26,7 +35,7 @@ export default function DailyStatisticsChart({ daily, kind }) {
       <div style={{ ...sectionTitleStyle, marginBottom: 10 }}>{harvest ? '近90天收获指数' : '近90天活跃指数'}</div>
       <div style={{ minHeight: 42, fontSize: 13, lineHeight: 1.6, background: colors.cardSoft, border: `1px solid ${colors.border}`, borderRadius: 8, padding: '9px 10px', marginBottom: 8 }}>
         {active ? <><strong>{active.date}</strong>：{harvest
-          ? `${percent(active.harvest_rate)}（落札 ${active.item_count} 件 / 任务 ${active.task_count} 次）`
+          ? `${percent(active.harvest_rate)}（落札 ${active.item_count} 件 / 出价商品 ${active.bid_product_count} 件）`
           : `提交 ${active.task_count} 次任务`}</> : null}
       </div>
       <div style={{ display: 'flex' }}>
@@ -37,8 +46,8 @@ export default function DailyStatisticsChart({ daily, kind }) {
             </span>
           ))}
         </div>
-        <div style={{ overflowX: 'auto', flex: 1, minWidth: 0 }}>
-          <svg viewBox="0 0 930 242" preserveAspectRatio="none" style={{ display: 'block', width: '100%', minWidth: 960, height: 242 }} role="group" aria-label={harvest ? '每日落札数除以每日总任务数折线图' : '每日提交任务总数折线图'}>
+        <div ref={chartScrollRef} style={{ overflowX: 'auto', flex: 1, minWidth: 0 }}>
+          <svg viewBox="0 0 930 242" preserveAspectRatio="none" style={{ display: 'block', width: '100%', minWidth: 960, height: 242 }} role="group" aria-label={harvest ? '每日落札数除以当日出价商品数折线图' : '每日提交任务总数折线图'}>
             <g transform="translate(15,16)">
               {[0, 0.25, 0.5, 0.75, 1].map(ratio => (
                 <line key={ratio} x1="0" x2="900" y1={ratio * 190} y2={ratio * 190} stroke={colors.border} />
@@ -68,7 +77,7 @@ export default function DailyStatisticsChart({ daily, kind }) {
         </div>
       </div>
       <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: colors.muted }}>
-        {harvest ? '每日落札数 ÷ 当日提交任务总数；无任务日显示 —。超过 100% 用顶端三角标记，点击查看实际比例。' : '按任务提交日期统计，包含成功、失败、终止及其他状态的全部任务。'}
+        {harvest ? '每日落札数 ÷ 当日出价商品数，同日同一商品只计一次；无出价商品日显示 —。超过 100% 用顶端三角标记，点击查看实际比例。' : '按任务提交日期统计，包含成功、失败、终止及其他状态的全部任务。'}
       </div>
     </div>
   );

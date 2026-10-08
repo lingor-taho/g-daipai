@@ -1,8 +1,8 @@
 // One entry per user submission; automatic followups belong to the original submission.
-async function getTaskSubmissionHistory(database, userId, productIds) {
+async function getTaskSubmissionHistory(database, userId, productIds, { includeCancelled = false } = {}) {
   const byProduct = new Map();
   if (!productIds.length) return byProduct;
-  const history = await database.getAll(`SELECT t.id AS task_id, t.product_id, t.created_at,
+  const history = await database.getAll(`SELECT t.id AS task_id, t.product_id, t.created_at, t.status,
       COALESCE(NULLIF(t.pending_followup_max_price, 0),
         (SELECT COALESCE(NULLIF(followup.user_max_price, 0), followup.max_price)
           FROM tasks followup WHERE followup.user_id = t.user_id
@@ -14,8 +14,9 @@ async function getTaskSubmissionHistory(database, userId, productIds) {
     ORDER BY datetime(t.created_at) ASC, t.id ASC`, [userId, ...productIds]);
 
   for (const bid of history) {
+    if (!includeCancelled && bid.status === 'cancelled') continue;
     if (!byProduct.has(bid.product_id)) byProduct.set(bid.product_id, []);
-    byProduct.get(bid.product_id).push({ task_id: bid.task_id, amount: Number(bid.amount || 0), created_at: bid.created_at });
+    byProduct.get(bid.product_id).push({ task_id: bid.task_id, amount: Number(bid.amount || 0), created_at: bid.created_at, status: bid.status });
   }
   return byProduct;
 }

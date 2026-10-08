@@ -221,7 +221,7 @@ export default function ActiveBidding() {
                     <div style={imageThumbStyle} />
                   )}
                   </button>
-                  {item.strategy === 'direct' ? (
+                  {!analysisMode && item.strategy === 'direct' ? (
                     <div
                       aria-label={`最高出价：${formatJPY(item.user_max_price || item.max_price)}`}
                       title="最高出价"
@@ -243,7 +243,7 @@ export default function ActiveBidding() {
                         <path d="M4 12h16m-6-6 6 6-6 6" />
                       </svg>
                       <Tag color={outbid ? 'danger' : 'primary'} style={{ flexShrink: 0 }}>
-                        {formatJPY(analysisMode ? item.final_bid : item.user_max_price || item.max_price)}
+                        {formatJPY(item.user_max_price || item.max_price)}
                       </Tag>
                     </div>
                   ) : null}
@@ -273,8 +273,8 @@ export default function ActiveBidding() {
                       <>
                         最终出价 <span style={{ color: colors.text, fontWeight: 600 }}>{formatJPY(item.final_bid)}</span>
                         {' / '}落札价 <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
-                        <BidPriceTimeline currentPrice={displayPrice} bids={item.bid_history || []} />
                         <div style={{ marginTop: 4 }}>商品结束时间：{formatBeijingTime(item.end_time) || '-'}</div>
+                        <BidPriceTimeline currentPrice={displayPrice} bids={item.bid_history || []} />
                       </>
                     ) : (
                       <>

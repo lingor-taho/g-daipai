@@ -206,30 +206,6 @@ export default function Statistics() {
                 })}
               </div>
             </div>
-
-            {performance && (
-              <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
-                <div style={insightStyle}>
-                  您近90天总共出价 <strong>{performance.bidProductCount || 0}</strong> 个商品，拍到 <strong>{performance.wonProductCount || 0}</strong> 个商品，中标率为 <strong>{formatPercent(performance.winRate)}</strong>。
-                </div>
-                <div style={insightStyle}>
-                  总共提交 <strong>{performance.taskCount || 0}</strong> 次任务，有效出价比为 <strong>{formatPercent(performance.effectiveBidRate)}</strong>。
-                </div>
-                <div style={insightStyle}>
-                  {topProduct ? (
-                    <>
-                      拍到的最高价商品为{' '}
-                      <a href={topProduct.url || `https://auctions.yahoo.co.jp/jp/auction/${topProduct.productId}`} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
-                        {topProduct.title || topProduct.productId}
-                      </a>
-                      （{formatJPY(topProduct.finalPrice)}），总共提交任务 <strong>{topProduct.taskCount || 0}</strong> 次，恭喜您。
-                    </>
-                  ) : (
-                    <>近90天暂无拍到商品，继续关注合适商品。</>
-                  )}
-                </div>
-              </div>
-            )}
           </>
         )}
       </div>
@@ -239,6 +215,29 @@ export default function Statistics() {
           <DailyStatisticsChart daily={daily} kind="harvest" />
         </>
       ) : null}
+      {!loading && daily.length > 0 && performance && (
+        <div style={{ ...cardStyle, padding: 14, marginBottom: 12, display: 'grid', gap: 8 }}>
+          <div style={insightStyle}>
+            您近90天总共出价 <strong>{performance.bidProductCount || 0}</strong> 个商品，拍到 <strong>{performance.wonProductCount || 0}</strong> 个商品，中标率为 <strong>{formatPercent(performance.winRate)}</strong>。
+          </div>
+          <div style={insightStyle}>
+            总共提交 <strong>{performance.taskCount || 0}</strong> 次任务，有效出价比为 <strong>{formatPercent(performance.effectiveBidRate)}</strong>。
+          </div>
+          <div style={insightStyle}>
+            {topProduct ? (
+              <>
+                拍到的最高价商品为{' '}
+                <a href={topProduct.url || `https://auctions.yahoo.co.jp/jp/auction/${topProduct.productId}`} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
+                  {topProduct.title || topProduct.productId}
+                </a>
+                （{formatJPY(topProduct.finalPrice)}），总共提交任务 <strong>{topProduct.taskCount || 0}</strong> 次，恭喜您。
+              </>
+            ) : (
+              <>近90天暂无拍到商品，继续关注合适商品。</>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
