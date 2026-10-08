@@ -5129,15 +5129,24 @@ async function getGmailVerificationSnapshot(tabId, options = {}) {
       if (Date.now() >= settings.deadline) return { expired: true };
       const main = document.querySelector('[role="main"]');
       if (!main) return { ready: false };
-      const rows = [...main.querySelectorAll('tr.zA, [data-legacy-thread-id]')]
-        .map(el => ({
-          el, threadId: el.getAttribute('data-legacy-thread-id') || el.getAttribute('data-thread-id'),
-          messageId: el.getAttribute('data-legacy-last-message-id') || ''
-        })).filter(row => row.threadId);
+      // Gmail may put metadata on a subject span rather than the row, and omit the last-message id.
+      const elements = [...new Set([...main.querySelectorAll('tr.zA, tr[role="row"], [data-legacy-thread-id], [data-thread-id]')]
+        .map(el => el.closest?.('tr.zA, tr[role="row"]') || el))];
+      const rows = elements.map((el, index) => {
+        const attribute = name => el.getAttribute(name) || el.querySelector?.(`[${name}]`)?.getAttribute(name) || '';
+        return {
+          el,
+          threadId: attribute('data-legacy-thread-id') || attribute('data-thread-id') || `row:${index}`,
+          messageId: attribute('data-legacy-last-message-id'),
+          date: el.querySelector?.('.xW [title], .xW [data-tooltip]')?.getAttribute('title') ||
+            el.querySelector?.('.xW [data-tooltip]')?.getAttribute('data-tooltip') || ''
+        };
+      });
       if (settings.baseline) {
-        if (rows.some(row => !row.messageId)) return { ready: false };
+        // Wait for search results after returning from a message; don't mistake its metadata for rows.
+        if (main.querySelectorAll('.adn').length) return { ready: false };
         const empty = /No (?:conversations|results|messages)|該当する|一致する.{0,10}(?:ありません|見つかりません)|没有.{0,15}(?:邮件|结果|会话)|沒有.{0,15}(?:郵件|結果|會話)|找不到/.test(main.innerText || '');
-        return { ready: rows.length > 0 || empty, rows: rows.map(({ threadId, messageId }) => ({ threadId, messageId })) };
+        return { ready: rows.length > 0 || empty, rows: rows.map(({ threadId, messageId, date }) => ({ threadId, messageId, date })) };
       }
       const bodies = [...main.querySelectorAll('.adn')];
       const accountLabel = [...document.querySelectorAll('a[aria-label], button[aria-label]')]
@@ -5156,19 +5165,21 @@ async function getGmailVerificationSnapshot(tabId, options = {}) {
         };
       });
       // Older messages in the same minute may share the thread; inspect only its newest message.
-      if (messages.length) return { ready: true, messages: messages.slice(-1) };
-      const changed = rows.find(row => row.messageId && settings.previous[row.threadId] !== row.messageId);
-      if (changed && Date.now() < settings.deadline) {
-        changed.el.click();
-        return { ready: true, opening: true };
+      if (messages.length) return {
+        ready: true, page: 'message', messages: messages.slice(-1),
+        observedMessageIds: messages.map(mail => mail.messageId).filter(Boolean)
+      };
+      const checked = new Set(settings.checkedThreads || []);
+      const candidates = rows.filter(row => !checked.has(row.threadId));
+      const candidate = settings.openThreadId
+        ? rows.find(row => row.threadId === settings.openThreadId)
+        : candidates.find(row => !Object.prototype.hasOwnProperty.call(settings.previous, row.threadId) ||
+          (row.messageId && settings.previous[row.threadId] !== row.messageId)) || candidates[0];
+      if (candidate && Date.now() < settings.deadline) {
+        candidate.el.click();
+        return { ready: true, page: 'list', opening: true, threadId: candidate.threadId, rowCount: rows.length };
       }
-      // Refresh only the Gmail search results; never refresh Yahoo here.
-      if (settings.refresh && Date.now() < settings.deadline) {
-        const refresh = [...document.querySelectorAll('[role="button"]')].find(el =>
-          /^(Refresh|刷新|更新)$/i.test(el.getAttribute('aria-label') || el.getAttribute('data-tooltip') || ''));
-        refresh?.click();
-      }
-      return { ready: true };
+      return { ready: true, page: 'list', rowCount: rows.length };
     }, args: [{ ...options, previous: options.previous || {} }]
   });
   return result?.[0]?.result || { ready: false };
@@ -5268,7 +5279,32 @@ async function executeManualEmailAttempt(tab, emailPage) {
     }
     if (!baseline?.ready) throw new Error(EMAIL_FILL_ERROR);
     const previous = Object.fromEntries(baseline.rows.map(row => [row.threadId, row.messageId]));
-    const previousIds = new Set(baseline.rows.map(row => normalizeGmailMessageId(row.messageId)));
+    const previousIds = new Set(baseline.rows.map(row => normalizeGmailMessageId(row.messageId)).filter(Boolean));
+    // If a list row omits its message id, read its old messages before refreshing Yahoo.
+    // This still rejects an old code received in the same minute as the new attempt.
+    const baselineMinute = Math.floor(Date.now() / 60000) * 60000;
+    for (const row of baseline.rows.filter(row => !row.messageId &&
+      !(parseGmailMessageTime(row.date) < baselineMinute))) {
+      let messageSnapshot;
+      while (Date.now() < attempt.deadline) {
+        messageSnapshot = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, {
+          openThreadId: row.threadId, deadline: attempt.deadline
+        }));
+        if (messageSnapshot.messages?.length) break;
+        await sleep(250);
+      }
+      const ids = messageSnapshot?.observedMessageIds || messageSnapshot?.messages?.map(mail => mail.messageId);
+      if (!messageSnapshot?.messages?.[0]?.messageId || !ids?.length || ids.some(id => !id)) throw new Error(EMAIL_FILL_ERROR);
+      for (const id of ids) previousIds.add(normalizeGmailMessageId(id));
+      await emailAttemptStep(attempt, () => chrome.tabs.update(gmailTab.id, { url: gmailUrl }));
+      let searchReady = false;
+      while (Date.now() < attempt.deadline) {
+        const search = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, { baseline: true, deadline: attempt.deadline }));
+        if (search.ready) { searchReady = true; break; }
+        await sleep(250);
+      }
+      if (!searchReady) throw new Error(EMAIL_FILL_ERROR);
+    }
     const refreshedAt = Date.now();
     attempt.deadline = refreshedAt + EMAIL_RECEIVE_TIMEOUT_MS;
     await emailAttemptStep(attempt, () => chrome.tabs.reload(tab.id)); // The only Yahoo refresh in this attempt.
@@ -5276,19 +5312,40 @@ async function executeManualEmailAttempt(tab, emailPage) {
     await sleep(2000);
     await emailAttemptStep(attempt, () => chrome.tabs.update(gmailTab.id, { active: true }));
     let code = '';
-    let poll = 0;
+    let lastGmailRefresh = refreshedAt;
+    let openedThread = '';
+    const checkedThreads = new Set();
+    const gmailProgress = { rows: 0, opened: 0, read: 0, missingId: 0, recipientMismatch: 0, invalidTime: 0 };
     while (Date.now() < attempt.deadline) {
       const snapshot = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, {
-        previous, deadline: attempt.deadline, refresh: poll++ % 3 === 0
+        previous, checkedThreads: [...checkedThreads], deadline: attempt.deadline
       }));
+      gmailProgress.rows = Math.max(gmailProgress.rows, snapshot.rowCount || 0);
+      if (snapshot.opening) { openedThread = snapshot.threadId || ''; gmailProgress.opened += 1; }
+      for (const mail of snapshot.messages || []) {
+        gmailProgress.read += 1;
+        if (!mail.messageId) gmailProgress.missingId += 1;
+        if (!matchesMaskedEmail(mail.recipient, emailPage.maskedAddress)) gmailProgress.recipientMismatch += 1;
+        if (!Number.isFinite(parseGmailMessageTime(mail.date))) gmailProgress.invalidTime += 1;
+      }
       code = selectFreshGmailCode(snapshot.messages, previousIds, refreshedAt, emailPage.maskedAddress);
       if (code) break;
       if (snapshot.messages?.length) {
+        if (openedThread) checkedThreads.add(openedThread);
+        openedThread = '';
         await emailAttemptStep(attempt, () => chrome.tabs.update(gmailTab.id, { url: gmailUrl }));
+      } else if (snapshot.ready && !snapshot.opening && snapshot.page === 'list' && Date.now() - lastGmailRefresh >= 5000) {
+        // Refresh Gmail itself, independent of toolbar labels and cached search results.
+        await emailAttemptStep(attempt, () => chrome.tabs.reload(gmailTab.id));
+        lastGmailRefresh = Date.now();
+        checkedThreads.clear();
       }
-      await sleep(Math.min(2000, Math.max(1, attempt.deadline - Date.now())));
+      await sleep(Math.min(snapshot.opening ? 500 : 2000, Math.max(1, attempt.deadline - Date.now())));
     }
-    if (!code) throw new Error(EMAIL_RECEIVE_ERROR);
+    if (!code) {
+      console.warn('[Yahoo Bid] Gmail verification mail was not accepted within 60s:', gmailProgress);
+      throw new Error(EMAIL_RECEIVE_ERROR);
+    }
     // Confirm this is still the same email page, then submit once and start the 30s page-transition clock.
     attempt.submitted = true;
     attempt.deadline = Date.now() + EMAIL_TRANSITION_TIMEOUT_MS;

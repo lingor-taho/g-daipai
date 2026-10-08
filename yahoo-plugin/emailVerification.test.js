@@ -303,6 +303,81 @@ async function testRetryRequiresAnotherHumanClickAndSharesConcurrentFlow() {
   assert.equal(fixture.counts().fills, 1);
 }
 
+async function testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(existingMail, options = {}) {
+  let now = new Date(2026, 9, 8, 14, 0, 30).getTime();
+  let targetId = 90;
+  let refreshed = false;
+  let opened = false;
+  let yahooUrl = emailUrl;
+  const counts = { yahooReloads: 0, gmailReloads: 0, opens: 0, baselineOpens: 0, fills: 0, removed: [] };
+  class Clock extends Date { static now() { return now; } }
+  const metadata = { getAttribute(name) { return name === 'data-thread-id' ? '#thread-f:123' : ''; }, closest() { return row; } };
+  const row = {
+    innerText: 'Yahoo 確認コードのお知らせ',
+    getAttribute() { return ''; },
+    querySelector(selector) {
+      if (selector.startsWith('.xW')) return options.oldDate ? { getAttribute: () => new Date(now - 600000).toISOString() } : null;
+      return options.noThreadId ? null : metadata;
+    },
+    querySelectorAll() { return [metadata]; },
+    closest() { return this; },
+    click() { opened = true; counts.opens += 1; if (!refreshed) counts.baselineOpens += 1; }
+  };
+  const mail = (id, code) => ({
+    getAttribute(name) { return name === 'data-message-id' ? `#msg-f:${id}` : ''; },
+    querySelector(selector) {
+      if (selector.startsWith('.gD')) return { getAttribute: () => 'login-master@mail.yahoo.co.jp' };
+      if (selector.startsWith('.g3')) return { getAttribute: () => new Date(now - (options.oldDate && id === 161 ? 600000 : 0)).toISOString() };
+      if (selector.startsWith('.g2')) return { getAttribute: () => 'donald@gmail.com' };
+      if (selector === '.a3s') return { innerText: `確認コード：${code}` };
+      return null;
+    }
+  });
+  const main = {
+    get innerText() { return existingMail || refreshed ? 'Yahoo verification email' : 'No conversations found.'; },
+    querySelectorAll(selector) {
+      if (selector === '.adn') return opened ? [...(existingMail ? [mail(161, '999999')] : []),
+        ...(refreshed && (!options.cached || counts.gmailReloads > 0) ? [mail(162, '012345')] : [])] : [];
+      return existingMail || refreshed ? [row, metadata] : [];
+    }
+  };
+  class Input { set value(value) { this.stored = value; } get value() { return this.stored; } }
+  const input = Object.assign(new Input(), { placeholder: '確認コード', disabled: false, offsetWidth: 200, getAttribute: () => '', focus() {}, dispatchEvent() {} });
+  const submit = { disabled: false, offsetWidth: 200, textContent: 'ログイン', click() {
+    counts.fills += 1;
+    assert.equal(input.value, '012345', 'must not reuse the old code from the same minute');
+    yahooUrl = 'https://login.yahoo.co.jp/ncaptcha?fido=1';
+  } };
+  const document = {
+    get body() { return { innerText: targetId === 7 ? `${mask} に届いた確認コードを入力してください。` : main.innerText }; },
+    querySelector() { return main; },
+    querySelectorAll(selector) {
+      if (targetId === 7) return selector === 'input' ? [input] : /button, input/.test(selector) ? [submit] : [];
+      return [];
+    }
+  };
+  const api = loadBackgroundForTest({ disableAutoStart: true, Date: Clock, document, HTMLInputElement: Input, Event: class {},
+    setTimeout(fn, ms) { if (!String(fn).includes('reject(')) { now += ms; queueMicrotask(fn); } return 1; },
+    tabs: {
+      async create() { return { id: 90 }; },
+      async reload(id) { if (id === 7) { refreshed = true; counts.yahooReloads += 1; } else { counts.gmailReloads += 1; opened = false; } },
+      async update(id, props) { if (id === 90 && props.url) opened = false; return { id }; },
+      async get(id) { return { id, url: yahooUrl, status: 'complete' }; },
+      async query() { return [{ id: 7, url: yahooUrl }]; },
+      async remove(id) { counts.removed.push(id); }
+    },
+    scripting: { async executeScript(payload) { targetId = payload.target.tabId; return [{ result: payload.func(...(payload.args || [])) }]; } }
+  });
+  const result = await api.executeManualEmailAttempt({ id: 7, url: emailUrl }, emailPage);
+  assert.equal(result.success, true, `missing list message id, existingMail=${existingMail}: ${result.error}`);
+  assert.equal(counts.yahooReloads, 1);
+  assert.equal(counts.fills, 1);
+  assert.ok(counts.opens >= (existingMail && !options.oldDate ? 2 : 1));
+  if (options.oldDate) assert.equal(counts.baselineOpens, 0, 'clearly older rows need not consume the 15s preparation window');
+  if (options.cached) assert.ok(counts.gmailReloads > 0, 'refresh Gmail even when toolbar labels cannot be found');
+  assert.deepEqual(counts.removed, [90]);
+}
+
 async function run() {
   await testOneRefreshOneSubmitAndSeparateTimeouts();
   await testReceiveAndTransitionTimeoutsDoNotRetry();
@@ -314,6 +389,11 @@ async function run() {
   await testGmailPageReaderUsesNewMessageAndDoesNotClickAfterExpiry();
   await testLateGmailTabCreationIsCleanedWithoutYahooRefresh();
   await testRetryRequiresAnotherHumanClickAndSharesConcurrentFlow();
+  await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(false);
+  await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(true);
+  await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(true, { cached: true });
+  await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(true, { noThreadId: true });
+  await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(true, { cached: true, oldDate: true });
   console.log('Email verification tests passed.');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });
