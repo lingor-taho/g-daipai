@@ -639,7 +639,7 @@ export default function ProductSearchPopup({
                     </div>
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">拍卖次数</span>
-                      <button type="button" style={{padding:0,border:0,background:'transparent',color:colors.text,cursor:'pointer',textDecoration:'underline'}} onClick={() => setHistoryVisible(true)} aria-label="查看拍卖记录">{Number(detailProduct.bidCount || 0)}</button>
+                      <button type="button" style={{padding:0,border:0,background:'transparent',font:'inherit',textAlign:'left',color:'#2563eb',cursor:'pointer',textDecoration:'underline'}} onClick={() => setHistoryVisible(true)} aria-label="查看拍卖记录">{Number(detailProduct.bidCount || 0)}</button>
                     </div>
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">截止时间</span>
