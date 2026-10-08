@@ -8110,14 +8110,16 @@ async function executeAuctionHistoryJob(job) {
 
 async function runAuctionHistoryJobs() {
   // Bounded batch; re-check workflow priority between products.
-  for (let count = 0; count < 5; count++) {
+  for (let count = 0; count < 10; count++) {
     if (await pauseIdleWorkForOpenManualPin()) return;
     if (count && (await fetchNextIdleAction())?.action !== 'auction_history') return;
     const response = await apiFetch('/api/plugin/auction-history/jobs');
     if (!response.ok) throw new Error('history queue unavailable');
     const {job} = await response.json();
     if (!job) return;
-    if (!await executeAuctionHistoryJob(job)) return;
+    // A failed product has been acknowledged and removed from this batch's queue.
+    // Continue with the next product; transport/acknowledgement failures still throw.
+    await executeAuctionHistoryJob(job);
   }
 }
 

@@ -58,4 +58,43 @@ async function testAuthenticatedPagination() {
   assert.equal(writes.at(-1).error,'');
   console.log('Authenticated tab pagination, first-page capture, login failure and cleanup tests passed');
 }
-testAuthenticatedPagination().catch(error=>{console.error(error);process.exitCode=1;});
+async function testBatchFailureContinuation() {
+  const background = fs.readFileSync(require.resolve('./background.js'),'utf8');
+  const batchSource = background.slice(background.indexOf('async function runAuctionHistoryJobs('),background.indexOf('async function executeNextWorkflowAction('));
+  const attempted = []; let claimed = 0;
+  const context = {
+    pauseIdleWorkForOpenManualPin:async()=>false,
+    fetchNextIdleAction:async()=>({action:'auction_history'}),
+    apiFetch:async()=>({ok:true,json:async()=>({job:{productId:`product-${++claimed}`}})}),
+    executeAuctionHistoryJob:async job=>{attempted.push(job.productId);return attempted.length>1;}
+  };
+  vm.createContext(context);vm.runInContext(batchSource,context);
+  await context.runAuctionHistoryJobs();
+  assert.equal(attempted.length,10,'A failed first product must not stop the next nine products');
+  assert.equal(claimed,10,'Do not claim an eleventh product');
+  assert.equal(attempted[1],'product-2');
+  attempted.length=0;claimed=0;
+  context.executeAuctionHistoryJob=async job=>{attempted.push(job.productId);return false;};
+  await context.runAuctionHistoryJobs();
+  assert.equal(attempted.length,10,'Even consecutive acknowledged product failures must continue');
+  attempted.length=0;claimed=0;
+  context.fetchNextIdleAction=async()=>({action:'scan'});
+  await context.runAuctionHistoryJobs();
+  assert.equal(attempted.length,1,'Higher-priority work still interrupts between products');
+  attempted.length=0;claimed=0;
+  context.fetchNextIdleAction=async()=>({action:'auction_history'});
+  context.pauseIdleWorkForOpenManualPin=async()=>attempted.length>0;
+  await context.runAuctionHistoryJobs();
+  assert.equal(attempted.length,1,'Manual verification still interrupts between products');
+  attempted.length=0;claimed=0;
+  context.pauseIdleWorkForOpenManualPin=async()=>false;
+  context.apiFetch=async()=>({ok:true,json:async()=>({job:null})});
+  await context.runAuctionHistoryJobs();
+  assert.equal(attempted.length,0,'An empty queue stops without execution');
+  context.apiFetch=async()=>({ok:true,json:async()=>({job:{productId:`product-${++claimed}`}})});
+  context.executeAuctionHistoryJob=async()=>{throw new Error('history result was not saved');};
+  await assert.rejects(context.runAuctionHistoryJobs(),/result was not saved/);
+  assert.equal(claimed,1,'Unacknowledged results must not cause another product claim');
+  console.log('Auction history 10-product limit, failure continuation and priority interruption tests passed');
+}
+testAuthenticatedPagination().then(testBatchFailureContinuation).catch(error=>{console.error(error);process.exitCode=1;});
