@@ -5,18 +5,30 @@ const rows = [
   {time:'10-8 21:44',username:'Alice',price:80000},
   {time:'10-1 18:55',username:'开始',price:1}
 ];
-const chart = buildAuctionHistoryChart(JSON.stringify(rows),'2026-10-08T21:46:00+09:00');
-assert.deepEqual(chart.points.map(p=>p.username),['开始','Alice','Bob']);
+const chart = buildAuctionHistoryChart(JSON.stringify(rows),'2026-10-08T21:50:15+09:00');
+assert.deepEqual(chart.points.map(p=>p.username),['开始','Alice','Bob','Bob']);
 assert.equal(chart.users.length,3);
 assert.notEqual(chart.points[1].color,chart.points[2].color);
 assert.equal(chart.points[1].color,'hsl(130, 65%, 42%)');
 const geometry = buildChartGeometry(chart.points);
-assert.equal(geometry.segments[0].color,chart.points[1].color);
-assert.equal(geometry.segments[1].color,chart.points[2].color);
+assert.equal(geometry.segments[0].color,chart.points[0].color);
+assert.equal(geometry.segments[1].color,chart.points[1].color);
 assert.ok(geometry.points[0].x < geometry.points[1].x);
 assert.ok(geometry.points[1].x < geometry.points[2].x);
 assert.ok(geometry.points[1].y > geometry.points[2].y);
 assert.equal(chart.points[0].price,1);
+assert.equal(chart.points.at(-1).isEnd,true);
+assert.equal(chart.points.at(-1).time,'10-8 21:50:15');
+assert.equal(chart.points.at(-1).stamp-chart.points.at(-2).stamp,255000);
+assert.equal(geometry.segments.at(-1).from.y,geometry.segments.at(-1).to.y);
+assert.equal(geometry.segments.at(-1).color,chart.points.at(-2).color);
+assert.equal(buildAuctionHistoryChart(rows,'unknown').points.length,3);
+assert.equal(buildAuctionHistoryChart(rows,'2026-10-08T21:45:00+09:00').points.length,3);
+assert.equal(buildAuctionHistoryChart(rows,'2026-10-08T21:46:00+09:00').points.length,4);
+assert.equal(buildAuctionHistoryChart(rows,'2026-10-08T12:50:15Z').points.at(-1).stamp,chart.points.at(-1).stamp);
+assert.equal(buildAuctionHistoryChart(rows,'2026-10-08 21:50:15').points.at(-1).stamp,chart.points.at(-1).stamp);
+assert.equal(rows.length,3); // End points exist only for display, not in stored history.
+
 assert.equal(buildAuctionHistoryChart('数据已过期').message,'数据已过期');
 assert.equal(buildAuctionHistoryChart('[]').message,'暂无入札记录');
 assert.equal(buildAuctionHistoryChart('').message,'拍卖记录尚未采集');

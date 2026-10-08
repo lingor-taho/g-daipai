@@ -33,6 +33,13 @@ export function buildAuctionHistoryChart(raw, endTime = '') {
     }
     point.color = colors.get(point.username);
   }
+  const endStamp = endMs + 9*3600000;
+  const last = points.at(-1);
+  if (Number.isFinite(endStamp) && endStamp >= last.stamp) {
+    const end = new Date(endStamp);
+    const time = `${end.getUTCMonth()+1}-${end.getUTCDate()} ${String(end.getUTCHours()).padStart(2,'0')}:${String(end.getUTCMinutes()).padStart(2,'0')}:${String(end.getUTCSeconds()).padStart(2,'0')}`;
+    points.push({...last,time,stamp:endStamp,isEnd:true});
+  }
   return {points,users,message:''};
 }
 
@@ -41,5 +48,5 @@ export function buildChartGeometry(points, width = 900) {
   const start = points[0].stamp; const end = points.at(-1).stamp;
   const maxPrice = Math.max(1,...points.map(p=>p.price))*1.08;
   const mapped = points.map(point=>({...point,x:70+(point.stamp-start)/Math.max(1,end-start)*(width-100),y:330-point.price/maxPrice*300}));
-  return {start,end,maxPrice,points:mapped,segments:mapped.slice(1).map((point,index)=>({from:mapped[index],to:point,color:point.color}))};
+  return {start,end,maxPrice,points:mapped,segments:mapped.slice(1).map((point,index)=>({from:mapped[index],to:point,color:mapped[index].color}))};
 }

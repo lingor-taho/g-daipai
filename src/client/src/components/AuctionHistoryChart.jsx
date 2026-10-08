@@ -50,13 +50,13 @@ export function AuctionHistoryPlot({ data, endTime }) {
           const y=330-i*75;return <g key={i}><line x1="70" y1={y} x2={right} y2={y} stroke="#e2e8f0" />
             <text x="62" y={y+4} textAnchor="end" fontSize="11" fill="#64748b">{Math.round(geometry.maxPrice*i/4).toLocaleString('en-US')}</text></g>;
         })}
-        {geometry.segments.map((segment,index)=><g key={index} data-segment-user={segment.to.username}>
+        {geometry.segments.map((segment,index)=><g key={index} data-segment-user={segment.from.username}>
           <path d={`M${segment.from.x},330 L${segment.from.x},${segment.from.y} L${segment.to.x},${segment.to.y} L${segment.to.x},330 Z`} fill={`url(#${prefix}-${index})`} />
           <line x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={segment.color} strokeWidth="2" />
         </g>)}
         <path d={`M70 30V330H${right}`} fill="none" stroke="#94a3b8" />
-        {geometry.points.map((point,index)=><circle key={index} cx={point.x} cy={point.y} r="3" fill={point.color}>
-          <title>{point.time} · {point.username} · {point.price.toLocaleString('en-US')}円</title>
+        {geometry.points.map((point,index)=><circle key={index} data-auction-end={point.isEnd ? 'true' : undefined} cx={point.x} cy={point.y} r="3" fill={point.color}>
+          <title>{point.isEnd ? '商品结束时间 · ' : ''}{point.time} · {point.username} · {point.price.toLocaleString('en-US')}円</title>
         </circle>)}
         {Array.from({length:tickCount},(_,i)=>{
           const ratio=tickCount===1?0:i/(tickCount-1); const x=70+ratio*(width-100);
@@ -77,7 +77,7 @@ export default function AuctionHistoryChart({ item, onClose }) {
     setResult({loading:true,data:'',message:''});
     api.get(`/task/auction-history/${encodeURIComponent(item.product_id)}`,{params:{format:'chart'},signal:controller.signal})
       .then(({data})=>{
-        if (!controller.signal.aborted && account===localStorage.getItem('actingUserId')) setResult({loading:false,data:data.data,message:''});
+        if (!controller.signal.aborted && account===localStorage.getItem('actingUserId')) setResult({loading:false,data:data.data,endTime:data.end_time ?? item.end_time,message:''});
       }).catch(error=>{if(!controller.signal.aborted)setResult({loading:false,data:'',message:getApiErrorMessage(error,'图表读取失败')});});
     const close = ()=>onClose();
     window.addEventListener('acting-user-change',close);
@@ -91,7 +91,7 @@ export default function AuctionHistoryChart({ item, onClose }) {
         <div style={{flex:1,minWidth:0}}><strong>用户拍卖记录图表</strong><div style={{fontSize:12,overflowWrap:'anywhere',marginTop:4}}>{item.product_title || item.product_id}</div></div>
         <button type="button" onClick={onClose} style={{border:0,background:'transparent',cursor:'pointer',color:'#2563eb'}}>关闭</button>
       </div>
-      {result.loading ? <div role="status" style={{padding:24}}>正在读取拍卖记录…</div> : result.message ? <div role="status" style={{padding:24}}>{result.message}</div> : <AuctionHistoryPlot data={result.data} endTime={item.end_time} />}
+      {result.loading ? <div role="status" style={{padding:24}}>正在读取拍卖记录…</div> : result.message ? <div role="status" style={{padding:24}}>{result.message}</div> : <AuctionHistoryPlot data={result.data} endTime={result.endTime} />}
     </div>
   </div>;
 }
