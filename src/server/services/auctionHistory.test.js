@@ -32,13 +32,13 @@ assert.equal(db.prepare('SELECT auction_history_html FROM products WHERE product
 history.schedule(db,now+1000); assert.equal(history.get(db,'auction_history_requested'),'0');
 history.request(db,now); job = history.next(db,now);
 const row = {time:'10-4 21:46',rawTime:'10月 4日 21時 46分',text:'<script>evil</script> 自動入札。 81,000',username:'<script>evil</script>',price:81000};
-const start = {...row,time:'10-4 21:46',start:true};
+const start = {...row,time:'10-4 21:46',price:1000,text:'オークション開始。 数量： 1 で 1,000',start:true};
 assert.throws(()=>history.finish(db,{...job,rows:[row],firstPageRows:[row]}),/start missing/);
 history.finish(db,{...job,rows:[row,{...row,username:'other',price:80000},start],firstPageRows:[row,{...row,username:'other',price:80000}]});
 const saved = db.prepare('SELECT * FROM products WHERE product_id=?').get('old');
 assert.equal(saved.auction_history_html.includes('<script>'),false);
 assert.equal((saved.auction_history_html.match(/<tr>/g)||[]).length,2);
-assert.deepEqual(JSON.parse(saved.auction_history_data),[{time:'10-4 21:46',username:row.username,price:81000},{time:'10-4 21:46',username:'开始',price:1}]);
+assert.deepEqual(JSON.parse(saved.auction_history_data),[{time:'10-4 21:46',username:row.username,price:81000},{time:'10-4 21:46',username:'开始',price:1000}]);
 assert.deepEqual(history.eligible(db,now),[]);
 assert.equal(history.correctedEndTime('2026-10-08 21:02:15','10-8 21:46'),'2026-10-08 21:46:00');
 assert.equal(history.correctedEndTime('2026-10-08T21:02:15+09:00','10-8 21:46'),'2026-10-08T21:46:00+09:00');
@@ -69,5 +69,28 @@ assert.deepEqual(saveCase('won-task','2026-10-08 21:02:15',{success:true}),{end_
 assert.deepEqual(saveCase('won-legacy','2026-10-08 21:02:15',{legacyOrder:true}),{end_time:'2026-10-08 21:02:15',current_price:200});
 assert.deepEqual(saveCase('no-records','2026-10-08 21:02:15',{empty:true}),{end_time:'2026-10-08 21:02:15',current_price:200});
 assert.deepEqual(saveCase('expired-records','2026-10-08 21:02:15',{expired:true}),{end_time:'2026-10-08 21:02:15',current_price:200});
+// Old plugins still send price=1, but their original page text has the real price.
+assert.equal(history.normalizeRows([{...start,price:1}])[0].price,1000);
+assert.throws(()=>history.normalizeRows([{...start,text:'オークション開始。 数量： 1 で 不明'}]),/price missing/);
+// Clearing touches only the two history fields and makes an ended product eligible again.
+const beforeClear = db.prepare('SELECT end_time,current_price FROM products WHERE product_id=?').get('old');
+history.set(db,'auction_history_requested','0');
+const queueBefore = history.get(db,'auction_history_queue');
+assert.equal(history.clearProductHistory(db,'old',now).success,true);
+assert.deepEqual(db.prepare('SELECT end_time,current_price FROM products WHERE product_id=?').get('old'),beforeClear);
+assert.deepEqual(db.prepare('SELECT auction_history_html,auction_history_data FROM products WHERE product_id=?').get('old'),{auction_history_html:null,auction_history_data:null});
+assert.equal(history.get(db,'auction_history_queue'),queueBefore);
+assert.equal(history.get(db,'auction_history_requested'),'0');
+assert.ok(history.eligible(db,Date.parse('2026-10-10T00:00:00Z')).includes('old'));
+assert.equal(history.clearProductHistory(db,'missing').success,false);
+assert.equal(history.clearProductHistory(db,'won').success,true); // Expired records can also be reset.
+history.set(db,'auction_history_requested','1');
+history.set(db,'auction_history_queue',JSON.stringify({token:'busy',ids:['old'],claim:'claimed',leaseUntil:now+1000}));
+db.prepare('UPDATE products SET auction_history_data=? WHERE product_id=?').run('saved','old');
+assert.equal(history.clearProductHistory(db,'old',now).success,false);
+assert.equal(db.prepare('SELECT auction_history_data FROM products WHERE product_id=?').get('old').auction_history_data,'saved');
+assert.equal(history.clearProductHistory(db,'old',now+1001).success,true);
+assert.equal(history.finish(db,{productId:'old',token:'busy',claim:'claimed',expired:true}).stale,true);
+assert.deepEqual(JSON.parse(history.get(db,'auction_history_queue')),{token:'busy',ids:['old']});
 db.close();
 console.log('Auction history queue, atomic storage and non-won end-time/price correction tests passed');

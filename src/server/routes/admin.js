@@ -3699,6 +3699,18 @@ router.post('/shipping-refresh/run', async (req, res) => {
   });
 });
 
+router.post('/auction-history/clear', (req, res) => {
+  const productIds = Array.isArray(req.body?.productIds)
+    ? parseShippingRefreshIds(req.body.productIds.join('\n'))
+    : parseShippingRefreshIds(req.body?.productIdsText || '');
+  if (!productIds.length) return res.status(400).json({error:'请输入有效的商品 ID'});
+  const results = productIds.map(productId => {
+    try { return auctionHistory.clearProductHistory(db,productId); }
+    catch (err) { return {productId,success:false,error:err.message || '清空失败'}; }
+  });
+  res.json({success:true,results,cleared:results.filter(item=>item.success).length,failed:results.filter(item=>!item.success).length});
+});
+
 router.post('/product-type-refresh/run', async (req, res) => {
   const productIds = Array.isArray(req.body?.productIds)
     ? parseShippingRefreshIds(req.body.productIds.join('\n'))

@@ -4,7 +4,11 @@ const vm = require('vm');
 const {parseAuctionHistoryRow} = require('./auctionHistory');
 assert.equal(parseAuctionHistoryRow('10月 4日 21時 46分','jailhnrx 自動入札。 81,000').price,81000);
 assert.equal(parseAuctionHistoryRow('10月 1日 19時 42分','AA 入札。 数量： 1 で 1').username,'AA');
-assert.equal(parseAuctionHistoryRow('10月 1日 18時 55分','オークション開始。 数量： 1 で 500').price,1);
+assert.equal(parseAuctionHistoryRow('10月 1日 18時 55分','オークション開始。 数量： 1 で 500').price,500);
+for (const price of [1,900,1000,3619]) {
+  assert.equal(parseAuctionHistoryRow('10月 5日 0時 41分',`オークション開始。 数量： 1 で ${price.toLocaleString('en-US')}`).price,price);
+}
+assert.throws(()=>parseAuctionHistoryRow('10月 5日 0時 41分','オークション開始。 数量： 1 で 不明'));
 assert.throws(()=>parseAuctionHistoryRow('unknown','AA 自動入札。 1'));
 const source = fs.readFileSync(require.resolve('./auctionHistory'),'utf8');
 function read({rows=[],text='すべての入札履歴',url='https://auctions.yahoo.co.jp/jp/show/bid_hist?aID=u1246662246&apg=1&typ=log',links=[]}={}) {

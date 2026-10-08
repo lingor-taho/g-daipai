@@ -9,6 +9,7 @@ import TrackingRescanPage from './TrackingRescan';
 import ProductDataDeletePage from './ProductDataDelete';
 import NormalBundleRepairPage from './NormalBundleRepair';
 import SettlementRollbackPage from './SettlementRollback';
+import AuctionHistoryClearPage from './AuctionHistoryClear';
 
 const labels = {
   shipping: '运费更新',
@@ -30,7 +31,8 @@ const dataBatchTabKeys = new Set([
   'settlementRollback',
   'receiptSheetBackfill',
   'trackingRescan',
-  'productDataDelete'
+  'productDataDelete',
+  'auctionHistory'
 ]);
 
 export default function DataBatchPage() {
@@ -89,6 +91,11 @@ export default function DataBatchPage() {
           key: 'productDataDelete',
           label: labels.productDataDelete,
           children: <ProductDataDeletePage />
+        },
+        {
+          key: 'auctionHistory',
+          label: '拍卖采集',
+          children: <AuctionHistoryClearPage />
         }
       ]}
     />

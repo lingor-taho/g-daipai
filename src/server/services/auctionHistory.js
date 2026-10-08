@@ -55,7 +55,14 @@ function normalizeRows(rows) {
   for (const row of rows) {
     if (!/^\d{1,2}-\d{1,2} \d{2}:\d{2}$/.test(row.time) || typeof row.username !== 'string' || row.username.length > 512 || !Number.isSafeInteger(row.price) || row.price < 0) throw new Error('invalid history record');
     const item = {time:row.time,username:row.username,price:row.price};
-    if (row.start === true) { start = {...item,username:'开始',price:1}; continue; }
+    if (row.start === true) {
+      // Read the original text too, so an older plugin cannot store its hardcoded 1.
+      const amount = String(row.text || '').match(/オークション開始。\s*数量\s*[:：]\s*\d+\s*で\s*([\d,]+)\s*(?:円)?\s*$/);
+      if (row.text && !amount) throw new Error('auction start price missing');
+      const price = amount ? Number(amount[1].replace(/,/g,'')) : item.price;
+      if (!Number.isSafeInteger(price) || price < 0) throw new Error('invalid auction start price');
+      start = {...item,username:'开始',price}; continue;
+    }
     if (!seen.has(row.time)) { seen.add(row.time); result.push(item); }
   }
   if (rows.length && !start) throw new Error('auction start missing');
@@ -119,4 +126,18 @@ function finish(database, payload) {
     return {success:true};
   })();
 }
-module.exports = {EXPIRED,get,set,eligible,request,schedule,next,finish,normalizeRows,buildHtml,correctedEndTime};
+function clearProductHistory(database, productId, now = Date.now()) {
+  return raw(database).transaction(() => {
+    const queue = JSON.parse(get(database,'auction_history_queue','{}'));
+    if (get(database,'auction_history_requested') === '1' && queue.ids?.[0] === productId && queue.claim && queue.leaseUntil > now) {
+      return {productId,success:false,error:'该商品正在采集，请完成后再清空'};
+    }
+    const result = raw(database).prepare('UPDATE products SET auction_history_html=NULL,auction_history_data=NULL WHERE product_id=?').run(productId);
+    if (result.changes && queue.ids?.[0] === productId && queue.claim) {
+      delete queue.claim; delete queue.leaseUntil;
+      set(database,'auction_history_queue',JSON.stringify(queue));
+    }
+    return {productId,success:result.changes > 0,error:result.changes ? undefined : '商品不存在'};
+  })();
+}
+module.exports = {EXPIRED,get,set,eligible,request,schedule,next,finish,normalizeRows,buildHtml,correctedEndTime,clearProductHistory};

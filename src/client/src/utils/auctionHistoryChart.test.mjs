@@ -28,4 +28,11 @@ const sameMinute = buildAuctionHistoryChart([{time:'10-8 21:46',username:'Alice'
 const same = buildChartGeometry(sameMinute.points);
 assert.equal(same.points[0].x,same.points[1].x);
 assert.ok(same.points.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)));
+for (const price of [1,900,1000,3619]) {
+  const actual = buildAuctionHistoryChart([{time:'10-6 00:42',username:'Alice',price},{time:'10-5 00:41',username:'开始',price}], '2026-10-06T00:42:00+09:00');
+  const plotted = buildChartGeometry(actual.points);
+  assert.equal(actual.points[0].price,price);
+  assert.equal(plotted.segments[0].from.y,plotted.segments[0].to.y);
+  assert.ok(plotted.points[0].y < 330);
+}
 console.log('Auction history chart chronology, time scale, colors, expiry and cross-year tests passed');
