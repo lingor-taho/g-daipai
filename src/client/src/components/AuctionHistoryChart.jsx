@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, getApiErrorMessage } from '../utils/api';
-import { buildAuctionHistoryChart, buildChartGeometry } from '../utils/auctionHistoryChart';
+import { buildAuctionHistoryChart, buildChartGeometry, resolveAuctionChartEnd } from '../utils/auctionHistoryChart';
 
 export function AuctionHistoryChartButton({ item, onClick }) {
   const enabled = Boolean(Number(item.has_auction_history));
@@ -18,7 +18,7 @@ function timeLabel(stamp) {
   const date = new Date(stamp);
   return `${date.getUTCMonth()+1}-${date.getUTCDate()} ${String(date.getUTCHours()).padStart(2,'0')}:${String(date.getUTCMinutes()).padStart(2,'0')}`;
 }
-export function AuctionHistoryPlot({ data, endTime }) {
+export function AuctionHistoryPlot({ data, endTime, endLabel = '商品结束时间' }) {
   const prefix = useId().replace(/:/g,'');
   const chart = buildAuctionHistoryChart(data,endTime);
   const plotRef = useRef(null);
@@ -56,7 +56,7 @@ export function AuctionHistoryPlot({ data, endTime }) {
         </g>)}
         <path d={`M70 30V330H${right}`} fill="none" stroke="#94a3b8" />
         {geometry.points.map((point,index)=><circle key={index} data-auction-end={point.isEnd ? 'true' : undefined} cx={point.x} cy={point.y} r="3" fill={point.color}>
-          <title>{point.isEnd ? '商品结束时间 · ' : ''}{point.time} · {point.username} · {point.price.toLocaleString('en-US')}円</title>
+          <title>{point.isEnd ? `${endLabel} · ` : ''}{point.time} · {point.username} · {point.price.toLocaleString('en-US')}円</title>
         </circle>)}
         {Array.from({length:tickCount},(_,i)=>{
           const ratio=tickCount===1?0:i/(tickCount-1); const x=70+ratio*(width-100);
@@ -69,7 +69,7 @@ export function AuctionHistoryPlot({ data, endTime }) {
     </div>
   </div>;
 }
-export default function AuctionHistoryChart({ item, onClose }) {
+export default function AuctionHistoryChart({ item, onClose, won = false }) {
   const [result,setResult] = useState({loading:true,data:'',message:''});
   useEffect(()=>{
     if (!item) return;
@@ -85,13 +85,14 @@ export default function AuctionHistoryChart({ item, onClose }) {
     return ()=>{controller.abort();window.removeEventListener('acting-user-change',close);window.removeEventListener('keydown',key);};
   },[item?.product_id]);
   if (!item) return null;
+  const chartEnd = resolveAuctionChartEnd(item,result.endTime,won);
   return <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:1100,background:'rgba(15,23,42,.4)',display:'flex',alignItems:'center',justifyContent:'center',padding:12}}>
     <div role="dialog" aria-modal="true" aria-label="用户拍卖记录图表" onClick={event=>event.stopPropagation()} style={{width:'min(1100px,100%)',maxHeight:'85vh',overflowY:'auto',borderRadius:12,background:'#fff',boxShadow:'0 12px 40px #0003'}}>
       <div style={{padding:'12px 14px',display:'flex',gap:12,alignItems:'center',borderBottom:'1px solid #e2e8f0',color:'#334155'}}>
         <div style={{flex:1,minWidth:0}}><strong>用户拍卖记录图表</strong><div style={{fontSize:12,overflowWrap:'anywhere',marginTop:4}}>{item.product_title || item.product_id}</div></div>
         <button type="button" onClick={onClose} style={{border:0,background:'transparent',cursor:'pointer',color:'#2563eb'}}>关闭</button>
       </div>
-      {result.loading ? <div role="status" style={{padding:24}}>正在读取拍卖记录…</div> : result.message ? <div role="status" style={{padding:24}}>{result.message}</div> : <AuctionHistoryPlot data={result.data} endTime={result.endTime} />}
+      {result.loading ? <div role="status" style={{padding:24}}>正在读取拍卖记录…</div> : result.message ? <div role="status" style={{padding:24}}>{result.message}</div> : <AuctionHistoryPlot data={result.data} endTime={chartEnd.time} endLabel={chartEnd.label} />}
     </div>
   </div>;
 }

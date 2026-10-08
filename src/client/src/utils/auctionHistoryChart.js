@@ -1,3 +1,9 @@
+export function resolveAuctionChartEnd(item, productEndTime, won = false) {
+  return won
+    ? {time:item?.won_at || '',label:'落札时间'}
+    : {time:productEndTime || '',label:'商品结束时间'};
+}
+
 export function buildAuctionHistoryChart(raw, endTime = '') {
   if (raw === '' || raw == null) return {message:'拍卖记录尚未采集',points:[],users:[]};
   if (raw === '数据已过期') return {message:'数据已过期',points:[],users:[]};

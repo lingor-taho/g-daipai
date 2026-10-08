@@ -584,7 +584,7 @@ export default function WonItems() {
           <InfiniteScroll loadMore={loadMore} hasMore={items.length < total} />
         ) : null}
       </List>
-      <AuctionHistoryChart item={historyChartItem} onClose={() => setHistoryChartItem(null)} />
+      <AuctionHistoryChart item={historyChartItem} won onClose={() => setHistoryChartItem(null)} />
       <ProductItemDetailPopup item={detailItem} onClose={() => setDetailItem(null)} />
       {remarkEditor ? (
         <div

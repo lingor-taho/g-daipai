@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
-import { buildAuctionHistoryChart, buildChartGeometry } from './auctionHistoryChart.js';
+import { buildAuctionHistoryChart, buildChartGeometry, resolveAuctionChartEnd } from './auctionHistoryChart.js';
 const rows = [
   {time:'10-8 21:46',username:'Bob',price:81000},
   {time:'10-8 21:44',username:'Alice',price:80000},
   {time:'10-1 18:55',username:'开始',price:1}
 ];
+const wonTime = '2026-10-08T22:17:00+09:00';
+const deadline = '2026-10-08T23:55:00+09:00';
+assert.deepEqual(resolveAuctionChartEnd({won_at:wonTime},deadline,true),{time:wonTime,label:'落札时间'});
+assert.deepEqual(resolveAuctionChartEnd({won_at:wonTime},deadline,false),{time:deadline,label:'商品结束时间'});
+assert.deepEqual(resolveAuctionChartEnd({},deadline,true),{time:'',label:'落札时间'});
+assert.equal(buildAuctionHistoryChart(rows,resolveAuctionChartEnd({won_at:wonTime},deadline,true).time).points.at(-1).time,'10-8 22:17:00');
 const chart = buildAuctionHistoryChart(JSON.stringify(rows),'2026-10-08T21:50:15+09:00');
 assert.deepEqual(chart.points.map(p=>p.username),['开始','Alice','Bob','Bob']);
 assert.equal(chart.users.length,3);
