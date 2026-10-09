@@ -5,7 +5,7 @@ async function run() {
   const raw = new Database(':memory:');
   raw.exec(`CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER, product_id TEXT, status TEXT, created_at TEXT, updated_at TEXT);
     CREATE TABLE orders (id INTEGER PRIMARY KEY, task_id INTEGER, final_price INTEGER, won_at TEXT, won_time_text TEXT);
-    CREATE TABLE products (product_id TEXT PRIMARY KEY, product_title TEXT, product_url TEXT, shipping_fee_text TEXT);`);
+    CREATE TABLE products (product_id TEXT PRIMARY KEY, product_title TEXT, product_url TEXT, shipping_fee_text TEXT, end_time TEXT);`);
   const database = {
     getAll: async (sql, params = []) => raw.prepare(sql).all(...params),
     getOne: async (sql, params = []) => raw.prepare(sql).get(...params)
@@ -28,10 +28,24 @@ async function run() {
   insertTask.run(8, 1, 'earliest', 'failed', `${dates.earliest} 12:00:00`, `${dates.earliest} 12:00:00`);
   insertTask.run(9, 1, 'outside', 'success', `${dates.outside} 12:00:00`, `${dates.today} 12:00:00`);
   insertTask.run(10, 2, 'other-user', 'success', `${dates.today} 12:00:00`, `${dates.today} 12:00:00`);
-  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(1, 2, 1000, `${dates.today} 12:00:00`, 'today');
-  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(2, 7, 2000, `${dates.today} 12:00:00`, 'today');
-  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(3, 9, 3000, `${dates.today} 12:00:00`, 'today');
-  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(4, 10, 99999, `${dates.today} 12:00:00`, 'today');
+  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(1, 2, 1000, `${dates.today} 00:00:00`, 'today');
+  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(2, 7, 2000, `${dates.today} 00:00:00`, 'today');
+  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(3, 9, 3000, `${dates.today} 00:00:00`, 'today');
+  raw.prepare('INSERT INTO orders VALUES (?, ?, ?, ?, ?)').run(4, 10, 99999, `${dates.today} 00:00:00`, 'today');
+
+  const insertProduct = raw.prepare('INSERT INTO products(product_id,end_time) VALUES (?,?)');
+  for (const id of ['same-product','yesterday','outside','other-user']) insertProduct.run(id,`${dates.today}T23:59:00+09:00`);
+  insertProduct.run('earliest',`${dates.earliest}T00:00:00Z`);
+  insertProduct.run('lookup-only',`${dates.today}T00:00:00Z`);
+  insertProduct.run('expired-no-win',`${dates.today}T00:00:00Z`);
+  insertProduct.run('future-end','2099-01-01T00:00:00+09:00');
+  insertProduct.run('invalid-end','unknown');
+  insertProduct.run('legacy-zone',`${dates.today} 00:30:00`);
+  insertTask.run(15,4,'legacy-zone','failed',`${dates.outside} 12:00:00`,`${dates.outside} 12:00:00`);
+  insertTask.run(11,1,'expired-no-win','failed',`${dates.outside} 12:00:00`,`${dates.outside} 12:00:00`);
+  insertTask.run(12,1,'expired-no-win','cancelled',`${dates.outside} 12:00:00`,`${dates.outside} 12:00:00`);
+  insertTask.run(13,1,'future-end','pending',`${dates.outside} 12:00:00`,`${dates.outside} 12:00:00`);
+  insertTask.run(14,1,'invalid-end','failed',`${dates.outside} 12:00:00`,`${dates.outside} 12:00:00`);
 
   async function request(userId, query = {}) {
     let result;
@@ -51,25 +65,33 @@ async function run() {
     assert.equal(data.daily.at(-1).task_count, 6, 'Every status and repeat-product submission must count');
     assert.equal(data.daily.at(-1).item_count, 3, 'Wins use won date, including earlier submitted tasks');
     assert.equal(data.daily.at(-1).bid_product_count, 1, 'Repeated submissions for one product count once in the harvest denominator');
-    assert.equal(data.daily.at(-1).harvest_rate, 3);
+    assert.equal(data.daily.at(-1).ended_product_count,4,'Three wins plus one ended non-win, deduplicated and excluding lookup/future/invalid dates');
+    assert.equal(data.daily.at(-1).harvest_rate, 0.75);
     assert.equal(data.daily.at(-1).total_amount, 6000);
     assert.equal(data.daily.at(-2).task_count, 1);
     assert.equal(data.daily.at(-2).bid_product_count, 1);
     assert.equal(data.daily.at(-2).item_count, 0);
     assert.equal(data.daily.at(-2).harvest_rate, 0);
-    assert.equal(data.daily[1].harvest_rate, 0, 'No submissions are displayed as zero to keep the line continuous');
+    assert.equal(data.daily[0].ended_product_count,1);
+    assert.equal(data.daily[1].ended_product_count,0);
+    assert.equal(data.daily[1].harvest_rate, 0, 'No ended products are displayed as zero to keep the line continuous');
     assert.equal(data.daily.reduce((sum, row) => sum + row.task_count, 0), 8);
     assert.equal(data.performance.taskCount, 8);
     assert.equal(data.items.length, 3, 'CSV continues to use the selected 90-day won range');
     const other = await request(2);
     assert.equal(other.daily.at(-1).task_count, 1);
     assert.equal(other.daily.at(-1).item_count, 1);
+    assert.equal(other.daily.at(-1).ended_product_count,1);
+    assert.equal(other.daily.at(-1).harvest_rate,1);
     assert.equal(other.daily.at(-1).total_amount, 99999);
+    const legacy = await request(4);
+    const legacyDate = raw.prepare("SELECT date(? || '+09:00','localtime') AS day").get(`${dates.today}T00:30:00`).day;
+    assert.equal(legacy.daily.find(row=>row.date===legacyDate).ended_product_count,1,'Unqualified product end times use Yahoo/Japan time before grouping by the statistics day');
     const empty = await request(3);
     assert.equal(empty.daily.length, 90);
     assert.ok(empty.daily.every(row => row.task_count === 0 && row.item_count === 0 && row.harvest_rate === 0));
     const today = data.daily.at(-1).date;
-    const overflow = buildWonStatsDailyRows(1, [{ won_date: today, item_count: 3 }], [{ task_date: today, task_count: 4, bid_product_count: 1 }]);
+    const overflow = buildWonStatsDailyRows(1, [{ won_date: today, item_count: 3 }], [{ task_date: today, task_count: 4, bid_product_count: 9 }], [{ended_date:today,ended_product_count:1}]);
     assert.equal(overflow[0].harvest_rate, 3, 'Daily event-date ratio must preserve values above 100%');
     assert.equal(buildWonStatsInput({ id: 1 }, { days: 1000 }).days, 90);
     assert.equal(buildWonStatsInput({ id: 1 }, { days: 30 }).days, 30, 'Explicit historical API ranges stay supported');

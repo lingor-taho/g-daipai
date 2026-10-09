@@ -358,21 +358,45 @@ function buildWonStatsTaskDailyQuery(input) {
   };
 }
 
-function buildWonStatsDailyRows(days, summaryRows, taskRows, now = new Date()) {
+function buildWonStatsEndedDailyQuery(input) {
+  return {
+    sql: `WITH ended_products AS (
+      SELECT p.product_id, COALESCE(
+        (SELECT MIN(COALESCE(o.won_at, wt.updated_at)) FROM tasks wt
+         INNER JOIN orders o ON o.task_id=wt.id
+         WHERE wt.product_id=p.product_id AND wt.user_id=? AND wt.status='success'),
+        CASE WHEN p.end_time GLOB '*Z' OR p.end_time GLOB '*z'
+               OR p.end_time GLOB '*+??:??' OR p.end_time GLOB '*-??:??'
+             THEN p.end_time ELSE REPLACE(p.end_time,' ','T') || '+09:00' END
+      ) AS ended_at
+      FROM products p WHERE EXISTS(SELECT 1 FROM tasks t WHERE t.product_id=p.product_id AND t.user_id=?)
+    ) SELECT date(ended_at,'localtime') AS ended_date, COUNT(DISTINCT product_id) AS ended_product_count
+      FROM ended_products
+      WHERE julianday(ended_at)<=julianday('now')
+        AND date(ended_at,'localtime')>=date('now','localtime','-' || (? - 1) || ' days')
+      GROUP BY ended_date ORDER BY ended_date`,
+    params:[input.userId,input.userId,input.days]
+  };
+}
+
+function buildWonStatsDailyRows(days, summaryRows, taskRows, endedRows = [], now = new Date()) {
   const summaryByDate = new Map(summaryRows.map(row => [row.won_date, row]));
   const tasksByDate = new Map(taskRows.map(row => [row.task_date, row]));
+  const endedByDate = new Map(endedRows.map(row => [row.ended_date,row]));
   return buildRecentDateKeys(days, now).map(date => {
     const row = summaryByDate.get(date);
     const taskCount = Number(tasksByDate.get(date)?.task_count || 0);
     const bidProductCount = Number(tasksByDate.get(date)?.bid_product_count || 0);
     const wonCount = Number(row?.item_count || 0);
+    const endedProductCount = Number(endedByDate.get(date)?.ended_product_count || 0);
     return {
       date,
       total_amount: Number(row?.total_amount || 0),
       item_count: wonCount,
       task_count: taskCount,
       bid_product_count: bidProductCount,
-      harvest_rate: bidProductCount > 0 ? wonCount / bidProductCount : 0
+      ended_product_count: endedProductCount,
+      harvest_rate: endedProductCount > 0 ? wonCount / endedProductCount : 0
     };
   });
 }
@@ -904,14 +928,16 @@ router.get('/won-stats', async (req, res) => {
     const exportQuery = buildWonStatsExportQuery(input);
     const performanceQuery = buildWonStatsPerformanceQuery(input);
     const taskDailyQuery = buildWonStatsTaskDailyQuery(input);
-    const [summaryRows, exportRows, performanceRow, taskRows] = await Promise.all([
+    const endedDailyQuery = buildWonStatsEndedDailyQuery(input);
+    const [summaryRows, exportRows, performanceRow, taskRows, endedRows] = await Promise.all([
       db.getAll(summaryQuery.sql, summaryQuery.params),
       db.getAll(exportQuery.sql, exportQuery.params),
       db.getOne(performanceQuery.sql, performanceQuery.params),
-      db.getAll(taskDailyQuery.sql, taskDailyQuery.params)
+      db.getAll(taskDailyQuery.sql, taskDailyQuery.params),
+      db.getAll(endedDailyQuery.sql, endedDailyQuery.params)
     ]);
 
-    const daily = buildWonStatsDailyRows(input.days, summaryRows, taskRows);
+    const daily = buildWonStatsDailyRows(input.days, summaryRows, taskRows, endedRows);
 
     const bidProductCount = Number(performanceRow?.bid_product_count || 0);
     const wonProductCount = Number(performanceRow?.won_product_count || 0);
@@ -1200,6 +1226,7 @@ module.exports.updateUserOrderRemark = updateUserOrderRemark;
 module.exports.buildWonStatsInput = buildWonStatsInput;
 module.exports.buildWonStatsSummaryQuery = buildWonStatsSummaryQuery;
 module.exports.buildWonStatsTaskDailyQuery = buildWonStatsTaskDailyQuery;
+module.exports.buildWonStatsEndedDailyQuery = buildWonStatsEndedDailyQuery;
 module.exports.buildWonStatsDailyRows = buildWonStatsDailyRows;
 module.exports.buildWonStatsExportQuery = buildWonStatsExportQuery;
 module.exports.buildWonStatsPerformanceQuery = buildWonStatsPerformanceQuery;
