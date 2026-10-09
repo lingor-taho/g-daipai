@@ -8081,7 +8081,7 @@ async function executeAuctionHistoryJob(job) {
       }
       if (!result || result.error) throw new Error(result?.error || 'history page unavailable');
       if (result.expired) {
-        if (page !== 0) throw new Error('later history page unavailable');
+        if (page !== 0 && !result.documentMissing) throw new Error('later history page unavailable');
         expired = true; break;
       }
       if (!firstPageRows) firstPageRows = result.rawRows || result.rows;

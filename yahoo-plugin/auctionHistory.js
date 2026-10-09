@@ -14,6 +14,7 @@ function parseAuctionHistoryRow(rawTime, text) {
 function readAuctionHistoryPage() {
   const body = document.body?.innerText || '';
   if (!/\/jp\/show\/bid_hist$/.test(location.pathname) || document.querySelector('input[type="password"]') || /ログインしてください|ログインが必要/.test(body)) return {error:'login required'};
+  if (body.includes('指定されたドキュメントは存在しません。')) return {expired:true,documentMissing:true};
   // Only explicit history-unavailable messages are terminal. Generic errors remain retryable.
   if (/入札履歴.{0,30}(?:表示期間|保存期間).{0,30}(?:過ぎ|終了)|(?:表示期間|保存期間).{0,30}(?:過ぎ|終了).{0,30}入札履歴|このオークションの入札履歴は表示できません/.test(body)) return {expired:true};
   if (!/すべての入札履歴/.test(body)) return {error:'history page not ready'};

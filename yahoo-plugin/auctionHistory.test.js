@@ -21,6 +21,9 @@ assert.equal(read({rows:[['10月 4日 21時 46分','jailhnrx 自動入札。 81,
 assert.equal(read({text:'ログインしてください'}).error,'login required');
 assert.equal(read({text:'システムエラー'}).expired,undefined);
 assert.equal(read({text:'このオークションの入札履歴は表示できません'}).expired,true);
+assert.equal(read({text:'指定されたドキュメントは存在しません。 商品ページが削除されている可能性があります。'}).expired,true);
+assert.equal(read({text:'ログインしてください 指定されたドキュメントは存在しません。'}).error,'login required');
+assert.equal(read({text:'指定されたドキュメントは存在しません。',url:'https://login.yahoo.co.jp/'}).expired,undefined);
 assert.equal(read({text:'すべての入札履歴 0件 入札履歴はありません'}).rows.length,0);
 assert.equal(read({rows:[['10月 4日 21時 46分','new markup']]}).error,'history rows missing');
 const mixed = read({rows:[['10月 4日 21時 46分','jailhnrx 自動入札。 81,000'],['10月 4日 21時 45分','linkwood1989 入札の取り消し'],['10月 1日 18時 55分','オークション開始。 数量： 1 で 1,000']]});
@@ -65,6 +68,34 @@ async function testAuthenticatedPagination() {
   await context.executeAuctionHistoryJob({productId:'u1246662246',token:'batch',claim:'claim3'});
   assert.equal(writes.at(-1).expired,true);
   assert.equal(writes.at(-1).error,'');
+  // Run the actual deleted-document parser through the worker and database writer.
+  const Database = require('better-sqlite3');
+  const history = require('../src/server/services/auctionHistory');
+  const database = new Database(':memory:');
+  database.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
+    CREATE TABLE products(product_id TEXT PRIMARY KEY,auction_history_html TEXT,auction_history_data TEXT);
+    INSERT INTO products(product_id) VALUES ('q1230679212');`);
+  history.set(database,'auction_history_requested','1');
+  history.set(database,'auction_history_queue',JSON.stringify({token:'deleted',ids:['q1230679212']}));
+  const deletedJob = history.next(database);
+  context.chrome.scripting.executeScript = async opts=>opts.files?[]:[{result:read({text:'指定されたドキュメントは存在しません。'})}];
+  context.apiFetch = async (url,options)=>({ok:true,json:async()=>history.finish(database,JSON.parse(options.body))});
+  assert.equal(await context.executeAuctionHistoryJob(deletedJob),true);
+  assert.deepEqual(database.prepare('SELECT auction_history_html,auction_history_data FROM products').get(),{auction_history_html:'数据已过期',auction_history_data:'数据已过期'});
+  assert.equal(history.get(database,'auction_history_requested'),'0');
+  assert.deepEqual(history.getAlerts(database),[]);
+  database.prepare('UPDATE products SET auction_history_html=NULL,auction_history_data=NULL').run();
+  history.set(database,'auction_history_requested','1');
+  history.set(database,'auction_history_queue',JSON.stringify({token:'deleted-later',ids:['q1230679212']}));
+  pageNumber = 1;
+  context.chrome.scripting.executeScript = async opts=>opts.files?[]:[{result:read(pageNumber===1 ? {
+    url:visited.at(-1),rows:[['10月 4日 21時 46分','jailhnrx 自動入札。 81,000']],
+    links:[{innerText:'次の50件',href:'https://auctions.yahoo.co.jp/jp/show/bid_hist?aID=q1230679212&apg=2&typ=log'}]
+  } : {url:visited.at(-1),text:'指定されたドキュメントは存在しません。'})}];
+  assert.equal(await context.executeAuctionHistoryJob(history.next(database)),true);
+  assert.equal(new URL(visited.at(-1)).searchParams.get('apg'),'2');
+  assert.deepEqual(database.prepare('SELECT auction_history_html,auction_history_data FROM products').get(),{auction_history_html:'数据已过期',auction_history_data:'数据已过期'});
+  database.close();
   console.log('Authenticated tab pagination, first-page capture, login failure and cleanup tests passed');
 }
 async function testBatchFailureContinuation() {
