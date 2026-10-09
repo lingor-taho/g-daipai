@@ -112,13 +112,16 @@ async function run() {
       await page.close();
     }
     const yahoo = await browser.newPage();
-    await yahoo.route('**/*',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:`<h2>すべての入札履歴</h2><table><tr><td>10月 4日 21時 46分</td><td><img alt="">jailhnrx 自動入札。 81,000</td></tr></table><a href="?aID=u1246662246&apg=2&typ=log">次の50件</a>`}));
+    await yahoo.route('**/*',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:`<h2>すべての入札履歴</h2><table><tr><td>10月 4日 21時 46分</td><td><img alt="">jailhnrx 自動入札。 81,000</td></tr><tr><td>10月 4日 21時 45分</td><td>linkwood1989 入札の取り消し</td></tr><tr><td>10月 1日 18時 55分</td><td>オークション開始。 数量： 1 で 1,000</td></tr></table><a href="?aID=u1246662246&apg=2&typ=log">次の50件</a>`}));
     await yahoo.goto('https://auctions.yahoo.co.jp/jp/show/bid_hist?aID=u1246662246&apg=1&typ=log');
     await yahoo.addScriptTag({path:path.resolve(__dirname,'../yahoo-plugin/auctionHistory.js')});
     const parsed = await yahoo.evaluate(()=>globalThis.readAuctionHistoryPage());
     assert.equal(parsed.error,undefined,JSON.stringify(parsed));
     assert.equal(parsed.rows[0].username,'jailhnrx');
     assert.equal(parsed.rows[0].price,81000);
+    assert.equal(parsed.rows.length,2);
+    assert.equal(parsed.rawRows.length,3);
+    assert.equal(parsed.rows[1].price,1000);
     assert.equal(new URL(parsed.nextUrl).searchParams.get('apg'),'2');
     console.log('Auction history browser tests passed: 390/1200px, won/failure list entries, segment colors/gradient, return, empty/expired, real DOM extraction');
   } finally {await browser.close();await closeServer();}

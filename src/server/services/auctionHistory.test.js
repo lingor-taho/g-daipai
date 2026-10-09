@@ -26,18 +26,32 @@ assert.equal(history.finish(db,{...job,expired:true}).stale,true);
 history.finish(db,{...reclaimed,expired:true});
 assert.deepEqual(db.prepare('SELECT auction_history_html,auction_history_data FROM products WHERE product_id=?').get('won'),{auction_history_html:history.EXPIRED,auction_history_data:history.EXPIRED});
 job = history.next(db,now);
-history.finish(db,{...job,error:'network timeout'});
+for (let attempt=1;attempt<=3;attempt++) {
+  history.finish(db,{...job,error:'network timeout'});
+  assert.equal(history.get(db,'auction_history_requested'),attempt<3?'1':'0');
+  if (attempt<3) {
+    assert.equal(history.next(db,now,['old']),null,'Retry must wait for the next batch');
+    job=history.next(db,now);
+  }
+}
+assert.equal(history.getAlerts(db)[0].items[0].attempts,3);
+assert.equal(history.getAlerts(db)[0].items[0].productId,'old');
+assert.equal(history.closeAlert(db,history.getAlerts(db)[0].id).closed,1);
+assert.deepEqual(history.getAlerts(db),[]);
 assert.equal(history.get(db,'auction_history_requested'),'0');
 assert.equal(db.prepare('SELECT auction_history_html FROM products WHERE product_id=?').get('old').auction_history_html,null);
 history.schedule(db,now+1000); assert.equal(history.get(db,'auction_history_requested'),'0');
 history.request(db,now); job = history.next(db,now);
 const row = {time:'10-4 21:46',rawTime:'10月 4日 21時 46分',text:'<script>evil</script> 自動入札。 81,000',username:'<script>evil</script>',price:81000};
 const start = {...row,time:'10-4 21:46',price:1000,text:'オークション開始。 数量： 1 で 1,000',start:true};
-assert.throws(()=>history.finish(db,{...job,rows:[row],firstPageRows:[row]}),/start missing/);
-history.finish(db,{...job,rows:[row,{...row,username:'other',price:80000},start],firstPageRows:[row,{...row,username:'other',price:80000}]});
+assert.equal(history.finish(db,{...job,rows:[row],firstPageRows:[row]}).retry,true);
+assert.equal(JSON.parse(history.get(db,'auction_history_queue')).failures.old.error,'auction start missing');
+job=history.next(db,now);
+history.finish(db,{...job,rows:[row,{...row,username:'other',price:80000},start],firstPageRows:[row,{...row,username:'other',price:80000},{rawTime:'10月 4日 21時 45分',text:'linkwood1989 入札の取り消し'},start]});
 const saved = db.prepare('SELECT * FROM products WHERE product_id=?').get('old');
 assert.equal(saved.auction_history_html.includes('<script>'),false);
-assert.equal((saved.auction_history_html.match(/<tr>/g)||[]).length,2);
+assert.equal((saved.auction_history_html.match(/<tr>/g)||[]).length,4);
+assert.ok(saved.auction_history_html.includes('入札の取り消し'));
 assert.deepEqual(JSON.parse(saved.auction_history_data),[{time:'10-4 21:46',username:row.username,price:81000},{time:'10-4 21:46',username:'开始',price:1000}]);
 assert.deepEqual(history.eligible(db,now),[]);
 assert.equal(history.correctedEndTime('2026-10-08 21:02:15','10-8 21:46'),'2026-10-08 21:46:00');
@@ -92,5 +106,36 @@ assert.equal(db.prepare('SELECT auction_history_data FROM products WHERE product
 assert.equal(history.clearProductHistory(db,'old',now+1001).success,true);
 assert.equal(history.finish(db,{productId:'old',token:'busy',claim:'claimed',expired:true}).stale,true);
 assert.deepEqual(JSON.parse(history.get(db,'auction_history_queue')),{token:'busy',ids:['old']});
+// Failed products rotate behind untouched products; alerts wait for the whole fixed queue.
+const retryDb = new Database(':memory:');
+retryDb.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
+CREATE TABLE products(product_id TEXT PRIMARY KEY,auction_history_html TEXT,auction_history_data TEXT);`);
+retryDb.prepare('INSERT INTO products(product_id) VALUES (?)').run('a');
+retryDb.prepare('INSERT INTO products(product_id) VALUES (?)').run('b');
+history.set(retryDb,'auction_history_requested','1');
+history.set(retryDb,'auction_history_queue',JSON.stringify({token:'fixed',ids:['a','b']}));
+let retryJob=history.next(retryDb,now);
+history.finish(retryDb,{...retryJob,error:'login required'});
+assert.deepEqual(JSON.parse(history.get(retryDb,'auction_history_queue')).ids,['b','a']);
+retryJob=history.next(retryDb,now,['a']);
+assert.equal(retryJob.productId,'b');
+history.finish(retryDb,{...retryJob,error:'timeout'});
+assert.equal(history.next(retryDb,now,['a','b']),null);
+for(let attempt=2;attempt<=3;attempt++) {
+ retryJob=history.next(retryDb,now);
+ assert.equal(retryJob.productId,'a');
+ history.finish(retryDb,{...retryJob,error:'login required'});
+ assert.deepEqual(history.getAlerts(retryDb),[]);
+ retryJob=history.next(retryDb,now,['a']);
+ assert.equal(retryJob.productId,'b');
+ history.finish(retryDb,{...retryJob,expired:true});
+ if(attempt===2) break;
+}
+retryJob=history.next(retryDb,now);
+history.finish(retryDb,{...retryJob,error:'login required'});
+assert.equal(history.get(retryDb,'auction_history_requested'),'0');
+assert.deepEqual(history.getAlerts(retryDb)[0].items,[{productId:'a',attempts:3,error:'login required'}]);
+assert.equal(history.getAlerts(retryDb)[0].items.some(item=>item.productId==='b'),false,'Successful retry must not remain in the failure summary');
+retryDb.close();
 db.close();
 console.log('Auction history queue, atomic storage and non-won end-time/price correction tests passed');

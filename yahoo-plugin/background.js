@@ -8084,7 +8084,7 @@ async function executeAuctionHistoryJob(job) {
         if (page !== 0) throw new Error('later history page unavailable');
         expired = true; break;
       }
-      if (!firstPageRows) firstPageRows = result.rows;
+      if (!firstPageRows) firstPageRows = result.rawRows || result.rows;
       rows.push(...result.rows);
       if (!result.nextUrl) {
         if (rows.length && !rows.some(row=>row.start)) throw new Error('auction start missing');
@@ -8105,20 +8105,21 @@ async function executeAuctionHistoryJob(job) {
     body:JSON.stringify({...job,expired,error,rows,firstPageRows:firstPageRows || []})
   });
   if (!response.ok) throw new Error('history result was not saved');
+  if ((await response.json()).success !== true) throw new Error('history result was not acknowledged');
   return !error;
 }
 
 async function runAuctionHistoryJobs() {
-  // Bounded batch; re-check workflow priority between products.
+  if (await pauseIdleWorkForOpenManualPin()) return;
+  const attempted = [];
+  // Complete this batch before considering other workflow priorities.
   for (let count = 0; count < 10; count++) {
-    if (await pauseIdleWorkForOpenManualPin()) return;
-    if (count && (await fetchNextIdleAction())?.action !== 'auction_history') return;
-    const response = await apiFetch('/api/plugin/auction-history/jobs');
+    const response = await apiFetch('/api/plugin/auction-history/jobs?exclude=' + encodeURIComponent(JSON.stringify(attempted)));
     if (!response.ok) throw new Error('history queue unavailable');
     const {job} = await response.json();
     if (!job) return;
-    // A failed product has been acknowledged and removed from this batch's queue.
-    // Continue with the next product; transport/acknowledgement failures still throw.
+    attempted.push(job.productId);
+    // Failed products remain queued, but are attempted only once in this batch.
     await executeAuctionHistoryJob(job);
   }
 }

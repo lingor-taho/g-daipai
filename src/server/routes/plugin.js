@@ -918,7 +918,10 @@ router.get('/tasks', async (req, res) => {
 });
 
 router.get('/auction-history/jobs', (req, res) => {
-  res.json({success:true, job:auctionHistory.next(db)});
+  let excluded = [];
+  try { excluded = JSON.parse(req.query.exclude || '[]'); } catch (_) {}
+  if (!Array.isArray(excluded) || excluded.length > 10 || excluded.some(id=>typeof id!=='string')) return res.status(400).json({error:'invalid history batch'});
+  res.json({success:true, job:auctionHistory.next(db,Date.now(),excluded)});
 });
 router.post('/auction-history/status', (req, res) => {
   try { res.json(auctionHistory.finish(db, req.body)); }

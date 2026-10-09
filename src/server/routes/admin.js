@@ -3343,9 +3343,12 @@ router.get('/idle-flags', async (req, res) => {
     paymentAlertMessage: values.payment_alert_message || '',
     captchaChallenge: await getCaptchaChallenge(db),
     shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt),
-    googleSheetAlerts: await getGoogleSheetAlerts(db)
+    googleSheetAlerts: await getGoogleSheetAlerts(db),
+    auctionHistoryAlerts: auctionHistory.getAlerts(db)
   });
 });
+
+router.post('/auction-history-alerts/:id/close', (req,res) => res.json(auctionHistory.closeAlert(db,String(req.params.id))));
 
 router.post('/shipment-alerts/:id/close', async (req, res) => {
   const alertId = String(req.params.id || '').trim();

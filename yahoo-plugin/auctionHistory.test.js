@@ -22,7 +22,12 @@ assert.equal(read({text:'ログインしてください'}).error,'login required
 assert.equal(read({text:'システムエラー'}).expired,undefined);
 assert.equal(read({text:'このオークションの入札履歴は表示できません'}).expired,true);
 assert.equal(read({text:'すべての入札履歴 0件 入札履歴はありません'}).rows.length,0);
-assert.equal(read({rows:[['10月 4日 21時 46分','new markup']]}).error,'history row format changed');
+assert.equal(read({rows:[['10月 4日 21時 46分','new markup']]}).error,'history rows missing');
+const mixed = read({rows:[['10月 4日 21時 46分','jailhnrx 自動入札。 81,000'],['10月 4日 21時 45分','linkwood1989 入札の取り消し'],['10月 1日 18時 55分','オークション開始。 数量： 1 で 1,000']]});
+assert.equal(mixed.error,undefined);
+assert.equal(mixed.rows.length,2);
+assert.equal(mixed.rawRows.length,3);
+assert.equal(mixed.rows.at(-1).price,1000);
 console.log('Auction history page parsing and failure classification tests passed');
 
 async function testAuthenticatedPagination() {
@@ -43,7 +48,7 @@ async function testAuthenticatedPagination() {
       } : {url:visited.at(-1),rows:[['10月 1日 18時 55分','オークション開始。 数量： 1 で 1']]})}];
     }}},
     waitForTabComplete:async()=>{},closeTabIfExists:async id=>closed.push(id),
-    apiFetch:async (url,options)=>{writes.push(JSON.parse(options.body));return {ok:true};}
+    apiFetch:async (url,options)=>{writes.push(JSON.parse(options.body));return {ok:true,json:async()=>({success:true})};}
   };
   vm.createContext(context);vm.runInContext(jobSource,context);
   assert.equal(await context.executeAuctionHistoryJob({productId:'u1246662246',token:'batch',claim:'claim'}),true);
@@ -69,7 +74,7 @@ async function testBatchFailureContinuation() {
   const context = {
     pauseIdleWorkForOpenManualPin:async()=>false,
     fetchNextIdleAction:async()=>({action:'auction_history'}),
-    apiFetch:async()=>({ok:true,json:async()=>({job:{productId:`product-${++claimed}`}})}),
+    apiFetch:async url=>{assert.deepEqual(JSON.parse(decodeURIComponent(url.split('exclude=')[1])),attempted);return {ok:true,json:async()=>({job:{productId:`product-${++claimed}`}})};},
     executeAuctionHistoryJob:async job=>{attempted.push(job.productId);return attempted.length>1;}
   };
   vm.createContext(context);vm.runInContext(batchSource,context);
@@ -84,13 +89,16 @@ async function testBatchFailureContinuation() {
   attempted.length=0;claimed=0;
   context.fetchNextIdleAction=async()=>({action:'scan'});
   await context.runAuctionHistoryJobs();
-  assert.equal(attempted.length,1,'Higher-priority work still interrupts between products');
+  assert.equal(attempted.length,10,'Higher-priority work must wait until the batch finishes');
   attempted.length=0;claimed=0;
   context.fetchNextIdleAction=async()=>({action:'auction_history'});
   context.pauseIdleWorkForOpenManualPin=async()=>attempted.length>0;
   await context.runAuctionHistoryJobs();
-  assert.equal(attempted.length,1,'Manual verification still interrupts between products');
+  assert.equal(attempted.length,10,'Do not recheck manual verification midway through a started batch');
   attempted.length=0;claimed=0;
+  context.pauseIdleWorkForOpenManualPin=async()=>true;
+  await context.runAuctionHistoryJobs();
+  assert.equal(attempted.length,0,'Do not start a batch while manual verification is already open');
   context.pauseIdleWorkForOpenManualPin=async()=>false;
   context.apiFetch=async()=>({ok:true,json:async()=>({job:null})});
   await context.runAuctionHistoryJobs();
@@ -99,6 +107,6 @@ async function testBatchFailureContinuation() {
   context.executeAuctionHistoryJob=async()=>{throw new Error('history result was not saved');};
   await assert.rejects(context.runAuctionHistoryJobs(),/result was not saved/);
   assert.equal(claimed,1,'Unacknowledged results must not cause another product claim');
-  console.log('Auction history 10-product limit, failure continuation and priority interruption tests passed');
+  console.log('Auction history 10-product limit, failure continuation and uninterrupted batch tests passed');
 }
 testAuthenticatedPagination().then(testBatchFailureContinuation).catch(error=>{console.error(error);process.exitCode=1;});

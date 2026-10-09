@@ -36,3 +36,6 @@ assert.equal(
   true,
   'Data batch must select the requested tab from the URL'
 );
+
+assert.ok(source.includes('auctionHistoryAlerts.map') && source.includes('拍卖记录采集未完成') && source.includes('item.attempts') && source.includes('item.error'));
+assert.ok(source.includes('/api/admin/auction-history-alerts/') && source.includes('closeAuctionHistoryAlert') && source.includes('消除'));

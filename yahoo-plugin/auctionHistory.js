@@ -18,12 +18,14 @@ function readAuctionHistoryPage() {
   if (/入札履歴.{0,30}(?:表示期間|保存期間).{0,30}(?:過ぎ|終了)|(?:表示期間|保存期間).{0,30}(?:過ぎ|終了).{0,30}入札履歴|このオークションの入札履歴は表示できません/.test(body)) return {expired:true};
   if (!/すべての入札履歴/.test(body)) return {error:'history page not ready'};
   if (new URL(location.href).searchParams.get('typ') !== 'log') return {error:'wrong history view'};
-  const rows = [];
+  const rows = []; const rawRows = [];
   for (const tr of document.querySelectorAll('tr')) {
     const cells = [...tr.querySelectorAll(':scope > td')];
     if (cells.length < 2 || !/\d+月\s*\d+日/.test(cells[0].innerText)) continue;
-    try { rows.push(parseAuctionHistoryRow(cells[0].innerText,cells.slice(1).map(c=>c.innerText).join(' '))); }
-    catch (_) { return {error:'history row format changed'}; }
+    const rawTime = cells[0].innerText; const text = cells.slice(1).map(c=>c.innerText).join(' ');
+    rawRows.push({rawTime,text});
+    try { rows.push(parseAuctionHistoryRow(rawTime,text)); }
+    catch (_) { /* Non-price events such as withdrawn bids do not enter the array. */ }
   }
   if (!rows.length && !/入札履歴はありません|入札はありません|入札履歴がありません|すべての入札履歴\s*0件/.test(body)) return {error:'history rows missing'};
   let nextUrl = null;
@@ -38,7 +40,7 @@ function readAuctionHistoryPage() {
     // Disabled footer text can occur on the last page; require the start marker there.
     return {error:'history pagination missing'};
   }
-  return {rows,nextUrl};
+  return {rows,rawRows,nextUrl};
 }
 globalThis.readAuctionHistoryPage = readAuctionHistoryPage;
 if (typeof module !== 'undefined') module.exports = {parseAuctionHistoryRow,readAuctionHistoryPage};

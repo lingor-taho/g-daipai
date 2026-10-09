@@ -79,6 +79,7 @@ export default function AdminLayout() {
   const passedCaptchaTimerRef = useRef<number | null>(null);
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [googleSheetAlerts, setGoogleSheetAlerts] = useState<any[]>([]);
+  const [auctionHistoryAlerts, setAuctionHistoryAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
 
@@ -144,6 +145,7 @@ export default function AdminLayout() {
           }
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
           setGoogleSheetAlerts(Array.isArray(flags.googleSheetAlerts) ? flags.googleSheetAlerts : []);
+          setAuctionHistoryAlerts(Array.isArray(flags.auctionHistoryAlerts) ? flags.auctionHistoryAlerts : []);
         }
       } catch {
         if (active) {
@@ -153,6 +155,7 @@ export default function AdminLayout() {
           setCaptchaAnswer('');
           setShipmentAlerts([]);
           setGoogleSheetAlerts([]);
+          setAuctionHistoryAlerts([]);
         }
       }
     }
@@ -206,6 +209,15 @@ export default function AdminLayout() {
 
   function goToReceiptSheetBackfill() {
     navigate('/data-batch?tab=receiptSheetBackfill');
+  }
+
+  async function closeAuctionHistoryAlert(alertId: string) {
+    try {
+      await fetchAdminJson(`/api/admin/auction-history-alerts/${encodeURIComponent(alertId)}/close`, { method: 'POST' });
+      setAuctionHistoryAlerts(items => items.filter(item => item.id !== alertId));
+    } catch (e: any) {
+      message.error(e.message || '消除拍卖采集提醒失败');
+    }
   }
 
   async function deleteGoogleSheetAlert(alertId: string) {
@@ -367,6 +379,20 @@ export default function AdminLayout() {
         ) : null}
         <Layout className="admin-main" style={{ marginLeft: isMobile ? 0 : (collapsed ? 50 : 210), transition: 'margin-left 0.2s' }}>
           <Content className="admin-content" style={{ padding: 20, background: '#f5f5f5', minHeight: 'calc(100vh - 64px)' }}>
+            {auctionHistoryAlerts.map(alert => (
+              <Alert key={alert.id} type="error" showIcon style={{ marginBottom: 12 }}
+                message={<Space wrap>
+                  <Typography.Text>拍卖记录采集未完成：以下商品已失败 3 次</Typography.Text>
+                  <Button size="small" onClick={() => closeAuctionHistoryAlert(alert.id)}>消除</Button>
+                </Space>}
+                description={<div>{(alert.items || []).map((item: any) => (
+                  <div key={item.productId}>
+                    商品 ID <a href={`https://auctions.yahoo.co.jp/jp/auction/${item.productId}`} target="_blank" rel="noreferrer">{item.productId}</a>
+                    {' '}，失败 {item.attempts} 次，原因：{item.error || '-'}
+                  </div>
+                ))}</div>}
+              />
+            ))}
             {googleSheetAlerts.map(alert => (
               <Alert
                 key={alert.id}

@@ -34,12 +34,15 @@ function schedule(database, now = Date.now()) {
   if (`${parts.hour}:${parts.minute}` < time || get(database,'auction_history_last_date') === day) return;
   raw(database).transaction(() => { request(database, now); set(database,'auction_history_last_date',day); })();
 }
-function next(database, now = Date.now()) {
+function next(database, now = Date.now(), excluded = []) {
   return raw(database).transaction(() => {
     if (get(database,'auction_history_requested') !== '1') return null;
     const queue = JSON.parse(get(database,'auction_history_queue','{}'));
     if (!queue.ids?.length) { set(database,'auction_history_requested','0'); return null; }
     if (queue.leaseUntil > now) return null;
+    const index = queue.ids.findIndex(id => !excluded.includes(id));
+    if (index < 0) return null;
+    if (index > 0) queue.ids.unshift(queue.ids.splice(index,1)[0]);
     queue.claim = randomUUID(); queue.leaseUntil = now + 10 * 60 * 1000;
     set(database,'auction_history_queue',JSON.stringify(queue));
     return { productId: queue.ids[0], token: queue.token, claim: queue.claim };
@@ -100,12 +103,18 @@ function finish(database, payload) {
   return raw(database).transaction(() => {
     const queue = JSON.parse(get(database,'auction_history_queue','{}'));
     if (queue.token !== payload.token || queue.claim !== payload.claim || queue.ids?.[0] !== payload.productId) return {success:false,stale:true};
+    let failure = String(payload.error || '').slice(0,500);
+    let data; let html;
+    if (!payload.expired && !failure) {
+      try {
+        data = normalizeRows(payload.rows);
+        if (!Array.isArray(payload.firstPageRows) || payload.firstPageRows.length > 100) throw new Error('invalid first page');
+        html = buildHtml(payload.firstPageRows);
+      } catch (error) { failure = error.message; }
+    }
     if (payload.expired === true) {
       raw(database).prepare("UPDATE products SET auction_history_html=?,auction_history_data=? WHERE product_id=? AND COALESCE(auction_history_html,'')='' AND COALESCE(auction_history_data,'')=''").run(EXPIRED,EXPIRED,payload.productId);
-    } else if (!payload.error) {
-      const data = normalizeRows(payload.rows);
-      if (!Array.isArray(payload.firstPageRows) || payload.firstPageRows.length > 100 || payload.firstPageRows.length > payload.rows.length) throw new Error('invalid first page');
-      const html = buildHtml(payload.firstPageRows);
+    } else if (!failure) {
       const saved = raw(database).prepare("UPDATE products SET auction_history_html=?,auction_history_data=? WHERE product_id=? AND COALESCE(auction_history_html,'')='' AND COALESCE(auction_history_data,'')=''").run(html,JSON.stringify(data),payload.productId);
       if (saved.changes && data.length) {
         const product = raw(database).prepare(`SELECT p.end_time,
@@ -121,9 +130,23 @@ function finish(database, payload) {
       }
     }
     queue.ids.shift(); delete queue.claim; delete queue.leaseUntil;
+    if (failure) {
+      queue.failures = queue.failures || {};
+      const attempts = (queue.failures[payload.productId]?.attempts || 0) + 1;
+      queue.failures[payload.productId] = {productId:payload.productId,attempts,error:failure};
+      if (attempts < 3) queue.ids.push(payload.productId);
+    } else if (queue.failures) { delete queue.failures[payload.productId]; }
     set(database,'auction_history_queue',JSON.stringify(queue));
-    if (!queue.ids.length) set(database,'auction_history_requested','0');
-    return {success:true};
+    if (!queue.ids.length) {
+      set(database,'auction_history_requested','0');
+      const failed = Object.values(queue.failures || {}).filter(item=>item.attempts>=3);
+      if (failed.length) {
+        const alerts = getAlerts(database);
+        alerts.push({id:queue.token,createdAt:new Date().toISOString(),items:failed});
+        set(database,'auction_history_alerts',JSON.stringify(alerts));
+      }
+    }
+    return {success:true,retry:!!failure && (queue.failures[payload.productId]?.attempts || 0)<3};
   })();
 }
 function clearProductHistory(database, productId, now = Date.now()) {
@@ -140,4 +163,13 @@ function clearProductHistory(database, productId, now = Date.now()) {
     return {productId,success:result.changes > 0,error:result.changes ? undefined : '商品不存在'};
   })();
 }
-module.exports = {EXPIRED,get,set,eligible,request,schedule,next,finish,normalizeRows,buildHtml,correctedEndTime,clearProductHistory};
+function getAlerts(database) { return JSON.parse(get(database,'auction_history_alerts','[]')); }
+function closeAlert(database,id) {
+  return raw(database).transaction(()=>{
+    const alerts = getAlerts(database);
+    const remaining = alerts.filter(alert=>alert.id!==id);
+    set(database,'auction_history_alerts',JSON.stringify(remaining));
+    return {success:true,closed:alerts.length-remaining.length};
+  })();
+}
+module.exports = {EXPIRED,get,set,eligible,request,schedule,next,finish,normalizeRows,buildHtml,correctedEndTime,clearProductHistory,getAlerts,closeAlert};
