@@ -11,6 +11,18 @@ assert.deepEqual(resolveAuctionChartEnd({won_at:wonTime},deadline,true),{time:wo
 assert.deepEqual(resolveAuctionChartEnd({won_at:wonTime},deadline,false),{time:deadline,label:'商品结束时间'});
 assert.deepEqual(resolveAuctionChartEnd({},deadline,true),{time:'',label:'落札时间'});
 assert.equal(buildAuctionHistoryChart(rows,resolveAuctionChartEnd({won_at:wonTime},deadline,true).time).points.at(-1).time,'10-8 22:17:00');
+const septemberRows = [{time:'9-30 09:03',username:'ワラリリ',price:2000},{time:'9-27 22:40',username:'开始',price:2000}];
+const legacyWon = {won_at:'2026-09-30T14:40:00.000Z',won_time_text:'9/30 22:40'};
+const correctedWon = resolveAuctionChartEnd(legacyWon,'2026-09-30T22:40:14+09:00',true);
+assert.equal(correctedWon.time,'2026-09-30T13:40:00.000Z');
+assert.equal(buildAuctionHistoryChart(septemberRows,correctedWon.time).points.at(-1).time,'9-30 22:40:00');
+assert.equal(buildAuctionHistoryChart(septemberRows,correctedWon.time).points.at(-1).price,2000);
+assert.equal(resolveAuctionChartEnd({...legacyWon,won_at:'2026-09-30T13:40:00Z'},deadline,true).time,correctedWon.time);
+assert.equal(resolveAuctionChartEnd({...legacyWon,won_time_text:'2/30 22:40'},deadline,true).time,legacyWon.won_at);
+assert.equal(resolveAuctionChartEnd({...legacyWon,won_time_text:'9/30 24:40'},deadline,true).time,legacyWon.won_at);
+assert.equal(resolveAuctionChartEnd({won_at:'2027-01-01T00:30:00+08:00',won_time_text:'12/31 23:30'},deadline,true).time,'2026-12-31T14:30:00.000Z');
+assert.deepEqual(resolveAuctionChartEnd(legacyWon,deadline,false),{time:deadline,label:'商品结束时间'});
+assert.equal(legacyWon.won_at,'2026-09-30T14:40:00.000Z');
 const chart = buildAuctionHistoryChart(JSON.stringify(rows),'2026-10-08T21:50:15+09:00');
 assert.deepEqual(chart.points.map(p=>p.username),['开始','Alice','Bob','Bob']);
 assert.equal(chart.users.length,3);

@@ -1,7 +1,22 @@
 export function resolveAuctionChartEnd(item, productEndTime, won = false) {
-  return won
-    ? {time:item?.won_at || '',label:'落札时间'}
-    : {time:productEndTime || '',label:'商品结束时间'};
+  if (!won) return {time:productEndTime || '',label:'商品结束时间'};
+  let time = item?.won_at || '';
+  // Yahoo's original wall time is Japanese time. Legacy won_at was sometimes
+  // created in the server's timezone; use it only to recover the calendar year.
+  const match = String(item?.won_time_text || '').trim().match(/^(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+  const anchor = Date.parse(time);
+  if (match && Number.isFinite(anchor)) {
+    const [month,day,hour,minute] = match.slice(1).map(Number);
+    const year = new Date(anchor+9*3600000).getUTCFullYear();
+    const candidates = [year-1,year,year+1].map(y=> {
+      const stamp = Date.UTC(y,month-1,day,hour,minute);
+      const date = new Date(stamp);
+      return month>=1 && month<=12 && day>=1 && date.getUTCMonth()===month-1 && date.getUTCDate()===day && hour<=23 && minute<=59
+        ? stamp-9*3600000 : NaN;
+    }).filter(Number.isFinite).sort((a,b)=>Math.abs(a-anchor)-Math.abs(b-anchor));
+    if (candidates.length) time = new Date(candidates[0]).toISOString();
+  }
+  return {time,label:'落札时间'};
 }
 
 export function buildAuctionHistoryChart(raw, endTime = '') {
