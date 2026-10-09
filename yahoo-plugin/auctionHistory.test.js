@@ -10,6 +10,17 @@ for (const price of [1,900,1000,3619]) {
 }
 assert.throws(()=>parseAuctionHistoryRow('10月 5日 0時 41分','オークション開始。 数量： 1 で 不明'));
 assert.throws(()=>parseAuctionHistoryRow('unknown','AA 自動入札。 1'));
+const parenthesizedStarts = [
+  ['7,000 (7,500)',7500],
+  ['1 (1,111) (111,111) (100)',100],
+  ['1（1,111）（111,111）（100）',100],
+  ['1 (1,000円)',1000]
+];
+for (const [amount,price] of parenthesizedStarts) {
+  assert.equal(parseAuctionHistoryRow('9月 15日 8時 20分',`オークション開始。 数量： 1 で ${amount}`).price,price);
+}
+assert.equal(parseAuctionHistoryRow('9月 27日 14時 34分','ワラリリ 入札して落札。 数量： 1 で 7,500').price,7500);
+assert.throws(()=>parseAuctionHistoryRow('9月 15日 8時 20分','オークション開始。 数量： 1 で 1 (不明)'));
 const source = fs.readFileSync(require.resolve('./auctionHistory'),'utf8');
 function read({rows=[],text='すべての入札履歴',url='https://auctions.yahoo.co.jp/jp/show/bid_hist?aID=u1246662246&apg=1&typ=log',links=[]}={}) {
   const document = {body:{innerText:text},querySelector:()=>null,querySelectorAll:selector=>selector==='tr'?rows.map(([time,text])=>({querySelectorAll:()=>[{innerText:time},{innerText:text}]})):links};
@@ -31,6 +42,18 @@ assert.equal(mixed.error,undefined);
 assert.equal(mixed.rows.length,2);
 assert.equal(mixed.rawRows.length,3);
 assert.equal(mixed.rows.at(-1).price,1000);
+for (const [bid,amount,expected] of [
+  ['ワラリリ 入札して落札。 数量： 1 で 7,500','7,000 (7,500)',7500],
+  ['ワラリリ 入札。 数量： 1 で 100','1 (1,111) (111,111) (100)',100]
+]) {
+  const page = read({rows:[['9月 27日 14時 34分',bid],['9月 15日 8時 20分',`オークション開始。 数量： 1 で ${amount}`]]});
+  assert.equal(page.error,undefined);
+  assert.equal(page.rows.length,2);
+  assert.equal(page.rows.at(-1).start,true);
+  const saved = require('../src/server/services/auctionHistory').normalizeRows(page.rows);
+  assert.equal(saved.at(-1).price,expected);
+  assert.equal(saved[0].username,'ワラリリ');
+}
 console.log('Auction history page parsing and failure classification tests passed');
 
 async function testAuthenticatedPagination() {

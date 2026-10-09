@@ -60,9 +60,10 @@ function normalizeRows(rows) {
     const item = {time:row.time,username:row.username,price:row.price};
     if (row.start === true) {
       // Read the original text too, so an older plugin cannot store its hardcoded 1.
-      const amount = String(row.text || '').match(/オークション開始。\s*数量\s*[:：]\s*\d+\s*で\s*([\d,]+)\s*(?:円)?\s*$/);
+      const amount = String(row.text || '').match(/オークション開始。\s*数量\s*[:：]\s*\d+\s*で\s*([\d,]+)\s*(?:円)?((?:\s*[(（]\s*[\d,]+\s*(?:円)?\s*[)）])*)\s*$/);
       if (row.text && !amount) throw new Error('auction start price missing');
-      const price = amount ? Number(amount[1].replace(/,/g,'')) : item.price;
+      const parentheses = amount ? [...amount[2].matchAll(/[(（]\s*([\d,]+)/g)] : [];
+      const price = amount ? Number((parentheses.at(-1)?.[1] || amount[1]).replace(/,/g,'')) : item.price;
       if (!Number.isSafeInteger(price) || price < 0) throw new Error('invalid auction start price');
       start = {...item,username:'开始',price}; continue;
     }

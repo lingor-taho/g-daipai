@@ -4,10 +4,11 @@ function parseAuctionHistoryRow(rawTime, text) {
   if (!date) throw new Error('history time not recognized');
   const time = `${Number(date[1])}-${Number(date[2])} ${date[3].padStart(2,'0')}:${date[4].padStart(2,'0')}`;
   const start = /オークション開始/.test(text);
-  const startAmount = start && String(text).match(/オークション開始。\s*数量\s*[:：]\s*\d+\s*で\s*([\d,]+)\s*(?:円)?\s*$/);
-  const match = String(text).match(/^\s*(.*?)\s*(?:自動入札。\s*|入札。\s*数量\s*[:：]\s*\d+\s*で\s*)([\d,]+)\s*(?:円)?\s*$/);
+  const startAmount = start && String(text).match(/オークション開始。\s*数量\s*[:：]\s*\d+\s*で\s*([\d,]+)\s*(?:円)?((?:\s*[(（]\s*[\d,]+\s*(?:円)?\s*[)）])*)\s*$/);
+  const match = String(text).match(/^\s*(.*?)\s*(?:自動入札。\s*|入札(?:して落札)?。\s*数量\s*[:：]\s*\d+\s*で\s*)([\d,]+)\s*(?:円)?\s*$/);
   if (start ? !startAmount : !match) throw new Error('history bid not recognized');
-  const price = Number((start ? startAmount[1] : match[2]).replace(/,/g,''));
+  const parentheses = start ? [...startAmount[2].matchAll(/[(（]\s*([\d,]+)/g)] : [];
+  const price = Number((start ? parentheses.at(-1)?.[1] || startAmount[1] : match[2]).replace(/,/g,''));
   if (!Number.isSafeInteger(price) || price < 0) throw new Error('history price not recognized');
   return {rawTime:String(rawTime).trim(),text:String(text).trim(),time,username:start?'开始':match[1].trim(),price,start};
 }

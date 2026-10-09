@@ -85,6 +85,10 @@ assert.deepEqual(saveCase('no-records','2026-10-08 21:02:15',{empty:true}),{end_
 assert.deepEqual(saveCase('expired-records','2026-10-08 21:02:15',{expired:true}),{end_time:'2026-10-08 21:02:15',current_price:200});
 // Old plugins still send price=1, but their original page text has the real price.
 assert.equal(history.normalizeRows([{...start,price:1}])[0].price,1000);
+for (const [amount,price] of [['7,000 (7,500)',7500],['1 (1,111) (111,111) (100)',100],['1（1,111）（111,111）（100）',100]]) {
+  assert.equal(history.normalizeRows([{...start,price:1,text:`オークション開始。 数量： 1 で ${amount}`}])[0].price,price);
+}
+assert.throws(()=>history.normalizeRows([{...start,text:'オークション開始。 数量： 1 で 1 (不明)'}]),/price missing/);
 assert.throws(()=>history.normalizeRows([{...start,text:'オークション開始。 数量： 1 で 不明'}]),/price missing/);
 // Clearing touches only the two history fields and makes an ended product eligible again.
 const beforeClear = db.prepare('SELECT end_time,current_price FROM products WHERE product_id=?').get('old');
