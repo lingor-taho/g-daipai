@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>g-daipai · Yahoo 多账号需求与开发计划</title>
+  <style>
+    :root{--ink:#172b3a;--muted:#647582;--paper:#fff;--bg:#f3f6f7;--line:#dce5e9;--accent:#147c78;--blue:#285cb0;--soft:#edf7f5;--amber:#946019}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:15px;line-height:1.85}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}a:focus-visible,button:focus-visible{outline:3px solid #65bdb6;outline-offset:4px}button{font:inherit;cursor:pointer}code{font-family:Consolas,monospace;font-size:.9em;background:#edf1f4;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}
+    .shell{max-width:1320px;margin:auto;padding:36px 30px 80px}.hero{padding:44px 48px;background:#132e3b;color:#fff;border-radius:20px;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;width:260px;height:260px;border:50px solid #1c5056;right:-80px;top:-100px;border-radius:50%;opacity:.5;pointer-events:none}.eyebrow{font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#90d8cb;font-weight:700}.hero h1{font-size:38px;line-height:1.4;margin:14px 0}.hero p{max-width:800px;color:#d5e3e9;margin:0 0 22px}.meta{display:flex;flex-wrap:wrap;gap:10px}.pill{font-size:12px;border:1px solid #52737f;border-radius:30px;padding:4px 13px;color:#e9f3f7}.print{background:#fff;color:#173b45;border:0;border-radius:8px;padding:6px 15px;margin-left:auto;position:relative;z-index:1}.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:26px;margin-top:28px}.nav{position:sticky;top:26px;align-self:start;border:1px solid var(--line);border-radius:14px;padding:18px;background:var(--paper)}.nav strong{font-size:12px;letter-spacing:1px;color:var(--muted);display:block;margin-bottom:10px}.nav a{display:block;padding:8px 0;font-size:13px;color:var(--ink);border-bottom:1px solid #eff2f4}.nav a:last-of-type{border-bottom:0}.nav small{display:block;margin-top:14px;color:var(--muted);line-height:1.65}.content{min-width:0}.section{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:30px 34px;margin-bottom:20px}.section h2{font-size:25px;line-height:1.45;margin:0 0 14px;letter-spacing:-.4px}.section h2 span{font-size:12px;color:var(--accent);margin-right:10px;vertical-align:middle}.section h3{font-size:18px;margin:26px 0 9px}.section h4{font-size:15px;margin:18px 0 6px}p{margin:10px 0}ul,ol{padding-left:23px;margin:10px 0}li{margin:5px 0}.lede{color:var(--muted);margin-top:0}.callout{background:var(--soft);border-left:4px solid var(--accent);padding:15px 18px;border-radius:0 9px 9px 0;margin:18px 0}.callout.warn{background:#fff7ea;border-color:#c48b33}.callout p{margin:4px 0}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:20px 0}.card{border:1px solid var(--line);border-radius:10px;padding:16px;background:#fafcfc}.card b{display:block;font-size:22px;color:var(--accent);margin-bottom:5px}.card p{font-size:13px;margin:0;color:var(--muted)}.table-wrap{overflow-x:auto;margin:15px 0;border:1px solid var(--line);border-radius:9px}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#edf3f5;text-align:left;font-weight:600;color:#314b59}th,td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}th:first-child{min-width:115px}td p{margin:0}table.wide{min-width:620px}.flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:18px 0}.flow div{padding:18px;border:1px solid var(--line);border-radius:10px}.flow .number{font-size:12px;font-weight:700;color:var(--accent)}.flow b{display:block;margin:5px 0}.flow p{font-size:13px;margin:0;color:var(--muted)}.tag{display:inline-block;font-size:11px;border-radius:4px;padding:2px 7px;background:#e6f2ef;color:#176a62;white-space:nowrap}.tag.planned{background:#eaf0fd;color:#365f9e}.phase{padding:21px 23px;border:1px solid var(--line);border-radius:11px;margin:16px 0}.phase.primary{border:2px solid #69aaa1;background:#f9fdfb}.phase h3{margin:0 0 8px}.phase .goal{font-weight:600;color:var(--accent)}.phase h4{margin:16px 0 6px}.checklist{list-style:none;padding:0}.checklist li{padding-left:23px;position:relative}.checklist li:before{content:"□";position:absolute;left:0;color:var(--accent)}.commands{white-space:pre-wrap;overflow-wrap:anywhere;background:#172f3b;color:#dcedf0;padding:18px 20px;border-radius:10px;font-family:Consolas,monospace;font-size:12px;line-height:1.85}.footer{font-size:12px;color:var(--muted);text-align:center;margin-top:22px}.small{font-size:12px;color:var(--muted)}.account-demo{border:1px solid var(--line);border-radius:10px;padding:15px 18px;margin:10px 0}.account-demo strong{color:var(--accent)}.alert-demo{border:1px solid #ecd7b5;background:#fffaf0;border-radius:8px;padding:12px 16px;margin:8px 0}.alert-demo span{float:right;font-size:12px;color:var(--blue)}
+    @media(max-width:940px){.shell{padding:20px 16px 50px}.hero{padding:30px}.hero h1{font-size:29px}.layout{grid-template-columns:1fr}.nav{position:static;display:flex;flex-wrap:wrap;gap:3px 16px}.nav strong{width:100%}.nav a{border:0;padding:3px 0}.nav small{width:100%;margin-top:5px}.section{padding:25px}.cards,.flow{grid-template-columns:1fr}.print{margin-left:0}}
+    @media(max-width:520px){body{font-size:14px}.hero{padding:25px 22px}.hero:after{display:none}.hero h1{font-size:25px}.section{padding:22px 18px}.section h2{font-size:21px}.phase{padding:17px}.account-demo{padding:12px}.alert-demo span{float:none;display:block;margin-top:4px}th,td{padding:10px}.table-wrap{max-width:100%}}
+    @media print{@page{size:A4;margin:15mm}body{background:#fff;font-size:10pt}.shell{padding:0;max-width:none}.hero{background:#fff;color:var(--ink);border:1px solid var(--line);padding:18px;border-radius:0}.hero:after,.nav,.print{display:none}.hero h1{font-size:23pt}.hero p,.eyebrow,.pill{color:var(--ink)}.pill{border-color:var(--line)}.layout{display:block;margin-top:15px}.section{border:0;border-top:1px solid var(--line);border-radius:0;padding:18px 0;margin-bottom:0}.section h2{font-size:16pt}h2,h3,h4{break-after:avoid}.phase,.card,.callout,.flow div{break-inside:avoid}.table-wrap{overflow:visible;border-radius:0}table.wide{min-width:0}thead{display:table-header-group}tr{break-inside:avoid}.commands{background:#f2f4f5;color:var(--ink)}a{color:var(--ink)}.footer{margin-top:12px}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="hero">
+    <div class="eyebrow">g-daipai · Architecture &amp; Delivery Plan</div>
+    <h1>Yahoo 多账号执行<br>需求汇总与分阶段开发计划</h1>
+    <p>先让现有 A 账号按多账号架构运行，稳定后接入可配置的多个备用账号。同商品可为不同用户分配不同账号，明确失败后按顺序寻找剩余可用账号。</p>
+    <div class="meta"><span class="pill">版本 2.1 · 2026-10-10</span><span class="pill">按最新讨论修订</span><span class="pill">开发方案待实施</span><span class="pill">本次仅文档</span><button class="print" type="button" onclick="window.print()">打印 / 保存 PDF</button></div>
+  </header>
+  <div class="layout">
+    <nav class="nav" aria-label="文档目录">
+      <strong>文档目录</strong>
+      <a href="#scope">01 · 最终范围与业务规则</a><a href="#accounts">02 · 账号管理与后台呈现</a><a href="#workflow">03 · 全流程账号归属</a><a href="#design">04 · 技术边界与冲突防护</a><a href="#plan">05 · 分阶段开发计划</a><a href="#acceptance">06 · 验收与发布回退</a><a href="#map">07 · 代码位置与检查命令</a>
+      <small>“已确认”来自本次讨论；标为“建议”的结构、字段和实施细节是开发方案，不表示已实现。</small>
+    </nav>
+    <main class="content">
+      <section id="scope" class="section">
+        <h2><span>01</span>最终范围与业务规则</h2>
+        <p class="lede">本版替代 1.0 的双账号限制及“同商品只接受一个用户”规则。最新需求是一个主账号＋可增加的备用账号列表；同商品可由不同 Yahoo 账号分别替不同用户竞拍。</p>
+        <div class="cards"><div class="card"><b>主 → 备用1 → …</b><p>按优先级分配。明确可转交的失败继续向后寻找可用账号，全部不可用才终止，不循环。</p></div><div class="card"><b>商品＋账号 · 一个用户</b><p>同商品可有多个用户，每人占一个 Yahoo 账号；同账号可承接多个不同商品。</p></div><div class="card"><b>先完成单账号迁移</b><p>第一阶段只有当前 A，不新增备用账号、不启用转交，基础结构直接支持多账号。</p></div></div>
+        <h3>1.1 已确认的最终需求</h3>
+        <ol>
+          <li>后台配置一个主账号＋备用1、备用2、备用3等多个备用账号，不把数量固定为两个。各 Yahoo 账号登录独立 Chrome profile及对应 Gmail，同一套插件分别绑定固定账号 ID。</li>
+          <li>当前 A 为主账号，备用列表可增加、排序和设置启用状态。名称与主备用角色可调整，固定账号 ID 不变，历史数据不随排序改绑。</li>
+          <li>新需求优先选择主账号；该商品已被主账号替其他用户承接时，按顺序选择备用账号。同一商品在同一个 Yahoo 账号下只归一个用户；不同商品互不占用名额。</li>
+          <li>同商品存在几个可分配的在线账号，就最多接受几个不同用户；账号全部占满或剩余账号均离线时，直接返回提交失败及原因，不预留离线名额、不建立等待账号恢复的新任务。</li>
+          <li>离线账号跳过。在线账号需要 PIN 验证时仍可接受任务，PIN 不作为跳过账号或提交失败的条件；其他登录／验证场景沿用目前程序的实际暂停边界，不新增“所有验证都禁止提交”的规则。</li>
+          <li>当前执行账号被卖家明确拉黑等安全条件满足时，原任务按顺序寻找该商品未被其他用户占用、在线且未尝试过的后续账号。备用1同样明确失败时继续找备用2等，全部可用候选耗尽才终止，不返回已尝试账号或循环。</li>
+          <li>同用户对同商品后续调整最高价、再入札和自动 followup 沿用原校验与已有归属，不为同一个用户额外占用多个账号；转交后继承新执行账号。</li>
+          <li>任务、入札、落札、订单与金额统计合并展示；相关明细增加“执行 Yahoo 号”，用户端仍遵守原用户权限隔离。</li>
+          <li>实际落札账号承担该订单后续交易、同捆、消息、付款、物流扫描及确认收货，不能交回另一账号操作。</li>
+          <li>后台系统配置继续只有一套；各账号独立保存运行状态、flag、计数、验证问题和错误。“出价并发任务数”保持为每个插件的上限，所有插件读取同一个配置值，不改为服务器总上限。</li>
+          <li>所有账号的邮箱验证、文字验证码和 PIN 问题可以同时显示，各提醒、输入与继续按钮只作用于对应账号。需要全机键盘／前台焦点的动作排队执行。</li>
+          <li>个人任务与入札状态按自己的执行账号查询。公共拍卖历史仍按商品保存一份；落札优先使用成交账号。未落札多账号商品的采集选择方案见 3.2，不要求每个用户重复采集。</li>
+          <li>批量任务建立成功后，账号转交是原任务的后续执行，不再次显示“批量提交失败”。执行最终失败在原任务列表展示；任务未建立的商品显示提交失败。</li>
+          <li>停止系统任务不等于撤销 Yahoo 已接受的入札；仍有有效入札或结果未知时，不能立即释放对应“商品＋账号”的用户归属。</li>
+        </ol>
+        <div class="callout"><strong>名额针对商品，账号不是被整个人独占</strong><p>A 拍商品 X，不妨碍 A 同时替其他用户拍商品 Y。只有“同一个商品＋同一个 Yahoo 账号”不能同时归不同用户。此前“一个商品只出一个价／只接受第一个用户”的表述已被本次修正替代；原有同用户加价、定时和低价分步能力继续保留。</p></div>
+        <h3>1.2 新提交的账号分配</h3>
+        <div class="table-wrap"><table class="wide"><thead><tr><th>候选账号情况</th><th>新需求的处理</th></tr></thead><tbody>
+          <tr><td>在线、该商品名额未占用</td><td>可分配，按主账号与备用优先级选择；同用户已有归属时沿用原关联。</td></tr>
+          <tr><td>在线、需要 PIN</td><td>仍可接受任务。PIN 对付款等具体操作的影响沿用原程序，不阻断任务提交。</td></tr>
+          <tr><td>离线</td><td>跳过，继续寻找其他账号。不为新需求预留该账号，不排队等待它上线。</td></tr>
+          <tr><td>替其他用户承接了同商品</td><td>跳过这个“商品＋账号”位置，不能抢占；账号承接其他商品不影响此次分配。</td></tr>
+          <tr><td>所有位置占用／剩余位置离线</td><td>返回提交失败，区分“账号名额已占满”与“剩余账号离线，暂无可用账号”。</td></tr>
+        </tbody></table></div>
+        <p class="small">身份不匹配、未知绑定或停用新分配的账号不能进入候选。插件在线与 Yahoo 登录状态分开显示，心跳判离线阈值在开发审计中确定，不能让旧的在线标识无限期有效。</p>
+        <h3>1.3 转交条件与终止条件</h3>
+        <div class="table-wrap"><table class="wide"><thead><tr><th>触发情况</th><th>处理规则</th></tr></thead><tbody>
+          <tr><td>当前账号被卖家拉黑</td><td>建议第一版唯一自动转交条件。使用明确错误码；确认本次被拒绝、没有有效或未知的旧入札，结束本次执行，再原子预留后续账号并转交。</td></tr>
+          <tr><td>其他“不能执行”</td><td>保留扩展方向，但不直接用所有 failed 触发。每个新增条件先定义明确证据、结果核实方法及独立回归；第一阶段和首次转交版本均不扩大。</td></tr>
+          <tr><td>我们把卖家拉黑</td><td>与卖家把 A 拉黑区分，默认不自动绕过；当前解析把两种方向归为同类，需拆分原因。</td></tr>
+          <tr><td>断网、超时、页面异常、登录验证</td><td>不直接换账号。先等待原账号恢复或核实 Yahoo 结果；无法确认时保留等待核实，不盲目重放。</td></tr>
+          <tr><td>价格超过上限／商品已结束</td><td>按原业务规则结束，不因换账号提高上限或继续出价；保留既有自动延长结束时间的页面核实机制。</td></tr>
+          <tr><td>备用账号同样明确被拉黑</td><td>继续向后寻找未占用、在线且未尝试的候选，不回到失败账号；没有候选时终止执行并记录尝试轨迹。</td></tr>
+          <tr><td>后续账号占用了同商品／离线</td><td>跳过，不挤掉其他用户、不等待离线名额。若只是承接其他商品，可以继续使用。</td></tr>
+          <tr><td>所有后续候选耗尽</td><td>按执行失败收尾，给出无可转交账号及各尝试原因，和人工 cancelled 区分；新增账号后不自动复活已终止任务。</td></tr>
+          <tr><td>已接受任务之后账号掉线</td><td>与“新提交找不到在线账号”区分。建议保留原任务归属并提示中断，恢复后核实结果与时效；不能仅因掉线盲目换账号或释放名额。</td></tr>
+          <tr><td>失败后实际落札</td><td>Yahoo /my/won 仍是事实来源；按成交账号校正 failed/processing/bidding 等任务并生成订单，人工 cancelled 的既有边界不自动改变。</td></tr>
+        </tbody></table></div>
+        <h3>1.4 通俗示例</h3>
+        <div class="table-wrap"><table><thead><tr><th>主账号＋两个在线备用账号</th><th>结果</th></tr></thead><tbody><tr><td>user1 提交商品 X</td><td>分配主账号 A。</td></tr><tr><td>user2 提交商品 X</td><td>分配备用1。</td></tr><tr><td>user3 提交商品 X</td><td>分配备用2。</td></tr><tr><td>user4 提交商品 X</td><td>失败：该商品的在线账号名额全部占用。</td></tr><tr><td>备用2离线，user3新提交</td><td>失败：剩余账号离线，不占位等待。</td></tr><tr><td>备用2在线但需要 PIN，user3新提交</td><td>允许提交，分配备用2。</td></tr></tbody></table></div>
+        <p><strong>同商品转交：</strong>user1 用 A 拍 X，user2 用备用1拍 X。A 被拉黑后，user1只能找备用2等剩余位置；不能抢 user2的位置。</p>
+        <p><strong>不同商品转交：</strong>user1 用 A 拍 X，user2 用备用1拍 Y。A 被拉黑后，user1可以转备用1继续拍 X，不影响 Y；X、Y的名额分别计算。</p>
+        <p><strong>批量提交：</strong>10件已建立任务，其中1件由 A 转备用1，再转备用2，始终是同一件已提交任务。所有候选失败时在任务列表显示执行失败；商品校验、账号名额等导致任务未建立时，才在批量结束反馈提交失败。</p>
+        <p><strong>多人竞拍：</strong>不同用户分别使用不同 Yahoo 账号参与同商品，可能相互竞价。各自最高价、是否领先及最终落札独立判断，提交成功不保证落札，也不能把其他用户的最高价公开给当前用户。</p>
+      </section>
+
+      <section id="accounts" class="section">
+        <h2><span>02</span>账号管理与后台呈现</h2>
+        <h3>2.1 Yahoo 执行账号管理</h3>
+        <p>增加独立“Yahoo 执行账号”页面，支持一个主账号和可增加、排序的多个备用账号。现有用户与服务器管理员账号页面保留；数据库已有 yahoo_accounts 可作为扩展基础。第一阶段只启用现有 A。</p>
+        <div class="table-wrap"><table><thead><tr><th>信息</th><th>要求</th></tr></thead><tbody>
+          <tr><td>固定账号 ID、名称</td><td>供任务、日志、订单、验证引用。名称可修改，账号 ID 不随主备用切换改变。</td></tr>
+          <tr><td>主／备用角色与顺序</td><td>一个主账号、多个备用账号。可增加、排序并控制是否接受新分配；角色调整不改绑存量任务和订单。第一阶段仅 A。</td></tr>
+          <tr><td>预期 Yahoo ID</td><td>显示绑定身份与最近检测的实际登录身份；不一致时停止领取有副作用的业务工作并提醒。</td></tr>
+          <tr><td>Chrome profile、Gmail</td><td>保存 profile 标识及预期验证码邮箱。profile 内插件显式绑定账号，不能仅凭目录文字或窗口标题猜账号。</td></tr>
+          <tr><td>插件在线状态</td><td>保存实例 ID、最后心跳、插件版本；离线与 Yahoo 登录状态分别展示。</td></tr>
+          <tr><td>登录与验证状态</td><td>正常、需要登录、邮箱验证、文字验证码、PIN、未知；包含最近确认时间，旧的“正常”不能无限期保持。</td></tr>
+          <tr><td>当前运行与启停</td><td>显示执行线、当前任务和等待原因。建议区分“停止新分配”和“处理已有业务”；有有效入札、订单或其他数据引用时禁止直接删除。相同实际 Yahoo 身份不能重复注册为不同名额。</td></tr>
+        </tbody></table></div>
+        <h3>2.2 flag 与运行进度</h3>
+        <p>交易开始、扫描计数、付款、确认收货和导入状态按账号独立显示。flag 保留原含义，额外展示待执行／执行中／等待验证／离线，避免把 flag=1 直接当作“正在执行”。</p>
+        <div class="account-demo"><strong>A · 主账号 · 在线</strong><br>交易开始 0　扫描计数 4 / 10　导入 空闲　付款 执行中　确认收货 0</div>
+        <div class="account-demo"><strong>备用1 · 在线 · 需要 PIN</strong><br>交易开始 0　扫描计数 1 / 10　导入 空闲　付款 等待 PIN　确认收货 0<br>新出价任务仍可提交</div>
+        <div class="account-demo"><strong>备用2 · 离线</strong><br>保留最后确认的工作状态；新分配跳过本账号</div>
+        <p class="small">以上是多账号界面示例，不是当前数据。第一阶段只显示 A 一行。拍卖记录显示“公共队列／执行账号／剩余数”，不按账号复制商品队列。</p>
+        <ul><li>一个账号完成不能清除其他账号的请求、提醒或进度；共享按钮产生稳定批次 ID，各账号分别回写完成。</li><li>同一账号只允许一个有效执行实例领取副作用工作。误开第二个同账号插件时提示重复绑定，不共同执行。</li><li>手机端支持展开分组状态，不把全部账号 flag 挤成一行。</li><li>备用账号即使没有新出价任务，也须继续处理自己的已有入札、落札和未完成订单。</li><li>提醒分别显示离线、验证问题及所影响的操作，不能把“付款等待 PIN”显示成“禁止提交出价”。</li></ul>
+        <h3>2.3 顶部提醒与验证</h3>
+        <div class="alert-demo"><strong>【A／主账号】需要邮箱验证码</strong><span>继续 · 仅作用于 A</span></div>
+        <div class="alert-demo"><strong>【备用1】需要 PIN 验证 · 不影响出价提交</strong><span>输入并提交 · 仅作用于备用1</span></div>
+        <div class="alert-demo"><strong>【备用2】插件离线</strong><span>新分配跳过本账号</span></div>
+        <ul><li>提醒至少携带账号 ID／名称、事件或验证 ID、商品／订单 ID、发生时间及影响范围；关闭、继续和成功提示只更新对应记录。</li><li>验证码由全局对象改为按账号保存。输入值、提交中状态、旧响应保护与验证通过提示各自隔离。</li><li>Gmail 沿用各自 profile 已登录会话与邮箱匹配规则；邮箱码不写入业务数据库、后台列表或日志。</li><li>邮箱流程保留单轮操作及 60 秒等邮件／提交后 30 秒等文字验证码边界；各自“继续”，不自动重复未知操作。</li><li>PIN 沿用人工输入，不新增明文长期保存；PIN 待处理不改变账号在线状态、不阻断任务提交。</li><li>多个账号可以同时显示问题。Win32 键盘输入、需要置前的截图及抢前台焦点操作统一排队，精确定位账号实例窗口并复核目标，同标题也不能误输。</li><li>显示全机输入排队原因，一个账号验证不清除其他账号工作；具体执行线暂停范围沿用原逻辑。</li></ul>
+        <h3>2.4 一套配置，多份运行状态</h3>
+        <div class="table-wrap"><table><thead><tr><th>类别</th><th>保存方式</th></tr></thead><tbody><tr><td>共享业务配置</td><td>轮询与同步间隔、策略参数、时间安排、扫描阈值、付款停留时间、运费地区配置、汇率及财务规则、Google 表格配置、公告、历史采集时间等继续一份。</td></tr><tr><td>账号专属资料</td><td>Yahoo ID、profile、Gmail、角色、备用优先级与启用状态，放在账号管理中。</td></tr><tr><td>账号运行状态</td><td>心跳、登录、工作请求、扫描计数、批次执行、最后运行时间、错误与验证，各账号独立。扫描阈值共享，实际计数独立。</td></tr><tr><td>公共商品采集</td><td>历史队列与商品字段一份，领取记录包含执行账号，共同展示总进度。</td></tr><tr><td>出价并发任务数</td><td>统一配置、每个插件独立执行该上限。配置为2时，每个插件最多同时出价2件，3个插件合计可同时处理最多6件；不增加跨插件的总出价并发限制。其他配置继续沿用原含义，不因多账号擅自改成总量。</td></tr></tbody></table></div>
+        <h3>2.5 多窗口问题的通俗说明</h3>
+        <ol><li><strong>每个插件分别跑任务：</strong>配置“出价并发任务数”为2，三个插件各自可同时跑2个，合计最多6个。电脑变慢时由管理员人工调整统一配置；系统不自动降低并发，也不新增服务器总出价上限。</li><li><strong>输入 PIN 不抢窗口：</strong>A和备用1都需输入时，先找到 A 的正确窗口完成，再处理备用1，避免输入到另一个账号。排队只保护需要抢前台焦点的动作，不把出价并发改成全机共享上限，也不影响任务提交。</li><li><strong>提醒分别处理：</strong>A需要 PIN、备用1离线、备用2需要邮箱验证，可以同时显示；处理完 A，只清除 A 提醒，其他问题继续保留。</li></ol>
+      </section>
+
+      <section id="workflow" class="section">
+        <h2><span>03</span>全流程账号归属</h2>
+        <div class="flow"><div><span class="number">STEP 1</span><b>提交与分配</b><p>按顺序寻找在线的商品账号名额，原子预留并建任务；同用户复用归属，无名额直接失败。</p></div><div><span class="number">STEP 2</span><b>执行与同步</b><p>凭账号与领取标识执行，明确安全条件下向后转交；各用户／账号状态独立，后台汇总展示。</p></div><div><span class="number">STEP 3</span><b>落札与订单</b><p>按实际成交账号＋商品归属确认用户，订单后续交易、付款与物流固定使用成交账号。</p></div></div>
+        <div class="table-wrap"><table class="wide"><thead><tr><th>功能</th><th>最终要求</th></tr></thead><tbody>
+          <tr><td>单条／批量提交</td><td>共用商品账号名额分配入口与请求去重。批量入队不代表每件已拿到账号；准备完成、正式建任务时检查在线候选并预留，无名额则该行提交失败。建议按成功预留并建任务的顺序确定先后。</td></tr>
+          <tr><td>定时／多次／低价分步</td><td>原最高价、税口径、策略和结束时间校验保持不变；followup 继承用户、账号和原提交关系。转交不增加新的用户提交次数。</td></tr>
+          <tr><td>入札同步</td><td>按账号＋商品记录。完整同步只让本账号旧记录过期；同步异常不能当空列表清除。最高价身份和已出价金额属于账号，商品当前价仍是共享快照。</td></tr>
+          <tr><td>落札同步</td><td>按实际成交账号＋商品＋对应用户归属匹配，不能按该商品最新任务猜用户。仅该账号对应用户获得成交事实；其他用户的任务分别收尾。发现归属矛盾或不同账号成交冲突时提示，不覆盖订单。</td></tr>
+          <tr><td>交易／同捆</td><td>订单账号过滤所有领取与回写；同捆主子商品必须同 Yahoo 账号，人工普通同捆修复、商城同捆补录同样校验。原暂停 24 小时边界保留。</td></tr>
+          <tr><td>付款／扫描／收货</td><td>按成交账号执行。混合账号订单选择由 API 分派；每账号保留进度、待办和错误。一个账号出错不结束另一账号工作；发送支付结果未知不自动重付。</td></tr>
+          <tr><td>Yahoo 消息</td><td>跟随订单账号，原独立消息线、同订单读发互斥及发送未知不自动重发规则保留；消息页归属与清理仍按当前实例隔离。</td></tr>
+          <tr><td>拍卖记录</td><td>公共历史按商品一份 HTML／JSON，采集选择见 3.2。领取关联账号并校验商品级租约，保留过期、三次失败、迟到回写和批次规则，不随账号数复制队列。</td></tr>
+          <tr><td>失败分析／小图表</td><td>读取当前用户的任务与对应账号状态，其他用户仍在入札／已落札不能误隐藏自己的失败分析。转交不增加三角；保留取消排除、followup 合并和时区。个人提交最高价不混入其他用户。</td></tr>
+          <tr><td>90 天统计／CSV</td><td>各账号后台统一汇总，当前用户统计范围不变。三个用户同商品是三个用户任务、一个公共商品；转交不增加任务。落札数按实际订单，收获分母按当前用户当日到期商品去重；CSV 标明执行账号。</td></tr>
+          <tr><td>Google 表格</td><td>配置与服务端凭据共用，profile 的 Gmail 不参与表格认证。保留逐商品查重、已有数据成功处理、同捆只补缺项；增加账号信息须兼容现有列、颜色、备注和收货读取。</td></tr>
+          <tr><td>批处理／数据清理</td><td>重同步、重扫单号、订单状态调整、订单用户修改都保留账号事实；删除一个账号的任务不能误删其他账号有效入札或共享商品。商品整体删除应清楚显示范围。</td></tr>
+        </tbody></table></div>
+        <h3>3.1 订单导入</h3>
+        <p><strong>建议第一版每次明确选择一个目标 Yahoo 账号，默认主账号。</strong>批次创建时固定 account_id，只由该账号 profile 读取 /my/won；候选行、确认导入的任务与订单均继承来源账号。现有按系统用户分配候选订单的流程继续保留。</p>
+        <ul><li>第一阶段仅 A，界面可显示唯一选项；以后增加多个账号不改变批次归属结构。</li><li>读取与确认入库分别防重复：领取核对条件更新是否成功，回写匹配批次账号和本次凭证。</li><li>候选匹配依据实际成交账号，不能用同商品其他用户的最新任务。已有订单按成交事实查重，来源矛盾提示冲突，不静默覆盖。</li><li>未来若增加“多个账号一起导入”，服务端按账号拆独立子批次，分别进度／错误并统一展示；多个 profile 不领取同一子批次。</li><li>离线账号的新导入读取不得伪报执行成功；提示目标账号状态，批次恢复仍按自身账号与领取规则。</li></ul>
+        <h3>3.2 公共拍卖历史与个人查询</h3>
+        <p>“每件商品只对应 A 或 B”的旧前提已经失效。个人入札、最终出价与提交图表看自己的归属；公共 Yahoo 拍卖历史仍按商品保存一份，不因三个用户参与就读取三遍。</p>
+        <p><span class="tag planned">建议采集选择</span>落札商品优先使用实际成交账号；未落札商品从参与该商品的在线账号按稳定顺序选择一个。读取失败且明确未取得结果时，可以在后续重试选择其他有读取权限的相关账号；不并行读取同一商品。账号切换不能把三次失败上限变成“每账号三次”。</p>
+        <p class="small">成功历史、过期提示及既有字段不覆盖；历史读取账号变更写入诊断。不同账号可见内容是否一致须在真实页面验收中确认，账号私有内容不能当公共数据展示。此处是适配多人参与的建议，不恢复旧的单一执行账号假设。</p>
+        <h3>3.3 商品与成交模型边界</h3>
+        <p>products 保存公共商品信息；tasks 保存各用户意图与执行账号；商品账号归属保存名额；orders 保存实际成交与后续流程。同一商品可以有多用户任务及多账号入札记录，只有真正落札的归属产生订单。商品当前价可共享，用户最高价、自己是否领先及验证状态独立。</p>
+        <p>本计划默认沿用当前单件商品成交范围及订单唯一保护。开发审计必须检查按 product_id 查订单并覆盖的入口，不能把其他账号订单更新成当前用户。Yahoo 多件数量拍卖／多个独立成交若需支持，另行设计成交标识、订单唯一约束与表格查重，本次不直接删除现有保护或宣称已支持。</p>
+      </section>
+
+      <section id="design" class="section">
+        <h2><span>04</span>技术边界与冲突防护</h2>
+        <p class="lede">下述是建议实现方向。字段名称和迁移形式在开发前审计中最终确定；不借本次扩展删除 tasks 旧商品快照字段或改写财务规则。</p>
+        <h3>4.1 数据与 API 边界</h3>
+        <div class="table-wrap"><table class="wide"><thead><tr><th>对象</th><th>建议改造</th></tr></thead><tbody>
+          <tr><td>yahoo_accounts</td><td>复用现有表，增加角色、优先级、是否接受新分配、预期身份、绑定／实例状态。保存固定 ID，结构不硬编码为 A/B 两个。</td></tr>
+          <tr><td>tasks</td><td>增加执行账号、领取实例／凭证、归属关联和转交轨迹；账号分配与领取采用事务／条件更新。原任务 ID、用户、最高价与策略在转交中保留。</td></tr>
+          <tr><td>bid_logs</td><td>启用已有 account_id，记录每次真实执行账号和领取关联；调度中的最高已提交金额按账号核对。</td></tr>
+          <tr><td>orders</td><td>启用已有 account_id，落札／导入时确定，普通角色调整和订单用户修改不能改变成交账号。</td></tr>
+          <tr><td>商品账号归属</td><td>独立持久化商品＋账号＋用户与状态；有效商品＋账号位置只能归一个用户，同用户同商品不额外占多个账号。保留已结束归属及尝试历史，不靠最新任务推断所有权。</td></tr>
+          <tr><td>账号尝试记录</td><td>记录任务、固定账号 ID、顺序、明确失败原因与时间。建议候选顺序按任务固定，后续仅向后；后台排序变化不让已尝试账号重新进入循环。</td></tr>
+          <tr><td>入札记录</td><td>按账号＋商品唯一存储，所有关联查询携带账号。采用可回退迁移，保留旧单账号数据，避免不同账号同商品覆盖。</td></tr>
+          <tr><td>工作运行记录</td><td>将请求、实际计数、完成 slot、错误和验证从全局状态拆到账号运行记录；公共配置只读共享。避免同一状态全局／账号两边长期双写。</td></tr>
+          <tr><td>导入与公共历史</td><td>导入批次固定目标账号；历史保持公共队列，领取关联执行账号。每个回写校验其自身批次、token 和账号。</td></tr>
+          <tr><td>插件通信</td><td>统一请求携带 account_id、实例 ID、协议版本和绑定凭证；任务执行回写额外带领取标识。旧内容脚本结果入口也走相同校验，不能只改轮询接口。</td></tr>
+        </tbody></table></div>
+        <h3>4.2 防抢任务与防重复执行</h3>
+        <ol><li><strong>提交即预留：</strong>检查候选在线与商品位置，原子预留并建立任务；数据库唯一／条件更新保护最后一个位置，两个并发提交只能一个成功。定时任务接受后同样占位。</li><li><strong>先分配，再领取：</strong>插件只获取自身账号工作；未知绑定、身份不匹配和重复实例不领取。PIN 状态不能被合并成禁止提交标志。</li><li><strong>领取必须成功：</strong>条件更新只有一方成功；响应丢失后通过稳定请求标识恢复领取，不猜测结果或另领任务。</li><li><strong>操作前再次核对：</strong>副作用步骤前检查任务、归属和领取有效；实例失联后停止后续操作。</li><li><strong>回写不可越权：</strong>心跳、status、touch、快照与 BID_RESULT 均核对账号及本次领取；迟到结果不改变新执行。</li><li><strong>转交原子完成：</strong>确认当前账号停止且无有效／未知入札，预留下一个符合条件的商品账号位置、作废旧领取并更新原任务。名额被并发占用则重新检查后续候选，不抢其他用户。</li><li><strong>未知结果先核实：</strong>超时／重启不能仅因 60 秒无心跳就重放未知副作用；核对入札／落札事实，必要时等待核实。</li></ol>
+        <div class="callout warn"><strong>不能仅凭数据库锁承诺 Yahoo 操作绝对只发生一次</strong><p>领取凭证能阻止旧数据库回写，但无法撤销已发给 Yahoo 的请求。实际防护必须包括操作前核验、实例停止、结果核实及未知结果不自动重放，付款和消息发送同样适用。</p></div>
+        <h3>4.3 生命周期与隔离</h3>
+        <ul><li>同用户后续提交保持已有商品归属，转交后不重新默认落回主账号、不额外占一个名额。</li><li>尚未出价且确认无有效入札，或被明确黑名单拒绝且无有效旧入札时，可以按规则安全释放原位置；被超过、系统取消或结果未知不能立即释放。保留历史以便真实落札追溯。</li><li>只有现有 A 时没有可转交备用，失败沿用适用的单账号处理；不生成等待不存在或离线备用的新任务。</li><li>角色／顺序调整不改绑存量任务与订单，新增账号不自动复活已终止任务；停用新分配不应直接丢弃已有订单工作。</li><li>同商品多个用户分别结束自己的任务。一个用户落札不能直接把其他账号未知结果当作已核实失败；先核对实际结束与 Yahoo 状态。</li><li>窗口与 tab 使用账号＋实例上下文，插件只清理自身页面；同标题窗口操作要准确定位。</li><li>各账号恢复自身批次和验证；过期领取作废，邮箱刷新／提交结果未知时等待新点击，不自动重放。</li><li>公共商品快照避免旧同步回退最新价格／结束时间；先区分完整同步、失败和空结果，再按账号更新记录。自动延长时间仍按实际 Yahoo 页面核实。</li></ul>
+      </section>
+
+      <section id="plan" class="section">
+        <h2><span>05</span>分阶段开发计划</h2>
+        <p class="lede">先单账号迁移，再接入多个 profile，再分别启用同商品多人分配和逐账号转交。第一阶段不增加任何真实备用账号，但结构直接支持账号列表；各阶段功能分别开关、提交和验收，便于发现问题后定位与回退。</p>
+        <div class="phase primary">
+          <h3>阶段一 · 只用 A，把执行形式改为按账号运行</h3>
+          <p class="goal">结果：仍只有当前 Chrome profile 与 A；全部工作关联 A，业务按单账号基线验证。后台按账号显示状态，结构支持多个账号，但多人分配与自动转交尚未启用。</p>
+          <div class="table-wrap"><table class="wide"><thead><tr><th>子步骤</th><th>改动范围</th><th>完成条件</th></tr></thead><tbody>
+            <tr><td>1A · 审计与基线</td><td>列出全部全局运行 key、插件接口、旧领取／回写入口、账号相关字段；记录当前待办、各 flag 和统计口径。先设计迁移 dry-run。</td><td>能够说明每个 key 是共享配置、账号状态还是公共采集；形成准确文件清单与回退方案。</td></tr>
+            <tr><td>1B · A 身份与存量数据</td><td>注册唯一 A；核实后映射存量空账号记录，合法非空值不覆盖；建立账号列表、商品＋账号归属、运行状态及协议结构。profile 显式绑定 A。</td><td>迁移幂等，任务／订单行数与关联不变；不重建任务、重付或重导入。无真实备用账号、无转交。</td></tr>
+            <tr><td>1C · 领取与同步按账号</td><td>分配／领取／心跳／回写／快照全链路携带 A；入札、落札与订单匹配按账号；followup、消息、导入、历史领取继承账号；补未知结果恢复保护。</td><td>A正常执行；错误账号、重复实例与迟到结果被拒绝。单账号商品归属不丢失，个人统计与基线一致。</td></tr>
+            <tr><td>1D · 工作状态与验证</td><td>交易／扫描／付款／收货请求及完成 slot 迁到 A；提醒和验证按账号保存；系统输入统一锁。共享配置一份，在线状态与 PIN 状态分开判断。</td><td>scan计数和待办不中断；继续／关闭只作用于 A，PIN不阻断提交；未知支付／验证码动作不自动重放。</td></tr>
+            <tr><td>1E · 界面与单账号发布</td><td>账号管理显示 A，列表式数据结构；flag、任务、订单和提醒显示执行账号。完成只读统计对比、离线拒绝新分配检查，并同步部署 API、两端静态与 A 插件。</td><td>通过单账号验收，观察完整工作周期；原策略和订单行为回归，最新离线／PIN规则单独验收，稳定后进入阶段二。</td></tr>
+          </tbody></table></div>
+          <h4>阶段一的控制范围</h4>
+          <ul><li>只启用 A，备用业务分配与自动转交保持关闭。一个商品可分配名额仍只有 A，所以其他用户同商品仍被拒绝；拒绝原因是没有第二名额，不能把旧全局单用户限制写死在新结构里。</li><li>账号状态采用集合结构，不硬编码 A/B、两个验证码或两组 flag；商品账号归属先用于 A，模拟多个账号验证结构，无需登录真实备用。</li><li>不改用户表、税价与财务、出价策略、工作优先级；不同时删除三表冗余字段或重做截图／网络提速。</li><li>配置与运行状态访问集中封装，逐步替换调用点；短期兼容有截止条件，不长期维护两套状态来源。</li><li>旧协议兼容仅限唯一 A 的受控迁移期；正式账号化后禁止旧插件领取，接入备用前关闭默认猜 A 的入口。</li></ul>
+        </div>
+        <div class="phase">
+          <h3>阶段二 · 接入可配置的多个账号与 profile</h3>
+          <p class="goal">结果：可增加、排序备用列表，逐个绑定独立 Yahoo／Gmail／profile，状态互不覆盖。先验证运行隔离，多人新分配与自动转交仍关闭。</p>
+          <ul><li>验证一个主账号＋两个以上备用账号的列表结构、身份检测、心跳与重复绑定拒绝，检查同一实际 Yahoo 不能占两个名额。</li><li>各账号独立同步入札／落札、flag和扫描计数。备用有历史业务时先核实归属，不能套到 A 的用户。</li><li>模拟混合账号订单、消息、导入和批次；账号选择、同捆隔离、付款未知保护须已具备，不能等备用真实落札后再补。</li><li>验证多提醒分别处理、同标题窗口精准输入、全机前台排队；离线不被误报在线，PIN不被误报为禁止提交。</li><li>验证统一配置为2时，各插件分别保持最多2个同时出价，3插件可合计6个；不存在服务器总出价并发池或按性能自动降速。停止新分配与已有业务处理分离，真实副作用按现有业务授权范围操作。</li></ul>
+          <p><strong>进入下一阶段：</strong>多账号读取与订单路由、验证、离线、实例冲突通过模拟验收，A 原流程持续正常。</p>
+        </div>
+        <div class="phase">
+          <h3>阶段三 · 启用同商品多人分配，先不转交</h3>
+          <p class="goal">结果：按在线账号及商品位置分配不同用户；主＋两个在线备用可接受三人，第四人失败。离线跳过，在线需 PIN 仍允许提交。</p>
+          <ul><li>移除全局“商品最新任务属于别人即拒绝”的限制，替换为商品＋账号名额事务分配；单条和批量共用入口。</li><li>验证同用户不占第二名额、定时任务占位、最后名额并发竞争与请求去重；不同商品可以共用账号。</li><li>批量按正式建任务预留账号，部分无名额只失败对应行；入队成功不承诺每件都已分配。</li><li>调整入札列表、失败分析和落札匹配，防止同商品不同用户状态串写；保证只有实际成交归属产生订单。</li><li>验证个人图表与统计不泄露其他用户最高价；后台区分任务数与去重商品数。先模拟，再小量验证。</li></ul>
+          <p><strong>进入下一阶段：</strong>三用户／第四人拒绝、不同商品共用账号、离线跳过、PIN允许及实际成交用户匹配验收通过。</p>
+        </div>
+        <div class="phase">
+          <h3>阶段四 · 启用明确黑名单后的逐账号转交</h3>
+          <p class="goal">结果：主账号或备用明确被卖家拉黑后，原任务继续向后找该商品可用账号；耗尽才终止，不抢其他用户、不循环。</p>
+          <ul><li>拆分黑名单方向，结构化错误码；原子预留后续位置、作废旧领取并更新原任务，记录固定账号 ID 与尝试轨迹。</li><li>同商品占用和离线跳过，其他商品占用不影响转交，PIN不成为候选排除条件；全部不可用给出明确原因。</li><li>有效入札、未知结果、已取消／已落札／已结束不得盲目转交；迟到回写与并发提交同时争名额须纳入事务测试。</li><li>保留用户、最高价、策略、任务 ID 与原提交标识；转交不增加图表三角、活跃任务或批量提交失败提醒。</li><li>测试备用1失败继续备用2、账号排序变化不重复尝试、取消不释放有效归属；通过模拟后小量业务验收。</li></ul>
+          <p><strong>范围：</strong>首次建议仅卖家明确拉黑触发自动转交。其他失败需单独定义证据；网络未知、PIN与价格上限不能一概当转交原因。</p>
+        </div>
+        <div class="phase">
+          <h3>阶段五 · 多账号成交闭环与稳定发布</h3>
+          <p class="goal">结果：任一账号落札后完整经历交易、消息、付款、发货、入表和收货，其他账号保持正常。</p>
+          <ul><li>验收同商品多人参与后的真实赢家／用户匹配、成交价、交易 URL 与税型；排序和角色调整不改订单归属。</li><li>混合订单按账号分发，同捆不跨账号，验证和完成回写不清掉其他账号工作。</li><li>验收公共历史选择、个人失败分析、90天统计、CSV、表格查重与修复／清理；用户最高价与账号私有内容隔离。</li><li>补重启、离线、临近结束、并发窗口和多个账号验证场景；完成应用回归并记录真实页面验收，更新 AGENTS.md。</li></ul>
+        </div>
+      </section>
+
+      <section id="acceptance" class="section">
+        <h2><span>06</span>验收与发布回退</h2>
+        <h3>6.1 第一阶段验收清单</h3>
+        <ul class="checklist"><li>只启用 A，不需要新增或登录真实备用；账号结构和接口按列表设计，模拟其他账号验证拒绝越权。</li><li>迁移前后任务／订单 ID、用户、金额、状态、URL、批次关联与已入表标识一致；重复迁移不重复写业务事实。</li><li>单条／批量、定时／multi_bid、低价分步、税价与商品类型按原业务回归；A离线时新分配失败、A在线需 PIN 时提交成功。</li><li>入札／落札同步、领先身份、订单用户归属、个人统计与单账号基线一致。</li><li>交易、扫描、付款、消息、导入、收货及历史队列账号正确，flag／计数与恢复正确。</li><li>邮箱、文字验证码、PIN 提醒与继续正常，迟到响应只处理对应账号当前事件；PIN不阻断提交。</li><li>重启、响应丢失、超时恢复和重复实例不盲目重放出价、付款、消息或导入。</li><li>同用户已有加价规则保留，其他用户同商品因仅有一个已占名额被拒绝。</li><li>系统配置仍一个入口，账号状态独立，用户范围不泄露。</li></ul>
+        <h3>6.2 多账号分配、转交及订单验收</h3>
+        <ul class="checklist"><li>主＋两个在线备用：同商品 user1／2／3分别分配，user4失败；最后位置并发提交只有一个成功。</li><li>不同商品可以共用同一 Yahoo 账号，某账号处理其他商品不阻止当前商品的分配或转交。</li><li>离线候选跳过，剩余全部离线直接提交失败，不建立等待恢复的新任务；在线需 PIN 的候选允许提交。</li><li>同用户再入札、调价、followup不占第二账号；定时任务接受后占位；请求重试不重复建任务。</li><li>批量入队与正式建任务分开反馈，无名额只失败对应行；已建任务转交不产生提交失败弹窗。</li><li>入札记录按账号＋商品唯一，完整同步只清本账号；其他用户领先／仍在入札不覆盖自己的状态或失败分析。</li><li>主账号黑名单转后续；备用1明确失败继续备用2；同商品其他用户占位和离线跳过，候选耗尽终止，不循环。</li><li>转交与新提交并发争位不抢占；已尝试固定账号不因排序变化再次使用；迟到旧回写和重新领取拒绝。</li><li>有效入札／取消／未知结果不立即释放名额或盲目转交，真实落札仍能追溯原用户。</li><li>同商品多任务只给实际成交账号对应用户生成订单；后续全流程跟随该账号，同捆不跨账号、导入不猜全局最新任务。</li><li>多账号flag、心跳、scan、验证、错误独立；同标题窗口不误输，处理一个提醒不清其他提醒。</li><li>公共历史按商品一份，选择读取账号明确，换账号不重置三次失败上限；过期、迟到写入和清空保护保留。</li><li>个人图表与统计用户隔离，后台区分任务／商品／成交数量；转交不增加任务／提交三角；表格不重复追加。</li><li>新增／停用／排序不改存量归属，重复实际 Yahoo 身份拒绝，已终止任务不因新增账号自动复活。</li></ul>
+        <ul class="checklist"><li>出价并发统一配置为2，三个插件各自最多2个，合计可同时运行6个；修改统一配置后各插件按原刷新机制应用同一新值。不得增加服务器总出价上限或自动性能调节，前台输入排队只限制对应焦点动作。</li></ul>
+        <h3>6.3 发布与回退建议</h3>
+        <ol><li><strong>发布前：</strong>明确旧版基线；停止相关领取与写入，核实正在进行的 Yahoo 操作，停服务备份 SQLite。dry-run 输出字段／索引、行数、空账号分布、商品账号归属、待办与验证状态。</li><li><strong>数据迁移：</strong>核实后将存量空账号归 A，非空有效 account_id 不覆盖；保留已支付、收货、入表、消息和队列事实，未知执行不强行重排。</li><li><strong>协议切换：</strong>关闭旧插件领取，协调 API、静态与绑定 A 的新插件更新及 reload；第一阶段不启用真实备用。</li><li><strong>分步放开：</strong>先 A 稳定，再账号列表与隔离，再同商品多人分配，最后安全转交；各阶段单独验收和记录。</li><li><strong>发生异常：</strong>先停新分配／领取，保留诊断和 Yahoo 事实，按子步骤定位；不能只停掉已有待付款订单而丢弃事实。</li><li><strong>回退：</strong>代码与数据回退分开。无外部写入才可直接恢复备份；已出价／付款／落札／入表后必须核对并保留新事实。多账号产生真实业务后不能简单回退到只认识 A 的旧程序。</li></ol>
+        <div class="callout"><strong>文档与现实状态</strong><p>本次仅修订需求文档和项目计划入口，没有实现账号化、迁移数据库、启动备用账号或操作真实 Yahoo。所有验收框都是后续开发要求，不表示已经通过；文档显示检查与应用回归分别记录。</p></div>
+      </section>
+
+      <section id="map" class="section">
+        <h2><span>07</span>代码位置与检查命令</h2>
+        <p class="lede">以 2026-10-10 工作区代码和最新 AGENTS.md 为依据。最新空闲优先级采用：交易开始 → 到期／手动扫描 → 付款 → 确认收货 → 导入 → 拍卖记录；消息保持独立。下列命令用于后续开发验证，本次文档编写没有运行应用回归。</p>
+        <div class="table-wrap"><table><thead><tr><th>代码区域</th><th>关注点</th></tr></thead><tbody>
+          <tr><td><code>src/db/init.sql</code><br><code>src/server/models/index.js</code></td><td>账号、任务、订单、日志与入札 schema、迁移与兼容初始化。</td></tr>
+          <tr><td><code>src/server/routes/task.js</code><br><code>src/server/services/batchTaskQueue.js</code></td><td>替换全局单用户商品限制，商品账号名额分配、离线跳过／PIN允许、并发预留、批量恢复与个人统计。</td></tr>
+          <tr><td><code>src/server/routes/plugin.js</code></td><td>账号身份、领取／回写与未知恢复，分账号同步、实际成交用户匹配、逐账号转交和工作状态访问。</td></tr>
+          <tr><td><code>src/server/routes/admin.js</code></td><td>账号管理、flag、统一配置、提醒、导入、混合付款、修复与重同步。</td></tr>
+          <tr><td><code>src/server/services/manualCaptcha.js</code><br><code>src/server/services/yahooLoginStatus.js</code></td><td>单全局验证对象和登录状态改为账号结构；条件更新与迟到处理。</td></tr>
+          <tr><td><code>src/server/services/auctionHistory.js</code><br><code>src/server/services/failureAnalysis.js</code><br><code>src/server/services/taskSubmissionHistory.js</code></td><td>商品级历史队列执行账号、失败分析入札关联、提交图表与转交去重。</td></tr>
+          <tr><td><code>src/server/services/googleSheets.js</code><br><code>src/server/services/dataCleanup.js</code><br><code>src/server/services/productRepository.js</code></td><td>表格查重、公用快照、清理保护及启动回填边界。</td></tr>
+          <tr><td><code>yahoo-plugin/background.js</code><br><code>yahoo-plugin/content.js</code><br><code>yahoo-plugin/auctionHistory.js</code></td><td>profile 绑定、统一请求、并发池、旧结果入口、黑名单方向、tab／窗口与执行归属。</td></tr>
+          <tr><td><code>src/admin/src/Orders.tsx</code><br><code>src/admin/src/layouts/AdminLayout.tsx</code><br><code>src/admin/src/ManualOrderImport.tsx</code></td><td>分账号运行状态、同时多验证／提醒、目标账号导入与合并列表。</td></tr>
+          <tr><td><code>src/client/src/pages/ActiveBidding.jsx</code><br><code>src/client/src/pages/WonItems.jsx</code><br><code>src/client/src/pages/Statistics.jsx</code></td><td>执行账号展示、用户隔离、入札／失败分析／落札／90 天统计与 CSV。</td></tr>
+        </tbody></table></div>
+        <h3>现有专项与完整回归</h3>
+        <pre class="commands">node src/server/routes/task.test.js
+node src/server/routes/task.batch.test.js
+node src/server/services/batchTaskQueue.test.js
+node src/server/routes/task.won-stats.test.js
+node src/server/routes/plugin.test.js
+node src/server/routes/admin.orders.test.js
+node src/server/routes/yahooMessages.test.js
+node src/server/services/manualCaptcha.test.js
+node src/server/services/failureAnalysis.test.js
+node src/server/services/auctionHistory.test.js
+node src/server/services/googleSheets.test.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/content.test.js
+node yahoo-plugin/emailVerification.test.js
+node yahoo-plugin/auctionHistory.test.js
+node src/admin/src/manualVerificationState.test.js
+node src/client/src/pages/ActiveBidding.display.test.mjs
+node src/client/src/pages/WonItems.display.test.mjs
+node scripts/check-product-read-paths.js
+node scripts/check-product-health.js
+node scripts/check-product-parity.js
+node scripts/encoding-guard.js
+git diff --check
+npm run regression</pre>
+        <p>后续新增账号迁移、商品账号名额、最后名额并发、离线跳过、PIN允许、多级转交、迟到结果、实际成交用户、混合订单与全机输入锁专项。完整回归是否含两端构建以实际脚本为准，需要时分别执行 <code>npm run build --prefix src/client</code> 与 <code>npm run build --prefix src/admin</code>；真实 Yahoo 验收单独记录。</p>
+      </section>
+      <footer class="footer">g-daipai · 版本 2.1 · 2026-10-10 · 每插件并发规则修订 · 可离线阅读与打印</footer>
+    </main>
+  </div>
+</div>
+</body>
+</html>
