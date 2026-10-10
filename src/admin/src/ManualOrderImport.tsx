@@ -32,6 +32,7 @@ export default function ManualOrderImportPage() {
   const [batchId, setBatchId] = useState<number | null>(null);
   const [batch, setBatch] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
+  const [yahooAccounts,setYahooAccounts]=useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [requesting, setRequesting] = useState(false);
@@ -83,6 +84,7 @@ export default function ManualOrderImportPage() {
   }
 
   useEffect(() => {
+    fetchAdminJson('/api/admin/accounts').then(data=>{setYahooAccounts(data.items||[]);form.setFieldsValue({account_id:data.items?.find((a:any)=>a.is_primary)?.id});}).catch(()=>null);
     loadUsers().catch(() => null);
     loadLatestBatch().catch(() => null);
   }, []);
@@ -112,6 +114,7 @@ export default function ManualOrderImportPage() {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          account_id: values.account_id,
           startDate: values.startDate,
           endDate: values.endDate,
           maxPages: values.maxPages
@@ -269,6 +272,9 @@ export default function ManualOrderImportPage() {
           initialValues={{ startDate: formatLocalDate(-1), endDate: formatLocalDate(0), maxPages: 10 }}
           onFinish={requestImport}
         >
+          <Form.Item name="account_id" label="Yahoo 账号" rules={[{required:true}]}>
+            <Select style={{minWidth:200}} options={yahooAccounts.map(a=>({value:a.id,label:`${a.account_name} / ${a.yahoo_id || a.id}${a.online?'':'（离线）'}`}))}/>
+          </Form.Item>
           <Form.Item label="开始日期" name="startDate" rules={[{ required: true }]}>
             <Input type="date" />
           </Form.Item>

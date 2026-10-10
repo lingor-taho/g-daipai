@@ -501,7 +501,7 @@ function buildActiveBiddingTaskListQuery(input) {
          END`;
   return {
     sql: `SELECT
-         t.id,
+         t.id, t.account_id,
          bi.product_id,
          p.product_url AS product_url,
          p.product_title AS product_title,
@@ -528,7 +528,7 @@ function buildActiveBiddingTaskListQuery(input) {
          SELECT t2.id
          FROM tasks t2
          WHERE t2.user_id = ?
-           AND t2.product_id = bi.product_id
+           AND t2.product_id = bi.product_id AND t2.account_id = bi.account_id
          ORDER BY datetime(t2.created_at) DESC, t2.id DESC
          LIMIT 1
        )
@@ -628,11 +628,12 @@ async function submitAuctionTask(context, body, {
     }
     const incomingStrategy = input.bidMode === 'buyout' ? 'direct' : (strategy || 'direct');
     assertBidStrategyAllowed({ loginUser: context.user, actingUser: context.actingUser }, incomingStrategy);
-    const existingTask = await database.getOne(
-      'SELECT id, user_id FROM tasks WHERE product_id = ? ORDER BY id DESC LIMIT 1',
-      [input.productId]
-    );
-    assertProductSubmissionOwner(existingTask, input.userId);
+    if (!database.raw) {
+      const legacyOwner=await database.getOne('SELECT user_id,status FROM tasks WHERE product_id=? ORDER BY id DESC LIMIT 1',[input.productId]);
+      assertProductSubmissionOwner(legacyOwner,input.userId);
+    }
+    // A product may serve different users through different Yahoo accounts.
+    // Reserve the account atomically only after validation/fetching succeeds.
     const activeAutomaticTask = await database.getOne(
       `SELECT id, strategy, status
        FROM tasks
@@ -744,10 +745,10 @@ async function submitAuctionTask(context, body, {
       endTime
     }), { source: 'fetch' });
 
-    const inserted = await database.getOne(
+    const taskInsertSql =
       `INSERT INTO tasks (user_id, product_id, max_price, user_max_price, multi_bid_increment, strategy, bid_mode, start_minutes_before, start_seconds_before, status, client_request_id, pending_followup_max_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) RETURNING id, product_id`,
-      [
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) RETURNING id, product_id`;
+    const taskInsertParams = [
         input.userId,
         input.productId,
         finalBidMaxPrice,
@@ -759,9 +760,11 @@ async function submitAuctionTask(context, body, {
         start_seconds_before || null,
         clientRequestId,
         followupMaxPrice
-      ]
-    );
-    return { success: true, task_id: inserted.id, product_id: inserted.product_id };
+      ];
+    const inserted = database.raw
+      ? require('../services/yahooAccounts').createAssignedTask(database, input, taskInsertSql, taskInsertParams)
+      : await database.getOne(taskInsertSql, taskInsertParams);
+    return { success: true, task_id: inserted.id, product_id: inserted.product_id, account_id: inserted.account_id };
   });
 }
 
@@ -822,7 +825,7 @@ router.get('/list', async (req, res) => {
     input.userId = req.actingUser.id;
     const totalRow = await db.getOne('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [input.userId]);
     const tasks = await db.getAll(
-      `SELECT t.id,
+      `SELECT t.id, t.account_id,
               t.product_id,
               p.product_url AS product_url,
               p.product_title AS product_title,
@@ -988,7 +991,7 @@ router.get('/won', async (req, res) => {
     const tasks = await db.getAll(
       `SELECT
          t.id,
-         o.id AS order_id,
+         o.id AS order_id, o.account_id,
          won_task.product_id,
          p.product_url AS product_url,
          p.product_title AS product_title,
@@ -1099,7 +1102,7 @@ router.get('/bidding', async (req, res) => {
     const totalRow = await db.getOne(
       `SELECT COUNT(DISTINCT bi.product_id) AS total
        FROM bidding_items bi
-       INNER JOIN tasks t ON t.product_id = bi.product_id
+       INNER JOIN tasks t ON t.product_id = bi.product_id AND t.account_id = bi.account_id
        WHERE t.user_id = ?
          AND bi.status IN ('highest', 'outbid')`,
       [input.userId]
@@ -1127,7 +1130,7 @@ router.get('/bidding-analysis', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const task = await db.getOne(
-      `SELECT t.id,
+      `SELECT t.id, t.account_id,
               t.user_id,
               t.product_id,
               p.product_url AS product_url,

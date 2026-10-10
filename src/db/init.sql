@@ -14,6 +14,14 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS yahoo_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   account_name VARCHAR(128) NOT NULL,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 100,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  yahoo_id TEXT NOT NULL DEFAULT '',
+  binding_token TEXT NOT NULL DEFAULT '',
+  instance_id TEXT NOT NULL DEFAULT '',
+  heartbeat_at INTEGER,
+  protocol_version INTEGER NOT NULL DEFAULT 0,
   email VARCHAR(256) NOT NULL,
   profile_dir VARCHAR(512),
   status VARCHAR(32) DEFAULT 'idle',
@@ -25,6 +33,7 @@ CREATE TABLE IF NOT EXISTS yahoo_accounts (
 -- 竞拍任务
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL DEFAULT 0 REFERENCES yahoo_accounts(id),
   user_id INTEGER REFERENCES users(id),
   product_id VARCHAR(32) NOT NULL,
   max_price INTEGER NOT NULL,
@@ -38,6 +47,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   is_highest_bidder INTEGER DEFAULT 0,
   last_bid_at DATETIME,
   pending_followup_max_price INTEGER,
+  claim_token TEXT,
+  claim_instance TEXT,
+  account_attempts TEXT NOT NULL DEFAULT '[]',
+  account_route TEXT NOT NULL DEFAULT '[]',
+  execution_unknown INTEGER NOT NULL DEFAULT 0,
   force_orders_resync INTEGER DEFAULT 0,
   buyout_auto_paid INTEGER DEFAULT 0,
   error_msg TEXT,
@@ -116,7 +130,8 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 
 CREATE TABLE IF NOT EXISTS bidding_items (
-  product_id VARCHAR(32) PRIMARY KEY,
+  account_id INTEGER NOT NULL DEFAULT 0 REFERENCES yahoo_accounts(id),
+  product_id VARCHAR(32) NOT NULL,
   product_url TEXT,
   product_title VARCHAR(512),
   product_image_url TEXT,
@@ -124,11 +139,13 @@ CREATE TABLE IF NOT EXISTS bidding_items (
   status VARCHAR(32) NOT NULL,
   synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(account_id,product_id)
 );
 
 CREATE TABLE IF NOT EXISTS plugin_diagnostics (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL DEFAULT 0 REFERENCES yahoo_accounts(id),
   type VARCHAR(64),
   level VARCHAR(16) DEFAULT 'info',
   product_id VARCHAR(32),
@@ -149,6 +166,7 @@ ON plugin_diagnostics(created_at);
 
 CREATE TABLE IF NOT EXISTS yahoo_trade_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL DEFAULT 0 REFERENCES yahoo_accounts(id),
   order_id INTEGER NOT NULL UNIQUE,
   product_id VARCHAR(32),
   message_html TEXT,
@@ -272,6 +290,7 @@ ON order_status_change_logs(order_id, created_at);
 
 CREATE TABLE IF NOT EXISTS manual_order_import_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL DEFAULT 0 REFERENCES yahoo_accounts(id),
   start_date VARCHAR(10) NOT NULL,
   end_date VARCHAR(10) NOT NULL,
   max_pages INTEGER DEFAULT 10,
@@ -289,6 +308,7 @@ CREATE TABLE IF NOT EXISTS manual_order_import_batches (
 
 CREATE TABLE IF NOT EXISTS manual_order_import_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL DEFAULT 0 REFERENCES yahoo_accounts(id),
   batch_id INTEGER NOT NULL,
   product_id VARCHAR(32) NOT NULL,
   product_url TEXT,
@@ -316,6 +336,34 @@ CREATE TABLE IF NOT EXISTS manual_order_import_items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_order_import_items_batch_product
 ON manual_order_import_items(batch_id, product_id);
+
+-- Account membership and fencing data; business facts remain in products/tasks/orders.
+CREATE TABLE IF NOT EXISTS yahoo_product_assignments (
+  product_id TEXT NOT NULL,
+  account_id INTEGER NOT NULL REFERENCES yahoo_accounts(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(product_id,account_id), UNIQUE(product_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS yahoo_task_requests (
+  account_id INTEGER NOT NULL, instance_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  task_ids TEXT NOT NULL, created_at INTEGER NOT NULL,
+  PRIMARY KEY(account_id,instance_id,request_id)
+);
+CREATE TABLE IF NOT EXISTS yahoo_work_claims (
+  account_id INTEGER NOT NULL,kind TEXT NOT NULL,object_id INTEGER NOT NULL,
+  instance_id TEXT NOT NULL,token TEXT NOT NULL,created_at INTEGER NOT NULL,
+  PRIMARY KEY(account_id,kind,object_id)
+);
+CREATE TABLE IF NOT EXISTS yahoo_account_transfers (
+  id INTEGER PRIMARY KEY,task_id INTEGER NOT NULL,from_account_id INTEGER NOT NULL,
+  to_account_id INTEGER,reason TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS yahoo_foreground_lock (
+  id INTEGER PRIMARY KEY CHECK(id=1),account_id INTEGER NOT NULL,
+  instance_id TEXT NOT NULL,token TEXT NOT NULL,expires_at INTEGER NOT NULL
+);
 
 -- 用户批量即时拍后台队列
 CREATE TABLE IF NOT EXISTS batch_task_submissions (

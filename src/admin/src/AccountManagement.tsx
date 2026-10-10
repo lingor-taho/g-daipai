@@ -1,4 +1,5 @@
 import { Tabs } from 'antd';
+import YahooAccounts from './YahooAccounts';
 import UsersPage from './Users';
 import ServerAccountsPage from './Accounts';
 
@@ -8,6 +9,7 @@ export default function AccountManagementPage() {
       className="admin-data-batch-tabs"
       defaultActiveKey="users"
       items={[
+        {key:'yahoo',label:'Yahoo 执行账号',children:<YahooAccounts />},
         {
           key: 'users',
           label: '用户账号',

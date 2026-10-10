@@ -225,6 +225,7 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
                       {auctionId}
                     </span>，策略: <span style={getStrategyTextStyle(task.strategy)}>{strategyLabel}</span>，最高出价：
                     <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(maxPrice)}</span>
+                    {task.execution_account_name ? <>，执行 Yahoo：{task.execution_yahoo_id || task.execution_account_name}</> : null}
                     {task.created_at ? (
                       <>，提交时间：{formatBeijingDateTime(task.created_at)}</>
                     ) : null}

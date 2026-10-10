@@ -272,6 +272,7 @@ export default function ActiveBidding() {
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
+                    {item.execution_account_name ? <>{'执行 Yahoo：'}{item.execution_yahoo_id || item.execution_account_name}<br /></> : null}
                     {analysisMode ? (
                       <>
                         最终出价 <span style={{ color: colors.text, fontWeight: 600 }}>{formatJPY(item.final_bid)}</span>

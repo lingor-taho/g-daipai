@@ -171,6 +171,7 @@ async function closeCaptchaChallenge(database, id) {
   }
   const next = {
     ...challenge,
+    answer: '',
     closedAt: new Date().toISOString()
   };
   const result = await database.query(

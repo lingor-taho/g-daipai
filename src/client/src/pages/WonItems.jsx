@@ -549,6 +549,7 @@ export default function WonItems() {
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id}<br />
+                    {item.execution_account_name ? <>{'成交 Yahoo：'}{item.execution_yahoo_id || item.execution_account_name}<br /></> : null}
                     落札价：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(finalPrice)}</span>
                     {item.shipping_fee_text ? (
                       <span>　运费：{item.shipping_fee_text}</span>

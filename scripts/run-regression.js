@@ -6,7 +6,18 @@ const adminDir = path.join(rootDir, 'src', 'admin');
 const clientDir = path.join(rootDir, 'src', 'client');
 const npmCommand = 'npm';
 
+// The default regression entry must never load the production database.
+if(process.env.GDAIPAI_ISOLATED_TESTS!=='1') {
+  const isolated=spawnSync(process.execPath,['scripts/run-isolated-regression.cjs'],{cwd:rootDir,stdio:'inherit',env:process.env});
+  if(isolated.error) throw isolated.error;
+  process.exit(isolated.status || 0);
+}
 const steps = [
+  ['Multi-account migration and routing',process.execPath,['src/server/services/yahooAccounts.test.js'],rootDir],
+  ['Multi-account HTTP workflow',process.execPath,['src/server/routes/yahooMultiAccount.test.js'],rootDir],
+  ['Multi-account recovery regressions',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/yahooMultiAccount.regressions.test.js'],rootDir],
+  ['Multi-account task safety regressions',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/yahooMultiAccount.taskSafety.test.js'],rootDir],
+  ['Multi-account extension transport',process.execPath,['yahoo-plugin/multiAccount.test.js'],rootDir],
   ['Auction history chart calculations', process.execPath, ['src/client/src/utils/auctionHistoryChart.test.mjs'], rootDir],
   ['Auction history queue tests', process.execPath, ['src/server/services/auctionHistory.test.js'], rootDir],
   ['Auction history plugin tests', process.execPath, ['yahoo-plugin/auctionHistory.test.js'], rootDir],
@@ -36,6 +47,7 @@ const steps = [
   ['Admin manual verification display tests', process.execPath, ['src/admin/src/manualVerificationState.test.js'], rootDir],
   ['Yahoo plugin encoding guard', process.execPath, ['yahoo-plugin/encoding.test.js'], rootDir],
   ['Admin build', npmCommand, ['run', 'build'], adminDir],
+  ['Multi-account admin browser checks',process.execPath,['scripts/yahoo-multi-account-browser.test.cjs'],rootDir],
   ['Client build', npmCommand, ['run', 'build'], clientDir]
 ];
 

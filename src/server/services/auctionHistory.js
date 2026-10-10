@@ -1,4 +1,6 @@
 const { randomUUID } = require('crypto');
+const accountScope = require('./yahooAccountContext');
+const yahooAccounts = require('./yahooAccounts');
 const EXPIRED = '数据已过期';
 function raw(database) { return database.raw || database.db || database; }
 function get(database, key, fallback = '') {
@@ -40,10 +42,19 @@ function next(database, now = Date.now(), excluded = []) {
     const queue = JSON.parse(get(database,'auction_history_queue','{}'));
     if (!queue.ids?.length) { set(database,'auction_history_requested','0'); return null; }
     if (queue.leaseUntil > now) return null;
-    const index = queue.ids.findIndex(id => !excluded.includes(id));
+    const ctx=accountScope.context();
+    const available=ctx ? yahooAccounts.list(database,now).filter(a=>a.online) : [];
+    const owner=id=>{
+      const won=raw(database).prepare('SELECT account_id FROM orders WHERE product_id=? ORDER BY id LIMIT 1').get(id);
+      if(won) return available.find(a=>a.id===won.account_id)?.id;
+      const related=new Set(raw(database).prepare('SELECT DISTINCT account_id FROM tasks WHERE product_id=?').all(id).map(a=>a.account_id));
+      return available.find(a=>related.has(a.id))?.id;
+    };
+    const index = queue.ids.findIndex(id => !excluded.includes(id) && (!ctx || owner(id)===ctx.accountId));
     if (index < 0) return null;
     if (index > 0) queue.ids.unshift(queue.ids.splice(index,1)[0]);
     queue.claim = randomUUID(); queue.leaseUntil = now + 10 * 60 * 1000;
+    queue.accountId=ctx?.accountId; queue.instanceId=ctx?.instanceId;
     set(database,'auction_history_queue',JSON.stringify(queue));
     return { productId: queue.ids[0], token: queue.token, claim: queue.claim };
   })();
@@ -104,6 +115,8 @@ function finish(database, payload) {
   return raw(database).transaction(() => {
     const queue = JSON.parse(get(database,'auction_history_queue','{}'));
     if (queue.token !== payload.token || queue.claim !== payload.claim || queue.ids?.[0] !== payload.productId) return {success:false,stale:true};
+    const ctx=accountScope.context();
+    if(ctx && (queue.accountId!==ctx.accountId || queue.instanceId!==ctx.instanceId)) return {success:false,stale:true};
     let failure = String(payload.error || '').slice(0,500);
     let data; let html;
     if (!payload.expired && !failure) {

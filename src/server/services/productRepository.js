@@ -79,7 +79,10 @@ function backfillProductsFromExistingData(database) {
        WHERE product_id IS NOT NULL AND product_id <> ''
        GROUP BY product_id
      ) latest_task ON latest_task.latest_task_id = t.id
-     LEFT JOIN bidding_items bi ON bi.product_id = t.product_id
+     LEFT JOIN bidding_items bi ON bi.rowid = (
+       SELECT snapshot.rowid FROM bidding_items snapshot WHERE snapshot.product_id = t.product_id
+       ORDER BY datetime(snapshot.synced_at) DESC, snapshot.rowid DESC LIMIT 1
+     )
      WHERE t.product_id IS NOT NULL AND t.product_id <> ''
      ON CONFLICT(product_id) DO UPDATE SET
        product_url = COALESCE(excluded.product_url, products.product_url),

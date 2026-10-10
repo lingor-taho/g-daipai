@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Input, Layout, Menu, Space, Typography, message } from 'antd';
 import { CloseOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
+import YahooAccountAlerts from '../YahooAccountAlerts';
+import YahooAccountStatusLights from '../YahooAccountStatusLights';
 import { getManualVerificationDisplayState } from '../manualVerificationState';
 
 const { Header, Content, Sider } = Layout;
@@ -65,7 +67,7 @@ export default function AdminLayout() {
     .filter(item => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))
     .sort((a, b) => b.key.length - a.key.length)[0]?.key || '/tasks';
   const username = localStorage.getItem('username') || 'admin';
-  const [yahooLogin, setYahooLogin] = useState<any>({ status: 'unknown', message: '' });
+  const [yahooAccounts,setYahooAccounts]=useState<any[]>([]);
   const [paymentAlert, setPaymentAlert] = useState('');
   const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
   const [captchaChallenge, setCaptchaChallenge] = useState<any>(null);
@@ -119,14 +121,9 @@ export default function AdminLayout() {
     async function fetchYahooLoginStatus() {
       if (!isAdminLoggedIn()) return;
       try {
-        const stats = await fetchAdminJson('/api/admin/tasks/stats');
-        if (active) setYahooLogin(stats.yahooLogin || { status: 'unknown', message: '' });
-      } catch {
-        if (active) setYahooLogin({ status: 'unknown', message: '' });
-      }
-      try {
         const flags = await fetchAdminJson('/api/admin/idle-flags');
         if (active) {
+          setYahooAccounts(flags.accounts || []);
           const nextChallenge = flags.captchaChallenge || null;
           setPaymentAlert(flags.paymentAlertMessage || '');
           setConfirmReceiptAlert(flags.confirmReceiptAlertMessage || '');
@@ -149,6 +146,7 @@ export default function AdminLayout() {
         }
       } catch {
         if (active) {
+          setYahooAccounts([]);
           setPaymentAlert('');
           setConfirmReceiptAlert('');
           setCaptchaChallenge(null);
@@ -188,9 +186,14 @@ export default function AdminLayout() {
     navigate('/login');
   }
 
+  function primaryActionPath(path:string) {
+    const id=yahooAccounts.find(a=>a.is_primary)?.account_id;
+    return id ? `${path}?account_id=${id}` : path;
+  }
+
   async function clearPaymentAlertAndContinue() {
     try {
-      await fetchAdminJson('/api/admin/payment/continue', { method: 'POST' });
+      await fetchAdminJson(primaryActionPath('/api/admin/payment/continue'), { method: 'POST' });
       setPaymentAlert('');
       message.success('付款任务已继续');
     } catch (e: any) {
@@ -200,7 +203,7 @@ export default function AdminLayout() {
 
   async function closeShipmentAlert(alertId: string) {
     try {
-      await fetchAdminJson(`/api/admin/shipment-alerts/${encodeURIComponent(alertId)}/close`, { method: 'POST' });
+      await fetchAdminJson(primaryActionPath(`/api/admin/shipment-alerts/${encodeURIComponent(alertId)}/close`), { method: 'POST' });
       setShipmentAlerts(items => items.filter(item => item.id !== alertId));
     } catch (e: any) {
       message.error(e.message || '关闭待发货提醒失败');
@@ -222,7 +225,7 @@ export default function AdminLayout() {
 
   async function deleteGoogleSheetAlert(alertId: string) {
     try {
-      await fetchAdminJson(`/api/admin/google-sheet-alerts/${encodeURIComponent(alertId)}`, { method: 'DELETE' });
+      await fetchAdminJson(primaryActionPath(`/api/admin/google-sheet-alerts/${encodeURIComponent(alertId)}`), { method: 'DELETE' });
       setGoogleSheetAlerts(items => items.filter(item => item.id !== alertId));
     } catch (e: any) {
       message.error(e.message || '删除Google表格写入提醒失败');
@@ -236,7 +239,7 @@ export default function AdminLayout() {
       return;
     }
     try {
-      const result = await fetchAdminJson('/api/admin/manual-captcha/answer', {
+      const result = await fetchAdminJson(primaryActionPath('/api/admin/manual-captcha/answer'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: captchaChallenge.id, answer })
@@ -258,7 +261,7 @@ export default function AdminLayout() {
     setEmailContinuePending(true);
     const id = captchaChallenge.id;
     try {
-      const result = await fetchAdminJson('/api/admin/manual-captcha/continue', {
+      const result = await fetchAdminJson(primaryActionPath('/api/admin/manual-captcha/continue'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
@@ -278,7 +281,7 @@ export default function AdminLayout() {
   async function closeCaptchaChallenge() {
     if (!captchaChallenge?.id) return;
     try {
-      await fetchAdminJson('/api/admin/manual-captcha/close', {
+      await fetchAdminJson(primaryActionPath('/api/admin/manual-captcha/close'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: captchaChallenge.id })
@@ -311,21 +314,11 @@ export default function AdminLayout() {
               style={{ fontSize: 16, width: 40, height: 40, color: '#fff' }}
             />
           ) : null}
-          <Typography.Text style={{ color: '#fff', fontSize: 16, fontWeight: 600 }}>g-daipai 后台</Typography.Text>
+          <Typography.Text className="admin-header-title" style={{ color: '#fff', fontSize: 16, fontWeight: 600 }}>g-daipai 后台</Typography.Text>
         </Space>
-        <Space>
-          {isMobile ? (
-            <Typography.Text
-              style={{
-                color: yahooLogin?.status === 'ok' ? '#95de64' : '#ffccc7',
-                fontSize: 12,
-                fontWeight: 600
-              }}
-            >
-              {yahooLogin?.status === 'ok' ? 'Yahoo正常' : 'Yahoo未确认'}
-            </Typography.Text>
-          ) : null}
-          <Typography.Text style={{ color: '#fff' }}>{username}</Typography.Text>
+        <Space className="admin-header-actions">
+          {isMobile ? <YahooAccountStatusLights accounts={yahooAccounts} inHeader /> : null}
+          <Typography.Text className="admin-header-username" style={{ color: '#fff' }} title={username}>{username}</Typography.Text>
           <Button size="small" onClick={logout}>退出</Button>
         </Space>
       </Header>
@@ -348,20 +341,8 @@ export default function AdminLayout() {
             }}
           >
             {!collapsed && (
-              <div style={{ padding: '14px 16px', borderBottom: '1px dashed #d9d9d9' }}>
-                <Typography.Text
-                  strong
-                  style={{ color: yahooLogin?.status === 'ok' ? '#389e0d' : '#cf1322' }}
-                >
-                  {yahooLogin?.status === 'ok' ? 'yahoo正常登录中' : 'yahoo未登录/未确认'}
-                </Typography.Text>
-                {yahooLogin?.status !== 'ok' && yahooLogin?.message ? (
-                  <div style={{ marginTop: 4 }}>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {yahooLogin.message}
-                    </Typography.Text>
-                  </div>
-                ) : null}
+              <div style={{ padding: '10px 16px', borderBottom: '1px dashed #d9d9d9', maxHeight: '30vh', overflowY: 'auto' }}>
+                <YahooAccountStatusLights accounts={yahooAccounts} />
               </div>
             )}
             <Menu
@@ -379,6 +360,7 @@ export default function AdminLayout() {
         ) : null}
         <Layout className="admin-main" style={{ marginLeft: isMobile ? 0 : (collapsed ? 50 : 210), transition: 'margin-left 0.2s' }}>
           <Content className="admin-content" style={{ padding: 20, background: '#f5f5f5', minHeight: 'calc(100vh - 64px)' }}>
+            {yahooAccounts.map(a=>a.is_primary?<div key={a.account_id} style={{marginBottom:12,fontWeight:600}}>{a.account_name}（{a.yahoo_id || `ID ${a.account_id}`}）：{a.online ? '插件在线' : '插件离线'} / 以下提醒对应本账号<YahooAccountAlerts account={a} workOnly /></div>:<YahooAccountAlerts key={a.account_id} account={a} />)}
             {auctionHistoryAlerts.map(alert => (
               <Alert key={alert.id} type="error" showIcon style={{ marginBottom: 12 }}
                 message={<Space wrap>

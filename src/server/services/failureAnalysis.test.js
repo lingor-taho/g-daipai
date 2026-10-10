@@ -5,15 +5,15 @@ const { getFailureAnalysis } = require('./failureAnalysis');
 async function run() {
   const raw = new Database(':memory:');
   raw.exec(`CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER, product_id TEXT, max_price INTEGER,
-    user_max_price INTEGER, strategy TEXT, status TEXT, created_at TEXT, pending_followup_max_price INTEGER, client_request_id TEXT);
+    user_max_price INTEGER, strategy TEXT, status TEXT, created_at TEXT, pending_followup_max_price INTEGER, client_request_id TEXT,account_id INTEGER DEFAULT 1);
     CREATE TABLE products (product_id TEXT PRIMARY KEY, product_url TEXT, product_title TEXT, product_image_url TEXT,
       current_price INTEGER, tax_type TEXT, end_time TEXT, auction_history_data TEXT);
-    CREATE TABLE bidding_items (product_id TEXT PRIMARY KEY, status TEXT);`);
+    CREATE TABLE bidding_items (product_id TEXT, status TEXT,account_id INTEGER DEFAULT 1,PRIMARY KEY(account_id,product_id));`);
   const db = { getAll: async (sql, params = []) => raw.prepare(sql).all(...params), getOne: async (sql, params = []) => raw.prepare(sql).get(...params) };
   const expired = raw.prepare("SELECT datetime('now', '-1 day') AS time").get().time;
   const future = raw.prepare("SELECT datetime('now', '+1 day') AS time").get().time;
   const product = raw.prepare('INSERT INTO products(product_id,product_url,product_title,product_image_url,current_price,tax_type,end_time) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  const task = raw.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const task = raw.prepare('INSERT INTO tasks(id,user_id,product_id,max_price,user_max_price,strategy,status,created_at,pending_followup_max_price,client_request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   let nextId = 1;
   function addProduct(id, end = expired, price = 3500, tax = 'tax_zero') {
     product.run(id, `https://auctions.yahoo.co.jp/jp/auction/${id}`, `Product ${id}`, 'image.png', price, tax, end);
@@ -30,10 +30,10 @@ async function run() {
     addTask('history', 2000);
     addTask('history', 2000);
     addTask('history', 99999, 'success', 2);
-    raw.prepare('INSERT INTO bidding_items VALUES (?, ?)').run('history', 'stale');
+    raw.prepare('INSERT INTO bidding_items(product_id,status) VALUES (?, ?)').run('history', 'stale');
     addProduct('future', future); addTask('future', 1500);
     addProduct('still-active'); addTask('still-active', 1600);
-    raw.prepare('INSERT INTO bidding_items VALUES (?, ?)').run('still-active', 'outbid');
+    raw.prepare('INSERT INTO bidding_items(product_id,status) VALUES (?, ?)').run('still-active', 'outbid');
     addProduct('won'); addTask('won', 1800, 'success'); addTask('won', 2000);
     addProduct('expired-pending'); addTask('expired-pending', 1200, 'pending');
     raw.prepare("UPDATE products SET current_price = 2000 WHERE product_id = 'expired-pending'").run();

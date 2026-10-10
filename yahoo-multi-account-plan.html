@@ -20,15 +20,41 @@
     <div class="eyebrow">g-daipai · Architecture &amp; Delivery Plan</div>
     <h1>Yahoo 多账号执行<br>需求汇总与分阶段开发计划</h1>
     <p>先让现有 A 账号按多账号架构运行，稳定后接入可配置的多个备用账号。同商品可为不同用户分配不同账号，明确失败后按顺序寻找剩余可用账号。</p>
-    <div class="meta"><span class="pill">版本 2.1 · 2026-10-10</span><span class="pill">按最新讨论修订</span><span class="pill">开发方案待实施</span><span class="pill">本次仅文档</span><button class="print" type="button" onclick="window.print()">打印 / 保存 PDF</button></div>
+    <div class="meta"><span class="pill">版本 3.0 · 2026-10-10</span><span class="pill">多账号已本地实现</span><span class="pill">隔离数据库与模拟插件验收</span><span class="pill">真实 Yahoo 待部署验收</span><button class="print" type="button" onclick="window.print()">打印 / 保存 PDF</button></div>
   </header>
   <div class="layout">
     <nav class="nav" aria-label="文档目录">
-      <strong>文档目录</strong>
+      <strong>文档目录</strong><a href="#implemented">00 · 本地实现与操作说明</a>
       <a href="#scope">01 · 最终范围与业务规则</a><a href="#accounts">02 · 账号管理与后台呈现</a><a href="#workflow">03 · 全流程账号归属</a><a href="#design">04 · 技术边界与冲突防护</a><a href="#plan">05 · 分阶段开发计划</a><a href="#acceptance">06 · 验收与发布回退</a><a href="#map">07 · 代码位置与检查命令</a>
-      <small>“已确认”来自本次讨论；标为“建议”的结构、字段和实施细节是开发方案，不表示已实现。</small>
+      <small>本地实现范围与运行说明见第 00 节；后续各阶段作为上线验收顺序。真实 Yahoo 页面与系统键盘操作仍需服务器实测。</small>
     </nav>
     <main class="content">
+      <section id="implemented" class="section">
+        <h2><span>00</span>本地实现与操作说明</h2>
+        <p class="lede">2026-10-10：已实现可配置账号列表、插件绑定、按账号执行、商品账号名额、逐级黑名单转交、成交账号订单流程、独立提醒与导入。本地使用临时数据库和模拟 Yahoo 数据测试；没有部署或执行真实竞拍、付款。</p>
+        <h3>启用方法</h3>
+        <ol><li>先关闭旧插件及其正在执行的页面，核对 Yahoo 已提交结果，停止 API 后备份生产数据库。更新 API、后台、用户端静态文件、共享模块与完整 yahoo-plugin，重启 API、reload 插件。</li><li>先只保留当前 A：首次迁移空账号数据归 A，旧配置中的运行状态复制到 A。首次有存量任务的迁移自动额外保存数据库副本；旧 processing 任务标记“结果未确认”，不会直接重新出价。正常任务／订单 ID、金额、用户与已入表事实保留。</li><li>后台「账号管理 → Yahoo 执行账号」设置主账号、备用顺序、启用状态、Yahoo ID、Gmail 和 Chrome profile。绑定码仅在管理员后台显示；同一个 Yahoo ID 或 profile 不能重复注册。</li><li>仅一个账号且插件未绑定时，插件自动绑定该账号；配置多个账号后，在各 profile 的扩展详情 → 扩展选项填写对应账号 ID 和绑定码。先人工核对本 profile 的真实 Yahoo / Gmail 身份，避免把正确绑定码填入错误 profile。系统按绑定号和实例隔离工作，当前不自动读取真实 Yahoo ID 来核实身份。</li><li>后台同时显示每个插件在线状态及其 Yahoo 登录／验证回报、flag、计数与提醒。插件重载后旧实例心跳可能保持在线最多 45 秒，新实例随后恢复连接。只配置 A 时先验收原业务，再逐个增加备用；不增加账号也可使用新执行架构。</li><li>“出价并发任务数”是各插件独立上限。值为 2、三个插件时总计可以并发 6 件；配置仍共用。窗口截图／PIN 输入单独排队，PIN 不阻止任务提交。</li></ol>
+        <h3>异常处理</h3>
+        <p>原业务规则以开发前提交 9d22b23 为基线。付款出问题仍立即中断本轮后续付款并关闭付款 flag，管理员按原入口继续后才恢复；归还尚未执行的领取标记不等于自动继续付款。多账号改造及修复只增加账号区分和领取校验，不调整原扫描判断、出价策略或其他既有业务规则。</p>
+        <ul><li>明确卖家黑名单、确认本次拒绝且无有效或未知旧入札，才转交原任务；其他未知错误不会盲目转交。后台任务页显示结果待核对，关闭该账号插件、核实无入札后才能解除保护，再按原归属重新提交。</li><li>订单工作领取后插件中断或返回丢失，不自动重新领取。后台显示待核对工作；先关闭原插件，核对成交账号实际状态，付款已成功时先同步真实状态，再确认释放领取。已有订单始终使用成交账号，不改绑主账号。</li><li>取消任务仍保留商品账号归属；黑名单安全转交会释放已明确拒绝的原位置。同捆不跨账号；导入批次创建时选定读取 Yahoo 号，确认导入继承来源号。</li><li>公共拍卖历史只有一份全局队列；落札商品只由成交账号读取，未落札从参与该商品的在线账号按顺序选一个，账号切换不重置三次失败上限。</li></ul>
+        <h3>本地验收</h3>
+        <p>2026-10-10 重载提示与登录展示修复：插件新实例首次认证前的启动等待中，明确“已有在线插件”的消息领取 409 静默等待，后台原 45 秒保护不变，过期后按原轮询恢复；其他错误、状态回写、已认证后冲突或等待超过 60 秒仍保留错误与真实原因。账号展示按最新要求改为红绿灯：PC 左侧与手机顶部均无文字／编号，主账号第一、备用沿原顺序，每行最多 4 个，多于 4 个由下箭头展开／收起。在线且 Yahoo 登录正常为绿灯，未登录／待确认／离线为红灯；点击或悬停可查看账号与具体状态。实际认证函数、内存 SQLite 和插件轮询专项、原插件回归、后台构建通过，最新红绿灯浏览器验收覆盖 360/390/1200 的四灯同排、七账号展开、账号查询及状态刷新。重载修复更新插件 background.js 后 reload；此次红绿灯仅更新后台静态文件，无 API 或数据库变更，未操作真实 Yahoo。</p>
+        <p>2026-10-10 补齐四处保护：黑名单转交时，同商品、同用户在原账号的排队任务一起跟随新账号，价格、策略与定时不变；后续账号耗尽时这些待执行任务一起失败，历史执行账号保持。领取时核对最新归属，结果未知同时阻止同账号同商品已有队列，其他账号独立；仍使用原人工核对入口解除。旧时间／快照回写不能覆盖落札或失败状态，拒绝的快照不更新商品，不触发后续任务；正常定时等待和未出价调度保留。交易开始明确因暂停等资格变化跳过时归还本次领取，暂停恢复及付款失败中断规则不变。无新数据库迁移，需更新 API 与插件并 reload。</p>
+        <p>四处修复专项和完整回归已通过，包含原业务测试、后台 390/1200 像素浏览器检查与两端构建。另行补测同账号其他商品继续执行、原暂停恢复流程下重新领取，均通过；仅使用临时数据库和模拟插件，没有部署生产或操作真实 Yahoo。</p>
+        <p>2026-10-10 检查修复：批次中断时归还尚未执行的订单；正常扫描无新物流和取消检查无变化时结束本次领取，未知已执行结果仍保留核对。旧页面回写必须匹配本次领取凭证、活动执行和来源标签页。后台修改订单用户保持原有同商品、原用户全部历史任务转移，撤销新增账号冲突禁令；可同步时更新分配，其他账号已有名额保留。已有订单以成交账号和管理员选择的用户为准，不再依赖历史分配来重新决定订单用户。此次需同步更新 API 与插件并 reload，无新增数据库迁移；旧遗留未知领取仍先人工核对。</p>
+        <p>迁移／重复迁移与旧入札归属、同商品多人及最后名额争用、离线跳过／PIN 允许、逐级转交与迟到回写、真实 HTTP 账号隔离、付款／交易／扫描／收货检查／消息／导入、公共历史归属、插件响应丢失与前台锁均有专项测试。后台在 390／1200 像素模拟 API 浏览器中验证账号管理、独立邮箱/PIN提醒、关闭提醒、flag 与导入选择。既有业务完整回归与两端构建已通过，收尾修改的相关专项与后台浏览器复测也通过；真实 Yahoo、Gmail、Windows PIN、表格和付款闭环单独验收。</p>
+        <pre class="commands">npm run regression
+node src/server/services/yahooAccounts.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.regressions.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.taskSafety.test.js
+node yahoo-plugin/multiAccount.test.js
+node scripts/yahoo-multi-account-browser.test.cjs
+node scripts/check-product-read-paths.js
+node scripts/encoding-guard.js
+git diff --check</pre>
+        <p class="small">npm run regression 现在自动创建临时 SQLite，避免加载项目实际数据库。直接执行会加载 models 的专项时应通过 run-isolated-regression.cjs；浏览器测试只使用模拟 API。只有启动真实 API 才会迁移其配置数据库。</p>
+      </section>
       <section id="scope" class="section">
         <h2><span>01</span>最终范围与业务规则</h2>
         <p class="lede">本版替代 1.0 的双账号限制及“同商品只接受一个用户”规则。最新需求是一个主账号＋可增加的备用账号列表；同商品可由不同 Yahoo 账号分别替不同用户竞拍。</p>
@@ -62,7 +88,7 @@
         <p class="small">身份不匹配、未知绑定或停用新分配的账号不能进入候选。插件在线与 Yahoo 登录状态分开显示，心跳判离线阈值在开发审计中确定，不能让旧的在线标识无限期有效。</p>
         <h3>1.3 转交条件与终止条件</h3>
         <div class="table-wrap"><table class="wide"><thead><tr><th>触发情况</th><th>处理规则</th></tr></thead><tbody>
-          <tr><td>当前账号被卖家拉黑</td><td>建议第一版唯一自动转交条件。使用明确错误码；确认本次被拒绝、没有有效或未知的旧入札，结束本次执行，再原子预留后续账号并转交。</td></tr>
+          <tr><td>当前账号被卖家拉黑</td><td>当前唯一自动转交条件。使用明确错误码；确认本次被拒绝、没有有效或未知的旧入札，结束本次执行，再原子预留后续账号并转交。</td></tr>
           <tr><td>其他“不能执行”</td><td>保留扩展方向，但不直接用所有 failed 触发。每个新增条件先定义明确证据、结果核实方法及独立回归；第一阶段和首次转交版本均不扩大。</td></tr>
           <tr><td>我们把卖家拉黑</td><td>与卖家把 A 拉黑区分，默认不自动绕过；当前解析把两种方向归为同类，需拆分原因。</td></tr>
           <tr><td>断网、超时、页面异常、登录验证</td><td>不直接换账号。先等待原账号恢复或核实 Yahoo 结果；无法确认时保留等待核实，不盲目重放。</td></tr>
@@ -88,7 +114,7 @@
         <div class="table-wrap"><table><thead><tr><th>信息</th><th>要求</th></tr></thead><tbody>
           <tr><td>固定账号 ID、名称</td><td>供任务、日志、订单、验证引用。名称可修改，账号 ID 不随主备用切换改变。</td></tr>
           <tr><td>主／备用角色与顺序</td><td>一个主账号、多个备用账号。可增加、排序并控制是否接受新分配；角色调整不改绑存量任务和订单。第一阶段仅 A。</td></tr>
-          <tr><td>预期 Yahoo ID</td><td>显示绑定身份与最近检测的实际登录身份；不一致时停止领取有副作用的业务工作并提醒。</td></tr>
+          <tr><td>预期 Yahoo ID</td><td>显示预期 Yahoo ID、profile、Gmail 及该插件回报的登录／验证状态；实际身份由管理员在 profile 中核对，当前没有自动读取真实 Yahoo ID 的检测器。发现不一致先停插件纠正绑定。</td></tr>
           <tr><td>Chrome profile、Gmail</td><td>保存 profile 标识及预期验证码邮箱。profile 内插件显式绑定账号，不能仅凭目录文字或窗口标题猜账号。</td></tr>
           <tr><td>插件在线状态</td><td>保存实例 ID、最后心跳、插件版本；离线与 Yahoo 登录状态分别展示。</td></tr>
           <tr><td>登录与验证状态</td><td>正常、需要登录、邮箱验证、文字验证码、PIN、未知；包含最近确认时间，旧的“正常”不能无限期保持。</td></tr>
@@ -130,12 +156,12 @@
           <tr><td>批处理／数据清理</td><td>重同步、重扫单号、订单状态调整、订单用户修改都保留账号事实；删除一个账号的任务不能误删其他账号有效入札或共享商品。商品整体删除应清楚显示范围。</td></tr>
         </tbody></table></div>
         <h3>3.1 订单导入</h3>
-        <p><strong>建议第一版每次明确选择一个目标 Yahoo 账号，默认主账号。</strong>批次创建时固定 account_id，只由该账号 profile 读取 /my/won；候选行、确认导入的任务与订单均继承来源账号。现有按系统用户分配候选订单的流程继续保留。</p>
+        <p><strong>当前每次明确选择一个目标 Yahoo 账号，默认主账号。</strong>批次创建时固定 account_id，只由该账号 profile 读取 /my/won；候选行、确认导入的任务与订单均继承来源账号。现有按系统用户分配候选订单的流程继续保留。</p>
         <ul><li>第一阶段仅 A，界面可显示唯一选项；以后增加多个账号不改变批次归属结构。</li><li>读取与确认入库分别防重复：领取核对条件更新是否成功，回写匹配批次账号和本次凭证。</li><li>候选匹配依据实际成交账号，不能用同商品其他用户的最新任务。已有订单按成交事实查重，来源矛盾提示冲突，不静默覆盖。</li><li>未来若增加“多个账号一起导入”，服务端按账号拆独立子批次，分别进度／错误并统一展示；多个 profile 不领取同一子批次。</li><li>离线账号的新导入读取不得伪报执行成功；提示目标账号状态，批次恢复仍按自身账号与领取规则。</li></ul>
         <h3>3.2 公共拍卖历史与个人查询</h3>
         <p>“每件商品只对应 A 或 B”的旧前提已经失效。个人入札、最终出价与提交图表看自己的归属；公共 Yahoo 拍卖历史仍按商品保存一份，不因三个用户参与就读取三遍。</p>
-        <p><span class="tag planned">建议采集选择</span>落札商品优先使用实际成交账号；未落札商品从参与该商品的在线账号按稳定顺序选择一个。读取失败且明确未取得结果时，可以在后续重试选择其他有读取权限的相关账号；不并行读取同一商品。账号切换不能把三次失败上限变成“每账号三次”。</p>
-        <p class="small">成功历史、过期提示及既有字段不覆盖；历史读取账号变更写入诊断。不同账号可见内容是否一致须在真实页面验收中确认，账号私有内容不能当公共数据展示。此处是适配多人参与的建议，不恢复旧的单一执行账号假设。</p>
+        <p><span class="tag">已实现采集选择</span>落札商品优先使用实际成交账号；未落札商品从参与该商品的在线账号按稳定顺序选择一个。读取失败且明确未取得结果时，可以在后续重试选择其他有读取权限的相关账号；不并行读取同一商品。账号切换不能把三次失败上限变成“每账号三次”。</p>
+        <p class="small">成功历史、过期提示及既有字段不覆盖；历史读取账号变更写入诊断。不同账号可见内容是否一致须在真实页面验收中确认，账号私有内容不能当公共数据展示。当前按此方式适配多人参与，真实页面权限差异仍需核对。</p>
         <h3>3.3 商品与成交模型边界</h3>
         <p>products 保存公共商品信息；tasks 保存各用户意图与执行账号；商品账号归属保存名额；orders 保存实际成交与后续流程。同一商品可以有多用户任务及多账号入札记录，只有真正落札的归属产生订单。商品当前价可共享，用户最高价、自己是否领先及验证状态独立。</p>
         <p>本计划默认沿用当前单件商品成交范围及订单唯一保护。开发审计必须检查按 product_id 查订单并覆盖的入口，不能把其他账号订单更新成当前用户。Yahoo 多件数量拍卖／多个独立成交若需支持，另行设计成交标识、订单唯一约束与表格查重，本次不直接删除现有保护或宣称已支持。</p>
@@ -143,7 +169,7 @@
 
       <section id="design" class="section">
         <h2><span>04</span>技术边界与冲突防护</h2>
-        <p class="lede">下述是建议实现方向。字段名称和迁移形式在开发前审计中最终确定；不借本次扩展删除 tasks 旧商品快照字段或改写财务规则。</p>
+        <p class="lede">下述保留原分阶段设计，实际落地的接口与操作见第 00 节；不借本次扩展删除 tasks 旧商品快照字段或改写财务规则。</p>
         <h3>4.1 数据与 API 边界</h3>
         <div class="table-wrap"><table class="wide"><thead><tr><th>对象</th><th>建议改造</th></tr></thead><tbody>
           <tr><td>yahoo_accounts</td><td>复用现有表，增加角色、优先级、是否接受新分配、预期身份、绑定／实例状态。保存固定 ID，结构不硬编码为 A/B 两个。</td></tr>
@@ -166,7 +192,7 @@
 
       <section id="plan" class="section">
         <h2><span>05</span>分阶段开发计划</h2>
-        <p class="lede">先单账号迁移，再接入多个 profile，再分别启用同商品多人分配和逐账号转交。第一阶段不增加任何真实备用账号，但结构直接支持账号列表；各阶段功能分别开关、提交和验收，便于发现问题后定位与回退。</p>
+        <p class="lede">先单账号迁移，再接入多个 profile，再分别启用同商品多人分配和逐账号转交。第一阶段不增加任何真实备用账号，但结构直接支持账号列表；本地已完成核心能力，上线仍按这些阶段验收：通过先只配置 A、稳定后逐个增加备用控制范围，当前没有额外的阶段开关。</p>
         <div class="phase primary">
           <h3>阶段一 · 只用 A，把执行形式改为按账号运行</h3>
           <p class="goal">结果：仍只有当前 Chrome profile 与 A；全部工作关联 A，业务按单账号基线验证。后台按账号显示状态，结构支持多个账号，但多人分配与自动转交尚未启用。</p>
@@ -239,7 +265,7 @@ node src/server/services/batchTaskQueue.test.js
 node src/server/routes/task.won-stats.test.js
 node src/server/routes/plugin.test.js
 node src/server/routes/admin.orders.test.js
-node src/server/routes/yahooMessages.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js
 node src/server/services/manualCaptcha.test.js
 node src/server/services/failureAnalysis.test.js
 node src/server/services/auctionHistory.test.js
@@ -257,9 +283,9 @@ node scripts/check-product-parity.js
 node scripts/encoding-guard.js
 git diff --check
 npm run regression</pre>
-        <p>后续新增账号迁移、商品账号名额、最后名额并发、离线跳过、PIN允许、多级转交、迟到结果、实际成交用户、混合订单与全机输入锁专项。完整回归是否含两端构建以实际脚本为准，需要时分别执行 <code>npm run build --prefix src/client</code> 与 <code>npm run build --prefix src/admin</code>；真实 Yahoo 验收单独记录。</p>
+        <p>已新增账号迁移、商品账号名额、最后名额并发、离线跳过、PIN允许、多级转交、迟到结果、实际成交用户、订单账号隔离与全机输入锁专项，参见第 00 节。完整回归是否含两端构建以实际脚本为准，需要时分别执行 <code>npm run build --prefix src/client</code> 与 <code>npm run build --prefix src/admin</code>；真实 Yahoo 验收单独记录。</p>
       </section>
-      <footer class="footer">g-daipai · 版本 2.1 · 2026-10-10 · 每插件并发规则修订 · 可离线阅读与打印</footer>
+      <footer class="footer">g-daipai · 版本 3.0 · 2026-10-10 · 本地实现与上线验收 · 可离线阅读与打印</footer>
     </main>
   </div>
 </div>

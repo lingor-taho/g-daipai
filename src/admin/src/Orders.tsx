@@ -691,6 +691,7 @@ export default function OrdersPage() {
   }
 
   const columns = [
+    {title:'成交 Yahoo',width:140,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
     {
       title: '用户名',
       dataIndex: 'username',
@@ -807,15 +808,18 @@ export default function OrdersPage() {
           </Button>
         ) : null}
         {(!isMobile || flagsExpanded) ? (
-          <Space wrap size={16} className="admin-mobile-flag-space">
-            <Typography.Text>交易开始flag：{idleFlags?.transactionStartFlag ?? '-'}</Typography.Text>
-            <Typography.Text>扫描计数：{idleFlags?.scanFlag ?? '-'} / {idleFlags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
-            <Typography.Text>导入flag：{renderManualOrderImportFlag(idleFlags)}</Typography.Text>
-            <Typography.Text>付款flag：{idleFlags?.paymentFlag ?? '-'}</Typography.Text>
-            <Typography.Text>确认收货flag：{idleFlags?.confirmReceiptFlag ?? '-'}</Typography.Text>
-            <Typography.Text>拍卖记录flag：{idleFlags?.auctionHistoryFlag ?? '-'}</Typography.Text>
-            <Typography.Text type="secondary">{renderTransactionStartLastRun(idleFlags?.transactionStartLastRunLog)}</Typography.Text>
+          <Space direction="vertical" style={{width:'100%'}}>{(idleFlags?.accounts || [idleFlags || {}]).map((flags:any)=>(
+          <Space key={flags.account_id || 0} wrap size={16} className="admin-mobile-flag-space">
+            <Typography.Text strong>{flags.account_name || '主账号'} {flags.online === false ? '（离线）' : ''}</Typography.Text>
+            <Typography.Text>交易开始flag：{flags?.transactionStartFlag ?? '-'}</Typography.Text>
+            <Typography.Text>扫描计数：{flags?.scanFlag ?? '-'} / {flags?.scanEveryIdleRuns ?? '-'}</Typography.Text>
+            <Typography.Text>导入flag：{renderManualOrderImportFlag(flags)}</Typography.Text>
+            <Typography.Text>付款flag：{flags?.paymentFlag ?? '-'}</Typography.Text>
+            <Typography.Text>确认收货flag：{flags?.confirmReceiptFlag ?? '-'}</Typography.Text>
+            <Typography.Text>拍卖记录flag：{flags?.auctionHistoryFlag ?? '-'}</Typography.Text>
+            <Typography.Text type="secondary">{renderTransactionStartLastRun(flags?.transactionStartLastRunLog)}</Typography.Text>
           </Space>
+          ))}</Space>
         ) : null}
       </Card>
 

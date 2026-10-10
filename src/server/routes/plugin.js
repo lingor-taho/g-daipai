@@ -2,7 +2,88 @@
 const router = express.Router();
 const { execFile } = require('child_process');
 const db = require('../models');
+const yahooAccounts = require('../services/yahooAccounts');
+const accountScope = require('../services/yahooAccountContext');
+const foreground = require('../services/yahooForeground');
+
+router.get('/binding/bootstrap', (req, res) => {
+  const accounts = yahooAccounts.list(db, Date.now(), true);
+  if (accounts.length !== 1) return res.status(409).json({ error: '请在插件设置中绑定对应 Yahoo 账号' });
+  const a = accounts[0];
+  res.json({ accountId: a.id, token: a.binding_token, name: a.account_name });
+});
+router.use((req, res, next) => {
+  try {
+    const value = yahooAccounts.authenticate(db, {
+      accountId: req.get('X-Yahoo-Account'), token: req.get('X-Yahoo-Token'), instanceId: req.get('X-Yahoo-Instance')
+    });
+    accountScope.run(value, () => {
+      const match = req.path.match(/^\/task\/(\d+)\//);
+      if (match) {
+        const task = db.raw.prepare('SELECT id,account_id,status,claim_token,claim_instance,strategy,max_price,product_id,execution_unknown FROM tasks WHERE id=? AND account_id=?').get(Number(match[1]), value.accountId);
+        if (!task || task.status === 'cancelled') return res.status(409).json({ error: '任务不属于当前账号或已终止' });
+        if (!(req.path.endsWith('/status') && req.body?.status === 'processing') &&
+          (!task.claim_token || task.claim_token !== req.get('X-Yahoo-Claim') || task.claim_instance !== value.instanceId)) {
+          return res.status(409).json({ error: '任务领取已失效，停止当前操作' });
+        }
+        req.yahooTask = task;
+      }
+      const orderId=Number(req.body?.orderId || req.body?.order_id || 0);
+      if(orderId && !db.raw.prepare('SELECT 1 FROM orders WHERE id=? AND account_id=?').get(orderId,value.accountId)) return res.status(409).json({error:'订单不属于当前 Yahoo 账号'});
+      const workflow=req.path.match(/^\/(transaction-start|scan|payment|confirm-receipt|manual-order-import)\/(jobs|status)$/);
+      const sendJson=res.json.bind(res);
+      if(workflow) {
+        const kind=workflow[1];
+        const objectId=kind==='manual-order-import' ? Number(req.body?.batchId) : Number(req.body?.claim_order_id || orderId);
+        for(const id of req.body?.orderIds || []) if(!db.raw.prepare('SELECT 1 FROM orders WHERE id=? AND account_id=?').get(Number(id),value.accountId)) return res.status(409).json({error:'同捆包含其他 Yahoo 账号的订单'});
+        if(workflow[2]==='status' && !objectId && !req.body?.empty) return res.status(400).json({error:'订单流程缺少领取标识'});
+        if(workflow[2]==='status' && objectId) {
+          const claim=db.raw.prepare('SELECT * FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=?').get(value.accountId,kind,objectId);
+          if(!claim || claim.instance_id!==value.instanceId || claim.token!==req.body?.claim_token) return res.status(409).json({error:'订单流程领取已失效'});
+        }
+        res.json=(data)=>{
+          if(res.statusCode<400 && workflow[2]==='jobs') {
+            const jobs=data.jobs || (data.job ? [data.job] : []);
+            const claimed=[];
+            for(const job of jobs) {
+              const id=Number(job.orderId || job.order_id || job.batchId);
+              if(!id) continue;
+              const token=yahooAccounts.randomUUID();
+              const inserted=db.raw.prepare('INSERT OR IGNORE INTO yahoo_work_claims VALUES(?,?,?,?,?,?)').run(value.accountId,kind,id,value.instanceId,token,Date.now());
+              if(inserted.changes) claimed.push({...job,claimToken:token,account_id:value.accountId});
+            }
+            data={...data,...(data.jobs ? {jobs:claimed,total:claimed.length} : {job:claimed[0] || null})};
+          } else if(res.statusCode<400 && workflow[2]==='status' && objectId) {
+            db.raw.prepare('DELETE FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=? AND token=?').run(value.accountId,kind,objectId,req.body.claim_token);
+            const affected=new Set((req.body.orderIds || []).map(Number));
+            for(const productId of req.body.productIds || []) for(const row of db.raw.prepare('SELECT id FROM orders WHERE account_id=? AND product_id=?').all(value.accountId,productId)) affected.add(row.id);
+            for(const id of affected) db.raw.prepare('DELETE FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=? AND instance_id=?').run(value.accountId,kind,id,value.instanceId);
+          }
+          return sendJson(data);
+        };
+      }
+      next();
+    });
+  } catch (e) { res.status(e.statusCode || 500).json({ error: e.message }); }
+});
 const auctionHistory = require('../services/auctionHistory');
+// Only the owning plugin may return work it has not started, or a completed
+// read-only check. Unknown side effects must retain their claim for review.
+router.post('/work/release', (req, res) => {
+  const { kind, jobs } = req.body || {};
+  if (!['transaction-start','scan','payment','confirm-receipt'].includes(kind) ||
+      !Array.isArray(jobs) || jobs.length > 1000 || jobs.some(j => !Number.isInteger(j.orderId) || !j.claimToken)) {
+    return res.status(400).json({error:'invalid work release'});
+  }
+  const ctx=accountScope.context();
+  const released=db.raw.transaction(() => {
+    const remove=db.raw.prepare('DELETE FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=? AND instance_id=? AND token=?');
+    return jobs.reduce((count,j)=>count+remove.run(ctx.accountId,kind,j.orderId,ctx.instanceId,j.claimToken).changes,0);
+  })();
+  res.json({success:true,released});
+});
+router.post('/foreground/acquire',(req,res)=>{try{res.json(foreground.acquire(db.raw));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
+router.post('/foreground/release',(req,res)=>{try{res.json(foreground.release(db.raw,req.body?.token));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
 const { isYahooLoginError } = require('../services/yahooLoginStatus');
 const {
   getOrderStatusAuditRows,
@@ -99,7 +180,7 @@ function quotePowerShellString(value) {
 function buildWindowsSendKeysScript(pinCode, options = {}) {
   const pin = normalizeManualPinCode(pinCode);
   const windowTitle = String(options.windowTitle || '').trim().slice(0, 200);
-  const preferredTitles = [
+  const preferredTitles = options.strictWindow ? [windowTitle].filter(Boolean) : [
     windowTitle,
     '再認証 - Yahoo! JAPAN',
     'Yahoo! JAPAN',
@@ -120,6 +201,7 @@ public static class GDaipaiNativeInput {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
 }
 '@`;
   return [
@@ -131,7 +213,7 @@ public static class GDaipaiNativeInput {
     '$chromeWindows = @(Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })',
     '$targetWindow = $null',
     "if ($targetTitle) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($targetTitle) } | Select-Object -First 1 }",
-    "if (-not $targetWindow) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -match 'Yahoo|再認証|Chrome' } | Sort-Object StartTime -Descending | Select-Object -First 1 }",
+    options.strictWindow ? "if (-not $targetWindow) { throw 'Exact Yahoo account window was not found' }" : "if (-not $targetWindow) { $targetWindow = $chromeWindows | Where-Object { $_.MainWindowTitle -match 'Yahoo|再認証|Chrome' } | Sort-Object StartTime -Descending | Select-Object -First 1 }",
     '$matchedTitle = if ($targetWindow) { $targetWindow.MainWindowTitle } else { "" }',
     '$activated = $false',
     'if ($targetWindow) { [GDaipaiNativeInput]::SetForegroundWindow($targetWindow.MainWindowHandle) | Out-Null; $activated = $true }',
@@ -139,12 +221,13 @@ public static class GDaipaiNativeInput {
     "if (-not $activated) { throw 'Chrome window activation failed before PIN input' }",
     'Start-Sleep -Milliseconds 600',
     '$handle = [GDaipaiNativeInput]::GetForegroundWindow()',
+    options.strictWindow ? "$activeTitle = New-Object System.Text.StringBuilder 512; [GDaipaiNativeInput]::GetWindowText($targetWindow.MainWindowHandle, $activeTitle, 512) | Out-Null; if ([GDaipaiNativeInput]::GetForegroundWindow() -ne $targetWindow.MainWindowHandle -or -not $activeTitle.ToString().Contains($targetTitle)) { throw 'Yahoo account tab lost focus during PIN input' };" : '',
     '$rect = New-Object GDaipaiNativeInput+RECT',
     '$clicked = $false',
     'if ([GDaipaiNativeInput]::GetWindowRect($handle, [ref]$rect)) { $width = [Math]::Max(1, $rect.Right - $rect.Left); $x = [int]($rect.Left + ($width / 2) - 160); $y = [int]($rect.Top + 220); [GDaipaiNativeInput]::SetCursorPos($x, $y) | Out-Null; Start-Sleep -Milliseconds 120; [GDaipaiNativeInput]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [GDaipaiNativeInput]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero); $clicked = $true }',
     'Start-Sleep -Milliseconds 250',
     `$pin = ${quotePowerShellString(pin)}`,
-    'foreach ($char in $pin.ToCharArray()) { $vk = [byte][int][char]$char; [GDaipaiNativeInput]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [GDaipaiNativeInput]::keybd_event($vk, 0, 0x0002, [UIntPtr]::Zero); Start-Sleep -Milliseconds 120 }',
+    `foreach ($char in $pin.ToCharArray()) { ${options.strictWindow ? "$activeTitle = New-Object System.Text.StringBuilder 512; [GDaipaiNativeInput]::GetWindowText($targetWindow.MainWindowHandle, $activeTitle, 512) | Out-Null; if ([GDaipaiNativeInput]::GetForegroundWindow() -ne $targetWindow.MainWindowHandle -or -not $activeTitle.ToString().Contains($targetTitle)) { throw 'Yahoo account tab lost focus during PIN input' };" : ''} $vk = [byte][int][char]$char; [GDaipaiNativeInput]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [GDaipaiNativeInput]::keybd_event($vk, 0, 0x0002, [UIntPtr]::Zero); Start-Sleep -Milliseconds 120 }`,
     'Start-Sleep -Milliseconds 700',
     "Write-Output ('typed=' + $pin.Length + '; clicked=' + $clicked + '; activated=' + $activated + '; matchedTitle=' + $matchedTitle + '; foregroundHandle=' + $handle)"
   ].join('\n');
@@ -164,7 +247,7 @@ function typeManualPinWithSystemKeyboard(pinCode, options = {}) {
     return Promise.reject(error);
   }
   const execFileImpl = options.execFileImpl || execFile;
-  const script = buildWindowsSendKeysScript(pin, { windowTitle: options.windowTitle });
+  const script = buildWindowsSendKeysScript(pin, { windowTitle: options.windowTitle,strictWindow:options.strictWindow });
   const args = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script];
   return new Promise((resolve, reject) => {
     execFileImpl('powershell.exe', args, {
@@ -299,19 +382,42 @@ async function failPricedOutPendingTasks(database = db) {
 
 async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
   const cutoffIso = new Date(nowMs - 60 * 1000).toISOString();
+  if (database.raw) {
+    // Never replay an account-bound operation whose Yahoo result is unknown.
+    await database.query(`UPDATE tasks SET status='failed',execution_unknown=1,
+      error_msg='执行失联，Yahoo 结果待核实，禁止自动重拍',updated_at=CURRENT_TIMESTAMP
+      WHERE status='processing' AND claim_token IS NOT NULL AND datetime(updated_at)<=datetime(?)`, [cutoffIso]);
+  }
   const result = await database.query(
     `UPDATE tasks
      SET status = 'pending',
          error_msg = NULL,
          updated_at = CURRENT_TIMESTAMP
      WHERE status = 'processing'
-       AND datetime(updated_at) <= datetime(?)`,
+       AND datetime(updated_at) <= datetime(?)${database.raw ? ' AND claim_token IS NULL' : ''}`,
     [cutoffIso]
   );
   return result.rowCount || 0;
 }
 
-async function claimTaskForProcessing(taskId, database = db) {
+async function claimTaskForProcessing(taskId, database = db, {allowExisting=false} = {}) {
+  const ctx = accountScope.context();
+  if (ctx && database.raw) {
+    return database.raw.transaction(() => {
+      const current = database.raw.prepare('SELECT id,user_id,account_id,status,claim_token,claim_instance,strategy,max_price,product_id,execution_unknown FROM tasks WHERE id=? AND account_id=?').get(taskId,ctx.accountId);
+      if (!current || !database.raw.prepare('SELECT 1 FROM yahoo_product_assignments WHERE product_id=? AND account_id=? AND user_id=?').get(current.product_id,ctx.accountId,current.user_id)) return {success:false};
+      if (database.raw.prepare('SELECT 1 FROM tasks WHERE account_id=? AND product_id=? AND execution_unknown=1 LIMIT 1').get(ctx.accountId,current.product_id)) return {success:false};
+      if (allowExisting && current?.status === 'processing' && current.claim_instance === ctx.instanceId && current.claim_token) return { success: true, claim_token: current.claim_token };
+      if (!current || current.execution_unknown || !['pending','bidding'].includes(current.status) || (current.status==='bidding' && current.strategy!=='multi_bid')) return {success:false};
+      if(database.raw.prepare("SELECT 1 FROM tasks WHERE account_id=? AND product_id=? AND status='processing' AND id<>? LIMIT 1").get(ctx.accountId,current.product_id,current.id)) return {success:false};
+      if (current.strategy==='multi_bid' && database.raw.prepare("SELECT 1 FROM bid_logs WHERE task_id=? AND result='bidding' AND bid_price>=? LIMIT 1").get(taskId,current.max_price)) return {success:false};
+      const limit=Math.max(1,Math.min(10,Number(database.raw.prepare("SELECT value FROM config WHERE key='bid_concurrency_limit'").get()?.value || 2)));
+      if(database.raw.prepare("SELECT COUNT(*) n FROM tasks WHERE account_id=? AND status='processing'").get(ctx.accountId).n>=limit) return {success:false};
+      const token=yahooAccounts.randomUUID();
+      database.raw.prepare("UPDATE tasks SET status='processing',error_msg=NULL,claim_token=?,claim_instance=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=?").run(token,ctx.instanceId,taskId,ctx.accountId);
+      return {success:true,claim_token:token};
+    })();
+  }
   const result = await database.query(
     `UPDATE tasks
      SET status = 'processing',
@@ -334,7 +440,12 @@ async function claimTaskForProcessing(taskId, database = db) {
        )`,
     [taskId]
   );
-  return { success: (result.rowCount || 0) > 0 };
+  let claimToken;
+  if (result.rowCount && ctx && database.raw) {
+    claimToken = yahooAccounts.randomUUID();
+    await database.query('UPDATE tasks SET claim_token=?,claim_instance=? WHERE id=?', [claimToken, ctx.instanceId, taskId]);
+  }
+  return { success: (result.rowCount || 0) > 0, ...(claimToken ? { claim_token: claimToken } : {}) };
 }
 
 async function getPluginTaskCandidates(database = db) {
@@ -395,8 +506,13 @@ async function getPluginTaskCandidates(database = db) {
 }
 
 async function claimReadyPluginTasks(limit = 1, database = db, nowMs = Date.now(), config = null) {
-  const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit || 1))));
+  let safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit || 1))));
   const multiBidConfig = config || await getMultiBidConfig(database);
+  const ctx=accountScope.context();
+  if(ctx && database.raw) {
+    const active=database.raw.prepare("SELECT COUNT(*) n FROM tasks WHERE account_id=? AND claim_instance=? AND status='processing'").get(ctx.accountId,ctx.instanceId).n;
+    safeLimit=Math.min(safeLimit,Math.max(0,multiBidConfig.bidConcurrencyLimit-active));
+  }
   let remaining = await getPluginTaskCandidates(database);
   const claimed = [];
   while (claimed.length < safeLimit) {
@@ -405,7 +521,7 @@ async function claimReadyPluginTasks(limit = 1, database = db, nowMs = Date.now(
     remaining = remaining.filter(item => Number(item.id) !== Number(task.id));
     const result = await claimTaskForProcessing(task.id, database);
     if (result?.success) {
-      claimed.push(withMultiBidDispatchConfig(task, multiBidConfig));
+      claimed.push(withMultiBidDispatchConfig({ ...task, ...(result.claim_token ? { claim_token: result.claim_token, account_id: accountScope.accountId() } : {}) }, multiBidConfig));
     }
   }
   return claimed;
@@ -897,9 +1013,7 @@ async function appendTransactionStartRunLogResult(database, result = {}) {
 // GET /api/plugin/task
 router.get('/task', async (req, res) => {
   const multiBidConfig = await getMultiBidConfig();
-  const tasks = await getPluginTaskCandidates();
-  const nowMs = Date.now();
-  const task = chooseNextPluginTask(tasks, nowMs, multiBidConfig);
+  const [task] = await claimReadyPluginTasks(1, db, Date.now(), multiBidConfig);
   res.json({
     task: withMultiBidDispatchConfig(task, multiBidConfig) || null,
     canIdleSync: true,
@@ -907,15 +1021,43 @@ router.get('/task', async (req, res) => {
   });
 });
 
+const taskRequestLocks = new Map();
 router.get('/tasks', async (req, res) => {
+  const key = `${accountScope.accountId()}:${accountScope.context().instanceId}:${req.query.request_id}`;
+  const preceding = taskRequestLocks.get(key) || Promise.resolve();
+  let release;
+  const completion = new Promise(resolve => { release = resolve; });
+  taskRequestLocks.set(key,completion);
+  await preceding;
+  try { await dispatchTaskRequest(req,res); }
+  catch(e) { res.status(e.statusCode || 500).json({error:e.message}); }
+  finally { release(); if(taskRequestLocks.get(key)===completion) taskRequestLocks.delete(key); }
+});
+async function dispatchTaskRequest(req,res) {
   const multiBidConfig = await getMultiBidConfig();
+  const ctx = accountScope.context();
+  const requestId = String(req.query.request_id || '');
+  if (!/^[a-zA-Z0-9-]{16,96}$/.test(requestId)) return res.status(400).json({ error: '领取请求标识无效' });
+  const previous = db.raw.prepare('SELECT task_ids FROM yahoo_task_requests WHERE account_id=? AND instance_id=? AND request_id=?').get(ctx.accountId, ctx.instanceId, requestId);
+  if (previous) {
+    const ids = JSON.parse(previous.task_ids);
+    const tasks = [];
+    for (const id of ids) {
+      const task = await db.getOne(`SELECT t.*,p.product_url,p.product_title,p.end_time,p.current_price,p.tax_type,p.product_type,p.shipping_fee_text
+        FROM tasks t LEFT JOIN products p ON p.product_id=t.product_id WHERE t.id=? AND t.status='processing' AND t.claim_instance=?`, [id, ctx.instanceId]);
+      if (task) tasks.push(withMultiBidDispatchConfig(task, multiBidConfig));
+    }
+    return res.json({ success: true, tasks, bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit });
+  }
   const tasks = await claimReadyPluginTasks(req.query.limit || 1, db, Date.now(), multiBidConfig);
+  db.raw.prepare('INSERT INTO yahoo_task_requests VALUES (?,?,?,?,?)').run(ctx.accountId, ctx.instanceId, requestId, JSON.stringify(tasks.map(t => t.id)), Date.now());
+  db.raw.prepare('DELETE FROM yahoo_task_requests WHERE created_at<?').run(Date.now() - 86400000);
   res.json({
     success: true,
     tasks,
     bidConcurrencyLimit: multiBidConfig.bidConcurrencyLimit
   });
-});
+}
 
 router.get('/auction-history/jobs', (req, res) => {
   let excluded = [];
@@ -943,8 +1085,19 @@ router.post('/idle-action/complete', async (req, res) => {
 router.patch('/task/:id/status', async (req, res) => {
   const { status, error_msg, bid_price, no_bid, not_highest } = req.body;
   if (status === 'processing') {
-    const result = await claimTaskForProcessing(req.params.id);
+    const result = await claimTaskForProcessing(req.params.id,db,{allowExisting:true});
     return res.json(result);
+  }
+
+  if (!['pending','bidding','success','failed'].includes(status)) return res.status(400).json({ error: 'invalid task status' });
+  if(req.yahooTask.status===status) return res.json({success:true,duplicate:true});
+  if(req.yahooTask.status!=='processing') return res.status(409).json({error:'任务已结束本次执行，拒绝迟到回写'});
+  if (status === 'failed' && req.body.error_code === 'SELLER_BLACKLIST' && req.body.result_unknown===false) {
+    const transferred = yahooAccounts.transferTask(db, req.yahooTask, req.body.error_code);
+    if (transferred) return res.json({ success: true, ...transferred });
+  }
+  if (status === 'failed' && req.body.result_unknown !== false) {
+    await db.query('UPDATE tasks SET execution_unknown=1 WHERE id=?', [req.params.id]);
   }
 
   if (isYahooLoginError(error_msg)) {
@@ -989,15 +1142,18 @@ router.patch('/task/:id/status', async (req, res) => {
 
 router.patch('/task/:id/touch', async (req, res) => {
   const allowedStatus = ['pending', 'bidding', 'success'].includes(req.body?.status) ? req.body.status : null;
-  await db.query(
+  const result = await db.query(
     `UPDATE tasks
      SET status = COALESCE(?, status),
          last_bid_at = CURRENT_TIMESTAMP,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-       AND status != 'cancelled'`,
+       AND status IN ('processing','bidding')
+       AND execution_unknown = 0
+       AND NOT EXISTS (SELECT 1 FROM orders won WHERE won.task_id=tasks.id OR (won.product_id=tasks.product_id AND won.account_id=tasks.account_id))`,
     [allowedStatus, req.params.id]
   );
+  if (!result.rowCount) return res.status(409).json({error:'任务已结束本次执行，拒绝迟到回写'});
   res.json({ success: true });
 });
 
@@ -1208,11 +1364,12 @@ async function syncBiddingItems(items, database = db) {
          current_price,
          remaining_time_text,
          status,
+         account_id,
          synced_at,
          updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       ON CONFLICT(product_id) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(account_id,product_id) DO UPDATE SET
          product_url = excluded.product_url,
          product_image_url = excluded.product_image_url,
          current_price = excluded.current_price,
@@ -1227,7 +1384,8 @@ async function syncBiddingItems(items, database = db) {
         item.imageUrl || null,
         currentPrice,
         remainingTimeText || null,
-        itemStatus
+        itemStatus,
+        accountScope.accountId() || database.raw?.prepare('SELECT id FROM yahoo_accounts WHERE is_primary=1').get()?.id || 1
       ]
     );
     await upsertProductSnapshot(database, {
@@ -1244,7 +1402,8 @@ async function syncBiddingItems(items, database = db) {
              error_msg = NULL,
              updated_at = CURRENT_TIMESTAMP
           WHERE product_id = ?
-            AND status IN ('bidding', 'success')`,
+            AND status IN ('bidding', 'success')
+            AND NOT EXISTS (SELECT 1 FROM orders won_order WHERE won_order.task_id=tasks.id OR (won_order.product_id=tasks.product_id AND won_order.account_id=tasks.account_id))`,
         [productId]
       );
       highest += 1;
@@ -1863,8 +2022,16 @@ async function syncYahooWonOrders(orders = [], database = db) {
     const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
+    if(database.raw && accountScope.accountId()) {
+      const conflicting=database.raw.prepare('SELECT account_id FROM orders WHERE product_id=? AND account_id<>?').get(productId,accountScope.accountId());
+      if(conflicting) throw yahooAccounts.fail('商品已有其他 Yahoo 账号成交记录，需人工核对');
+    }
     const wonProductType = String(order.productType || order.product_type || '').trim() === 'store' ? 'store' : '';
-    const task = await database.getOne(
+    const task = accountScope.accountId() && database.raw
+      ? (database.raw.prepare(`SELECT t.id,t.force_orders_resync FROM orders o JOIN tasks t ON t.id=o.task_id
+          WHERE COALESCE(o.product_id,t.product_id)=? AND o.account_id=? ORDER BY o.id DESC LIMIT 1`).get(productId,accountScope.accountId()) ||
+         database.raw.prepare(`SELECT t.id,t.force_orders_resync FROM tasks t JOIN yahoo_product_assignments own ON own.product_id=t.product_id AND own.account_id=t.account_id AND own.user_id=t.user_id WHERE t.product_id=? AND t.account_id=? ORDER BY t.force_orders_resync DESC,datetime(COALESCE(t.last_bid_at,t.updated_at,t.created_at)) DESC,t.id DESC LIMIT 1`).get(productId,accountScope.accountId()))
+      : await database.getOne(
       `SELECT id, force_orders_resync
        FROM tasks
        WHERE product_id = ?
@@ -1917,6 +2084,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
     await database.query(
       `UPDATE tasks
        SET status = 'success',
+           execution_unknown=0,
            error_msg = NULL,
            force_orders_resync = 0,
            updated_at = CURRENT_TIMESTAMP
@@ -1963,12 +2131,13 @@ async function getManualOrderImportJob(database = db) {
      LIMIT 1`
   );
   if (!batch) return { job: null };
-  await database.query(
+  const claimed = await database.query(
     `UPDATE manual_order_import_batches
      SET status = 'scanning', error_msg = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND status = 'requested'`,
     [batch.id]
   );
+  if(claimed.rowCount!==1) return {job:null};
   return {
     job: {
       batchId: batch.id,
@@ -3033,10 +3202,12 @@ router.post('/bidding/sync', async (req, res) => {
 });
 
 router.post('/orders/sync', async (req, res) => {
+  try {
   const orders = Array.isArray(req.body?.orders) ? req.body.orders : [];
   const result = await syncYahooWonOrders(orders, db);
   await setYahooLoginStatus('ok');
   res.json({ success: true, ...result });
+  } catch(error) { res.status(error.statusCode || 500).json({error:error.message}); }
 });
 
 router.post('/diagnostics', async (req, res) => {
@@ -3244,8 +3415,10 @@ router.post('/manual-captcha/close', async (req, res) => {
 
 router.post('/manual-pin/type', async (req, res) => {
   try {
+    foreground.check(db.raw,req.body?.foreground_token);
+    if(!String(req.body?.windowTitle || '').startsWith(`GDAIPAI-${accountScope.accountId()}-`)) throw yahooAccounts.fail('PIN 窗口账号标识不匹配');
     const result = await typeManualPinWithSystemKeyboard(req.body?.pin || req.body?.answer || '', {
-      windowTitle: req.body?.windowTitle || req.body?.title || ''
+      windowTitle: req.body?.windowTitle || req.body?.title || '',strictWindow:true
     });
     res.json({ success: true, ...result });
   } catch (error) {
@@ -3274,17 +3447,20 @@ function buildPluginTaskSnapshotUpdate(payload = {}) {
 
 router.patch('/task/:id/snapshot', async (req, res) => {
   const { status } = req.body || {};
-  await db.query(
+  const result = await db.query(
     `UPDATE tasks
      SET status = COALESCE(?, status),
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-       AND status != 'cancelled'`,
+       AND status = 'processing'
+       AND execution_unknown = 0
+       AND NOT EXISTS (SELECT 1 FROM orders won WHERE won.task_id=tasks.id OR (won.product_id=tasks.product_id AND won.account_id=tasks.account_id))`,
     [
       status || null,
       req.params.id
     ]
   );
+  if (!result.rowCount) return res.status(409).json({error:'任务已结束本次执行，拒绝迟到回写'});
   const task = await db.getOne(
     `SELECT id, product_id
      FROM tasks

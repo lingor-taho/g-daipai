@@ -8,6 +8,8 @@ const {
 
 const dbPath = config.databaseUrl.replace('sqlite:', '').replace('//', '');
 const db = new Database(path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd(), dbPath));
+// Persisted account guards are already active when an upgraded database opens.
+db.function('current_yahoo_account',()=>require('../services/yahooAccountContext').accountId());
 
 // 启用外键约束
 db.pragma('foreign_keys = ON');
@@ -412,20 +414,36 @@ repairStaleTaskForeignKeyReferences();
 
 require('../services/batchTaskQueue').ensureBatchTaskQueueSchema(db);
 
+const yahooAccounts = require('../services/yahooAccounts');
+const yahooAccountContext = require('../services/yahooAccountContext');
+yahooAccounts.ensureSchema(db);
+function decorateAccount(row) {
+  if(!row || !row.account_id) return row;
+  const a=db.prepare('SELECT account_name,yahoo_id FROM yahoo_accounts WHERE id=?').get(row.account_id);
+  return {...row,execution_account_name:a?.account_name || '',execution_yahoo_id:a?.yahoo_id || ''};
+}
+function accountQuery(text, params) {
+  const primary = db.prepare('SELECT id FROM yahoo_accounts WHERE is_primary=1').get();
+  return yahooAccountContext.prepareQuery(text, params, primary?.id || 0);
+}
+
 module.exports = {
   db,
   async query(text, params) {
-    const stmt = db.prepare(text);
-    const result = params ? stmt.run(...params) : stmt.run();
+    const scoped = accountQuery(text, params);
+    const stmt = db.prepare(scoped.sql);
+    const result = scoped.params ? stmt.run(...scoped.params) : stmt.run();
     return { rows: [], rowCount: result.changes };
   },
   async getOne(text, params) {
-    const stmt = db.prepare(text);
-    return params ? stmt.get(...params) : stmt.get();
+    const scoped = accountQuery(text, params);
+    const stmt = db.prepare(scoped.sql);
+    return decorateAccount(scoped.restore(scoped.params ? stmt.get(...scoped.params) : stmt.get()));
   },
   async getAll(text, params) {
-    const stmt = db.prepare(text);
-    return params ? stmt.all(...params) : stmt.all();
+    const scoped = accountQuery(text, params);
+    const stmt = db.prepare(scoped.sql);
+    return (scoped.params ? stmt.all(...scoped.params) : stmt.all()).map(scoped.restore).map(decorateAccount);
   },
   raw: db
 };

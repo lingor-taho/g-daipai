@@ -417,6 +417,8 @@ function buildSellerBlacklistBidFailure(stage) {
   return {
     success: false,
     error: '\u5931\u8d25\uff1a\u5356\u5bb6\u9ed1\u540d\u5355',
+    errorCode: /出品者のブラックリストに登録されているため/.test(getBodyText()) ? 'SELLER_BLACKLIST' : 'LOCAL_SELLER_BLACKLIST',
+    resultUnknown: false,
     closeTab: true,
     ...buildBidPageDiagnostics(stage)
   };
@@ -2891,10 +2893,10 @@ getTaskData().then(taskData => {
   if (shouldExecuteBid) {
     executeBidV3(taskData.maxPrice, { taskId: taskData.taskId, bidMode: taskData.bidMode, productType: taskData.productType, strategy: taskData.strategy, userMaxPrice: taskData.userMaxPrice, currentPrice: taskData.currentPrice, taxType: taskData.taxType, multiBidIncrement: taskData.multiBidIncrement })
       .then(result => {
-        chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, result });
+        chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, claimToken: taskData.claimToken, result });
       })
       .catch(err => {
-        chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, result: { success: false, error: err.message } });
+        chrome.runtime.sendMessage({ type: 'BID_RESULT', taskId: taskData.taskId, claimToken: taskData.claimToken, result: { success: false, error: err.message } });
       });
   } else {
 // No task - if on auction page, extract and save product data

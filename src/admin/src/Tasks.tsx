@@ -1,6 +1,6 @@
 import { ProTable } from '@ant-design/pro-components';
 import { useEffect, useState } from 'react';
-import { Alert, Card, Col, Row, Space, Statistic, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Col, Popconfirm, Row, Space, Statistic, Tag, Typography, message } from 'antd';
 import { fetchAdminJson, isAdminLoggedIn, redirectToLogin } from './utils/auth';
 import { getTaskFailureLabel as getSharedTaskFailureLabel } from '../../shared/taskFailureReason';
 
@@ -119,6 +119,8 @@ export default function TasksPage() {
   }, []);
 
   const columns = [
+    {title:'结果核对',search:false,render:(_:any,row:any)=>row.execution_unknown?<Popconfirm title="先关闭对应插件和原出价页面，并在 Yahoo 核实没有此商品的入札。确认后允许用户重新提交；已入札时不要解除，请同步原账号状态。" onConfirm={async()=>{try{await fetchAdminJson(`/api/admin/tasks/${row.id}/resolve-unknown`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,resolution:'no_bid'})});message.success('已解除未知结果限制');}catch(e:any){message.error(e.message);}}}><Button size="small">已核实无入札</Button></Popconfirm>:null},
+    {title:'执行 Yahoo',width:140,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
     { title: '提交用户', dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
     {
       title: '商品ID',

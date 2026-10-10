@@ -90,11 +90,88 @@ function releaseManagedTaskTabs(taskId) {
 }
 const activeBidProgressExtenders = new Map();
 
-async function apiFetch(path, options) {
+let yahooForegroundToken;
+let yahooForegroundTail=Promise.resolve();
+async function withYahooForeground(callback) {
+  if(!await getYahooBinding()) return callback();
+  const previous=yahooForegroundTail;let release;
+  yahooForegroundTail=new Promise(resolve=>{release=resolve;});
+  await previous;
+  try {
+    let lock;
+    for(let i=0;i<30;i++) {
+      const response=await apiFetch('/api/plugin/foreground/acquire',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      lock=await response.json();if(response.ok && lock.token) break;
+      await sleep(500);
+    }
+    if(!lock?.token) throw new Error('其他账号正在处理验证，请稍后继续');
+    yahooForegroundToken=lock.token;
+    try{return await callback();}
+    finally {await apiFetch('/api/plugin/foreground/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:lock.token})}).catch(()=>{});yahooForegroundToken=undefined;}
+  } finally {release();}
+}
+async function updateYahooWindow(id,options,ownedToken) {
+  if(!options?.focused || !await getYahooBinding() || (ownedToken && ownedToken===yahooForegroundToken)) return chrome.windows.update(id,options);
+  return withYahooForeground(()=>chrome.windows.update(id,options));
+}
+let yahooBindingPromise;
+const yahooTaskClaims = new Map();
+const yahooActiveBidClaims = new Map();
+const yahooWorkClaims = new Map();
+const pluginInstanceId = globalThis.crypto?.randomUUID?.() || `plugin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const pluginInstanceStartedAt = Date.now();
+let yahooInstanceAuthenticated = false;
+async function getYahooBinding() {
+  if (!chrome.storage?.local) return null; // Pure browser harnesses have no installed profile.
+  if (!yahooBindingPromise) yahooBindingPromise = (async () => {
+    const saved = await chrome.storage.local.get('yahooBinding');
+    if (saved.yahooBinding?.accountId && saved.yahooBinding?.token) return saved.yahooBinding;
+    const response = await fetch(`${API_BASES[0]}/api/plugin/binding/bootstrap`);
+    if (!response.ok) throw new Error('请在扩展设置中绑定 Yahoo 账号');
+    const binding = await response.json();
+    await chrome.storage.local.set({yahooBinding:binding});
+    return binding;
+  })().catch(error => { yahooBindingPromise=undefined; throw error; });
+  return yahooBindingPromise;
+}
+chrome.storage?.onChanged?.addListener((changes,area) => {
+  if(area==='local' && changes.yahooBinding) {
+    // Changing credentials must end this worker, never move an active callback to another account.
+    chrome.runtime.reload();
+  }
+});
+async function apiFetch(path, options = {}) {
+  const binding = await getYahooBinding();
+  if (binding) {
+    const match = path.match(/\/task\/(\d+)\//);
+    options = {...options,headers:{...options.headers,
+      'X-Yahoo-Account':String(binding.accountId),'X-Yahoo-Token':binding.token,'X-Yahoo-Instance':pluginInstanceId,
+      ...(match ? {'X-Yahoo-Claim':options.headers?.['X-Yahoo-Claim'] ?? yahooTaskClaims.get(Number(match[1])) ?? ''} : {})}};
+    if (/^\/api\/plugin\/tasks\?/.test(path)) path += `&request_id=${globalThis.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    const work=path.match(/^\/api\/plugin\/(transaction-start|scan|payment|confirm-receipt|manual-order-import)\/status$/);
+    if(work && options.body) {
+      const payload=JSON.parse(options.body);
+      const id=payload.orderId || payload.order_id || payload.batchId || payload.orderIds?.[0] || yahooWorkClaims.get(`${work[1]}:product:${payload.productIds?.[0]}`);
+      if(id) options.body=JSON.stringify({...payload,claim_order_id:id,claim_token:yahooWorkClaims.get(`${work[1]}:${id}`)});
+    }
+  }
   let lastError;
   for (const base of API_BASES) {
     try {
       const res = await fetch(`${base}${path}`, options);
+      if (binding && res.ok) yahooInstanceAuthenticated = true;
+      if (binding && res.clone && res.ok) {
+        const data = await res.clone().json().catch(()=>null);
+        for(const task of [...(data?.tasks || []),...(data?.task ? [data.task] : [])]) if(task.claim_token) yahooTaskClaims.set(Number(task.id),task.claim_token);
+        const match=path.match(/\/task\/(\d+)\/status/);
+        if(match && data?.claim_token) yahooTaskClaims.set(Number(match[1]),data.claim_token);
+        const work=path.match(/^\/api\/plugin\/(transaction-start|scan|payment|confirm-receipt|manual-order-import)\/jobs/);
+        if(work) for(const job of [...(data?.jobs || []),...(data?.job ? [data.job] : [])]) if(job.claimToken) {
+          const id=job.orderId || job.order_id || job.batchId;
+          yahooWorkClaims.set(`${work[1]}:${id}`,job.claimToken);
+          if(job.productId) yahooWorkClaims.set(`${work[1]}:product:${job.productId}`,id);
+        }
+      }
       fetchFailureCount = 0;
       return res;
     } catch (e) {
@@ -121,11 +198,12 @@ async function fetchPendingTask() {
 }
 
 async function markTaskStatus(taskId, status, errorMsg = null, extra = {}) {
+  const {executionClaim,...payload}=extra;
   try {
     const res = await apiFetch(`/api/plugin/task/${taskId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, error_msg: errorMsg, ...extra })
+      headers: { 'Content-Type': 'application/json',...(executionClaim !== undefined ? {'X-Yahoo-Claim':executionClaim} : {}) },
+      body: JSON.stringify({ status, error_msg: errorMsg, ...payload })
     });
     return await res.json().catch(() => ({ success: res.ok }));
   } catch (e) {
@@ -134,11 +212,11 @@ async function markTaskStatus(taskId, status, errorMsg = null, extra = {}) {
   }
 }
 
-async function touchTaskSchedule(taskId, status) {
+async function touchTaskSchedule(taskId, status, executionClaim) {
   try {
     await apiFetch(`/api/plugin/task/${taskId}/touch`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json',...(executionClaim !== undefined ? {'X-Yahoo-Claim':executionClaim} : {}) },
       body: JSON.stringify({ status })
     });
   } catch (e) {
@@ -146,12 +224,12 @@ async function touchTaskSchedule(taskId, status) {
   }
 }
 
-async function heartbeatProcessingTask(taskId) {
+async function heartbeatProcessingTask(taskId, executionClaim) {
   if (!taskId) return null;
   try {
     const res = await apiFetch(`/api/plugin/task/${taskId}/heartbeat`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json',...(executionClaim !== undefined ? {'X-Yahoo-Claim':executionClaim} : {}) }
     });
     return await res.json().catch(() => ({ success: res.ok }));
   } catch (e) {
@@ -415,6 +493,7 @@ async function openTaskPage(task, options = {}) {
   await chrome.storage.session.set({
     currentTask: {
       taskId: task.id,
+      claimToken: task.claim_token,
       maxPrice: task.max_price,
       userMaxPrice: task.user_max_price || task.max_price,
       currentPrice: task.current_price || 0,
@@ -629,10 +708,10 @@ function isInsideStrategyWindow(task, endTime) {
   return endMs > nowMs && endMs - nowMs <= getStrategyLeadMs(task);
 }
 
-async function updateTaskSnapshot(taskId, snapshot, status) {
+async function updateTaskSnapshot(taskId, snapshot, status, executionClaim) {
   await apiFetch(`/api/plugin/task/${taskId}/snapshot`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json',...(executionClaim !== undefined ? {'X-Yahoo-Claim':executionClaim} : {}) },
     body: JSON.stringify({
       product_title: snapshot?.title || null,
       product_image_url: snapshot?.imageUrl || null,
@@ -666,27 +745,27 @@ async function ensureTaskReadyByCurrentEndTime(tab, task) {
   const actualEndTime = snapshot.endTime || task.end_time;
   const changedEndTime = actualEndTime && actualEndTime !== task.end_time;
   if (pageEndMs && pageEndMs <= Date.now()) {
-    await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'failed');
+    await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'failed', task.claim_token);
     await closeTaskTab(tab.id);
     throw new Error('Auction ended according to product page snapshot');
   }
 
   if (isDirectTask(task)) {
     if (changedEndTime || snapshot.currentPrice) {
-      await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'processing');
+      await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'processing', task.claim_token);
     }
     return true;
   }
 
   if (!isInsideStrategyWindow(task, actualEndTime)) {
-    await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'pending');
+    await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'pending', task.claim_token);
     await closeTaskTab(tab.id);
     console.log('[Yahoo Bid] Task is not inside strategy window, end time refreshed:', task.id, actualEndTime, changedEndTime ? '(changed)' : '');
     return false;
   }
 
   if (changedEndTime || snapshot.currentPrice) {
-    await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'processing');
+    await updateTaskSnapshot(task.id, { ...snapshot, endTime: actualEndTime }, 'processing', task.claim_token);
   }
   return true;
 }
@@ -705,6 +784,8 @@ function buildBidError(result, fallbackMessage) {
   error.bidResult = result || null;
   error.diagnostics = result?.diagnostics || '';
   error.url = result?.url || '';
+  error.errorCode = result?.errorCode;
+  error.resultUnknown = result?.resultUnknown !== false;
   return error;
 }
 
@@ -957,6 +1038,21 @@ async function fetchTransactionStartJobs(options = {}) {
   return Array.isArray(data.jobs) ? data.jobs : [];
 }
 
+async function releaseWorkJobs(kind, jobs) {
+  const claimed=jobs.filter(job=>job.claimToken).map(job=>({orderId:Number(job.orderId),claimToken:job.claimToken}));
+  if (!claimed.length) return;
+  const response=await apiFetch('/api/plugin/work/release', {
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,jobs:claimed})
+  });
+  if (!response.ok) throw new Error('未执行订单的领取释放失败，请核对账号工作状态');
+}
+
+async function withWorkBatch(kind, jobs, callback) {
+  const unstarted=new Set(jobs);
+  try { return await callback(job=>unstarted.delete(job)); }
+  finally { await releaseWorkJobs(kind,[...unstarted]); }
+}
+
 async function isTransactionStartEligible(orderId, productIds = []) {
   const res = await apiFetch('/api/plugin/transaction-start/eligibility', {
     method: 'POST',
@@ -1068,8 +1164,16 @@ async function updatePaymentStatus(payload) {
 }
 
 async function fetchYahooMessageJobs() {
-  const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1');
-  return Array.isArray(data.jobs) ? data.jobs : [];
+  try {
+    const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1');
+    return Array.isArray(data.jobs) ? data.jobs : [];
+  } catch (error) {
+    // Reload creates a new instance; the previous heartbeat expires after 45s.
+    // Only this startup rejection is an idle poll, never a successful writeback.
+    if (!yahooInstanceAuthenticated && Date.now() - pluginInstanceStartedAt <= 60000 &&
+        error.status === 409 && error.apiError === '该 Yahoo 账号已有在线插件，禁止重复执行') return [];
+    throw error;
+  }
 }
 
 async function updateYahooMessageStatus(payload) {
@@ -1085,7 +1189,12 @@ async function yahooMessageApiJson(path, options = {}) {
   const timer = setTimeout(() => controller.abort(), MESSAGE_API_TIMEOUT_MS);
   try {
     const res = await apiFetch(path, { ...options, signal: controller.signal });
-    if (!res.ok) throw new Error(`message API failed: HTTP ${res.status}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw Object.assign(new Error(`message API failed: HTTP ${res.status}${data?.error ? ` (${data.error})` : ''}`), {
+        status: res.status, apiError: data?.error || ''
+      });
+    }
     return await res.json();
   } finally {
     clearTimeout(timer);
@@ -1731,7 +1840,7 @@ async function dispatchTrustedYahooMessageSend(tab, messageText) {
     }
     await chrome.tabs.update(tabId, { active: true }).catch(() => null);
     if (tab?.windowId && chrome.windows?.update) {
-      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
+      await updateYahooWindow(tab.windowId, { focused: true }).catch(() => null);
     }
     await chrome.debugger.attach(target, '1.3');
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
@@ -1950,6 +2059,7 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         pin,
+        foreground_token:yahooForegroundToken,
         windowTitle: String(context.windowTitle || context.title || '').slice(0, 200)
       })
     });
@@ -2747,7 +2857,7 @@ async function dispatchTrustedPaymentActionClick(tab, action) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -3134,7 +3244,7 @@ async function focusPaymentInteractionTab(tab) {
   if (!tabId) return null;
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -3932,7 +4042,7 @@ async function dispatchTrustedStoreConfirmationCheckboxes(tab) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -4103,7 +4213,7 @@ async function dispatchTrustedStoreConfirmationClick(tab, action) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -4558,7 +4668,7 @@ async function dispatchTrustedConfirmReceiptCheckboxClick(tab) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -5784,12 +5894,13 @@ async function captureManualCaptchaImageWithDebugger(tabId, rectResult) {
   }
 }
 
-async function captureManualCaptchaImage(tab) {
+async function captureManualCaptchaImage(tab) {return withYahooForeground(()=>captureManualCaptchaImageUnlocked(tab));}
+async function captureManualCaptchaImageUnlocked(tab) {
   const tabId = tab?.id;
   if (!tabId) throw new Error('captcha tab id is required');
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true },yahooForegroundToken).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(500);
@@ -5894,7 +6005,7 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -5956,12 +6067,12 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
   }
 }
 
-async function focusManualPinTabForSystemInput(tabId) {
+async function focusManualPinTabForSystemInput(tabId,ownedToken) {
   if (!tabId) return null;
   const currentTab = await chrome.tabs.get(tabId).catch(() => null);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true, state: 'normal' }).catch(() => {
-      return chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true, state: 'normal' },ownedToken).catch(() => {
+      return updateYahooWindow(currentTab.windowId, { focused: true },ownedToken).catch(() => {});
     });
   }
   await chrome.tabs.update(tabId, { active: true, highlighted: true }).catch(() => {
@@ -5970,17 +6081,24 @@ async function focusManualPinTabForSystemInput(tabId) {
   await sleep(300);
   const latestTab = await chrome.tabs.get(tabId).catch(() => null);
   if (latestTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(latestTab.windowId, { focused: true, state: 'normal' }).catch(() => {
-      return chrome.windows.update(latestTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(latestTab.windowId, { focused: true, state: 'normal' },ownedToken).catch(() => {
+      return updateYahooWindow(latestTab.windowId, { focused: true },ownedToken).catch(() => {});
     });
   }
   await sleep(500);
   return latestTab || currentTab;
 }
 
-async function fillManualPinAnswer(tabId, answer) {
-  const pinTab = await focusManualPinTabForSystemInput(tabId);
-  const systemResult = await typeManualPinWithSystemKeyboard(answer, { windowTitle: pinTab?.title || '' });
+async function fillManualPinAnswer(tabId, answer) {return withYahooForeground(()=>fillManualPinAnswerUnlocked(tabId,answer));}
+async function fillManualPinAnswerUnlocked(tabId, answer) {
+  const pinTab = await focusManualPinTabForSystemInput(tabId,yahooForegroundToken);
+  const binding=await getYahooBinding();
+  let windowTitle=pinTab?.title || '';
+  if(binding) {
+    windowTitle=`GDAIPAI-${binding.accountId}-${pluginInstanceId}-PIN`;
+    await chrome.scripting.executeScript({target:{tabId},func:title=>{document.title=title;},args:[windowTitle]});
+  }
+  const systemResult = await typeManualPinWithSystemKeyboard(answer, { windowTitle });
   console.log('[Yahoo Bid] Manual PIN system keyboard result:', systemResult?.success ? 'success' : 'failed', systemResult?.diagnostics || systemResult?.error || '');
   await postPluginDiagnostic({
     type: 'pin',
@@ -5991,6 +6109,7 @@ async function fillManualPinAnswer(tabId, answer) {
     diagnostics: systemResult?.diagnostics || systemResult?.error || ''
   });
   if (systemResult?.success) return systemResult;
+  if(binding) return systemResult; // A partial native PIN input must not be replayed via another method.
   console.warn('[Yahoo Bid] System keyboard PIN input failed, falling back to debugger:', systemResult?.error || systemResult);
 
   const trustedResult = await dispatchTrustedManualPinKeys(tabId, answer);
@@ -6534,7 +6653,7 @@ async function activateTabForBundleAction(tab) {
   if (!tabId) return;
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -6587,7 +6706,7 @@ async function dispatchTrustedBundleActionClick(tab, action) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await chrome.windows.update(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -7005,6 +7124,7 @@ async function executeTransactionStartJob(job) {
   const beforeTabIds = await getTabIds();
   try {
     if (!await isTransactionStartEligible(job.orderId)) {
+      await releaseWorkJobs('transaction-start', [job]);
       return { processedProductIds: [job.productId] };
     }
     tab = await openTransactionPage(job, beforeTabIds);
@@ -7022,6 +7142,7 @@ async function executeTransactionStartJob(job) {
     }
     const info = response.info || {};
     if (!await isTransactionStartEligible(job.orderId, info.available ? info.productIds || [] : [])) {
+      await releaseWorkJobs('transaction-start', [job]);
       return { processedProductIds: [job.productId] };
     }
     const initialState = await getBundleActionState(tab.id).catch(() => null);
@@ -7046,6 +7167,7 @@ async function executeTransactionStartJob(job) {
       }
       const bundleProductIds = info.productIds || [];
       if (!await isTransactionStartEligible(job.orderId, bundleProductIds)) {
+        await releaseWorkJobs('transaction-start', [job]);
         return { processedProductIds: [job.productId] };
       }
       const result = await completeNormalBundleRequest(tab);
@@ -7077,6 +7199,7 @@ async function executeTransactionStartJob(job) {
       return { processedProductIds: bundleProductIds };
     }
     if (!await isTransactionStartEligible(job.orderId)) {
+      await releaseWorkJobs('transaction-start', [job]);
       return { processedProductIds: [job.productId] };
     }
     const singleStartResult = await startNormalSingleTransaction(tab);
@@ -7124,18 +7247,21 @@ async function executeTransactionStartJob(job) {
 
 async function runTransactionStartJobs(options = {}) {
   const jobs = await fetchTransactionStartJobs(options);
+  return withWorkBatch('transaction-start',jobs,async started => {
   if (options.processNormalJobs === false) {
     return;
   }
   const processedProducts = new Set();
   for (const job of jobs) {
     if (processedProducts.has(String(job.productId || '').toLowerCase())) continue;
+    started(job);
     const result = await executeTransactionStartJob(job);
     for (const productId of result?.processedProductIds || []) {
       processedProducts.add(String(productId || '').toLowerCase());
     }
     if (result?.stop) break;
   }
+  });
 }
 
 async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
@@ -7268,6 +7394,7 @@ async function executePendingShipmentScanJob(job) {
     }
     const payload = buildScanStatusPayload({ ...job, result });
     if (payload) await updateScanStatus(payload);
+    else await releaseWorkJobs('scan',[job]);
     return { stop: false };
   } catch (e) {
     console.warn('[Yahoo Bid] Pending shipment scan job failed:', e.message || e);
@@ -7400,6 +7527,7 @@ async function executeWaitingShippingScanJob(job) {
     if (!response?.success) return { stop: false };
     const payload = buildScanStatusPayload({ ...job, result: response.result });
     if (payload) await updateScanStatus(payload);
+    else await releaseWorkJobs('scan',[job]);
     return { stop: false };
   } catch (e) {
     console.warn('[Yahoo Bid] Waiting shipping scan job failed:', e.message || e);
@@ -7504,6 +7632,7 @@ async function executePendingBundleScanJob(job) {
     if (result?.type && !noProgressReported) {
       await postScanDiagnostic(job, result, `bundle scan no progress: ${result.type}`);
     }
+    if (result?.type && result.type !== 'unknown') await releaseWorkJobs('scan',[job]);
     return { stop: false };
   } catch (e) {
     await postScanDiagnostic(job, null, `pending bundle scan failed: ${e.message || e}`, 'error').catch(() => {});
@@ -7516,9 +7645,11 @@ async function executePendingBundleScanJob(job) {
 
 async function runScanJobs() {
   const jobs = await fetchScanJobs();
+  return withWorkBatch('scan',jobs,async started => {
   const processedBundleGroups = new Set();
   for (const job of jobs) {
     if (job.bundleGroupId && processedBundleGroups.has(job.bundleGroupId)) continue;
+    started(job);
     const result = job.orderStatus === 'pending_bundle'
       ? await executePendingBundleScanJob(job)
       : (job.orderStatus === 'pending_shipment'
@@ -7529,6 +7660,7 @@ async function runScanJobs() {
     }
     if (result?.stop) break;
   }
+  });
 }
 
 async function executePaymentJob(job, paymentBatch = {}) {
@@ -7731,7 +7863,9 @@ async function runPaymentJobs() {
     await updatePaymentStatus({ empty: true });
     return;
   }
+  return withWorkBatch('payment',jobs,async started => {
   for (const job of jobs) {
+    started(job);
     try {
       const paymentResult = await executePaymentJob(job, result);
       if (paymentResult?.cancelled) {
@@ -7748,6 +7882,7 @@ async function runPaymentJobs() {
       break;
     }
   }
+  });
 }
 
 async function executeConfirmReceiptJob(job) {
@@ -7775,6 +7910,7 @@ async function executeConfirmReceiptJob(job) {
         });
         return { success: true, pendingShipment: true };
       }
+      await releaseWorkJobs('confirm-receipt',[job]);
       return { success: true, skippedCancelCheck: true };
     } finally {
       await closeTabsForTransactionFlow(tab, beforeTabIds);
@@ -7996,7 +8132,9 @@ async function runConfirmReceiptJobs() {
     await updateConfirmReceiptStatus({ empty: true });
     return 0;
   }
+  return withWorkBatch('confirm-receipt',jobs,async started => {
   for (const job of jobs) {
+    started(job);
     try {
       await executeConfirmReceiptJob(job);
     } catch (error) {
@@ -8005,6 +8143,7 @@ async function runConfirmReceiptJobs() {
     }
   }
   return jobs.length;
+  });
 }
 
 async function syncIdleYahooPages() {
@@ -8149,22 +8288,41 @@ async function executeNextWorkflowAction() {
 
 async function executeBidTask(task, options = {}) {
   if (!task?.id) return;
+  const reportStatus=(id,status,error,extra={})=>markTaskStatus(id,status,error,{...extra,executionClaim:task.claim_token});
+  if(task.claim_token) yahooActiveBidClaims.set(Number(task.id),task.claim_token);
   console.log('[Yahoo Bid] Executing task:', task.product_url);
   let taskTab = null;
   let taskTimedOut = false;
   let bidStage = 'start';
+  let leaseHeartbeatTimer;
+  let leaseHeartbeatRunning=false;
   const taskExecutionTimeoutMs = getTaskExecutionTimeoutMs(task);
   const taskProgressExtensionMs = getTaskProgressExtensionMs(task);
   const taskExecutionMaxTimeoutMs = getTaskExecutionMaxTimeoutMs(task);
   try {
+    if(task.claim_token) leaseHeartbeatTimer=setInterval(async()=>{
+      if(leaseHeartbeatRunning || taskTimedOut) return;
+      leaseHeartbeatRunning=true;
+      try {
+        const lease=await heartbeatProcessingTask(task.id, task.claim_token);
+        if(!lease?.success) {
+          taskTimedOut=true;
+          await closeManagedTaskTabs(task.id,taskTab?.id);
+        }
+      } finally {leaseHeartbeatRunning=false;}
+    },15000);
     await withProgressTimeout((async () => {
           if (!options.alreadyClaimed) {
           bidStage = 'claim-processing';
-          const markedProcessing = await markTaskStatus(task.id, 'processing');
+          const markedProcessing = await reportStatus(task.id, 'processing');
           if (taskTimedOut) return;
           if (!markedProcessing?.success) {
             console.log('[Yahoo Bid] Task skipped because it is no longer active:', task.id);
             return;
+          }
+          if(markedProcessing.claim_token) {
+            task.claim_token=markedProcessing.claim_token;
+            yahooActiveBidClaims.set(Number(task.id),task.claim_token);
           }
           }
           bidStage = 'open-task-page';
@@ -8189,6 +8347,13 @@ async function executeBidTask(task, options = {}) {
             return;
           }
           bidStage = 'execute-bid';
+          if(task.claim_token) {
+            const lease=await heartbeatProcessingTask(task.id, task.claim_token);
+            if(!lease?.success) {
+              await closeManagedTaskTabs(task.id,tab.id);
+              throw new Error('任务领取已失效，已停止出价');
+            }
+          }
           const result = await executeTaskInTabV2(tab, task);
           if (taskTimedOut) return;
           await chrome.storage.session.remove(['currentTask']);
@@ -8198,12 +8363,12 @@ async function executeBidTask(task, options = {}) {
             // 之前直接 touchTaskSchedule 会把 status 写回 task.status（pending），
             // 导致下一轮轮询又取出来执行，陷入死循环。这里直接标 bidding。
             if (isDirectTask(task)) {
-              await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true });
+              await reportStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: true });
             } else {
-              await touchTaskSchedule(task.id, task.status);
+              await touchTaskSchedule(task.id, task.status, task.claim_token);
             }
           } else {
-            await markTaskStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
+            await reportStatus(task.id, 'bidding', null, { bid_price: result?.bidPrice, no_bid: result?.noBid, not_highest: result?.notHighest });
           }
           if (!shouldKeepTaskTabOpen(task, result)) {
             bidStage = 'close-success-tab';
@@ -8216,7 +8381,7 @@ async function executeBidTask(task, options = {}) {
       registerProgressHandler: taskProgressExtensionMs
         ? extend => registerBidProgressExtender(task.id, msg => {
           const remainingMs = extend();
-          heartbeatProcessingTask(task.id).catch(() => {});
+          heartbeatProcessingTask(task.id, task.claim_token).catch(() => {});
           console.debug('[Yahoo Bid] Extended multi-bid task timeout:', task.id, msg?.stage || '', Math.round(remainingMs / 1000) + 's remaining');
         })
         : null,
@@ -8227,7 +8392,7 @@ async function executeBidTask(task, options = {}) {
     });
   } catch (e) {
     await chrome.storage.session.remove(['currentTask']);
-    if (isTransientServerTabError(e) && !options.tabRetryAttempted && !taskTimedOut) {
+    if (!task.claim_token && isTransientServerTabError(e) && !options.tabRetryAttempted && !taskTimedOut) {
       console.warn('[Yahoo Bid] Retrying task after transient server tab error:', task.id, e.message || e);
       if (taskTab?.id) await closeManagedTaskTabs(task.id, taskTab.id).catch(() => {});
       await sleep(1000);
@@ -8238,7 +8403,7 @@ async function executeBidTask(task, options = {}) {
         preserveActiveRun: true
       });
     }
-    if (isRetryableBidTimeoutFailure(e, { timedOut: taskTimedOut }) && !options.timeoutRetryAttempted) {
+    if (!task.claim_token && isRetryableBidTimeoutFailure(e, { timedOut: taskTimedOut }) && !options.timeoutRetryAttempted) {
       console.warn('[Yahoo Bid] Retrying task once after bid timeout failure:', task.id, e.message || e);
       if (taskTab?.id) await closeManagedTaskTabs(task.id, taskTab.id).catch(() => {});
       await sleep(1000);
@@ -8259,7 +8424,7 @@ async function executeBidTask(task, options = {}) {
       const recoveredResult = buildBuyoutPendingFinalResult(task, {
         stage: 'buyout-final-message-disconnected-after-delayed-completion'
       });
-      await markTaskStatus(task.id, 'bidding', null, {
+      await reportStatus(task.id, 'bidding', null, {
         bid_price: recoveredResult.bidPrice,
         no_bid: recoveredResult.noBid,
         not_highest: recoveredResult.notHighest
@@ -8291,12 +8456,14 @@ async function executeBidTask(task, options = {}) {
       url: tabSnapshot.url || '',
       timedOut: taskTimedOut
     });
-    if (taskTab?.id && e.closeTab) {
+    if (taskTab?.id && (e.closeTab || task.claim_token)) {
       await closeManagedTaskTabs(task.id, taskTab.id);
     }
-    await markTaskStatus(task.id, 'failed', finalError.message);
+    await reportStatus(task.id, 'failed', finalError.message, {error_code:finalError.errorCode, result_unknown:finalError.resultUnknown !== false});
     releaseManagedTaskTabs(task.id);
   } finally {
+    if(leaseHeartbeatTimer) clearInterval(leaseHeartbeatTimer);
+    if(yahooActiveBidClaims.get(Number(task.id))===task.claim_token) yahooActiveBidClaims.delete(Number(task.id));
     if (!options.preserveActiveRun) activeBidRuns.delete(task.id);
   }
 }
@@ -8467,6 +8634,10 @@ startPolling();
 
 // Listen for messages from content script or client page
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if(msg.type==='YAHOO_BINDING_CAN_CHANGE') {
+    sendResponse({idle:activeBidRuns.size===0 && !workflowRunning && !monitorRunning && !yahooMessagesRunning && !manualVerificationFlowActive});
+    return false;
+  }
   if (msg.type === 'BID_PROGRESS') {
     const extended = handleBidProgressMessage(msg);
     if (sendResponse) sendResponse({ success: extended });
@@ -8474,6 +8645,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'BID_RESULT') {
     const { taskId, result } = msg;
+    if(chrome.storage?.local && (!msg.claimToken ||
+        yahooActiveBidClaims.get(Number(taskId))!==msg.claimToken ||
+        yahooTaskClaims.get(Number(taskId))!==msg.claimToken ||
+        !managedTaskTabIdsByTaskId.get(taskId)?.has(sender?.tab?.id))) {
+      sendResponse?.({success:false,error:'stale bid execution'});
+      return;
+    }
     if (result?.pendingFinal) {
       console.log('[Yahoo Bid] Waiting for final confirmation page:', taskId, result.stage);
       return;
@@ -8482,12 +8660,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (result.success) {
       if (result.noStatus) {
         // 已是最高价且新出价≤自动入札上限，跳过出价。直接标 bidding，避免任务一直停留 processing/pending。
-        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: true });
+        markTaskStatus(taskId, 'bidding', null, { executionClaim:msg.claimToken, bid_price: result.bidPrice, no_bid: true });
       } else {
-        markTaskStatus(taskId, 'bidding', null, { bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest });
+        markTaskStatus(taskId, 'bidding', null, { executionClaim:msg.claimToken, bid_price: result.bidPrice, no_bid: result.noBid, not_highest: result.notHighest });
       }
     } else {
-      markTaskStatus(taskId, 'failed', result.error || 'bid failed');
+      markTaskStatus(taskId, 'failed', result.error || 'bid failed', {executionClaim:msg.claimToken,error_code:result.errorCode,result_unknown:result.resultUnknown !== false});
     }
     pollAndExecute();
   } else if (msg.type === 'PRODUCT_DATA_REMOVED') {

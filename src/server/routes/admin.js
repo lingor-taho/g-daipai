@@ -149,6 +149,14 @@ function getOrderStatusRefreshText(orderStatus) {
 
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
+const yahooAccounts = require('../services/yahooAccounts');
+const accountScope = require('../services/yahooAccountContext');
+router.use((req,res,next)=>{
+  const id=Number(req.body?.account_id || req.query.account_id || 0);
+  if(!id) return next();
+  if(!Number.isSafeInteger(id) || !db.raw.prepare('SELECT id FROM yahoo_accounts WHERE id=?').get(id)) return res.status(400).json({error:'Yahoo 账号不存在'});
+  accountScope.run({accountId:id},next);
+});
 
 function parseTaskTimeMs(value) {
   let input = String(value || '').trim();
@@ -194,7 +202,7 @@ function getNextExecuteAt(task, multiBidConfig, nowMs = Date.now()) {
 
 function buildAdminTasksListQuery({ pageSize, offset }) {
   return {
-    sql: `SELECT t.id,
+    sql: `SELECT t.id, t.account_id, t.execution_unknown,
             t.user_id,
             t.product_id,
             t.max_price,
@@ -239,7 +247,7 @@ function buildAdminTasksListQuery({ pageSize, offset }) {
 
 function buildAdminPendingTasksQuery() {
   return {
-    sql: `SELECT t.id,
+    sql: `SELECT t.id, t.account_id, t.execution_unknown,
             t.product_id,
             p.product_title AS product_title,
             CASE WHEN COALESCE(t.bid_mode, 'bid') = 'buyout'
@@ -410,7 +418,7 @@ function buildOrderStatusDebugOrdersQuery(productId) {
 
 function buildOrderStatusDebugTasksQuery(productId) {
   return {
-    sql: `SELECT t.id,
+    sql: `SELECT t.id, t.account_id, t.execution_unknown,
             t.product_id,
             t.status,
             t.strategy,
@@ -429,7 +437,7 @@ function buildOrderStatusDebugTasksQuery(productId) {
 
 function buildProductDebugTasksQuery(productId) {
   return {
-    sql: `SELECT t.id,
+    sql: `SELECT t.id, t.account_id, t.execution_unknown,
             t.user_id,
             u.username,
             t.product_id,
@@ -1161,6 +1169,32 @@ async function reassignOrderOwner(database, { orderId, userId }) {
     throw error;
   }
 
+  if (database.raw) {
+    // Preserve the original admin operation: move this product's history from
+    // the old user to the new user. Allocations on other accounts remain held;
+    // changing an order's user must not impose a new submission restriction.
+    return accountScope.run(null, () => database.raw.transaction(() => {
+      const current=database.raw.prepare(`SELECT o.account_id,o.task_id,t.product_id,t.user_id
+        FROM orders o JOIN tasks t ON t.id=o.task_id WHERE o.id=?`).get(normalizedOrderId);
+      if(!current) throw yahooAccounts.fail('订单不存在',404);
+      const assigned=database.raw.prepare('SELECT * FROM yahoo_product_assignments WHERE product_id=? AND account_id=?').get(current.product_id,current.account_id);
+      const target=database.raw.prepare('SELECT account_id FROM yahoo_product_assignments WHERE product_id=? AND user_id=?').get(current.product_id,normalizedUserId);
+      if(current.user_id===normalizedUserId) return {success:true,orderId:normalizedOrderId,userId:normalizedUserId,username:user.username,taskCount:0};
+      const changed=String(current.product_id || '').trim() && current.user_id!==null
+        ? database.raw.prepare(`UPDATE tasks SET user_id=?,updated_at=CURRENT_TIMESTAMP
+            WHERE product_id=? AND user_id=?`).run(normalizedUserId,current.product_id,current.user_id)
+        : database.raw.prepare('UPDATE tasks SET user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(normalizedUserId,current.task_id);
+      // When the target already has another account allocation, preserve both
+      // original bid allocations. The existing order is authoritative for won
+      // sync and payment; it keeps its Yahoo account and its newly chosen user.
+      if ((!target || target.account_id===current.account_id) && (!assigned || [current.user_id,normalizedUserId].includes(assigned.user_id))) {
+        database.raw.prepare(`INSERT INTO yahoo_product_assignments(product_id,account_id,user_id,task_id) VALUES(?,?,?,?)
+          ON CONFLICT(product_id,account_id) DO UPDATE SET user_id=excluded.user_id,task_id=excluded.task_id`).run(current.product_id,current.account_id,normalizedUserId,current.task_id);
+      }
+      return {success:true,orderId:normalizedOrderId,userId:normalizedUserId,username:user.username,taskCount:changed.changes};
+    })());
+  }
+
   if (Number(order.old_user_id) === normalizedUserId) {
     return {
       success: true,
@@ -1389,57 +1423,31 @@ router.delete('/server-accounts/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// 账号管理
-router.get('/accounts', async (req, res) => {
-  const { current = 1, pageSize = 10 } = req.query;
-  const offset = (current - 1) * pageSize;
-  const items = await db.getAll(
-    `SELECT * FROM yahoo_accounts ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    [pageSize, offset]
-  );
-  const countResult = await db.getOne('SELECT COUNT(*) as total FROM yahoo_accounts');
-  res.json({ items, total: countResult?.total || 0 });
-});
-
-router.post('/accounts', async (req, res) => {
-  const { account_name, email, profile_dir } = req.body;
-  if (!account_name || !email) {
-    return res.status(400).json({ error: 'account_name and email are required' });
-  }
+// Yahoo execution accounts; administrative server logins remain separate.
+router.get('/accounts',(req,res)=>{ const items=yahooAccounts.list(db,Date.now(),true); res.json({items,total:items.length}); });
+router.post('/accounts',(req,res)=>{try{res.json(yahooAccounts.save(db,req.body));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
+router.put('/accounts/:id',(req,res)=>{try{res.json(yahooAccounts.save(db,req.body,req.params.id));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
+router.delete('/accounts/:id',(req,res)=>{try{res.json(yahooAccounts.remove(db,req.params.id));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
+router.post('/accounts/:id/work-claims/:kind/:objectId/release',(req,res)=>{
   try {
-    await db.query(
-      'INSERT INTO yahoo_accounts (account_name, email, profile_dir) VALUES (?, ?, ?)',
-      [account_name, email, profile_dir]
-    );
-    const inserted = await db.getOne('SELECT last_insert_rowid() as id');
-    res.json({ success: true, id: inserted.id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const id=Number(req.params.id);
+    const account=yahooAccounts.list(db).find(a=>a.id===id);
+    if(!account || account.online || req.body?.confirmed!==true) throw yahooAccounts.fail('请先关闭该账号插件，核对 Yahoo 实际结果后确认释放');
+    db.raw.prepare('DELETE FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=?').run(id,req.params.kind,Number(req.params.objectId));
+    if(req.params.kind==='manual-order-import') db.raw.prepare("UPDATE manual_order_import_batches SET status='requested' WHERE id=? AND account_id=? AND status='scanning'").run(Number(req.params.objectId),id);
+    res.json({success:true});
+  } catch(e) {res.status(e.statusCode||500).json({error:e.message});}
 });
-
-router.put('/accounts/:id', async (req, res) => {
-  const { account_name, email, profile_dir, status, error_msg } = req.body;
-  if (!account_name || !email) {
-    return res.status(400).json({ error: 'account_name and email are required' });
-  }
+router.post('/tasks/:id/resolve-unknown',(req,res)=>{
   try {
-    await db.query(
-      `UPDATE yahoo_accounts
-       SET account_name = ?, email = ?, profile_dir = ?, status = ?, error_msg = ?
-       WHERE id = ?`,
-      [account_name, email, profile_dir || null, status || 'idle', error_msg || null, req.params.id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const task=db.raw.prepare('SELECT id,account_id,status,execution_unknown FROM tasks WHERE id=?').get(Number(req.params.id));
+    if(!task?.execution_unknown || !['failed','cancelled'].includes(task.status) || req.body?.confirmed!==true || req.body?.resolution!=='no_bid') throw yahooAccounts.fail('只允许核实结果不明且已停止的任务');
+    if(yahooAccounts.list(db).find(a=>a.id===task.account_id)?.online) throw yahooAccounts.fail('请先关闭该账号插件及原出价页面，核对 Yahoo 没有该商品入札后再解除');
+    db.raw.prepare("UPDATE tasks SET execution_unknown=0,claim_token=NULL,claim_instance=NULL,error_msg='已人工核实无入札，可重新提交',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(task.id);
+    res.json({success:true});
+  } catch(e) {res.status(e.statusCode||500).json({error:e.message});}
 });
 
-router.delete('/accounts/:id', async (req, res) => {
-  await db.query('DELETE FROM yahoo_accounts WHERE id = ?', [req.params.id]);
-  res.json({ success: true });
-});
 
 // 账号统计
 router.get('/accounts/stats', async (req, res) => {
@@ -1969,6 +1977,7 @@ async function rollbackOrderSettlement(database, rawProductId) {
 
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
+            o.account_id,
             o.order_status,
             o.settled_at,
             o.total_amount_cny,
@@ -2102,6 +2111,7 @@ async function repairNormalBundle(database, payload = {}, options = {}) {
   const placeholders = productIds.map(() => '?').join(',');
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
+            o.account_id,
             o.order_status,
             o.bundle_group_id,
             o.settled_at,
@@ -2128,6 +2138,7 @@ async function repairNormalBundle(database, payload = {}, options = {}) {
     error.statusCode = 400;
     throw error;
   }
+  if(new Set(rows.map(row=>Number(row.account_id || 1))).size!==1) throw yahooAccounts.fail('同捆商品必须使用同一个 Yahoo 成交账号',400);
   const userIds = new Set(rows.map(row => Number(row.user_id)));
   if (userIds.size !== 1) {
     const error = new Error('同捆商品必须属于同一个用户');
@@ -2247,6 +2258,7 @@ async function backfillStoreBundle(database, payload = {}, options = {}) {
   const placeholders = allProductIds.map(() => '?').join(',');
   const rows = await database.getAll(
     `SELECT o.id AS order_id,
+            o.account_id,
             o.order_status,
             t.product_id,
             COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type
@@ -2257,6 +2269,7 @@ async function backfillStoreBundle(database, payload = {}, options = {}) {
        AND t.status = 'success'`,
     allProductIds
   );
+  if(new Set(rows.map(row=>Number(row.account_id || 1))).size!==1) throw yahooAccounts.fail('同捆商品必须使用同一个 Yahoo 成交账号',400);
   assertStoreBundleBackfillRows({ mainProductId, childProductIds, rows });
 
   const byProductId = new Map(rows.map(row => [String(row.product_id || '').toLowerCase(), row]));
@@ -2826,16 +2839,19 @@ router.put('/multi-bid-config', async (req, res) => {
 });
 
 router.post('/transaction-start/request', async (req, res) => {
+  await eachYahooAccount(async()=>{
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_requested', '1', CURRENT_TIMESTAMP)`
   );
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('transaction_start_requested_source', 'manual', CURRENT_TIMESTAMP)`
   );
+  });
   res.json({ success: true });
 });
 
 router.post('/confirm-receipt/request', async (req, res) => {
+  await eachYahooAccount(async()=>{
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_alert_message', '', CURRENT_TIMESTAMP)`
   );
@@ -2845,8 +2861,15 @@ router.post('/confirm-receipt/request', async (req, res) => {
   await db.query(
     `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('confirm_receipt_requested_source', 'manual', CURRENT_TIMESTAMP)`
   );
+  });
   res.json({ success: true });
 });
+
+async function eachYahooAccount(callback){
+  if(accountScope.accountId()) return callback();
+  const results=[];for(const a of yahooAccounts.list(db)) results.push(await accountScope.run({accountId:a.id},callback));
+  return {accounts:results};
+}
 
 async function requestScan(database = db) {
   const row = await database.getOne(
@@ -2906,7 +2929,10 @@ async function requestPayment(database = db, orderIds = []) {
     ]
   );
   if ((result.rowCount || 0) > 0) {
-    await saveConfigValue(database, 'payment_requested', '1');
+    if(database.raw) {
+      const accounts=database.raw.prepare('SELECT DISTINCT account_id FROM orders WHERE id IN ('+placeholders+") AND order_status='pending_settlement'").all(...ids);
+      for(const a of accounts) await accountScope.run({accountId:a.account_id},()=>saveConfigValue(database,'payment_requested','1'));
+    } else await saveConfigValue(database, 'payment_requested', '1');
   }
   return { requested: result.rowCount || 0 };
 }
@@ -3028,6 +3054,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     error.statusCode = 404;
     throw error;
   }
+  if(batch.account_id && accountScope.accountId()!==batch.account_id) return accountScope.run({accountId:batch.account_id},()=>confirmManualOrderImport(batchId,assignments,database));
   if (!['ready', 'confirmed'].includes(String(batch.status || ''))) {
     const error = new Error('import batch is not ready');
     error.statusCode = 400;
@@ -3097,6 +3124,12 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
   for (const item of items) {
     const productId = normalizeImportProductId(item.product_id);
     if (!productId || !item.assigned_user_id) continue;
+    if(database.raw && batch.account_id) {
+      const otherOrder=database.raw.prepare('SELECT id FROM orders WHERE product_id=? AND account_id<>?').get(productId,batch.account_id);
+      if(otherOrder) throw yahooAccounts.fail('商品已有其他 Yahoo 账号成交记录，请核对来源账号');
+      const owner=database.raw.prepare('SELECT user_id,account_id FROM yahoo_product_assignments WHERE product_id=? AND (account_id=? OR user_id=?)').all(productId,batch.account_id,item.assigned_user_id);
+      if(owner.some(o=>o.user_id!==item.assigned_user_id || o.account_id!==batch.account_id)) throw yahooAccounts.fail('导入用户与该商品的 Yahoo 账号归属冲突，请先核对');
+    }
     const existing = await database.getOne(
       `SELECT o.id
        FROM orders o
@@ -3156,6 +3189,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
       ]
     );
     const orderRow = await database.getOne('SELECT last_insert_rowid() AS id');
+    if(database.raw && batch.account_id) database.raw.prepare('INSERT INTO yahoo_product_assignments(product_id,account_id,user_id,task_id) VALUES(?,?,?,?) ON CONFLICT(product_id,account_id) DO UPDATE SET task_id=excluded.task_id').run(productId,batch.account_id,item.assigned_user_id,taskRow.id);
     await database.query(
       `UPDATE manual_order_import_items
        SET status = 'imported', task_id = ?, order_id = ?, updated_at = CURRENT_TIMESTAMP
@@ -3178,7 +3212,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
 }
 
 router.post('/scan/request', async (req, res) => {
-  const result = await requestScan(db);
+  const result = await eachYahooAccount(()=>requestScan(db));
   res.json({ success: true, ...result });
 });
 
@@ -3258,7 +3292,7 @@ router.post('/manual-captcha/close', async (req, res) => {
   res.json({ success: true, ...result });
 });
 
-router.get('/idle-flags', async (req, res) => {
+async function getAccountIdleFlags() {
   await ensureScheduledTransactionStartRequest(db);
   await ensureScheduledConfirmReceiptRequest(db);
   const rows = await db.getAll(
@@ -3320,7 +3354,7 @@ router.get('/idle-flags', async (req, res) => {
   );
   const manualImportFlags = normalizeManualOrderImportSummary(manualImportSummary);
 
-  res.json({
+  return {
     success: true,
     transactionStartFlag,
     transactionStartRequested: transactionStartRequested ? 1 : 0,
@@ -3345,7 +3379,18 @@ router.get('/idle-flags', async (req, res) => {
     shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt),
     googleSheetAlerts: await getGoogleSheetAlerts(db),
     auctionHistoryAlerts: auctionHistory.getAlerts(db)
-  });
+  };
+}
+router.get('/idle-flags',async(req,res)=>{
+  const items=[];
+  for(const a of yahooAccounts.list(db)) {
+    const flags=await accountScope.run({accountId:a.id},getAccountIdleFlags);
+    const login=await accountScope.run({accountId:a.id},()=>db.getAll("SELECT key,value,updated_at FROM config WHERE key IN ('yahoo_login_status','yahoo_login_message')"));
+    const values=Object.fromEntries(login.map(row=>[row.key,row.value]));
+    const workClaims=db.raw.prepare('SELECT kind,object_id,instance_id,created_at FROM yahoo_work_claims WHERE account_id=?').all(a.id);
+    items.push({...flags,workClaims,instance_id:a.instance_id,account_id:a.id,account_name:a.account_name,yahoo_id:a.yahoo_id,is_primary:a.is_primary,online:a.online,enabled:a.enabled,yahooLogin:{status:values.yahoo_login_status||'unknown',message:values.yahoo_login_message||''}});
+  }
+  res.json({...items.find(a=>a.is_primary),accounts:items});
 });
 
 router.post('/auction-history-alerts/:id/close', (req,res) => res.json(auctionHistory.closeAlert(db,String(req.params.id))));

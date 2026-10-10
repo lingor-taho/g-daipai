@@ -8,6 +8,89 @@ body,
   display: none;
 }
 
+.yahoo-status-lights {
+  position: relative;
+  line-height: 1;
+}
+
+.yahoo-status-lights-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.yahoo-status-lights-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 28px);
+  gap: 8px;
+}
+
+.yahoo-status-light,
+.yahoo-status-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.yahoo-status-light:hover,
+.yahoo-status-expand:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.yahoo-status-light:focus-visible,
+.yahoo-status-expand:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 1px;
+}
+
+.yahoo-status-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.yahoo-status-dot-green { background: #52c41a; }
+.yahoo-status-dot-red { background: #ff4d4f; }
+.yahoo-status-lights-extra { margin-top: 8px; }
+
+.yahoo-status-lights-header .yahoo-status-lights-grid {
+  grid-template-columns: repeat(4, 22px);
+  gap: 4px;
+}
+
+.yahoo-status-lights-header .yahoo-status-light,
+.yahoo-status-lights-header .yahoo-status-expand {
+  width: 22px;
+  height: 28px;
+  color: #fff;
+}
+
+.yahoo-status-lights-header .yahoo-status-lights-extra {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1100;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
 .admin-bottom-nav-link {
   display: flex;
   min-width: 0;
@@ -80,6 +163,15 @@ body,
 }
 
 @media (max-width: 767px) {
+  .admin-header .admin-header-title { font-size: 14px !important; }
+  .admin-header .admin-header-actions { gap: 6px !important; }
+  .admin-header .admin-header-username {
+    display: block;
+    max-width: 32px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
+  }
   .admin-header {
     height: 52px !important;
     padding-inline: 12px !important;

@@ -1,8 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Yahoo Auto Bid Agent",
-  "version": "1.0.0",
-  "permissions": ["alarms", "storage", "tabs", "scripting", "debugger"],
+  "version": "2.0.0",
+  "permissions": [
+    "alarms",
+    "storage",
+    "tabs",
+    "scripting",
+    "debugger"
+  ],
   "host_permissions": [
     "https://mail.google.com/*",
     "http://127.0.0.1:3034/*",
@@ -27,11 +33,17 @@
         "http://43.165.177.49/*",
         "http://43.165.177.49:3035/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "action": {
     "default_title": "Yahoo Auto Bid"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   }
 }
