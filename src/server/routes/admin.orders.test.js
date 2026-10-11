@@ -86,8 +86,8 @@ function testParseNormalBundleRepairProductIdsKeepsFirstAsMain() {
 
 async function testRepairNormalBundleUpdatesWholeGroupAtomically() {
   const rows = [
-    { order_id: 51, order_status: 'pending_payment', bundle_group_id: '', settled_at: null, total_amount_cny: null, product_id: 'r1231736698', user_id: 7, product_type: 'normal' },
-    { order_id: 52, order_status: 'pending_bundle', bundle_group_id: 'bundle-old', settled_at: null, total_amount_cny: null, product_id: 'f1236640559', user_id: 7, product_type: 'normal' }
+    { order_id: 51, account_id: 2, order_status: 'pending_payment', bundle_group_id: '', settled_at: null, total_amount_cny: null, product_id: 'r1231736698', user_id: 7, product_type: 'normal' },
+    { order_id: 52, account_id: 2, order_status: 'pending_bundle', bundle_group_id: 'bundle-old', settled_at: null, total_amount_cny: null, product_id: 'f1236640559', user_id: 8, product_type: 'normal' }
   ];
   const queries = [];
   const fakeDb = {
@@ -111,6 +111,7 @@ async function testRepairNormalBundleUpdatesWholeGroupAtomically() {
   assert.match(queries[1].sql, /order_status = 'pending_bundle'/);
   assert.match(queries[1].sql, /bundle_shipping_fee_text = NULL/);
   assert.equal(queries.at(-1).sql, 'COMMIT');
+  assert.equal(queries.some(query => /UPDATE tasks|user_id\s*=|account_id\s*=/.test(query.sql)), false);
 }
 
 function testBuildTrustedInputReportQueries() {

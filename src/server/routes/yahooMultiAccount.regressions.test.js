@@ -45,6 +45,22 @@ async function main(){
   assert.equal(after.length,0);
   assert.equal(db.raw.prepare('SELECT order_status FROM orders WHERE id=?').get(first[1].orderId).order_status,'pending_shipment');
   console.log('Unstarted payment recovery and stale release protection passed.');
+  // Reloaded instances resume the original job selection; active claims remain exclusive.
+  db.raw.prepare("UPDATE orders SET order_status='pending_settlement' WHERE id=?").run(rows[0].orderId);
+  const abandoned=(await request('payment/jobs')).jobs[0];assert(abandoned);
+  assert.equal((await request('payment/jobs')).jobs.length,0,'same active instance cannot claim an order twice');
+  await request('work/check',{kind:'payment',orderId:abandoned.orderId,claimToken:abandoned.claimToken});
+  const oldHeaders={...headers};
+  db.raw.prepare('UPDATE yahoo_accounts SET heartbeat_at=0 WHERE id=?').run(a.id);
+  headers['X-Yahoo-Instance']='review-new-instance-0001';
+  const resumed=(await request('payment/jobs')).jobs[0];assert(resumed);
+  assert.equal(resumed.orderId,abandoned.orderId);assert.notEqual(resumed.claimToken,abandoned.claimToken);
+  const staleCheck=await fetch(base+'/api/plugin/work/check',{headers:oldHeaders,method:'POST',body:JSON.stringify({kind:'payment',orderId:abandoned.orderId,claimToken:abandoned.claimToken})});
+  assert.equal(staleCheck.status,409,'old plugin instance cannot act after takeover');
+  await request('work/release',{kind:'payment',jobs:[{orderId:resumed.orderId,claimToken:abandoned.claimToken}]});
+  await request('work/check',{kind:'payment',orderId:resumed.orderId,claimToken:resumed.claimToken});
+  await request('payment/status',{orderId:resumed.orderId,claim_token:resumed.claimToken,status:'success'});
+  console.log('Reload recovery preserves original job eligibility and fences the previous instance.');
   const b=accounts.save(db,{account_name:'B',email:'b@example.com',profile_dir:'B',yahoo_id:'review-b'}).id;
   const historical=db.raw.prepare("INSERT INTO tasks(account_id,user_id,product_id,max_price,status) VALUES(?,1,?,2000,'failed')").run(b,rows[0].product).lastInsertRowid;
   const reassigned=await admin.reassignOrderOwner(db,{orderId:rows[0].orderId,userId:2});
@@ -74,6 +90,26 @@ async function main(){
   assert.equal(db.raw.prepare('SELECT user_id FROM tasks WHERE id=?').get(rows[0].taskId).user_id,1);
   assert.equal((await admin.reassignOrderOwner(db,{orderId:rows[0].orderId,userId:1})).taskCount,0);
   console.log('Original order owner history scope, existing allocations, won sync and idempotency passed.');
+  // Manual repair follows the Yahoo winning account, regardless of internal owner.
+  db.raw.prepare('UPDATE tasks SET user_id=2 WHERE id=?').run(rows[1].taskId);
+  for(const row of rows) db.raw.prepare("UPDATE orders SET order_status=NULL,total_amount_cny=NULL,settled_at=NULL,transaction_start_error='bundle decide button not found' WHERE id=?").run(row.orderId);
+  const foreignProduct='r123456783';
+  db.raw.prepare("INSERT INTO products(product_id,product_type) VALUES(?,'normal')").run(foreignProduct);
+  const foreignTask=db.raw.prepare("INSERT INTO tasks(account_id,user_id,product_id,max_price,status) VALUES(?,1,?,2000,'success')").run(b,foreignProduct).lastInsertRowid;
+  const foreignOrder=db.raw.prepare('INSERT INTO orders(task_id,product_id,account_id,final_price) VALUES(?,?,?,500)').run(foreignTask,foreignProduct,b).lastInsertRowid;
+  const before=rows.map(row=>db.raw.prepare('SELECT * FROM orders WHERE id=?').get(row.orderId));
+  await assert.rejects(()=>admin.repairNormalBundle(db,{productIdsText:[rows[0].product,foreignProduct].join('\n')}), /同一个 Yahoo 成交账号/);
+  assert.deepEqual(rows.map(row=>db.raw.prepare('SELECT * FROM orders WHERE id=?').get(row.orderId)),before,'cross-account rejection does not change orders');
+  const repaired=await admin.repairNormalBundle(db,{productIdsText:rows.map(row=>row.product).join('\n')});
+  assert.equal(repaired.updated,2);
+  for(const [i,row] of rows.entries()){
+    const order=db.raw.prepare('SELECT * FROM orders WHERE id=?').get(row.orderId);
+    assert.equal(order.order_status,'pending_bundle');assert.equal(order.bundle_group_id,repaired.bundleGroupId);
+    assert.equal(order.transaction_start_error,null);assert.equal(order.account_id,a.id);assert.equal(order.final_price,before[i].final_price);
+    assert.equal(db.raw.prepare('SELECT user_id FROM tasks WHERE id=?').get(row.taskId).user_id,i===0?1:2);
+  }
+  assert.equal(db.raw.prepare('SELECT order_status FROM orders WHERE id=?').get(foreignOrder).order_status,null);
+  console.log('Manual normal bundle repair accepts different users within one Yahoo account and rejects cross-account groups without writes.');
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
  db.raw.close();
 }

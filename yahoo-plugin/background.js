@@ -118,6 +118,8 @@ let yahooBindingPromise;
 const yahooTaskClaims = new Map();
 const yahooActiveBidClaims = new Map();
 const yahooWorkClaims = new Map();
+const yahooPendingWorkReleases = new Map();
+let yahooActiveWorkClaim = null;
 const pluginInstanceId = globalThis.crypto?.randomUUID?.() || `plugin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const pluginInstanceStartedAt = Date.now();
 let yahooInstanceAuthenticated = false;
@@ -141,6 +143,9 @@ chrome.storage?.onChanged?.addListener((changes,area) => {
   }
 });
 async function apiFetch(path, options = {}) {
+  if (/^\/api\/plugin\/(transaction-start|scan|payment|confirm-receipt)\/jobs/.test(path)) {
+    for(const [kind,jobs] of yahooPendingWorkReleases) await releaseWorkJobs(kind,[...jobs.values()]);
+  }
   const binding = await getYahooBinding();
   if (binding) {
     const match = path.match(/\/task\/(\d+)\//);
@@ -605,7 +610,7 @@ async function injectContentScript(tabId, options = {}) {
       if (options.ignoreMissingTab) return false;
       throw e;
     }
-    console.error('[Yahoo Bid] Failed to inject content script:', e);
+    if (!options.reportAtSyncBoundary) console.error('[Yahoo Bid] Failed to inject content script:', e);
     throw e;
   }
 }
@@ -787,6 +792,12 @@ function buildBidError(result, fallbackMessage) {
   error.errorCode = result?.errorCode;
   error.resultUnknown = result?.resultUnknown !== false;
   return error;
+}
+
+function isYahooPageBidFailure(error) {
+  const message = [error?.message, error?.bidResult?.error].filter(Boolean).join(' ');
+  // Same category as the shared "Yahoo页面错误" task label.
+  return /Yahoo bid failed|Yahoo system error page|Yahoo error page|Yahoo.*access failure/i.test(message);
 }
 
 function isRetryableBidTimeoutFailure(error, context = {}) {
@@ -1041,16 +1052,26 @@ async function fetchTransactionStartJobs(options = {}) {
 async function releaseWorkJobs(kind, jobs) {
   const claimed=jobs.filter(job=>job.claimToken).map(job=>({orderId:Number(job.orderId),claimToken:job.claimToken}));
   if (!claimed.length) return;
+  const pending=yahooPendingWorkReleases.get(kind) || new Map();
+  for(const job of claimed) pending.set(job.claimToken,job);
+  yahooPendingWorkReleases.set(kind,pending);
   const response=await apiFetch('/api/plugin/work/release', {
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,jobs:claimed})
   });
-  if (!response.ok) throw new Error('未执行订单的领取释放失败，请核对账号工作状态');
+  if (!response.ok) throw new Error('订单领取释放失败，下一轮重试');
+  for(const job of claimed) pending.delete(job.claimToken);
+  if(!pending.size) yahooPendingWorkReleases.delete(kind);
 }
 
 async function withWorkBatch(kind, jobs, callback) {
-  const unstarted=new Set(jobs);
-  try { return await callback(job=>unstarted.delete(job)); }
-  finally { await releaseWorkJobs(kind,[...unstarted]); }
+  try { return await callback(job=>{yahooActiveWorkClaim=job.claimToken ? {kind,orderId:Number(job.orderId),claimToken:job.claimToken} : null;}); }
+  finally { yahooActiveWorkClaim=null; await releaseWorkJobs(kind,jobs); }
+}
+
+async function assertYahooWorkClaim() {
+  if(!yahooActiveWorkClaim) return;
+  const response=await apiFetch('/api/plugin/work/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(yahooActiveWorkClaim)});
+  if(!response.ok) throw new Error('订单流程领取已失效，停止当前操作');
 }
 
 async function isTransactionStartEligible(orderId, productIds = []) {
@@ -2692,6 +2713,7 @@ async function selectPaymentNoAppraisalOption(tabId) {
 }
 
 async function runMainWorldPaymentActionClick(tabId, action) {
+  await assertYahooWorkClaim();
   const pattern = getPaymentActionPatternSource(action);
   if (!pattern) return { success: false, error: 'unknown payment action' };
   const injectionResult = await chrome.scripting.executeScript({
@@ -2851,6 +2873,7 @@ function formatPaymentClickDiagnostics(action, clickResult, trustedClick, state,
 }
 
 async function dispatchTrustedPaymentActionClick(tab, action) {
+  await assertYahooWorkClaim();
   const tabId = tab?.id || tab;
   if (!tabId) return { success: false, error: 'tabId is required for trusted payment click' };
   if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
@@ -4731,6 +4754,7 @@ async function dispatchTrustedConfirmReceiptCheckboxClick(tab) {
 }
 
 async function clickConfirmReceiptSubmit(tabId) {
+  await assertYahooWorkClaim();
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -4956,24 +4980,161 @@ function applyPluginConfig(config = {}) {
   }
 }
 
-async function openWonPageForSync(options = {}) {
-  const closeAfter = options.closeAfter === true;
-  const [existingTab] = closeAfter ? [] : await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/won*' });
-  const tab = existingTab
-    ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/won', active: false })
-    : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/won', active: false });
+// Navigation errors belong to a tab in this profile. Keep only bounded, transient
+// metadata; never collect page contents or credentials for sync diagnostics.
+const yahooSyncNavigationErrors = new Map();
+const yahooManagedSyncTabs = new Set();
+const yahooRetiredSyncTabs = new Set();
+function retireYahooSyncTab(tabId) {
+  if (!yahooManagedSyncTabs.delete(tabId)) return;
+  yahooRetiredSyncTabs.add(tabId);
+  while (yahooRetiredSyncTabs.size > 100) yahooRetiredSyncTabs.delete(yahooRetiredSyncTabs.values().next().value);
+}
+function yahooSyncDiagnosticUrl(value) {
   try {
-    if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
-    await sleep(3000);
-    const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
-    if (!injected) return null;
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ORDER_HISTORY' }).catch(error => {
-      if (closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
-        console.warn('[Yahoo Bid] Skip order history sync because message receiver is gone:', tab.id, error.message || error);
+    const url = new URL(value);
+    const params = new URLSearchParams();
+    for (const key of ['page', 'b', 'n', 'start', 'offset', 'p', 'aID', 'aid']) {
+      if (url.searchParams.has(key)) params.set(key, url.searchParams.get(key));
+    }
+    const origin = url.origin === 'null' ? `${url.protocol}//${url.host}` : url.origin;
+    return `${origin}${url.pathname}${params.size ? `?${params}` : ''}`;
+  } catch { return ''; }
+}
+chrome.webNavigation?.onErrorOccurred?.addListener(details => {
+  if (details.frameId !== 0) return;
+  yahooSyncNavigationErrors.delete(details.tabId);
+  yahooSyncNavigationErrors.set(details.tabId, {
+    error: details.error, url: yahooSyncDiagnosticUrl(details.url)
+  });
+  while (yahooSyncNavigationErrors.size > 100) {
+    yahooSyncNavigationErrors.delete(yahooSyncNavigationErrors.keys().next().value);
+  }
+}, { url: [{ hostSuffix: 'yahoo.co.jp' }] });
+chrome.webNavigation?.onCompleted?.addListener(details => {
+  if (details.frameId === 0) yahooSyncNavigationErrors.delete(details.tabId);
+}, { url: [{ hostSuffix: 'yahoo.co.jp' }] });
+
+function assertYahooSyncActive(options) {
+  if (options.isCancelled?.()) throw new Error('Yahoo sync cancelled after timeout');
+}
+
+// A newly created tab may still report about:blank as "complete" just after
+// navigation is requested. Wait for the destination document, not that old tab state.
+// Keep this separate from the original bid/payment page wait helpers.
+async function waitForYahooSyncDocument(tabId, options, deadline) {
+  while (true) {
+    assertYahooSyncActive(options);
+    const tab = await chrome.tabs.get(tabId);
+    assertYahooSyncActive(options);
+    if (tab.status === 'complete' && tab.url !== 'about:blank' && !tab.pendingUrl) return tab;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Product page load timeout');
+    await sleep(Math.min(250, remaining));
+  }
+}
+
+async function readYahooSyncPage(state, options) {
+  const binding = await getYahooBinding();
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    let stage = 'open-page';
+    try {
+      assertYahooSyncActive(options);
+      if (attempt === 2 && options.closeAfter && state.tab?.id) {
+        retireYahooSyncTab(state.tab.id);
+        await chrome.tabs.remove(state.tab.id).catch(() => {});
+        yahooSyncNavigationErrors.delete(state.tab.id);
+        state.tab = null;
+        assertYahooSyncActive(options);
+      }
+      if (!state.tab && !options.closeAfter) {
+        [state.tab] = await chrome.tabs.query({ url: `*://auctions.yahoo.co.jp/my/${options.kind}*` });
+        assertYahooSyncActive(options);
+      }
+      if (state.tab) {
+        yahooSyncNavigationErrors.delete(state.tab.id);
+        await chrome.tabs.update(state.tab.id, { url: options.url, active: false });
+      } else {
+        // Establish ownership before Yahoo's content script can auto-report a
+        // partial list. Only the explicit reader may publish this tab's result.
+        state.tab = await chrome.tabs.create({ url: options.closeAfter ? 'about:blank' : options.url, active: false });
+        if (options.closeAfter) yahooManagedSyncTabs.add(state.tab.id);
+        if (options.isCancelled?.()) {
+          retireYahooSyncTab(state.tab.id);
+          await chrome.tabs.remove(state.tab.id).catch(() => {});
+          assertYahooSyncActive(options);
+        }
+        if (options.closeAfter) await chrome.tabs.update(state.tab.id, { url: options.url, active: false });
+      }
+      if (options.isCancelled?.()) {
+        retireYahooSyncTab(state.tab.id);
+        await chrome.tabs.remove(state.tab.id).catch(() => {});
+        assertYahooSyncActive(options);
+      }
+      stage = 'wait-load';
+      const loadDeadline = Date.now() + 30000;
+      await waitForYahooSyncDocument(state.tab.id, options, loadDeadline);
+      assertYahooSyncActive(options);
+      await sleep(3000);
+      assertYahooSyncActive(options);
+      stage = 'check-document';
+      // Navigation/redirects can start after the first complete observation.
+      // Use the remaining original timeout instead of failing after only 3 s.
+      const loaded = await waitForYahooSyncDocument(state.tab.id, options, loadDeadline);
+      const frame = chrome.webNavigation?.getFrame
+        ? await chrome.webNavigation.getFrame({ tabId: state.tab.id, frameId: 0 })
+        : null;
+      assertYahooSyncActive(options);
+      if (frame?.errorOccurred || /^chrome-error:/.test(loaded.url || '')) {
+        throw new Error('Frame with ID 0 is showing error page');
+      }
+      stage = 'inject-content';
+      const injected = await injectContentScript(state.tab.id, {
+        ignoreMissingTab: options.closeAfter, reportAtSyncBoundary: true
+      });
+      assertYahooSyncActive(options);
+      if (!injected) return null;
+      stage = 'extract-page';
+      const response = await chrome.tabs.sendMessage(state.tab.id, { type: options.messageType });
+      assertYahooSyncActive(options);
+      return response;
+    } catch (error) {
+      assertYahooSyncActive(options);
+      if (isTabsTemporarilyUneditableError(error)) throw error;
+      if (options.closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
+        console.warn('[Yahoo Bid] Skip sync because message receiver is gone:', state.tab?.id, error.message || error);
         return null;
       }
-      console.error('[Yahoo Bid] Failed to extract order history:', error);
-      return null;
+      const tab = state.tab?.id ? await chrome.tabs.get(state.tab.id).catch(() => null) : null;
+      const navigation = yahooSyncNavigationErrors.get(state.tab?.id);
+      const diagnostics = formatDiagnosticParts({
+        accountId: binding?.accountId || 'unbound', instance: pluginInstanceId,
+        sync: options.kind, page: options.page, stage, attempt,
+        tabId: state.tab?.id, requestedUrl: yahooSyncDiagnosticUrl(options.url),
+        actualUrl: yahooSyncDiagnosticUrl(tab?.url), navigationUrl: navigation?.url,
+        browserError: navigation?.error || '',
+        cause: String(error.message || error).replace(/https?:\/\/[^\s"'<>]+/g, yahooSyncDiagnosticUrl),
+        time: new Date().toISOString()
+      });
+      assertYahooSyncActive(options);
+      const retryable = /Frame with ID \d+ is showing error page|Product page load timeout/i.test(error.message || '');
+      if (attempt === 1 && retryable) {
+        console.info('[Yahoo Bid] Sync page load failed; retrying once:', diagnostics);
+        await sleep(1000);
+        continue;
+      }
+      throw new Error(`Yahoo sync failed (${diagnostics})`);
+    }
+  }
+}
+
+async function openWonPageForSync(options = {}) {
+  const closeAfter = options.closeAfter === true;
+  const state = { tab: null };
+  try {
+    const response = await readYahooSyncPage(state, {
+      kind: 'won', page: 1, url: 'https://auctions.yahoo.co.jp/my/won',
+      messageType: 'EXTRACT_ORDER_HISTORY', closeAfter
     });
     await reportYahooLoginStatus(response?.loginStatus);
     if (response?.success) {
@@ -4981,7 +5142,9 @@ async function openWonPageForSync(options = {}) {
     }
     return null;
   } finally {
-    if (closeAfter && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
+    if (closeAfter) retireYahooSyncTab(state.tab?.id);
+    if (closeAfter && state.tab?.id) await chrome.tabs.remove(state.tab.id).catch(() => {});
+    yahooSyncNavigationErrors.delete(state.tab?.id);
   }
 }
 
@@ -5129,28 +5292,19 @@ async function runManualOrderImportJobs() {
 
 async function openBiddingPageForSync(options = {}) {
   const closeAfter = options.closeAfter === true;
-  const [existingTab] = closeAfter ? [] : await chrome.tabs.query({ url: '*://auctions.yahoo.co.jp/my/bidding*' });
-  const tab = existingTab
-    ? await chrome.tabs.update(existingTab.id, { url: 'https://auctions.yahoo.co.jp/my/bidding', active: false })
-    : await chrome.tabs.create({ url: 'https://auctions.yahoo.co.jp/my/bidding', active: false });
+  const state = { tab: null };
   let timedOut = false;
   try {
     return await withTimeout((async () => {
     const itemsByProduct = new Map();
+    let url = 'https://auctions.yahoo.co.jp/my/bidding';
     for (let page = 0; page < BIDDING_SYNC_MAX_PAGES; page += 1) {
-      if (tab.id) await waitForTabComplete(tab.id).catch(() => {});
-      await sleep(3000);
-      const injected = await injectContentScript(tab.id, { ignoreMissingTab: closeAfter });
-      if (!injected) return null;
-      const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_BIDDING_ITEMS' }).catch(error => {
-        if (closeAfter && (isContentScriptTargetGoneError(error) || isMessageChannelClosed(error))) {
-          console.warn('[Yahoo Bid] Skip bidding sync because message receiver is gone:', tab.id, error.message || error);
-          return null;
-        }
-        console.error('[Yahoo Bid] Failed to extract bidding items:', error);
-        return null;
+      const response = await readYahooSyncPage(state, {
+        kind: 'bidding', page: page + 1, url, messageType: 'EXTRACT_BIDDING_ITEMS',
+        closeAfter, isCancelled: () => timedOut
       });
       await reportYahooLoginStatus(response?.loginStatus);
+      if (timedOut) return null;
       if (!response?.success) return null;
       for (const item of response.items || []) {
         const match = String(item?.url || item?.productId || '').match(/[a-zA-Z]?\d{8,10}/);
@@ -5158,8 +5312,9 @@ async function openBiddingPageForSync(options = {}) {
         itemsByProduct.set(match[0].toLowerCase(), item);
       }
       if (!response.nextPageUrl) break;
-      await chrome.tabs.update(tab.id, { url: response.nextPageUrl, active: false });
+      url = response.nextPageUrl;
     }
+    if (timedOut) return null;
     await syncBiddingItems([...itemsByProduct.values()]);
     })(), BIDDING_SYNC_TIMEOUT_MS, () => {
       timedOut = true;
@@ -5168,7 +5323,9 @@ async function openBiddingPageForSync(options = {}) {
       return error;
     });
   } finally {
-    if ((closeAfter || timedOut) && tab?.id) await chrome.tabs.remove(tab.id).catch(() => {});
+    if (closeAfter) retireYahooSyncTab(state.tab?.id);
+    if ((closeAfter || timedOut) && state.tab?.id) await chrome.tabs.remove(state.tab.id).catch(() => {});
+    yahooSyncNavigationErrors.delete(state.tab?.id);
   }
 }
 
@@ -5987,13 +6144,13 @@ function getDigitKeyEventParams(digit) {
   return { key: digit, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
 }
 
-async function dispatchTrustedManualPinKeys(tab, answer) {
+async function dispatchTrustedManualPinKeys(tab, answer, foregroundToken) {
   const tabId = tab?.id || tab;
   if (!tabId) return { success: false, error: 'tabId is required for manual pin keyboard input' };
   if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
   const digits = String(answer || '').replace(/\D/g, '');
   if (!digits) return { success: false, error: 'pin digits are required' };
-  return dispatchTrustedManualPinInput(tabId, digits, { preferKeyboard: true });
+  return dispatchTrustedManualPinInput(tabId, digits, { preferKeyboard: true, foregroundToken });
 }
 
 async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
@@ -6005,7 +6162,7 @@ async function dispatchTrustedManualPinInput(tab, digits, options = {}) {
 
   const currentTab = await chrome.tabs.get(tabId).catch(() => tab);
   if (currentTab?.windowId && chrome.windows?.update) {
-    await updateYahooWindow(currentTab.windowId, { focused: true }).catch(() => {});
+    await updateYahooWindow(currentTab.windowId, { focused: true }, options.foregroundToken).catch(() => {});
   }
   await chrome.tabs.update(tabId, { active: true }).catch(() => {});
   await sleep(200);
@@ -6109,10 +6266,9 @@ async function fillManualPinAnswerUnlocked(tabId, answer) {
     diagnostics: systemResult?.diagnostics || systemResult?.error || ''
   });
   if (systemResult?.success) return systemResult;
-  if(binding) return systemResult; // A partial native PIN input must not be replayed via another method.
   console.warn('[Yahoo Bid] System keyboard PIN input failed, falling back to debugger:', systemResult?.error || systemResult);
 
-  const trustedResult = await dispatchTrustedManualPinKeys(tabId, answer);
+  const trustedResult = await dispatchTrustedManualPinKeys(tabId, answer, yahooForegroundToken);
   console.log('[Yahoo Bid] Manual PIN debugger keyboard result:', trustedResult?.success ? 'success' : 'failed', trustedResult?.diagnostics || trustedResult?.error || '');
   await postPluginDiagnostic({
     type: 'pin',
@@ -6535,6 +6691,7 @@ function buildBundleActionWaitError(action, error, trustedClick = null) {
 }
 
 async function runMainWorldBundleActionClick(tabId, action, mode = 'click') {
+  await assertYahooWorkClaim();
   const pattern = getBundleActionPatternSource(action);
   if (!pattern) return { success: false, error: 'unknown bundle action' };
   const injectionResult = await chrome.scripting.executeScript({
@@ -6700,6 +6857,7 @@ async function getBundleActionClickPoint(tabId, action) {
 }
 
 async function dispatchTrustedBundleActionClick(tab, action) {
+  await assertYahooWorkClaim();
   const tabId = tab?.id || tab;
   if (!tabId) return { success: false, error: 'tabId is required for trusted click' };
   if (!chrome.debugger?.attach) return { success: false, error: 'chrome.debugger API unavailable' };
@@ -6864,6 +7022,7 @@ function getBundleActionWaitTimeoutMs(action) {
 }
 
 async function clickBundleActionAndFollowTab(tab, action, waitForOverride = null, options = {}) {
+  await assertYahooWorkClaim();
   console.log(`[Yahoo Bid] clickBundleActionAndFollowTab: action=${action}, tabId=${tab.id}`);
 
   try {
@@ -8286,6 +8445,21 @@ async function executeNextWorkflowAction() {
   await completeIdleAction(idleAction?.action || 'none');
 }
 
+async function renewBidRetryClaim(task) {
+  if (!task.claim_token) return task;
+  const response = await apiFetch(`/api/plugin/task/${task.id}/retry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Yahoo-Claim': task.claim_token },
+    body: '{}'
+  });
+  const result = await response.json();
+  if (!response.ok || !result.success || !result.claim_token) {
+    throw new Error(result.error || '任务领取已失效，停止当前操作');
+  }
+  yahooTaskClaims.set(Number(task.id), result.claim_token);
+  return { ...task, claim_token: result.claim_token };
+}
+
 async function executeBidTask(task, options = {}) {
   if (!task?.id) return;
   const reportStatus=(id,status,error,extra={})=>markTaskStatus(id,status,error,{...extra,executionClaim:task.claim_token});
@@ -8392,22 +8566,39 @@ async function executeBidTask(task, options = {}) {
     });
   } catch (e) {
     await chrome.storage.session.remove(['currentTask']);
-    if (!task.claim_token && isTransientServerTabError(e) && !options.tabRetryAttempted && !taskTimedOut) {
+    if (isYahooPageBidFailure(e) && !options.yahooPageRetryAttempted && !taskTimedOut) {
+      console.warn('[Yahoo Bid] Retrying task once after Yahoo page error:', task.id, e.message || e);
+      if (taskTab?.id) await closeManagedTaskTabs(task.id, taskTab.id).catch(() => {});
+      taskTimedOut = true;
+      if (leaseHeartbeatTimer) clearInterval(leaseHeartbeatTimer);
+      await sleep(1000);
+      return await executeBidTask(await renewBidRetryClaim(task), {
+        ...options,
+        alreadyClaimed: true,
+        yahooPageRetryAttempted: true,
+        preserveActiveRun: true
+      });
+    }
+    if (isTransientServerTabError(e) && !options.tabRetryAttempted && !taskTimedOut) {
       console.warn('[Yahoo Bid] Retrying task after transient server tab error:', task.id, e.message || e);
       if (taskTab?.id) await closeManagedTaskTabs(task.id, taskTab.id).catch(() => {});
+      taskTimedOut = true;
+      if (leaseHeartbeatTimer) clearInterval(leaseHeartbeatTimer);
       await sleep(1000);
-      return await executeBidTask(task, {
+      return await executeBidTask(await renewBidRetryClaim(task), {
         ...options,
         alreadyClaimed: true,
         tabRetryAttempted: true,
         preserveActiveRun: true
       });
     }
-    if (!task.claim_token && isRetryableBidTimeoutFailure(e, { timedOut: taskTimedOut }) && !options.timeoutRetryAttempted) {
+    if (isRetryableBidTimeoutFailure(e, { timedOut: taskTimedOut }) && !options.timeoutRetryAttempted) {
       console.warn('[Yahoo Bid] Retrying task once after bid timeout failure:', task.id, e.message || e);
       if (taskTab?.id) await closeManagedTaskTabs(task.id, taskTab.id).catch(() => {});
+      taskTimedOut = true;
+      if (leaseHeartbeatTimer) clearInterval(leaseHeartbeatTimer);
       await sleep(1000);
-      return await executeBidTask(task, {
+      return await executeBidTask(await renewBidRetryClaim(task), {
         ...options,
         alreadyClaimed: true,
         timeoutRetryAttempted: true,
@@ -8634,6 +8825,11 @@ startPolling();
 
 // Listen for messages from content script or client page
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (['BIDDING_ITEMS', 'ORDER_HISTORY'].includes(msg.type) &&
+      (yahooManagedSyncTabs.has(sender?.tab?.id) || yahooRetiredSyncTabs.has(sender?.tab?.id))) {
+    sendResponse?.({ success: true, deferredToSyncReader: true });
+    return false;
+  }
   if(msg.type==='YAHOO_BINDING_CAN_CHANGE') {
     sendResponse({idle:activeBidRuns.size===0 && !workflowRunning && !monitorRunning && !yahooMessagesRunning && !manualVerificationFlowActive});
     return false;

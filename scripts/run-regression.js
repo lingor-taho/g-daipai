@@ -38,17 +38,20 @@ const steps = [
   ['Client submission display tests', process.execPath, ['src/client/src/pages/Submit.display.test.mjs'], rootDir],
   ['Client bid price tests', process.execPath, ['src/client/src/utils/bidPrice.test.mjs'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],
+  ['Order audit schema recovery', process.execPath, ['src/server/services/orderAuditSchema.test.js'], rootDir],
   ['Admin queue detail tests', process.execPath, ['src/server/services/adminTaskQueue.test.js'], rootDir],
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],
   ['Yahoo plugin content tests', process.execPath, ['yahoo-plugin/content.test.js'], rootDir],
   ['Yahoo plugin background tests', process.execPath, ['yahoo-plugin/background.test.js'], rootDir],
+  ['Yahoo sync recovery tests', process.execPath, ['yahoo-plugin/syncRecovery.test.js'], rootDir],
   ['Yahoo email verification tests', process.execPath, ['yahoo-plugin/emailVerification.test.js'], rootDir],
   ['Manual verification service tests', process.execPath, ['src/server/services/manualCaptcha.test.js'], rootDir],
   ['Admin manual verification display tests', process.execPath, ['src/admin/src/manualVerificationState.test.js'], rootDir],
   ['Yahoo plugin encoding guard', process.execPath, ['yahoo-plugin/encoding.test.js'], rootDir],
   ['Admin build', npmCommand, ['run', 'build'], adminDir],
   ['Multi-account admin browser checks',process.execPath,['scripts/yahoo-multi-account-browser.test.cjs'],rootDir],
-  ['Client build', npmCommand, ['run', 'build'], clientDir]
+  ['Client build', npmCommand, ['run', 'build'], clientDir],
+  ['Client login and bid config browser checks',process.execPath,['scripts/run-isolated-regression.cjs','scripts/client-login.test.cjs'],rootDir]
 ];
 
 for (const [label, command, args, cwd] of steps) {

@@ -68,7 +68,7 @@ function loadBackgroundForTest(overrides = {}) {
       runtime: {
         onInstalled: { addListener() {} },
         onStartup: { addListener() {} },
-        onMessage: { addListener() {} }
+        onMessage: { addListener(fn) { overrides.onMessageListener?.(fn); } }
       },
       tabs: {
         async query(...args) { return tabs.query ? tabs.query(...args) : []; },
@@ -106,6 +106,9 @@ function loadBackgroundForTest(overrides = {}) {
       }
     }
   };
+  if (overrides.localStorage) sandbox.chrome.storage.local = overrides.localStorage;
+  if (overrides.webNavigation) sandbox.chrome.webNavigation = overrides.webNavigation;
+  if (overrides.clearTimeout) sandbox.clearTimeout = overrides.clearTimeout;
   if ('document' in overrides) sandbox.document = overrides.document;
   if ('InputEvent' in overrides) sandbox.InputEvent = overrides.InputEvent;
   if ('PointerEvent' in overrides) sandbox.PointerEvent = overrides.PointerEvent;
@@ -4840,7 +4843,7 @@ async function testMonitorSyncCollectsAllBiddingPagesBeforeSync() {
       },
       async update(tabId, details) {
         visitedUrls.push(details.url);
-        if (tabId === 57600239) currentBiddingUrl = details.url;
+        if (String(details.url).includes('/my/bidding')) currentBiddingUrl = details.url;
         return { id: tabId, status: 'complete', url: details.url };
       },
       async sendMessage(tabId, message) {

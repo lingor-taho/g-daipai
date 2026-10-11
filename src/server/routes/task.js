@@ -922,6 +922,21 @@ router.get('/site-config', async (req, res) => {
   }
 });
 
+// The client uses user authentication, never the extension's account credentials.
+// Read the existing shared config so displayed bidding rules match the plugin.
+router.get('/bid-config', async (req, res) => {
+  try {
+    const config = await require('./plugin').getMultiBidConfig();
+    res.json({
+      multiBidStartHours: config.multiBidStartHours,
+      multiBidIntervalMinutes: config.multiBidIntervalMinutes,
+      multiBidMinPrice: config.multiBidMinPrice
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '获取出价配置失败' });
+  }
+});
+
 // GET /api/task/won-stats - 近 N 天落札统计和导出明细
 router.get('/won-stats', async (req, res) => {
   try {

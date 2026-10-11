@@ -40,13 +40,13 @@ function submit(database, userId, productId='a123456789') {
 (async()=>{
   const single=fixture();const only=accounts.list(single)[0].id;online(single,only);
   assert.equal(submit(single,1).account_id,only);
-  assert.throws(()=>submit(single,2),/暂无可用/,'only A uses the new protocol without admitting a second user');
+  assert.throws(()=>submit(single,2),/该商品已由其他用户提交，请联系管理员！/,'only A uses the new protocol without admitting a second user');
   single.raw.close();
   const legacy=fixture(true);const legacyA=accounts.list(legacy)[0].id;
   assert.equal(legacy.raw.prepare('SELECT current_price,account_id FROM bidding_items').get().current_price,1234);
   assert.equal(legacy.raw.prepare('SELECT account_id FROM bidding_items').get().account_id,legacyA);
   assert.equal(legacy.raw.prepare("SELECT user_id FROM yahoo_product_assignments WHERE product_id='z123456789'").get().user_id,1,'legacy cancelled ownership retained');
-  assert.equal(legacy.raw.prepare("SELECT execution_unknown FROM tasks WHERE product_id='migration123456789'").get().execution_unknown,1,'unfinished legacy task cannot be replayed after upgrade');
+  assert.deepEqual(legacy.raw.prepare("SELECT status,execution_unknown FROM tasks WHERE product_id='migration123456789'").get(),{status:'processing',execution_unknown:0},'migration preserves task status and leaves recovery to the original scheduler');
   assert.equal((await legacy.getOne("SELECT value FROM config WHERE key='payment_requested'")).value,'1');
   const legacyB=add(legacy,'B',1);
   legacy.raw.prepare('INSERT INTO bidding_items(account_id,product_id,status,current_price) VALUES(?,?,?,?)').run(legacyB,'z123456789','outbid',2345);
@@ -69,7 +69,7 @@ function submit(database, userId, productId='a123456789') {
   for(const id of [a,b,c]) online(db,id);
   const t1=submit(db,1),t2=submit(db,2),t3=submit(db,3);
   assert.deepEqual([t1.account_id,t2.account_id,t3.account_id],[a,b,c]);
-  assert.throws(()=>submit(db,4),/暂无可用/);
+  assert.throws(()=>submit(db,4),/该商品已由其他用户提交，请联系管理员！/);
   assert.equal(submit(db,1).account_id,a,'same user keeps one account');
   assert.equal(submit(db,4,'b123456789').account_id,a,'another product does not consume A globally');
   db.raw.prepare('UPDATE yahoo_accounts SET heartbeat_at=0 WHERE id=?').run(b);
@@ -80,7 +80,7 @@ function submit(database, userId, productId='a123456789') {
   assert.equal(submit(db,3,'d123456789').account_id,c,'PIN is not an admission blocker');
   db.raw.prepare('UPDATE yahoo_accounts SET heartbeat_at=0 WHERE id=?').run(c);
   submit(db,1,'e123456789');
-  assert.throws(()=>submit(db,2,'e123456789'),/暂无可用/);
+  assert.throws(()=>submit(db,2,'e123456789'),/该商品已由其他用户提交，请联系管理员！/);
   assert.equal(db.raw.prepare("SELECT COUNT(*) n FROM tasks WHERE product_id='e123456789' AND user_id=2").get().n,0,'failed admission leaves no task or reservation');
   for(const id of [b,c]) online(db,id);
   const transfer=submit(db,1,'f123456789'); submit(db,2,'f123456789');

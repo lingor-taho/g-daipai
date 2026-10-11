@@ -411,6 +411,10 @@ db.prepare(`
 `).run();
 
 repairStaleTaskForeignKeyReferences();
+const orderAuditSchemaRepair = require('../services/orderAuditSchema').repairStaleOrderAuditForeignKey(db);
+if (orderAuditSchemaRepair.repaired) {
+  console.log(`[DB] Repaired stale order audit foreign key; backup: ${orderAuditSchemaRepair.backupPath || 'in-memory database'}`);
+}
 
 require('../services/batchTaskQueue').ensureBatchTaskQueueSchema(db);
 

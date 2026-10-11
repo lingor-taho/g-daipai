@@ -15,9 +15,26 @@ function load(binding,transport,overrides={}) {
     fetch:async(url,options={})=>{calls.push({url,options});return transport(url,options);},...overrides};
   let source=fs.readFileSync(require.resolve('./background.js'),'utf8');
   source=source.replace(/\r?\nstartPolling\(\);\r?\n\r?\n\/\/ Listen for messages from content script or client page/,'\n// Listen for messages from content script or client page');
-  source+=`\nglobalThis.transportTests={apiFetch,withYahooForeground,updateYahooWindow,buildBidError,
+  source+=`\nglobalThis.transportTests={apiFetch,withYahooForeground,updateYahooWindow,buildBidError,executeBidTask,fillManualPinAnswer,assertYahooWorkClaim,
     runPaymentJobs,runScanJobs,runTransactionStartJobs,runConfirmReceiptJobs,runYahooMessageJobs,fetchYahooMessageJobs,yahooMessageApiJson,
     stubMessagePolling(){getOpenManualVerificationTabs=async()=>[];},
+    stubRetry(errors){
+      this.attempts=[];this.closed=[];this.statuses=[];
+      sleep=async()=>{};injectContentScript=async()=>{};ensureTaskReadyByCurrentEndTime=async()=>true;
+      heartbeatProcessingTask=async()=>({success:true});
+      openTaskPage=async task=>({id:100+globalThis.transportTests.attempts.length});
+      executeTaskInTabV2=async(tab,task)=>{this.attempts.push({...task});const error=errors.shift();if(error)throw new Error(error);return {bidPrice:task.max_price};};
+      closeManagedTaskTabs=async(id,tab)=>this.closed.push(tab);
+      getTabPageDiagnosticSnapshot=async()=>({});postBidFailureDiagnostic=async()=>{};
+      markTaskStatus=async(id,status,error,extra)=>{this.statuses.push({id,status,error,extra});return {success:true};};
+    },
+    stubPin(debuggerFails){
+      sleep=async()=>{};this.keys=[];this.domWrites=0;
+      chrome.tabs.get=async id=>({id,windowId:9});chrome.tabs.update=async id=>({id,windowId:9});
+      chrome.scripting={executeScript:async args=>{if(args.world==='MAIN'){this.domWrites++;return [{result:{success:true,method:'dom'}}];}return [{result:{}}];}};
+      chrome.debugger={attach:async()=>{if(debuggerFails)throw new Error('debugger unavailable');},detach:async()=>{},sendCommand:async(target,command,args)=>this.keys.push({target,command,args})};
+      getTrustedInputDiagnostics=async()=>'';postPluginDiagnostic=async()=>{};
+    },
     activate(id,token,tab){yahooTaskClaims.set(id,token);yahooActiveBidClaims.set(id,token);registerManagedTaskTab(id,tab);},
     stubPayment(fn){executePaymentJob=fn;},
     stubScan(result){getTabIds=async()=>new Set();openTransactionPage=async()=>({id:7});waitForPendingShipmentScanResult=async()=>({success:true,result});closeTabsForScanFlow=async()=>{};},
@@ -128,7 +145,7 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
   await work.api.runPaymentJobs();
   assert.deepEqual(executedPayments,[11],'payment failure stops this batch, preserving original business rule');
   let returned=work.calls.filter(c=>c.url?.endsWith('/work/release')).map(c=>JSON.parse(c.options.body));
-  assert.deepEqual(returned[0].jobs,[{orderId:12,claimToken:'work-12'}],'only unstarted payment released');
+  assert.deepEqual(returned[0].jobs,jobs.map(({orderId,claimToken})=>({orderId,claimToken})),'finished batch releases claims without changing payment stop/continue');
   await work.api.runTransactionStartJobs({processNormalJobs:false});
   returned=work.calls.filter(c=>c.url?.endsWith('/work/release')).map(c=>JSON.parse(c.options.body));
   assert.equal(returned[1].jobs.length,2,'skipped batch returns all claims');
@@ -144,17 +161,17 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
     assert.equal(eligibilityChecks,scenario.rejectAt);
     assert.equal(paused.api.tradeActions,0,'paused order never starts single or bundle Yahoo transaction');
     const releases=paused.calls.filter(call=>call.url?.endsWith('/work/release'));
-    assert.equal(releases.length,1,'each pre-transaction eligibility exit releases its original claim');
+    assert.equal(releases.length,2,'explicit skip and batch cleanup release the same original claim idempotently');
     assert.deepEqual(JSON.parse(releases[0].options.body),{kind:'transaction-start',jobs:[{orderId:11,claimToken:'work-11'}]});
     assert.equal(paused.calls.some(call=>call.url?.endsWith('/transaction-start/status')),false,'pause does not change the original order status');
   }
   const scan=load({accountId:2,token:'B-token'},async url=>json(url.includes('/jobs')?{jobs:[{...jobs[0],orderStatus:'pending_shipment',trackingRescanRequested:true}]}:{success:true}));
   scan.api.stubScan({type:'pending_shipment'});
   await scan.api.runScanJobs();
-  assert.equal(scan.calls.filter(c=>c.url?.endsWith('/work/release')).length,1,'normal no-change rescan releases claim');
+  assert.equal(scan.calls.filter(c=>c.url?.endsWith('/work/release')).length,2,'normal no-change rescan releases claim and batch cleanup is idempotent');
   work.api.stubReceipt();await work.api.runConfirmReceiptJobs();
   returned=work.calls.filter(c=>c.url?.endsWith('/work/release')).map(c=>JSON.parse(c.options.body));
-  assert.deepEqual(returned.at(-1).jobs,[{orderId:12,claimToken:'work-12'}]);
+  assert.deepEqual(returned.at(-1).jobs,jobs.map(({orderId,claimToken})=>({orderId,claimToken})));
   const unknown=load({accountId:2,token:'B-token'},async url=>{
     if(url.endsWith('/payment/status')) throw new Error('status response unavailable');
     return json(url.includes('/jobs')?{jobs}:{success:true});
@@ -162,6 +179,78 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
   unknown.api.stubPayment(async()=>{throw new Error('payment outcome unknown');});
   await assert.rejects(unknown.api.runPaymentJobs(),/status response unavailable/);
   const unused=unknown.calls.find(c=>c.url?.endsWith('/work/release'));
-  assert.deepEqual(JSON.parse(unused.options.body).jobs,[{orderId:12,claimToken:'work-12'}],'unknown started payment remains protected');
+  assert.deepEqual(JSON.parse(unused.options.body).jobs,jobs.map(({orderId,claimToken})=>({orderId,claimToken})),'failed batch does not add a manual claim-release requirement');
+  let releaseUnavailable=true;
+  const disconnected=load({accountId:2,token:'B-token'},async url=>{
+    if(url.endsWith('/work/release') && releaseUnavailable)return json({error:'unavailable'},503);
+    return json(url.includes('/jobs')?{jobs}:{success:true});
+  });
+  disconnected.api.stubPayment(async()=>{throw new Error('payment failed');});
+  await assert.rejects(disconnected.api.runPaymentJobs(),/释放失败/);
+  const beforeResume=disconnected.calls.length;
+  releaseUnavailable=false;
+  await disconnected.api.runPaymentJobs();
+  const resumedCalls=disconnected.calls.slice(beforeResume).filter(c=>c.url);
+  assert(resumedCalls[0].url.endsWith('/work/release'),'a lost release is retried before requesting another batch');
+  assert.deepEqual(JSON.parse(resumedCalls[0].options.body).jobs,jobs.map(({orderId,claimToken})=>({orderId,claimToken})));
+  const failedScan=load({accountId:2,token:'B-token'},async url=>json(url.includes('/jobs')?{jobs:[{...jobs[0],orderStatus:'pending_shipment'}]}:{success:true}));
+  failedScan.api.stubScan({type:'unknown'});
+  await failedScan.api.runScanJobs();
+  assert(failedScan.calls.some(c=>c.url?.endsWith('/work/release')),'unreadable scan does not leave a permanent claim');
+  // Binding must not disable either original retry or change bid intent/count.
+  for(const error of ['Frame with ID 0 was removed','bid result confirmation timeout',
+    'Yahoo bid failed: Yahoo system error page','Yahoo bid failed: オークションにアクセスできませんでした',
+    'Yahoo error page','Yahoo bid access failure']) {
+    for(const persistent of [false,true]) {
+      const retried=load({accountId:2,token:'B-token'},async()=>json({success:true,claim_token:'retry-token'}));
+      retried.api.stubRetry(persistent?[error,error,error]:[error]);
+      const original={id:91,claim_token:'first-token',max_price:2000,user_max_price:2000,strategy:'direct',bid_mode:'bid',account_id:2};
+      await retried.api.executeBidTask(original,{alreadyClaimed:true});
+      assert.equal(retried.api.attempts.length,2,'eligible failures retry once, including with account binding');
+      assert.equal(retried.api.attempts[0].claim_token,'first-token');
+      assert.equal(retried.api.attempts[1].claim_token,'retry-token');
+      for(const attempt of retried.api.attempts) for(const key of ['max_price','user_max_price','strategy','bid_mode','account_id']) assert.equal(attempt[key],original[key]);
+      assert.equal(retried.api.statuses.at(-1).status,persistent?'failed':'bidding');
+      assert.equal(retried.api.statuses.length,1,'only the final attempt reports its outcome');
+      assert.equal(retried.api.statuses[0].extra.executionClaim,'retry-token','final result uses the new attempt credential');
+      assert.equal(retried.calls.filter(c=>c.url?.endsWith('/retry')).length,1);
+    }
+  }
+  const ordinary=load({accountId:2,token:'B-token'},async()=>json({success:true}));
+  ordinary.api.stubRetry(['current price exceeds max price']);
+  await ordinary.api.executeBidTask({id:92,claim_token:'ordinary',max_price:1000,strategy:'direct'},{alreadyClaimed:true});
+  assert.equal(ordinary.api.attempts.length,1,'ordinary price-rule failure adds no retry or price increase');
+  assert.equal(ordinary.api.statuses.at(-1).status,'failed');
+  for(const error of ['outbid after bid','Rebid required: current bid is not high enough','失败：卖家黑名单','Yahoo login required']) {
+    const rejected=load({accountId:2,token:'B-token'},async()=>json({success:true}));
+    rejected.api.stubRetry([error]);
+    await rejected.api.executeBidTask({id:92,claim_token:'ordinary',max_price:1000,strategy:'direct'},{alreadyClaimed:true});
+    assert.equal(rejected.api.attempts.length,1,`${error}: no added page-error retry`);
+  }
+  const retryThenOutbid=load({accountId:1,token:'A-token'},async()=>json({success:true,claim_token:'retry-A'}));
+  retryThenOutbid.api.stubRetry(['Yahoo bid failed: Yahoo system error page','outbid after bid']);
+  await retryThenOutbid.api.executeBidTask({id:93,claim_token:'first-A',max_price:400,strategy:'direct',account_id:1},{alreadyClaimed:true});
+  assert.equal(retryThenOutbid.api.attempts.length,2);
+  assert.equal(retryThenOutbid.api.statuses.at(-1).error,'outbid after bid','retry reports its actual failure');
+  assert(retryThenOutbid.api.attempts.every(t=>t.max_price===400 && t.account_id===1));
+  const expiredRetry=load({accountId:2,token:'B-token'},async()=>json({error:'任务领取已失效，停止当前操作'},409));
+  expiredRetry.api.stubRetry(['Yahoo bid failed: Yahoo system error page']);
+  await assert.rejects(expiredRetry.api.executeBidTask({id:94,claim_token:'old-B',max_price:400},{alreadyClaimed:true}),/领取已失效/);
+  assert.equal(expiredRetry.api.attempts.length,1,'invalidated claims never open another bid attempt');
+  for(const debuggerFails of [false,true]) {
+    const pin=load({accountId:2,token:'B-token'},async url=>{
+      if(url.endsWith('/foreground/acquire'))return json({token:'pin-focus'});
+      if(url.endsWith('/manual-pin/type'))return json({success:false,error:'system keyboard unavailable'});
+      return json({success:true});
+    });
+    pin.api.stubPin(debuggerFails);
+    let timeout;
+    const result=await Promise.race([pin.api.fillManualPinAnswer(8,'123456'),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('PIN foreground lock deadlocked')),3000);})]).finally(()=>clearTimeout(timeout));
+    assert.equal(result.success,true);
+    assert.equal(pin.calls.filter(c=>c.url?.endsWith('/foreground/acquire')).length,1,'PIN fallbacks retain one foreground lock');
+    assert.equal(pin.calls.filter(c=>c.url?.endsWith('/foreground/release')).length,1);
+    assert.equal(pin.api.domWrites,debuggerFails?1:0);
+    if(!debuggerFails) assert(pin.api.keys.some(k=>k.command==='Input.dispatchKeyEvent' && k.target.tabId===8));
+  }
   console.log('Multi-account extension identity, response-loss, task/work leases and focus queue tests passed.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

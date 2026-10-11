@@ -1428,25 +1428,6 @@ router.get('/accounts',(req,res)=>{ const items=yahooAccounts.list(db,Date.now()
 router.post('/accounts',(req,res)=>{try{res.json(yahooAccounts.save(db,req.body));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
 router.put('/accounts/:id',(req,res)=>{try{res.json(yahooAccounts.save(db,req.body,req.params.id));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
 router.delete('/accounts/:id',(req,res)=>{try{res.json(yahooAccounts.remove(db,req.params.id));}catch(e){res.status(e.statusCode||500).json({error:e.message});}});
-router.post('/accounts/:id/work-claims/:kind/:objectId/release',(req,res)=>{
-  try {
-    const id=Number(req.params.id);
-    const account=yahooAccounts.list(db).find(a=>a.id===id);
-    if(!account || account.online || req.body?.confirmed!==true) throw yahooAccounts.fail('请先关闭该账号插件，核对 Yahoo 实际结果后确认释放');
-    db.raw.prepare('DELETE FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=?').run(id,req.params.kind,Number(req.params.objectId));
-    if(req.params.kind==='manual-order-import') db.raw.prepare("UPDATE manual_order_import_batches SET status='requested' WHERE id=? AND account_id=? AND status='scanning'").run(Number(req.params.objectId),id);
-    res.json({success:true});
-  } catch(e) {res.status(e.statusCode||500).json({error:e.message});}
-});
-router.post('/tasks/:id/resolve-unknown',(req,res)=>{
-  try {
-    const task=db.raw.prepare('SELECT id,account_id,status,execution_unknown FROM tasks WHERE id=?').get(Number(req.params.id));
-    if(!task?.execution_unknown || !['failed','cancelled'].includes(task.status) || req.body?.confirmed!==true || req.body?.resolution!=='no_bid') throw yahooAccounts.fail('只允许核实结果不明且已停止的任务');
-    if(yahooAccounts.list(db).find(a=>a.id===task.account_id)?.online) throw yahooAccounts.fail('请先关闭该账号插件及原出价页面，核对 Yahoo 没有该商品入札后再解除');
-    db.raw.prepare("UPDATE tasks SET execution_unknown=0,claim_token=NULL,claim_instance=NULL,error_msg='已人工核实无入札，可重新提交',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(task.id);
-    res.json({success:true});
-  } catch(e) {res.status(e.statusCode||500).json({error:e.message});}
-});
 
 
 // 账号统计
@@ -2139,12 +2120,6 @@ async function repairNormalBundle(database, payload = {}, options = {}) {
     throw error;
   }
   if(new Set(rows.map(row=>Number(row.account_id || 1))).size!==1) throw yahooAccounts.fail('同捆商品必须使用同一个 Yahoo 成交账号',400);
-  const userIds = new Set(rows.map(row => Number(row.user_id)));
-  if (userIds.size !== 1) {
-    const error = new Error('同捆商品必须属于同一个用户');
-    error.statusCode = 400;
-    throw error;
-  }
   const nonNormal = rows.filter(row => row.product_type !== 'normal').map(row => row.product_id);
   if (nonNormal.length) {
     const error = new Error(`只能修复普通商品同捆：${nonNormal.join(', ')}`);
@@ -3127,8 +3102,6 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     if(database.raw && batch.account_id) {
       const otherOrder=database.raw.prepare('SELECT id FROM orders WHERE product_id=? AND account_id<>?').get(productId,batch.account_id);
       if(otherOrder) throw yahooAccounts.fail('商品已有其他 Yahoo 账号成交记录，请核对来源账号');
-      const owner=database.raw.prepare('SELECT user_id,account_id FROM yahoo_product_assignments WHERE product_id=? AND (account_id=? OR user_id=?)').all(productId,batch.account_id,item.assigned_user_id);
-      if(owner.some(o=>o.user_id!==item.assigned_user_id || o.account_id!==batch.account_id)) throw yahooAccounts.fail('导入用户与该商品的 Yahoo 账号归属冲突，请先核对');
     }
     const existing = await database.getOne(
       `SELECT o.id
@@ -3189,7 +3162,11 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
       ]
     );
     const orderRow = await database.getOne('SELECT last_insert_rowid() AS id');
-    if(database.raw && batch.account_id) database.raw.prepare('INSERT INTO yahoo_product_assignments(product_id,account_id,user_id,task_id) VALUES(?,?,?,?) ON CONFLICT(product_id,account_id) DO UPDATE SET task_id=excluded.task_id').run(productId,batch.account_id,item.assigned_user_id,taskRow.id);
+    if(database.raw && batch.account_id) {
+      // The order/task records retain the winning account and assigned user.
+      // Existing bid allocations must not restrict assignment of an unowned order.
+      database.raw.prepare('INSERT OR IGNORE INTO yahoo_product_assignments(product_id,account_id,user_id,task_id) VALUES(?,?,?,?)').run(productId,batch.account_id,item.assigned_user_id,taskRow.id);
+    }
     await database.query(
       `UPDATE manual_order_import_items
        SET status = 'imported', task_id = ?, order_id = ?, updated_at = CURRENT_TIMESTAMP

@@ -2,7 +2,7 @@
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getApiErrorMessage, getPluginConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
+import { getApiErrorMessage, getClientBidConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import useProductFavorites from '../utils/useProductFavorites';
@@ -172,7 +172,7 @@ export default function Submit() {
   const availableStrategyOptions = isDirectOnlyUser ? DIRECT_ONLY_STRATEGY_OPTIONS : STRATEGY_OPTIONS;
 
   useEffect(() => {
-    runDeduped('Submit:getPluginConfig', getPluginConfig)
+    runDeduped('Submit:getClientBidConfig', getClientBidConfig)
       .then(res => {
         setMultiBidConfig({
           startHours: Number(res.data?.multiBidStartHours || 0.5),

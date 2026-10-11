@@ -6,6 +6,7 @@
     "alarms",
     "storage",
     "tabs",
+    "webNavigation",
     "scripting",
     "debugger"
   ],

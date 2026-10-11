@@ -68,8 +68,7 @@ function ensureSchema(raw) {
     raw.exec(`INSERT OR IGNORE INTO yahoo_product_assignments(product_id,account_id,user_id,task_id)
       SELECT product_id,account_id,user_id,id FROM tasks WHERE user_id IS NOT NULL ORDER BY id DESC;`);
     if(!raw.prepare("SELECT 1 FROM config WHERE key='yahoo_account_state_migrated'").get()) {
-      // A pre-upgrade processing task has no fencing token. Never replay its unknown Yahoo result.
-      raw.prepare("UPDATE tasks SET status='failed',execution_unknown=1,claim_token=NULL,claim_instance=NULL,error_msg='升级前任务仍在执行，结果未确认，请核对 Yahoo 后处理' WHERE status='processing'").run();
+      // Preserve legacy task state; the original 60-second recovery still applies.
       for (const key of scope.runtimeKeys) raw.prepare(`INSERT OR IGNORE INTO config(key,value,updated_at)
         SELECT ?,value,updated_at FROM config WHERE key=?`).run(scope.configKey(key, primary.id), key);
       raw.prepare("INSERT INTO config(key,value) VALUES('yahoo_account_state_migrated','1')").run();
@@ -104,7 +103,8 @@ function selectAccount(database, productId, userId, options = {}) {
   const raw = rawDb(database);
   const existing = raw.prepare('SELECT * FROM yahoo_product_assignments WHERE product_id=? AND user_id=?').get(productId, userId);
   if (existing && !options.transfer) {
-    if(raw.prepare('SELECT 1 FROM tasks WHERE product_id=? AND account_id=? AND execution_unknown=1 LIMIT 1').get(productId,existing.account_id)) throw fail('该商品之前出价结果未确认，请先核对 Yahoo，不能重复出价');
+    // A failed attempt must not block later submissions on the same allocation.
+    // execution_unknown is retained only to prevent unsafe cross-account transfer.
     if(!list(raw,options.now || Date.now()).find(a=>a.id===existing.account_id)?.online) throw fail('该商品已有 Yahoo 账号归属，该账号离线，请恢复后再提交');
     return existing.account_id;
   }
@@ -115,7 +115,7 @@ function selectAccount(database, productId, userId, options = {}) {
   const candidates = route.slice(currentIndex+1).map(id=>accounts.find(a=>a.id===id)).filter(a=>a && a.enabled && a.online && !attempted.includes(a.id));
   const occupied = new Set(raw.prepare('SELECT account_id FROM yahoo_product_assignments WHERE product_id=? AND user_id<>?').all(productId, userId).map(r => r.account_id));
   const selected = candidates.find(a => !occupied.has(a.id));
-  if (!selected) throw fail('该商品暂无可用 Yahoo 账号：账号名额已占满或剩余账号离线');
+  if (!selected) throw fail('该商品已由其他用户提交，请联系管理员！');
   return selected.id;
 }
 

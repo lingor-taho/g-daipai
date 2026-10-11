@@ -34,6 +34,15 @@ router.use((req, res, next) => {
       const sendJson=res.json.bind(res);
       if(workflow) {
         const kind=workflow[1];
+        if(workflow[2]==='jobs') {
+          // Authentication fences the old instance before the new one can resume
+          // the original order workflow. A reload must not require admin approval.
+          db.raw.transaction(()=>{
+            const abandoned=db.raw.prepare('SELECT object_id FROM yahoo_work_claims WHERE account_id=? AND kind=? AND instance_id<>?').all(value.accountId,kind,value.instanceId);
+            if(kind==='manual-order-import') for(const row of abandoned) db.raw.prepare("UPDATE manual_order_import_batches SET status='requested' WHERE id=? AND account_id=? AND status='scanning'").run(row.object_id,value.accountId);
+            db.raw.prepare('DELETE FROM yahoo_work_claims WHERE account_id=? AND kind=? AND instance_id<>?').run(value.accountId,kind,value.instanceId);
+          })();
+        }
         const objectId=kind==='manual-order-import' ? Number(req.body?.batchId) : Number(req.body?.claim_order_id || orderId);
         for(const id of req.body?.orderIds || []) if(!db.raw.prepare('SELECT 1 FROM orders WHERE id=? AND account_id=?').get(Number(id),value.accountId)) return res.status(409).json({error:'同捆包含其他 Yahoo 账号的订单'});
         if(workflow[2]==='status' && !objectId && !req.body?.empty) return res.status(400).json({error:'订单流程缺少领取标识'});
@@ -67,8 +76,13 @@ router.use((req, res, next) => {
   } catch (e) { res.status(e.statusCode || 500).json({ error: e.message }); }
 });
 const auctionHistory = require('../services/auctionHistory');
-// Only the owning plugin may return work it has not started, or a completed
-// read-only check. Unknown side effects must retain their claim for review.
+// Claims fence an active batch, not the original workflow's retry/continue rules.
+router.post('/work/check', (req,res)=>{
+  const ctx=accountScope.context();
+  const claim=db.raw.prepare('SELECT 1 FROM yahoo_work_claims WHERE account_id=? AND kind=? AND object_id=? AND instance_id=? AND token=?')
+    .get(ctx.accountId,req.body?.kind,Number(req.body?.orderId),ctx.instanceId,req.body?.claimToken);
+  res.status(claim?200:409).json({success:!!claim});
+});
 router.post('/work/release', (req, res) => {
   const { kind, jobs } = req.body || {};
   if (!['transaction-start','scan','payment','confirm-receipt'].includes(kind) ||
@@ -382,19 +396,13 @@ async function failPricedOutPendingTasks(database = db) {
 
 async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
   const cutoffIso = new Date(nowMs - 60 * 1000).toISOString();
-  if (database.raw) {
-    // Never replay an account-bound operation whose Yahoo result is unknown.
-    await database.query(`UPDATE tasks SET status='failed',execution_unknown=1,
-      error_msg='执行失联，Yahoo 结果待核实，禁止自动重拍',updated_at=CURRENT_TIMESTAMP
-      WHERE status='processing' AND claim_token IS NOT NULL AND datetime(updated_at)<=datetime(?)`, [cutoffIso]);
-  }
   const result = await database.query(
     `UPDATE tasks
      SET status = 'pending',
-         error_msg = NULL,
+         error_msg = NULL,${database.raw ? ' claim_token=NULL, claim_instance=NULL, execution_unknown=0,' : ''}
          updated_at = CURRENT_TIMESTAMP
      WHERE status = 'processing'
-       AND datetime(updated_at) <= datetime(?)${database.raw ? ' AND claim_token IS NULL' : ''}`,
+       AND datetime(updated_at) <= datetime(?)`,
     [cutoffIso]
   );
   return result.rowCount || 0;
@@ -406,15 +414,14 @@ async function claimTaskForProcessing(taskId, database = db, {allowExisting=fals
     return database.raw.transaction(() => {
       const current = database.raw.prepare('SELECT id,user_id,account_id,status,claim_token,claim_instance,strategy,max_price,product_id,execution_unknown FROM tasks WHERE id=? AND account_id=?').get(taskId,ctx.accountId);
       if (!current || !database.raw.prepare('SELECT 1 FROM yahoo_product_assignments WHERE product_id=? AND account_id=? AND user_id=?').get(current.product_id,ctx.accountId,current.user_id)) return {success:false};
-      if (database.raw.prepare('SELECT 1 FROM tasks WHERE account_id=? AND product_id=? AND execution_unknown=1 LIMIT 1').get(ctx.accountId,current.product_id)) return {success:false};
       if (allowExisting && current?.status === 'processing' && current.claim_instance === ctx.instanceId && current.claim_token) return { success: true, claim_token: current.claim_token };
-      if (!current || current.execution_unknown || !['pending','bidding'].includes(current.status) || (current.status==='bidding' && current.strategy!=='multi_bid')) return {success:false};
+      if (!['pending','bidding'].includes(current.status) || (current.status==='bidding' && current.strategy!=='multi_bid')) return {success:false};
       if(database.raw.prepare("SELECT 1 FROM tasks WHERE account_id=? AND product_id=? AND status='processing' AND id<>? LIMIT 1").get(ctx.accountId,current.product_id,current.id)) return {success:false};
       if (current.strategy==='multi_bid' && database.raw.prepare("SELECT 1 FROM bid_logs WHERE task_id=? AND result='bidding' AND bid_price>=? LIMIT 1").get(taskId,current.max_price)) return {success:false};
       const limit=Math.max(1,Math.min(10,Number(database.raw.prepare("SELECT value FROM config WHERE key='bid_concurrency_limit'").get()?.value || 2)));
       if(database.raw.prepare("SELECT COUNT(*) n FROM tasks WHERE account_id=? AND status='processing'").get(ctx.accountId).n>=limit) return {success:false};
       const token=yahooAccounts.randomUUID();
-      database.raw.prepare("UPDATE tasks SET status='processing',error_msg=NULL,claim_token=?,claim_instance=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=?").run(token,ctx.instanceId,taskId,ctx.accountId);
+      database.raw.prepare("UPDATE tasks SET status='processing',error_msg=NULL,execution_unknown=0,claim_token=?,claim_instance=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=?").run(token,ctx.instanceId,taskId,ctx.accountId);
       return {success:true,claim_token:token};
     })();
   }
@@ -1081,6 +1088,14 @@ router.post('/idle-action/complete', async (req, res) => {
   res.json(await completeIdleAction(action));
 });
 
+// Keep the original one-time plugin retry, with a fresh credential for the new tab.
+router.post('/task/:id/retry', (req,res)=>{
+  const token=yahooAccounts.randomUUID();
+  const result=db.raw.prepare("UPDATE tasks SET status='processing',error_msg=NULL,execution_unknown=0,claim_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=? AND status IN ('processing','failed') AND claim_token=? AND claim_instance=? AND NOT EXISTS (SELECT 1 FROM tasks AS other WHERE other.account_id=tasks.account_id AND other.product_id=tasks.product_id AND other.id<>tasks.id AND other.status='processing')")
+    .run(token,req.yahooTask.id,accountScope.accountId(),req.yahooTask.claim_token,accountScope.context().instanceId);
+  if(!result.changes) return res.status(409).json({error:'任务领取已失效，停止当前操作'});
+  res.json({success:true,claim_token:token});
+});
 // PATCH /api/plugin/task/:id/status
 router.patch('/task/:id/status', async (req, res) => {
   const { status, error_msg, bid_price, no_bid, not_highest } = req.body;
