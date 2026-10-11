@@ -8,7 +8,8 @@ async function run() {
     user_max_price INTEGER, strategy TEXT, status TEXT, created_at TEXT, pending_followup_max_price INTEGER, client_request_id TEXT,account_id INTEGER DEFAULT 1);
     CREATE TABLE products (product_id TEXT PRIMARY KEY, product_url TEXT, product_title TEXT, product_image_url TEXT,
       current_price INTEGER, tax_type TEXT, end_time TEXT, auction_history_data TEXT);
-    CREATE TABLE bidding_items (product_id TEXT, status TEXT,account_id INTEGER DEFAULT 1,PRIMARY KEY(account_id,product_id));`);
+    CREATE TABLE bidding_items (product_id TEXT, status TEXT,account_id INTEGER DEFAULT 1,PRIMARY KEY(account_id,product_id));
+    CREATE TABLE orders (id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT,account_id INTEGER);`);
   const db = { getAll: async (sql, params = []) => raw.prepare(sql).all(...params), getOne: async (sql, params = []) => raw.prepare(sql).get(...params) };
   const expired = raw.prepare("SELECT datetime('now', '-1 day') AS time").get().time;
   const future = raw.prepare("SELECT datetime('now', '+1 day') AS time").get().time;
@@ -91,6 +92,39 @@ async function run() {
     assert.equal(third.data.length, 6);
     assert.equal(new Set([...first.data, ...second.data, ...third.data].map(item => item.product_id)).size, 26);
     assert.equal((await getFailureAnalysis(db, { userId: 3 })).total, 0);
+    // A different user's win on another account ends the shared auction immediately.
+    function crossAccountWin(productId, endTime, wonAt, {legacy=false, imported=false} = {}) {
+      addProduct(productId,endTime);
+      addTask(productId,700,'failed',1);
+      const winner=addTask(productId,90000,'success',2);
+      raw.prepare('UPDATE tasks SET account_id=2,strategy=? WHERE id=?').run(imported?'manual_import':'direct',winner);
+      raw.prepare('INSERT INTO orders(product_id,task_id,won_at,account_id) VALUES (?,?,?,2)').run(legacy?null:productId,winner,wonAt);
+    }
+    crossAccountWin('a123456789',future,expired);
+    crossAccountWin('b123456789',null,expired,{imported:true});
+    crossAccountWin('c123456789',future,expired,{legacy:true});
+    crossAccountWin('d123456789',expired,future);
+    crossAccountWin('e123456789',expired,null);
+    crossAccountWin('f123456789',expired,'unknown');
+    const stateBefore=raw.serialize();
+    const ended = await getFailureAnalysis(db,{userId:1,limit:100});
+    assert.equal(ended.total,29);
+    for (const id of ['a123456789','b123456789','c123456789']) {
+      const item=ended.data.find(item=>item.product_id===id);
+      assert.ok(item,'A cross-account win must not wait for the product deadline');
+      assert.equal(item.end_time,expired);
+      assert.equal(item.ended_by_win,1);
+      assert.equal(item.status,'failed');
+      assert.equal(item.account_id,1);
+      assert.deepEqual(item.bid_history.map(bid=>bid.amount),[700],'Another user\'s winning bid must not enter failure history');
+      assert.equal(item.final_bid,700);
+      assert.equal(item.won_at,undefined,'Do not expose another user\'s order details');
+    }
+    for (const id of ['future','d123456789','e123456789','f123456789']) assert.ok(!ended.data.some(item=>item.product_id===id));
+    assert.equal(ended.data.find(item=>item.product_id==='history').end_time,expired);
+    assert.equal(ended.data.find(item=>item.product_id==='history').ended_by_win,0);
+    assert.equal((await getFailureAnalysis(db,{userId:2,limit:100})).total,1,'The winner remains excluded from their own failure analysis');
+    assert.deepEqual(raw.serialize(),stateBefore,'Time selection must not alter tasks, orders or product snapshots');
     // Route wiring can be exercised without initializing any workspace database.
     const modelPath = require.resolve('../models');
     require.cache[modelPath] = { id: modelPath, filename: modelPath, loaded: true, exports: db };
@@ -102,6 +136,13 @@ async function run() {
       json(value) { response = value; }, status() { throw new Error('Unexpected route error'); }
     });
     assert.equal(response.total, 1, 'Route must use acting user rather than login user');
+    const historyRoute=router.stack.find(layer=>layer.route?.path==='/auction-history/:productId');
+    await historyRoute.route.stack[0].handle({params:{productId:'a123456789'},query:{format:'chart'}},{
+      json(value){response=value;},status(){throw new Error('Unexpected chart route error');}
+    });
+    assert.equal(response.end_time,expired,'Failure chart endpoint uses the win on another account');
+    assert.equal(response.ended_by_win,1);
+    assert.equal(response.account_id,undefined);
     const originalGetAll = db.getAll;
     const originalGetOne = db.getOne;
     db.getAll = async (sql, params) => sql.includes('FROM tasks won_task') ? [{ product_id: 'history', final_price: 2000 }] : originalGetAll(sql, params);

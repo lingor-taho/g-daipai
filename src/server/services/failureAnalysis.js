@@ -1,7 +1,8 @@
 const { getTaskSubmissionHistory } = require('./taskSubmissionHistory');
+const { hasWinningOrderSql, auctionEndTimeSql } = require('./productAuctionTime');
 
 const notWonFilter = `t.user_id = ? AND t.product_id IS NOT NULL
-  AND datetime(p.end_time) <= datetime('now')
+  AND datetime(${auctionEndTimeSql}) <= datetime('now')
   AND NOT EXISTS (SELECT 1 FROM bidding_items active WHERE active.product_id = t.product_id AND active.account_id = t.account_id
     AND active.status IN ('highest', 'outbid'))
   AND NOT EXISTS (SELECT 1 FROM tasks won WHERE won.user_id = t.user_id
@@ -14,7 +15,8 @@ async function getFailureAnalysis(database, { userId, page = 1, limit = 10 }) {
   const items = await database.getAll(`SELECT t.id, t.account_id, t.product_id, t.max_price, t.user_max_price, t.strategy,
       t.status, t.created_at, p.product_url, p.product_title, p.product_image_url,
       CASE WHEN LENGTH(COALESCE(p.auction_history_data, '')) > 0 THEN 1 ELSE 0 END AS has_auction_history,
-      p.current_price, p.end_time AS end_time, COALESCE(p.tax_type, 'tax_zero') AS tax_type,
+      p.current_price, ${auctionEndTimeSql} AS end_time,
+      ${hasWinningOrderSql} AS ended_by_win, COALESCE(p.tax_type, 'tax_zero') AS tax_type,
       bi.status AS bidding_status
     FROM tasks t
     LEFT JOIN products p ON p.product_id = t.product_id

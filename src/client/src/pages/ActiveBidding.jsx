@@ -276,7 +276,7 @@ export default function ActiveBidding() {
                       <>
                         最终出价 <span style={{ color: colors.text, fontWeight: 600 }}>{formatJPY(item.final_bid)}</span>
                         {' / '}落札价 <span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(displayPrice)}</span>
-                        <div style={{ marginTop: 4 }}>商品结束时间：{formatBeijingTime(item.end_time) || '-'}</div>
+                        <div style={{ marginTop: 4 }}>{item.ended_by_win ? '落札时间' : '商品结束时间'}：{formatBeijingTime(item.end_time) || '-'}</div>
                         <BidPriceTimeline currentPrice={displayPrice} bids={item.bid_history || []} />
                       </>
                     ) : (

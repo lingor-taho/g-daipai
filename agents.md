@@ -18,6 +18,8 @@
 
 ## 项目概述
 
+2026-10-11 拍卖记录采集和失败分析的时间条件已本地修正：非落札商品按商品结束时间，任一账号已落札（含人工导入）按落札时间；各用户的任务、出价记录及其他采集/订单业务规则不变。需更新 API、用户端静态文件并重启 API，已有漏采商品通过原手动/定时采集入口重新入队；未部署生产。说明和验证命令见主计划 0e。
+
 Yahoo 日本拍卖代拍系统。中国用户通过 Web 提交商品 URL、最高价和出价策略；Windows 服务器上的 Chrome 扩展轮询 API，在 Yahoo Auction 页面自动执行竞拍、同步入札中状态、同步落札订单，并处理交易开始、付款、扫描物流和确认收货等订单流程。
 
 生产侧已连续运行稳定；用户端商品名称多结果搜索已支持 Yahoo 列表分页弹层和选中后详情确认，并支持按用户隔离的浏览器本地商品收藏。当前后续重点是三表模型收尾、用户本地商品缓存提速，以及 Windows Chrome 小窗口下 PIN/文字验证码截图稳定性。
@@ -243,6 +245,12 @@ git diff --check
 完整回归入口现在自动使用临时 SQLite，含原业务测试、新账号测试、浏览器检查与两端构建；涉及 models 的单独专项也应使用 run-isolated-regression.cjs，避免加载项目实际数据库。
 
 ### 0e. 插件拍卖记录采集生产验证
+
+2026-10-11 多账号商品结束时间统一：同一商品在任一 Yahoo 账号已有落札订单时，失败分析及拍卖记录采集统一使用该商品的实际落札时间；没有落札订单才沿用商品结束时间。失败用户不必等原结束时间，列表及拍卖图表终点显示“落札时间”；保留各用户自己的任务、出价历史、状态、原仍在入札中排除及成功排除规则，不向失败用户返回其他用户的订单或账号信息。通过 `productAuctionTime.js` 共用只读时间表达式，兼容导入和旧订单关联；已有落札但时间缺失/无效不回退猜测。此次需更新 API、共享服务文件及用户端静态文件并重启 API；插件无需更新，未部署或修改生产数据。专项：`node scripts/run-isolated-regression.cjs src/server/services/failureAnalysis.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/task.test.js`、`node src/server/services/auctionHistory.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`、`node scripts/auction-history-browser.test.cjs`、`npm run build --prefix src/client` 及编码/读路径/diff 检查。浏览器验证覆盖 390/1200 像素下其他账号落札后的失败列表时间和图表终点，原未落札及自己落札图表继续覆盖。
+
+2026-10-11 拍卖记录入队时间条件修正：非落札商品沿用 `products.end_time`；已有落札订单（含人工导入及旧 `orders.task_id` 关联）改用 `orders.won_at`，只在有效时间已到且两个记录字段均为空时入队。已落札但落札时间缺失、无效或仍在未来时不以商品结束时间代替。修复人工导入 `r1232702461` 的结束时间为空及提前落札商品结束时间仍在未来时不能入队的问题。不改账号领取、采集重试/过期、队列顺序、出价、结算、付款或订单状态规则；不直接修改已有商品/订单数据。仅需更新 API 的 `src/server/services/auctionHistory.js` 并重启 API；flag 为 0 后通过原后台手动采集入口重新入队，或等待下次定时采集；现有批次不自动重建。未部署或触发生产采集。
+
+本次验证：内存 SQLite 覆盖提前落札、无结束时间的导入订单、无时区/UTC/带偏移时间、旧订单关联、未来/缺失/无效落札时间、已有/过期记录不覆盖及时间边界；实际多账号 HTTP 专项验证导入订单按成交账号领取、其他账号不能回写。命令：`node src/server/services/auctionHistory.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js`、`node yahoo-plugin/auctionHistory.test.js`、`node --check src/server/services/auctionHistory.js`、`node scripts/encoding-guard.js`、`git diff --check`。
 
 2026-10-09 落札图表终点时区修正：生产 g1245757348 的 Yahoo won_time_text 为 9/30 22:40，而历史 won_at 为 2026-09-30T14:40Z，原保存函数按服务器本地时区解释 Yahoo 文本，图表再转换日本时间导致多一小时。图表现优先采用有效 won_time_text 的日本当地月日时分，won_at 仅用于恢复最接近的年份；文本缺失/无效时保留原 won_at，非落札仍用 products.end_time。只修正图表展示，不批量改订单数据库或改动交易/付款日期逻辑。仅需更新用户端静态文件。验证：真实商品时间样例、已正确 UTC 不重复偏移、跨年与非法日期回退、图表计算、落札展示、用户端构建、编码及 diff 检查。
 

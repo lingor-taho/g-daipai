@@ -4,13 +4,55 @@ const history = require('./auctionHistory');
 const db = new Database(':memory:');
 db.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
 CREATE TABLE products(product_id TEXT PRIMARY KEY,end_time TEXT,current_price INTEGER,auction_history_html TEXT,auction_history_data TEXT);
-CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT,status TEXT); CREATE TABLE orders(product_id TEXT,task_id INTEGER);`);
+CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT,status TEXT); CREATE TABLE orders(id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT);`);
 const now = Date.parse('2026-10-08T01:20:00+08:00');
+// Queue eligibility uses actual winning time, independently of settlement or strategy.
+const eligibilityNow = Date.parse('2026-10-11T19:00:00+08:00');
+const eligibilityDb = new Database(':memory:');
+eligibilityDb.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
+CREATE TABLE products(product_id TEXT PRIMARY KEY,end_time TEXT,auction_history_html TEXT,auction_history_data TEXT);
+CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT,status TEXT,strategy TEXT,account_id INTEGER);
+CREATE TABLE orders(id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT,order_status TEXT,account_id INTEGER);`);
+function eligibilityCase(id, {end='2026-10-01T00:00:00+09:00',won,legacy=false,imported=false,linked=true,html=null,data=null} = {}) {
+  eligibilityDb.prepare('INSERT INTO products VALUES (?,?,?,?)').run(id,end,html,data);
+  const taskId = linked ? eligibilityDb.prepare('INSERT INTO tasks(product_id,status,strategy,account_id) VALUES (?,?,?,2)').run(id,won===undefined?'failed':'success',imported?'manual_import':'direct').lastInsertRowid : null;
+  if (won !== undefined) eligibilityDb.prepare('INSERT INTO orders(product_id,task_id,won_at,order_status,account_id) VALUES (?,?,?,?,2)').run(legacy?null:id,taskId,won,imported?'completed':'pending_payment');
+}
+eligibilityCase('non-won-ended');
+eligibilityCase('non-won-future',{end:'2026-10-12T00:00:00+09:00'});
+eligibilityCase('non-won-null',{end:null});
+eligibilityCase('non-won-invalid',{end:'unknown'});
+eligibilityCase('unrelated-ended',{linked:false});
+eligibilityCase('v1247947416',{end:'2026-10-14T20:44:40+09:00',won:'2026-10-11T07:54:00.000Z'});
+eligibilityCase('r1232702461',{end:null,won:'2026-06-14T15:17:00.000Z',imported:true});
+eligibilityCase('won-invalid-deadline',{end:'unknown',won:'2026-10-07 23:17:00'});
+eligibilityCase('won-offset',{end:null,won:'2026-10-11T18:59:00+08:00'});
+eligibilityCase('legacy-order',{end:null,won:'2026-10-07T23:17:00+09:00',legacy:true});
+eligibilityCase('order-only',{end:null,won:'2026-10-07T23:17:00+09:00',linked:false});
+eligibilityCase('won-future',{won:'2026-10-12T00:00:00+09:00'});
+eligibilityCase('won-missing',{won:null});
+eligibilityCase('won-invalid',{won:'unknown'});
+eligibilityCase('won-boundary',{won:new Date(eligibilityNow).toISOString()});
+eligibilityCase('won-one-ms-later',{won:new Date(eligibilityNow+1).toISOString()});
+eligibilityCase('won-has-html',{won:'2026-10-07T00:00:00Z',html:'saved'});
+eligibilityCase('won-has-data',{won:'2026-10-07T00:00:00Z',data:'[]'});
+eligibilityCase('won-expired',{won:'2026-10-07T00:00:00Z',html:history.EXPIRED,data:history.EXPIRED});
+const beforeEligibility = eligibilityDb.serialize();
+const expectedEligible = ['non-won-ended','v1247947416','r1232702461','won-invalid-deadline','won-offset','legacy-order','order-only','won-boundary'].sort();
+assert.deepEqual(history.eligible(eligibilityDb,eligibilityNow).sort(),expectedEligible);
+assert.deepEqual(eligibilityDb.serialize(),beforeEligibility,'Eligibility must not change product, task or order data');
+history.request(eligibilityDb,eligibilityNow);
+assert.deepEqual(JSON.parse(history.get(eligibilityDb,'auction_history_queue')).ids.slice().sort(),expectedEligible);
+const claimedEligibilityJob = history.next(eligibilityDb,eligibilityNow);
+assert.ok(expectedEligible.includes(claimedEligibilityJob.productId));
+history.finish(eligibilityDb,{...claimedEligibilityJob,expired:true});
+assert.equal(eligibilityDb.prepare('SELECT auction_history_data FROM products WHERE product_id=?').get(claimedEligibilityJob.productId).auction_history_data,history.EXPIRED);
+eligibilityDb.close();
 for (const [id,end,linked] of [['old','2026-10-01T20:00:00+09:00',true],['won','2026-10-02T20:00:00+09:00',false],['future','2026-10-09T20:00:00+09:00',true],['lookup','2026-10-01T20:00:00+09:00',false],['invalid','unknown',true]]) {
   db.prepare('INSERT INTO products(product_id,end_time) VALUES (?,?)').run(id,end);
   if (linked) db.prepare('INSERT INTO tasks(product_id) VALUES (?)').run(id);
 }
-db.prepare('INSERT INTO orders(product_id) VALUES (?)').run('won');
+db.prepare('INSERT INTO orders(product_id,won_at) VALUES (?,?)').run('won','2026-10-02T20:00:00+09:00');
 assert.deepEqual(history.eligible(db,now),['won','old']);
 history.schedule(db, now-1);
 assert.equal(history.get(db,'auction_history_requested'),'');
@@ -68,7 +110,7 @@ assert.equal(history.correctedEndTime('unknown','10-8 21:46'),null);
 function saveCase(id, endTime, {order=false,success=false,legacyOrder=false,empty=false,expired=false} = {}) {
   db.prepare('INSERT INTO products(product_id,end_time,current_price) VALUES (?,?,?)').run(id,endTime,200);
   const task = db.prepare('INSERT INTO tasks(product_id,status) VALUES (?,?)').run(id,success?'success':'failed');
-  if (order || legacyOrder) db.prepare('INSERT INTO orders VALUES (?,?)').run(legacyOrder?null:id,task.lastInsertRowid);
+  if (order || legacyOrder) db.prepare('INSERT INTO orders(product_id,task_id,won_at) VALUES (?,?,?)').run(legacyOrder?null:id,task.lastInsertRowid,'2026-10-08T21:00:00+09:00');
   history.request(db,Date.parse('2026-10-09T12:00:00+09:00'));
   const job = history.next(db);
   assert.equal(job.productId,id);

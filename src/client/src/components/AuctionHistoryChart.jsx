@@ -77,7 +77,7 @@ export default function AuctionHistoryChart({ item, onClose, won = false }) {
     setResult({loading:true,data:'',message:''});
     api.get(`/task/auction-history/${encodeURIComponent(item.product_id)}`,{params:{format:'chart'},signal:controller.signal})
       .then(({data})=>{
-        if (!controller.signal.aborted && account===localStorage.getItem('actingUserId')) setResult({loading:false,data:data.data,endTime:data.end_time ?? item.end_time,message:''});
+        if (!controller.signal.aborted && account===localStorage.getItem('actingUserId')) setResult({loading:false,data:data.data,endTime:data.end_time ?? item.end_time,endedByWin:data.ended_by_win ?? item.ended_by_win,message:''});
       }).catch(error=>{if(!controller.signal.aborted)setResult({loading:false,data:'',message:getApiErrorMessage(error,'图表读取失败')});});
     const close = ()=>onClose();
     window.addEventListener('acting-user-change',close);
@@ -86,6 +86,7 @@ export default function AuctionHistoryChart({ item, onClose, won = false }) {
   },[item?.product_id]);
   if (!item) return null;
   const chartEnd = resolveAuctionChartEnd(item,result.endTime,won);
+  if (!won && result.endedByWin) chartEnd.label = '落札时间';
   return <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:1100,background:'rgba(15,23,42,.4)',display:'flex',alignItems:'center',justifyContent:'center',padding:12}}>
     <div role="dialog" aria-modal="true" aria-label="用户拍卖记录图表" onClick={event=>event.stopPropagation()} style={{width:'min(1100px,100%)',maxHeight:'85vh',overflowY:'auto',borderRadius:12,background:'#fff',boxShadow:'0 12px 40px #0003'}}>
       <div style={{padding:'12px 14px',display:'flex',gap:12,alignItems:'center',borderBottom:'1px solid #e2e8f0',color:'#334155'}}>

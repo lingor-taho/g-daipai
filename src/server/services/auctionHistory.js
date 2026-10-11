@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 const accountScope = require('./yahooAccountContext');
 const yahooAccounts = require('./yahooAccounts');
+const { hasWinningOrderSql, auctionEndTimeSql } = require('./productAuctionTime');
 const EXPIRED = '数据已过期';
 function raw(database) { return database.raw || database.db || database; }
 function get(database, key, fallback = '') {
@@ -10,13 +11,16 @@ function set(database, key, value) {
   raw(database).prepare('INSERT INTO config (key,value,updated_at) VALUES (?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP').run(key, String(value));
 }
 function eligible(database, now = Date.now()) {
-  return raw(database).prepare(`SELECT p.product_id, p.end_time FROM products p
+  return raw(database).prepare(`SELECT p.product_id, ${auctionEndTimeSql} AS ended_at
+    FROM products p
     WHERE COALESCE(p.auction_history_html,'')='' AND COALESCE(p.auction_history_data,'')=''
     AND (EXISTS(SELECT 1 FROM tasks t WHERE t.product_id=p.product_id)
-      OR EXISTS(SELECT 1 FROM orders o WHERE o.product_id=p.product_id))
+      OR ${hasWinningOrderSql})
     ORDER BY p.end_time DESC,p.product_id`).all().filter(p => {
-      const text = String(p.end_time || '');
-      // Product snapshots use ISO timestamps; unqualified legacy values are Yahoo local time.
+      // A winning order, including a manual import, ends at its recorded win time.
+      // Missing win times must not fall back to the original auction deadline.
+      const text = String(p.ended_at || '');
+      // Recorded times use ISO timestamps; unqualified legacy values are Yahoo local time.
       const ms = Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(text) ? text : text.replace(' ', 'T') + '+09:00');
       return Number.isFinite(ms) && ms <= now;
     }).map(p => p.product_id);

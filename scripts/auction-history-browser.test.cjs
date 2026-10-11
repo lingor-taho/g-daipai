@@ -50,8 +50,9 @@ async function run() {
       const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR',e.message);});
       page.on('console',message=>{if(message.type()==='error')console.error('BROWSER',message.text());});
       let response = {html:'<div class="auction-history"><h3>入札履歴</h3><table><tr><td>10月4日21時46分</td><td>jailhnrx 自動入札。 81,000</td></tr></table></div>',expired:false};
+      let analysisWon = false;
       await page.route('**/api/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(route.request().url().includes('/task/auction-history/') ? response : {
-        success:true,data:[{id:1,order_id:1,product_id:'u1246662246',product_title:'列表测试商品',has_auction_history:1,order_status:null,status:'success',strategy:'direct',max_price:82000,final_price:81000,current_price:81000,won_at:'2026-10-08T22:17:00+09:00',end_time:'2026-10-08T21:46:00+09:00',bid_history:[]}],total:1,page:1,limit:10
+        success:true,data:[{id:1,order_id:1,product_id:'u1246662246',product_title:'列表测试商品',has_auction_history:1,order_status:null,status:'success',strategy:'direct',max_price:82000,final_price:81000,current_price:81000,won_at:'2026-10-08T22:17:00+09:00',end_time:'2026-10-08T21:46:00+09:00',bid_history:[],...(analysisWon?{status:'failed',won_at:undefined,end_time:'2026-10-08T22:17:00+09:00',ended_by_win:1,final_bid:700,bid_history:[{task_id:1,amount:700,created_at:'2026-10-08T12:00:00Z',status:'failed'}]}:{})}],total:1,page:1,limit:10
       })}));
       await page.goto('http://127.0.0.1:43821/__history_test');
       await page.getByRole('button',{name:'查看拍卖记录',exact:true}).click({timeout:10000}).catch(async error=>{console.error(await page.locator('body').innerText());throw error;});
@@ -107,6 +108,19 @@ async function run() {
       await page.getByRole('button',{name:'查看拍卖记录图表',exact:true}).click();
       await page.getByRole('img',{name:'用户拍卖记录时间价格折线图'}).waitFor();
       assert.ok((await page.locator('[data-auction-end="true"] title').textContent()).includes('商品结束时间 · 10-8 21:46:00'));
+      await page.keyboard.press('Escape');
+      analysisWon=true;
+      response={...response,end_time:'2026-10-08T22:17:00+09:00',ended_by_win:1};
+      await page.reload();
+      await page.getByRole('button',{name:'入札中',exact:true}).click();
+      await page.getByRole('button',{name:'失败分析 → 返回',exact:true}).waitFor();
+      await page.getByText(/落札时间：/).waitFor();
+      assert.equal(await page.getByText(/商品结束时间：/).count(),0);
+      await page.getByRole('button',{name:'查看拍卖记录图表',exact:true}).click();
+      await page.getByRole('img',{name:'用户拍卖记录时间价格折线图'}).waitFor();
+      assert.ok((await page.locator('[data-auction-end="true"] title').textContent()).includes('落札时间 · 10-8 22:17:00'));
+      assert.equal(await page.locator('body').evaluate(el=>el.scrollWidth<=window.innerWidth),true);
+      await page.screenshot({path:path.join(output,`cross-account-failure-history-${width}.png`)});
       await page.keyboard.press('Escape');
       assert.deepEqual(errors,[]);
       await page.close();

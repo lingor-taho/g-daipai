@@ -8,6 +8,7 @@ const { createBatchTaskQueue } = require('../services/batchTaskQueue');
 const { getWebsiteRate } = require('../services/websiteRate');
 const { getCaptchaChallenge } = require('../services/manualCaptcha');
 const { getFailureAnalysis } = require('../services/failureAnalysis');
+const { hasWinningOrderSql, auctionEndTimeSql } = require('../services/productAuctionTime');
 const { getTaskSubmissionHistory } = require('../services/taskSubmissionHistory');
 const {
   normalizeTaxType,
@@ -37,8 +38,9 @@ router.get('/auction-history/:productId', async (req,res) => {
   const productId = String(req.params.productId);
   if (!/^[a-zA-Z]?\d{8,10}$/.test(productId)) return res.status(400).json({error:'商品ID无效'});
   if (req.query.format === 'chart') {
-    const product = await db.getOne('SELECT auction_history_data,end_time FROM products WHERE product_id=?',[productId]);
-    return res.json({data:product?.auction_history_data || '',end_time:product?.end_time || ''});
+    const product = await db.getOne(`SELECT p.auction_history_data, ${auctionEndTimeSql} AS end_time,
+      ${hasWinningOrderSql} AS ended_by_win FROM products p WHERE p.product_id=?`,[productId]);
+    return res.json({data:product?.auction_history_data || '',end_time:product?.end_time || '',ended_by_win:product?.ended_by_win || 0});
   }
   const product = await db.getOne('SELECT auction_history_html FROM products WHERE product_id=?',[productId]);
   res.json({html:product?.auction_history_html || '', expired:product?.auction_history_html === '数据已过期'});
