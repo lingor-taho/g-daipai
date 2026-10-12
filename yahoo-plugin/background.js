@@ -6648,7 +6648,7 @@ function getBundleActionPatternSource(action) {
   const patterns = {
     close: '\\u9589\\u3058\\u308b',
     start: '^\\s*\\u307e\\u3068\\u3081\\u3066\\u53d6\\u5f15\\u3092(?:\\u306f\\u3058\\u3081\\u308b|\\u4f9d\\u983c\\u3059\\u308b)\\s*$',
-    singleStart: '^\\s*\\u53d6\\u5f15\\u3092\\u306f\\u3058\\u3081\\u308b\\s*$',
+    singleStart: '^\\s*(?:\\u53d6\\u5f15\\u3092\\u306f\\u3058\\u3081\\u308b|\\u8cfc\\u5165\\u624b\\u7d9a\\u304d(?:\\u3092)?\\u3059\\u308b)\\s*$',
     input: '\\u53d6\\u5f15\\s*\\u60c5\\u5831\\s*\\u3092\\s*\\u5165\\u529b\\s*\\u3059\\u308b',
     placementOk: '^\\s*OK\\s*$',
     decide: '^\\s*(?:\\u6c7a\\u5b9a\\u3059\\u308b|\\u78ba\\u8a8d\\u3059\\u308b)\\s*$',

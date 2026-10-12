@@ -5335,7 +5335,9 @@ async function run() {
   testBundleTransactionActionStateDetectsDecideButton();
   testBundleTransactionActionStateDetectsReviewButtonAsDecide();
   testBundleRejectedStateFindsSingleTransactionStart('取引をはじめる');
-  testBundleRejectedStateFindsSingleTransactionStart('購入手続きする', false);
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きする');
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きをする');
+  testBundleRejectedStateFindsSingleTransactionStart('  購入手続きをする  ');
   testBundleRejectedStateFindsSingleTransactionStart('まとめて取引をはじめる', false);
   testBundleRejectedStateFindsSingleTransactionStart('購入手続きすることができません', false);
   testBundleTransactionActionStateDetectsPlacementOkModal();
