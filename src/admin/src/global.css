@@ -162,6 +162,12 @@ body,
   white-space: nowrap;
 }
 
+.admin-tasks-table .ant-table-thead > tr > th,
+.admin-tasks-table .ant-table-tbody > tr > td,
+.admin-orders-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
 @media (max-width: 767px) {
   .admin-header .admin-header-title { font-size: 14px !important; }
   .admin-header .admin-header-actions { gap: 6px !important; }

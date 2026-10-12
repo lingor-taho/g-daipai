@@ -18,6 +18,8 @@
 
 ## 项目概述
 
+2026-10-12 修正手机任务表挤压换行：此前账号列 ellipsis 触发表格固定布局，而主任务表没有横向 scroll，其他未指定宽度列被挤成竖排。现任务／队列共用表保留各字段单行所需宽度，开启横向滚动；订单原其他列宽不变。两处账号标题统一「YH」，宽度 64；手机菜单保持原单行左右滑动。仅后台静态文件，见 0f。
+
 2026-10-12 后台内容顶部取消账号在线／登录文字区，主账号说明和备用账号状态标签均移除，无提醒不留空白；在线状态继续通过红绿灯查看。保留原主／备用账号验证码、付款及其他实际提醒。仅更新后台静态文件，无 API／插件／数据库变更，验证见 0f。
 
 2026-10-12 后台任务报表／订单管理的账号列标题缩短为「执行Yh／成交Yh」，列宽从 140 缩至 88，长账号使用省略显示。仅更新后台静态文件，不改账号取值或业务，手机／PC 验证见 0f。
@@ -168,6 +170,8 @@ orders.task_id      N --- 0/1 tasks.id
 ## 当前主计划
 
 ### 0f. Yahoo 多账号本地实现与生产验收
+
+2026-10-12 手机表格修正并替代此前 88px 标题方案：任务表因账号 ellipsis 自动启用固定布局、主表缺少横向 scroll，导致其他列被挤压逐字换行。任务／队列共用列显式保留用户名 100、商品ID 150、金额各 100、策略 90、状态 100、时间各 170 像素；横向 scroll 1214 与列总宽一致，标题／数据 nowrap，超出容器左右滑动。订单其他列保持原宽，仅标题 nowrap。两处账号列改「YH」、64px、原长账号省略显示，底部菜单继续原单行横向滚动，不更改菜单结构。仅后台静态文件，无 API／插件／schema 改动。验证：`node src/admin/src/Tasks.display.test.js`、`node src/admin/src/Orders.display.test.js`、`npm run build --prefix src/admin`、`node scripts/admin-table-mobile.browser.test.cjs`、`node scripts/encoding-guard.js`、`git diff --check`。新增 360／390／1200 浏览器回归使用真实长度样例，验证 YH 列宽、所有标题与数据行高度、表格可横向滚动、页面无横向溢出及菜单单行；此前只查账号列宽的验证未覆盖其他列挤压，此次补齐。未部署生产。
 
 2026-10-12 按用户要求删除顶部冗余账号状态区：AdminLayout 移除主账号名称与「插件在线／以下提醒对应本账号」说明，备用 YahooAccountAlerts 移除名称及在线／登录 Tag，仅有实际提醒时渲染容器。主账号原独立提醒、备用账号登录异常／验证码／PIN／邮箱／付款／确认收货／超期发货／表格失败提醒及操作仍保留，红绿灯组件不变。仅更新后台静态文件。验证：`node src/admin/src/AdminLayout.display.test.js`、`node src/admin/src/MessageRead.display.test.js`、`npm run build --prefix src/admin`、`node scripts/yahoo-multi-account-browser.test.cjs`、390／1200 模拟无提醒页面检查、`node scripts/encoding-guard.js`、`git diff --check`；未部署或操作实际账号。
 
@@ -814,6 +818,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-12 手机表格恢复单行与横向滚动
+
+任务表明确各字段可读宽度并开启左右滑动，避免逐字竖排；订单其他列不缩短。账号列统一「YH」、64px，详见 0f。
 
 ### 2026-10-12 删除顶部账号状态文字
 

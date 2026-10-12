@@ -119,10 +119,11 @@ export default function TasksPage() {
   }, []);
 
   const columns = [
-    {title:'执行Yh',width:88,ellipsis:true,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
-    { title: '提交用户', dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
+    {title:'YH',width:64,ellipsis:true,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
+    { title: '提交用户', width:100, dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
     {
       title: '商品ID',
+      width:150,
       dataIndex: 'product_id',
       render: (_: any, row: any) => (
         <a href={row.product_url || `https://auctions.yahoo.co.jp/jp/auction/${row.product_id}`} target="_blank" rel="noreferrer">
@@ -130,19 +131,20 @@ export default function TasksPage() {
         </a>
       )
     },
-    { title: '当前价', dataIndex: 'current_price', render: (_: any, row: any) => row.status === 'preparation_pending' ? '-' : formatJPY(row.current_price) },
-    { title: '最高价', dataIndex: 'max_price', render: (_: any, row: any) => formatJPY(row.max_price) },
-    { title: '策略', dataIndex: 'strategy', render: (_: any, row: any) => strategyLabels[row.strategy] || row.strategy || '即时拍' },
+    { title: '当前价', width:100, dataIndex: 'current_price', render: (_: any, row: any) => row.status === 'preparation_pending' ? '-' : formatJPY(row.current_price) },
+    { title: '最高价', width:100, dataIndex: 'max_price', render: (_: any, row: any) => formatJPY(row.max_price) },
+    { title: '策略', width:90, dataIndex: 'strategy', render: (_: any, row: any) => strategyLabels[row.strategy] || row.strategy || '即时拍' },
     {
       title: '状态',
+      width:100,
       dataIndex: 'status',
       render: (_: any, row: any) => (
         <Tag color={statusColors[row.status] || 'default'}>{row.status === 'failed' ? getSharedTaskFailureLabel(row.error_msg) : (statusLabels[row.status] || row.status)}</Tag>
       )
     },
-    { title: '提交时间', dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) },
-    { title: '下次执行时间', dataIndex: 'next_execute_at', render: (_: any, row: any) => formatDateTime(row.next_execute_at) },
-    { title: '商品结束时间', dataIndex: 'end_time', render: (_: any, row: any) => formatDateTime(row.end_time) }
+    { title: '提交时间', width:170, dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) },
+    { title: '下次执行时间', width:170, dataIndex: 'next_execute_at', render: (_: any, row: any) => formatDateTime(row.next_execute_at) },
+    { title: '商品结束时间', width:170, dataIndex: 'end_time', render: (_: any, row: any) => formatDateTime(row.end_time) }
   ];
 
   const preparation = stats?.preparation || { pending: 0, processing: 0, items: [] };
@@ -199,8 +201,8 @@ export default function TasksPage() {
 
       {queueVisible && <Card id="task-queue-details" title="队列任务详情">
         {queueError && <Alert type="error" showIcon message="队列详情加载失败" description={queueError} />}
-        <ProTable columns={columns} dataSource={queueData.items} rowKey="queue_key"
-          loading={queueLoading} search={false} options={false} scroll={{ x: 1100 }}
+        <ProTable className="admin-tasks-table" columns={columns} dataSource={queueData.items} rowKey="queue_key"
+          loading={queueLoading} search={false} options={false} scroll={{ x: 1214 }}
           pagination={{ current: queuePage, pageSize: 10, total: queueData.total,
             showSizeChanger: false, onChange: page => setQueuePage(page) }} />
       </Card>}
@@ -242,6 +244,7 @@ export default function TasksPage() {
       </Card>}
 
       <ProTable
+        className="admin-tasks-table"
         columns={columns}
         request={async (params: any) => {
           try {
@@ -254,6 +257,7 @@ export default function TasksPage() {
         }}
         rowKey="id"
         search={false}
+        scroll={{ x: 1214 }}
         pagination={{ pageSize: 10 }}
       />
     </Space>
