@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Input, Space, Tag, message } from 'antd';
+import { Alert, Button, Input, Space, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
 export default function YahooAccountAlerts({account:a,workOnly=false}:{account:any,workOnly?:boolean}) {
   const [answer,setAnswer]=useState('');
@@ -9,7 +9,11 @@ export default function YahooAccountAlerts({account:a,workOnly=false}:{account:a
   async function act(path:string,body:any={}) {setBusy(true);try{await fetchAdminJson(`/api/admin/${path}?account_id=${a.account_id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,account_id:a.account_id})});}catch(e:any){message.error(e.message);}finally{setBusy(false);}}
   const title=`${a.account_name}（${a.yahoo_id || `ID ${a.account_id}`}）`;
   if(workOnly) return null;
-  return <div data-yahoo-account={a.account_id} style={{marginBottom:12}}><Space wrap><strong>{title}</strong><Tag color={a.online?'green':'red'}>{a.online?'插件在线':'插件离线'}</Tag><Tag color={a.yahooLogin?.status==='ok'?'green':'orange'}>{a.yahooLogin?.status==='ok'?'Yahoo 已登录':'Yahoo 登录待确认'}</Tag></Space>
+  const hasAlerts = (a.yahooLogin?.message && a.yahooLogin.status!=='ok') ||
+    a.paymentAlertMessage || a.confirmReceiptAlertMessage || c ||
+    a.shipmentAlerts?.length || a.googleSheetAlerts?.length;
+  if (!hasAlerts) return null;
+  return <div data-yahoo-account={a.account_id} style={{marginBottom:12}}>
     {a.yahooLogin?.message && a.yahooLogin.status!=='ok'?<Alert type="warning" message={`${title}：${a.yahooLogin.message}`}/>:null}
     {a.paymentAlertMessage?<Alert type="error" message={`${title}：${a.paymentAlertMessage}`} action={<Button disabled={busy} onClick={()=>act('payment/continue')}>继续</Button>}/>:null}
     {a.confirmReceiptAlertMessage?<Alert type="warning" message={`${title}：${a.confirmReceiptAlertMessage}`}/>:null}

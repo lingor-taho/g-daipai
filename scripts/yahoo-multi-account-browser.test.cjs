@@ -55,7 +55,7 @@ const {chromium}=require('playwright');
       await page.getByRole('button',{name:'提交 PIN',exact:true}).click();
       assert.equal(writes.find(w=>w.path==='/api/admin/manual-captcha/answer').accountId,'1','primary alert action retains its displayed account');
       await page.goto(base+'/#/orders');
-      await page.getByRole('columnheader',{name:'成交 Yahoo',exact:true}).waitFor({state:width<600?'attached':'visible'});
+      await page.getByRole('columnheader',{name:'成交Yh',exact:true}).waitFor({state:width<600?'attached':'visible'});
       const toggle=page.getByRole('button',{name:'展开运行状态',exact:true});if(await toggle.count()) await toggle.click();
       assert.equal(await page.getByText('交易开始flag：1',{exact:true}).count(),3);
       await page.screenshot({path:path.join(output,`yahoo-accounts-${width}.png`),fullPage:true});

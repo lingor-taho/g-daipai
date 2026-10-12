@@ -360,7 +360,7 @@ export default function AdminLayout() {
         ) : null}
         <Layout className="admin-main" style={{ marginLeft: isMobile ? 0 : (collapsed ? 50 : 210), transition: 'margin-left 0.2s' }}>
           <Content className="admin-content" style={{ padding: 20, background: '#f5f5f5', minHeight: 'calc(100vh - 64px)' }}>
-            {yahooAccounts.map(a=>a.is_primary?<div key={a.account_id} style={{marginBottom:12,fontWeight:600}}>{a.account_name}（{a.yahoo_id || `ID ${a.account_id}`}）：{a.online ? '插件在线' : '插件离线'} / 以下提醒对应本账号<YahooAccountAlerts account={a} workOnly /></div>:<YahooAccountAlerts key={a.account_id} account={a} />)}
+            {yahooAccounts.filter(a=>!a.is_primary).map(a=><YahooAccountAlerts key={a.account_id} account={a} />)}
             {auctionHistoryAlerts.map(alert => (
               <Alert key={alert.id} type="error" showIcon style={{ marginBottom: 12 }}
                 message={<Space wrap>

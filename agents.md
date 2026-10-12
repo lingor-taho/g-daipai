@@ -18,6 +18,8 @@
 
 ## 项目概述
 
+2026-10-12 后台内容顶部取消账号在线／登录文字区，主账号说明和备用账号状态标签均移除，无提醒不留空白；在线状态继续通过红绿灯查看。保留原主／备用账号验证码、付款及其他实际提醒。仅更新后台静态文件，无 API／插件／数据库变更，验证见 0f。
+
 2026-10-12 后台任务报表／订单管理的账号列标题缩短为「执行Yh／成交Yh」，列宽从 140 缩至 88，长账号使用省略显示。仅更新后台静态文件，不改账号取值或业务，手机／PC 验证见 0f。
 
 2026-10-12 普通商品同捆拒绝后的新版单品入口已本地兼容：识别「購入手続きをする／購入手続きする」及原「取引をはじめる」，页面状态、MAIN world 点击及 content 点击一致。关闭拒绝弹框后先进入单品信息页，再按原运费类型完成信息确认；落札者负担仍进入等待运费，不跳过确认直接标待支付。只需更新插件 background.js、content.js 并分别 reload；不改 API、数据库或实际订单。验证与验收见 0f，真实新版后续页面待用户更新验收。
@@ -166,6 +168,8 @@ orders.task_id      N --- 0/1 tasks.id
 ## 当前主计划
 
 ### 0f. Yahoo 多账号本地实现与生产验收
+
+2026-10-12 按用户要求删除顶部冗余账号状态区：AdminLayout 移除主账号名称与「插件在线／以下提醒对应本账号」说明，备用 YahooAccountAlerts 移除名称及在线／登录 Tag，仅有实际提醒时渲染容器。主账号原独立提醒、备用账号登录异常／验证码／PIN／邮箱／付款／确认收货／超期发货／表格失败提醒及操作仍保留，红绿灯组件不变。仅更新后台静态文件。验证：`node src/admin/src/AdminLayout.display.test.js`、`node src/admin/src/MessageRead.display.test.js`、`npm run build --prefix src/admin`、`node scripts/yahoo-multi-account-browser.test.cjs`、390／1200 模拟无提醒页面检查、`node scripts/encoding-guard.js`、`git diff --check`；未部署或操作实际账号。
 
 2026-10-12 后台账号列紧凑显示：任务报表「执行 Yahoo」改「执行Yh」，订单管理「成交 Yahoo」改「成交Yh」，两列宽度 140→88 并开启 ellipsis，保留原 Yahoo ID／账号名称取值、账号隔离及订单操作。仅需更新后台静态文件，API／插件／schema 无改动。验证：`node src/admin/src/Tasks.display.test.js`、`node src/admin/src/Orders.display.test.js`、`npm run build --prefix src/admin`、390／1200 像素模拟 API 浏览器列宽／省略检查、`node scripts/encoding-guard.js`、`git diff --check`；未部署生产。
 
@@ -810,6 +814,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-12 删除顶部账号状态文字
+
+主／备用账号在线和登录文字不再重复显示，无实际提醒不占空白；红绿灯及原账号操作提醒保留，仅后台静态文件，详见 0f。
 
 ### 2026-10-12 后台执行／成交账号列缩短
 
