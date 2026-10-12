@@ -28,6 +28,8 @@ const steps = [
   ['User deletion cleanup', process.execPath, ['src/server/services/deleteUser.test.js'], rootDir],
   ['User deletion HTTP flow', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/admin.users.delete.test.js'], rootDir],
   ['Task route tests', process.execPath, ['src/server/routes/task.test.js'], rootDir],
+  ['Auction deadline clock tests',process.execPath,['src/shared/auctionDeadline.test.cjs'],rootDir],
+  ['Ended task submission guard',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/task.endedSubmit.test.js'],rootDir],
   ['Expired bidding failure analysis', process.execPath, ['src/server/services/failureAnalysis.test.js'], rootDir],
   ['Bid price timeline markers', process.execPath, ['src/client/src/utils/bidPriceTimeline.test.mjs'], rootDir],
   ['90-day statistics API tests', process.execPath, ['src/server/routes/task.won-stats.test.js'], rootDir],
@@ -56,6 +58,7 @@ const steps = [
   ['User deletion admin browser checks',process.execPath,['scripts/user-delete-browser.test.cjs'],rootDir],
   ['Multi-account admin browser checks',process.execPath,['scripts/yahoo-multi-account-browser.test.cjs'],rootDir],
   ['Client build', npmCommand, ['run', 'build'], clientDir],
+  ['Ended product submission display',process.execPath,['scripts/submit-ended-browser.test.cjs'],rootDir],
   ['Client login and bid config browser checks',process.execPath,['scripts/run-isolated-regression.cjs','scripts/client-login.test.cjs'],rootDir]
 ];
 

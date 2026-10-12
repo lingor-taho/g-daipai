@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { isAuctionEnded } = require('../../shared/auctionDeadline.cjs');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
 const db = require('../models');
 const authMiddleware = require('../middleware/auth');
@@ -671,6 +672,7 @@ async function submitAuctionTask(context, body, {
       } catch (_) {}
     }
     const endTime = end_time || productInfo?.endTime || null;
+    if (isAuctionEnded(endTime) || isAuctionEnded(productInfo?.endTime)) throw submitError('商品已结束，不能提交任务');
     const resolvedTaxType = normalizeTaxType(tax_type || productInfo?.taxType);
     const resolvedProductType = normalizeProductType(product_type || productInfo?.productType, resolvedTaxType);
     const fetchedBuyoutPrice = Number(productInfo?.buyoutPrice || 0) || 0;

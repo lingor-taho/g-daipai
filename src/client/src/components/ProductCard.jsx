@@ -25,7 +25,7 @@ export function BidCountIcon() {
   );
 }
 
-export default function ProductCard({ product, onOpenDetail }) {
+export default function ProductCard({ product, onOpenDetail, ended = false }) {
   const taxType = product.taxType || product.tax_type || 'tax_zero';
   const productType = product.productType || product.product_type || (taxType === 'tax_included' ? 'store' : 'normal');
   const productTypeLabel = productType === 'store' ? '商城商品' : '普通商品';
@@ -44,10 +44,11 @@ export default function ProductCard({ product, onOpenDetail }) {
           type="button"
           onClick={onOpenDetail}
           aria-label={`查看商品详情：${product.title}`}
-          style={{ width: 136, height: 136, padding: 0, border: 0, flex: '0 0 136px', background: colors.cardSoft, cursor: 'pointer' }}
+          style={{ width: 136, height: 136, padding: 0, border: 0, flex: '0 0 136px', background: colors.cardSoft, cursor: 'pointer', position: 'relative' }}
         >
           <img src={product.imageUrl} alt={product.title}
             style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
+          {ended && <span data-auction-ended style={{ position: 'absolute', top: 0, left: 0, background: '#ff3141', color: '#fff', padding: '4px 8px', fontSize: 12, fontWeight: 700, borderBottomRightRadius: 6 }}>已结束</span>}
         </button>
       )}
       <div style={{ padding: 12, minWidth: 0, flex: 1 }}>

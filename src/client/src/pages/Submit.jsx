@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getApiErrorMessage, getClientBidConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
+import auctionDeadline from '../../../shared/auctionDeadline.cjs';
 import useProductFavorites from '../utils/useProductFavorites';
 import ProductSearchPopup from '../components/ProductSearchPopup';
 import BatchSubmitPopup from '../components/BatchSubmitPopup';
@@ -12,6 +13,7 @@ import TaskList from './TaskList';
 import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
 import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
+const { auctionEndMs, isAuctionEnded } = auctionDeadline;
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -131,6 +133,24 @@ export default function Submit() {
   const [searchParams] = useSearchParams();
   const [url, setUrl] = useState('');
   const [product, setProduct] = useState(null);
+  const [deadlineNow, setDeadlineNow] = useState(Date.now);
+  const productEnded = isAuctionEnded(product?.endTime, deadlineNow);
+  useEffect(() => {
+    let timer;
+    function updateDeadline() {
+      const now = Date.now();
+      setDeadlineNow(now);
+      const end = auctionEndMs(product?.endTime);
+      if (Number.isFinite(end) && end >= now) {
+        timer = setTimeout(updateDeadline, Math.min(end - now + 1, 2147483647));
+      }
+    }
+    updateDeadline();
+    const refresh = () => { clearTimeout(timer); updateDeadline(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { clearTimeout(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
+  }, [product]);
   const [maxPrice, setMaxPrice] = useState('');
   const [strategy, setStrategy] = useState('direct');
   const [multiBidIncrement, setMultiBidIncrement] = useState('');
@@ -482,6 +502,11 @@ export default function Submit() {
       Toast.show({ content: '出价功能被一时限制，请联系管理员。' });
       return;
     }
+    if (isAuctionEnded(product?.endTime)) {
+      setDeadlineNow(Date.now());
+      Toast.show({ content: '商品已结束，不能提交任务' });
+      return;
+    }
     const submitTaxType = getSubmitTaxType(product, storeBidPriceMode);
     const buyoutPrice = getBuyoutPrice(product);
     const inputYenPrice = getInputYenPrice();
@@ -680,7 +705,7 @@ export default function Submit() {
       />
 
       {product && (
-        <ProductCard product={product} onOpenDetail={() => setSingleProductDetailVisible(true)} />
+        <ProductCard product={product} ended={productEnded} onOpenDetail={() => setSingleProductDetailVisible(true)} />
       )}
 
       {product && (
@@ -699,7 +724,7 @@ export default function Submit() {
         />
       )}
 
-      {product && (
+      {product && !productEnded && (
         <>
           <List style={{ ...listStyle, marginTop: 12 }}>
             {getBuyoutPrice(product) > 0 && (
