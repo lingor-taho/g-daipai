@@ -691,7 +691,7 @@ export default function OrdersPage() {
   }
 
   const columns = [
-    {title:'成交 Yahoo',width:140,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
+    {title:'成交Yh',width:88,ellipsis:true,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
     {
       title: '用户名',
       dataIndex: 'username',

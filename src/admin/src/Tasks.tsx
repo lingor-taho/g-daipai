@@ -119,7 +119,7 @@ export default function TasksPage() {
   }, []);
 
   const columns = [
-    {title:'执行 Yahoo',width:140,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
+    {title:'执行Yh',width:88,ellipsis:true,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
     { title: '提交用户', dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
     {
       title: '商品ID',

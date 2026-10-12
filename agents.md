@@ -18,6 +18,8 @@
 
 ## 项目概述
 
+2026-10-12 后台任务报表／订单管理的账号列标题缩短为「执行Yh／成交Yh」，列宽从 140 缩至 88，长账号使用省略显示。仅更新后台静态文件，不改账号取值或业务，手机／PC 验证见 0f。
+
 2026-10-12 普通商品同捆拒绝后的新版单品入口已本地兼容：识别「購入手続きをする／購入手続きする」及原「取引をはじめる」，页面状态、MAIN world 点击及 content 点击一致。关闭拒绝弹框后先进入单品信息页，再按原运费类型完成信息确认；落札者负担仍进入等待运费，不跳过确认直接标待支付。只需更新插件 background.js、content.js 并分别 reload；不改 API、数据库或实际订单。验证与验收见 0f，真实新版后续页面待用户更新验收。
 
 2026-10-12 拍卖记录数组最新同分钟超过 2 条有效出价记录时，若第一条价格小于或等于第二条，改存第二条用户名及价格；其他分钟、恰好 2 条或第一条更高时保留原规则。商品时间／当前价原本从归一化数组首条更新，自动沿用新选取结果，原非落札且历史时间严格更晚的更新条件保留。仅需更新 API 服务文件并重启，无前端／插件／schema 变更；已有记录不自动覆盖，未部署生产。详见 0e。
@@ -164,6 +166,8 @@ orders.task_id      N --- 0/1 tasks.id
 ## 当前主计划
 
 ### 0f. Yahoo 多账号本地实现与生产验收
+
+2026-10-12 后台账号列紧凑显示：任务报表「执行 Yahoo」改「执行Yh」，订单管理「成交 Yahoo」改「成交Yh」，两列宽度 140→88 并开启 ellipsis，保留原 Yahoo ID／账号名称取值、账号隔离及订单操作。仅需更新后台静态文件，API／插件／schema 无改动。验证：`node src/admin/src/Tasks.display.test.js`、`node src/admin/src/Orders.display.test.js`、`npm run build --prefix src/admin`、390／1200 像素模拟 API 浏览器列宽／省略检查、`node scripts/encoding-guard.js`、`git diff --check`；未部署生产。
 
 2026-10-12 新版同捆拒绝后单品开始按钮兼容：截图现场已被扫描识别为拒绝并拆组，但关闭弹框后新版「購入手続きをする」未匹配旧「取引をはじめる」，落札者负担分支在未进入信息页时寻找决定按钮，产生 bundle decide button not found。单品开始的状态检测、MAIN world 与 content 点击均增加新版有／无「を」的完整按钮文案，保留严格整段匹配、旧入口及原后续决定／确认、运费和付款规则；不把购买最终确认或同捆入口当单品开始。仅更新 yahoo-plugin/background.js、content.js 并在各 profile reload；API／schema／前端无需变更，未直接改真实订单或执行 Yahoo 交易。验证：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/multiAccount.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/content.js`、`node scripts/encoding-guard.js`、`git diff --check`。模拟覆盖旧入口、新入口两种文案、拒绝关闭后单品信息决定／确认到等待运费、无拒绝的单品入口及错误文案不匹配；真实新版后续信息页待更新后核对，不宣称已验证真实交易完成。
 
@@ -806,6 +810,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-12 后台执行／成交账号列缩短
+
+标题改为「执行Yh／成交Yh」，两列缩至 88，长账号省略显示，改善手机首屏空间；仅后台静态文件，详见 0f。
 
 ### 2026-10-12 新版同捆拒绝后的单品入口兼容
 
