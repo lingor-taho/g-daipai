@@ -25,6 +25,8 @@ const steps = [
   ['Startup build cache and readiness tests', process.execPath, ['scripts/startup.test.js'], rootDir],
   ['Google Sheets config tests', process.execPath, ['src/server/services/googleSheets.test.js'], rootDir],
   ['Online users service tests', process.execPath, ['src/server/services/onlineUsers.test.js'], rootDir],
+  ['User deletion cleanup', process.execPath, ['src/server/services/deleteUser.test.js'], rootDir],
+  ['User deletion HTTP flow', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/admin.users.delete.test.js'], rootDir],
   ['Task route tests', process.execPath, ['src/server/routes/task.test.js'], rootDir],
   ['Expired bidding failure analysis', process.execPath, ['src/server/services/failureAnalysis.test.js'], rootDir],
   ['Bid price timeline markers', process.execPath, ['src/client/src/utils/bidPriceTimeline.test.mjs'], rootDir],
@@ -49,6 +51,7 @@ const steps = [
   ['Admin manual verification display tests', process.execPath, ['src/admin/src/manualVerificationState.test.js'], rootDir],
   ['Yahoo plugin encoding guard', process.execPath, ['yahoo-plugin/encoding.test.js'], rootDir],
   ['Admin build', npmCommand, ['run', 'build'], adminDir],
+  ['User deletion admin browser checks',process.execPath,['scripts/user-delete-browser.test.cjs'],rootDir],
   ['Multi-account admin browser checks',process.execPath,['scripts/yahoo-multi-account-browser.test.cjs'],rootDir],
   ['Client build', npmCommand, ['run', 'build'], clientDir],
   ['Client login and bid config browser checks',process.execPath,['scripts/run-isolated-regression.cjs','scripts/client-login.test.cjs'],rootDir]

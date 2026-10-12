@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
 const db = require('../models');
+const { deleteUser } = require('../services/deleteUser');
 const auctionHistory = require('../services/auctionHistory');
 const { getBatchPreparationStats } = require('../services/batchTaskQueue');
 const { getAdminTaskQueue } = require('../services/adminTaskQueue');
@@ -1372,9 +1373,13 @@ router.put('/users/:id', async (req, res) => {
 });
 
 router.delete('/users/:id', async (req, res) => {
-  await db.query("UPDATE users SET parent_user_id = NULL WHERE parent_user_id = ? AND role = 'user'", [req.params.id]);
-  await db.query("DELETE FROM users WHERE id = ? AND role = 'user'", [req.params.id]);
-  res.json({ success: true });
+  try {
+    const result = deleteUser(db, req.params.id, req.query.confirm === '1');
+    return res.status(result.requiresConfirmation ? 409 : 200).json(result);
+  } catch (error) {
+    console.error('Failed to delete user:', error.message);
+    return res.status(error.status || 500).json({ error: error.status ? error.message : '删除失败，所有修改已回滚' });
+  }
 });
 
 router.get('/server-accounts', async (req, res) => {

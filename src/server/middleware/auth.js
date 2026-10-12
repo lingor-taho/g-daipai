@@ -3,7 +3,7 @@ const config = require('../../config');
 const db = require('../models');
 const { syncClientSession } = require('../services/onlineUsers');
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: '未登录' });
@@ -11,6 +11,8 @@ function authMiddleware(req, res, next) {
   const token = authHeader.slice(7);
   try {
     const payload = jwt.verify(token, config.jwtSecret);
+    const user = await db.getOne('SELECT id FROM users WHERE id=?', [payload.id]);
+    if (!user) return res.status(401).json({ error: '账号已删除，请重新登录' });
     req.user = payload;
     syncClientSession(db, {
       user: payload,

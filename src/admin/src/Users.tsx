@@ -39,12 +39,13 @@ async function saveUser(values: any, id?: number) {
   return data;
 }
 
-async function deleteUser(id: number) {
-  const res = await fetch(`/api/admin/users/${id}`, {
+async function deleteUser(id: number, confirmed = false) {
+  const res = await fetch(`/api/admin/users/${id}${confirmed ? '?confirm=1' : ''}`, {
     method: 'DELETE',
     headers: authHeaders()
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 409 && data.requiresConfirmation) return data;
   if (!res.ok) throw new Error(data.error || '删除失败');
   return data;
 }
@@ -160,9 +161,29 @@ export default function UsersPage() {
           <Button size="small" onClick={() => openEdit(row)}>编辑</Button>
           <Popconfirm
             title="确认删除这个用户？"
+            disabled={Number(row.user_level || 1) >= 3}
             onConfirm={async () => {
               try {
-                await deleteUser(row.id);
+                const result = await deleteUser(row.id);
+                if (result.requiresConfirmation) {
+                  Modal.confirm({
+                    title: '该用户还有订单、任务未清空，需要一起删除吗？',
+                    content: `任务 ${result.taskCount} 条，订单 ${result.orderCount} 条。确认后删除该用户及其全部关联数据。`,
+                    okText: '一起删除', cancelText: '取消', okButtonProps: { danger: true },
+                    onOk: async () => {
+                      try {
+                        await deleteUser(row.id, true);
+                        message.success('删除成功');
+                        await loadUserOptions();
+                        actionRef.current?.reload();
+                      } catch (e: any) {
+                        message.error(e.message || '删除失败');
+                        throw e;
+                      }
+                    }
+                  });
+                  return;
+                }
                 message.success('删除成功');
                 await loadUserOptions();
                 actionRef.current?.reload();
@@ -171,7 +192,7 @@ export default function UsersPage() {
               }
             }}
           >
-            <Button size="small" danger>删除</Button>
+            <Button size="small" danger disabled={Number(row.user_level || 1) >= 3}>删除</Button>
           </Popconfirm>
         </Space>
       )
