@@ -13,7 +13,7 @@ import TaskList from './TaskList';
 import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
 import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
-const { auctionEndMs, isAuctionEnded } = auctionDeadline;
+const { isAuctionEnded } = auctionDeadline;
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -133,24 +133,7 @@ export default function Submit() {
   const [searchParams] = useSearchParams();
   const [url, setUrl] = useState('');
   const [product, setProduct] = useState(null);
-  const [deadlineNow, setDeadlineNow] = useState(Date.now);
-  const productEnded = isAuctionEnded(product?.endTime, deadlineNow);
-  useEffect(() => {
-    let timer;
-    function updateDeadline() {
-      const now = Date.now();
-      setDeadlineNow(now);
-      const end = auctionEndMs(product?.endTime);
-      if (Number.isFinite(end) && end >= now) {
-        timer = setTimeout(updateDeadline, Math.min(end - now + 1, 2147483647));
-      }
-    }
-    updateDeadline();
-    const refresh = () => { clearTimeout(timer); updateDeadline(); };
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
-    return () => { clearTimeout(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
-  }, [product]);
+  const productEnded = Boolean(product?.endedAtRead);
   const [maxPrice, setMaxPrice] = useState('');
   const [strategy, setStrategy] = useState('direct');
   const [multiBidIncrement, setMultiBidIncrement] = useState('');
@@ -345,7 +328,8 @@ export default function Submit() {
         productType: data.productType || data.product_type || (data.taxType === 'tax_included' ? 'store' : 'normal'),
         shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
         imageUrl: data.imageUrl || '',
-        endTime: data.endTime || ''
+        endTime: data.endTime || '',
+        endedAtRead: isAuctionEnded(data.endTime)
       };
       setProduct(nextProduct);
       setStoreBidPriceMode('tax_before');
@@ -502,8 +486,7 @@ export default function Submit() {
       Toast.show({ content: '出价功能被一时限制，请联系管理员。' });
       return;
     }
-    if (isAuctionEnded(product?.endTime)) {
-      setDeadlineNow(Date.now());
+    if (productEnded) {
       Toast.show({ content: '商品已结束，不能提交任务' });
       return;
     }

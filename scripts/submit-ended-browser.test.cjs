@@ -33,13 +33,18 @@ const {chromium}=require('playwright');
     end='2099-01-01T10:00:00+09:00';await fetchButton.click();
     await page.getByRole('button',{name:'提交任务',exact:true}).waitFor();
     assert.equal(await page.locator('[data-auction-ended]').count(),0);
-    // Leave an open product on screen until its actual deadline passes.
+    // Freeze the display at read time, even after the deadline or focus changes.
     end=new Date(Date.now()+1800).toISOString();await fetchButton.click();
     await page.getByRole('button',{name:'提交任务',exact:true}).waitFor();
+    await page.waitForTimeout(2100);
+    await page.evaluate(()=>{window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));});
+    assert.equal(await page.locator('[data-auction-ended]').count(),0);
+    assert.equal(await page.getByRole('button',{name:'提交任务',exact:true}).count(),1);
+    await fetchButton.click();
     await page.locator('[data-auction-ended]').waitFor();
     assert.equal(await page.getByRole('button',{name:'提交任务',exact:true}).count(),0);
     assert.equal(submissions,0);
-    console.log(`${width}px: ended badge, hidden bid form, open product form and live deadline transition passed`);
+    console.log(`${width}px: ended badge/form only determined at read time; deadline/focus preserve display, refetch updates it`);
     await page.close();
   }}finally{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});
