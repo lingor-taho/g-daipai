@@ -24,8 +24,9 @@ const { chromium } = require('playwright');
         localStorage.setItem('username', 'test-admin');
       });
       const row = {
-        id: 1, username: '小陈', product_id: 't1247560114', execution_account_name: '主号',
-        current_price: 8504, max_price: 10454, strategy: 'direct', status: 'bidding',
+        id: 1, username: '我想买您的东西呀很长的用户名', product_id: 't1247560114', execution_account_name: '主号',
+        current_price: 8504, max_price: 10454, strategy: 'direct', status: 'failed',
+        error_msg: 'Rebid required: current bid is not high enough',
         created_at: '2026-10-12T13:08:00+08:00', next_execute_at: '2026-10-12T13:43:00+08:00',
         end_time: '2026-10-12T14:04:00+08:00', won_at: '2026-10-12T13:08:00+08:00',
         shipping_fee_text: '落札者负担', final_price: 10454, order_status: 'waiting_shipping'
@@ -34,7 +35,8 @@ const { chromium } = require('playwright');
         const p = new URL(route.request().url()).pathname;
         let data = { success: true, items: [], total: 0 };
         if (p === '/api/admin/tasks' || p === '/api/admin/orders') data = { items: [row], total: 1 };
-        if (p === '/api/admin/tasks/stats') data = { total: 1, pending: 0, processing: 0, failed: 0, success: 0 };
+        if (p === '/api/admin/tasks/stats') data = { total: 1, pending: 1, processing: 0, failed: 1, success: 0 };
+        if (p === '/api/admin/tasks/queue') data = {items:[{...row,queue_key:'task-1',status:'preparation_pending'}],total:1};
         await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
       });
       for (const name of ['tasks', 'orders']) {
@@ -51,7 +53,33 @@ const { chromium } = require('playwright');
           height: el.getBoundingClientRect().height, wrap: getComputedStyle(el).whiteSpace
         })));
         assert(cells.every(c => c.height < 65), `${name}: rows must not become vertical text`);
-        if (name === 'tasks') assert(cells.every(c => c.wrap === 'nowrap'));
+        if (name === 'tasks') {
+          assert(cells.every(c => c.wrap === 'nowrap'));
+          async function checkColumns(target) {
+            const dataRow = target.locator('tbody tr').filter({hasText:row.username});
+            const usernameCell = dataRow.locator('td').nth(1);
+            const clipped = await usernameCell.evaluate(el => ({
+              overflow:getComputedStyle(el).textOverflow, hidden:getComputedStyle(el).overflow,
+              client:el.clientWidth,scroll:el.scrollWidth
+            }));
+            assert.equal(clipped.overflow,'ellipsis');assert.equal(clipped.hidden,'hidden');
+            assert(clipped.scroll>clipped.client,'Long username must be clipped rather than cover product ID');
+            const statusCell = dataRow.locator('td').nth(6);
+            const bounds = await statusCell.evaluate(el => ({
+              right:el.getBoundingClientRect().right-parseFloat(getComputedStyle(el).paddingRight),
+              tagRight:el.querySelector('.ant-tag').getBoundingClientRect().right
+            }));
+            assert(bounds.tagRight<=bounds.right+1,'Status label must fit without touching the timestamp');
+          }
+          await checkColumns(table);
+          await page.getByRole('button',{name:'展开队列详情',exact:true}).click();
+          const queue = page.locator('#task-queue-details .admin-tasks-table');
+          await queue.getByText(row.product_id,{exact:true}).waitFor();
+          await checkColumns(queue);
+          await page.screenshot({path:path.join(output,`admin-queue-ellipsis-${width}.png`),fullPage:true});
+          await page.getByRole('button',{name:'收起队列详情',exact:true}).click();
+          await queue.waitFor({state:'detached'});
+        }
         const scroller = table.locator('.ant-table-content');
         const scroll = await scroller.evaluate(el => {
           el.scrollLeft = el.scrollWidth;
@@ -67,7 +95,7 @@ const { chromium } = require('playwright');
         }
         await scroller.evaluate(el => { el.scrollLeft = 0; });
         await page.screenshot({ path: path.join(output, `admin-${name}-single-line-${width}.png`), fullPage: true });
-        console.log(`${width}px ${name}: 64px YH, single-line headers/rows, horizontal scroll verified`);
+        console.log(`${width}px ${name}: single-line headers/rows and horizontal scroll verified; tasks also check long username and full status in both tables`);
       }
       await page.close();
     }

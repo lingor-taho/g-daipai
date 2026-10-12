@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { withEndedTaskReason } = require('../services/endedTaskReason');
 const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const { productService } = require('./proxy');
@@ -854,7 +855,7 @@ router.get('/list', async (req, res) => {
        LIMIT ? OFFSET ?`,
       [input.userId, input.limit, input.offset]
     );
-    res.json({ success: true, data: tasks, total: totalRow?.total || 0, page: input.page, limit: input.limit });
+    res.json({ success: true, data: withEndedTaskReason(tasks,db), total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1183,7 +1184,7 @@ router.get('/:id', async (req, res) => {
       [req.params.id, req.actingUser.id]
     );
     if (!task) return res.status(404).json({ error: 'task not found' });
-    res.json({ success: true, data: task });
+    res.json({ success: true, data: withEndedTaskReason([task],db)[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -2,6 +2,7 @@
 const router = express.Router();
 const db = require('../models');
 const { deleteUser } = require('../services/deleteUser');
+const { withEndedTaskReason } = require('../services/endedTaskReason');
 const auctionHistory = require('../services/auctionHistory');
 const { getBatchPreparationStats } = require('../services/batchTaskQueue');
 const { getAdminTaskQueue } = require('../services/adminTaskQueue');
@@ -1479,7 +1480,7 @@ router.get('/tasks', async (req, res) => {
   const items = await db.getAll(tasksQuery.sql, tasksQuery.params);
   const multiBidConfig = await getPluginMultiBidConfig();
   const nowMs = Date.now();
-  const mappedItems = items.map(item => mapAdminTaskListItem(item, multiBidConfig, nowMs));
+  const mappedItems = withEndedTaskReason(items,db).map(item => mapAdminTaskListItem(item, multiBidConfig, nowMs));
   const countResult = await db.getOne('SELECT COUNT(*) as total FROM tasks');
   const statusRows = await db.getAll(
     'SELECT status, COUNT(*) as count FROM tasks GROUP BY status'

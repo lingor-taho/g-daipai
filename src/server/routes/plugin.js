@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { ENDED_REASON } = require('../services/endedTaskReason');
 const { execFile } = require('child_process');
 const db = require('../models');
 const yahooAccounts = require('../services/yahooAccounts');
@@ -3462,9 +3463,15 @@ function buildPluginTaskSnapshotUpdate(payload = {}) {
 
 router.patch('/task/:id/snapshot', async (req, res) => {
   const { status } = req.body || {};
+  // The plugin finishes expired pages through this endpoint before reporting status.
+  // Store its known reason atomically; the later duplicate status report stays fenced.
+  const pageEndMs = Date.parse(req.body?.end_time || '');
+  const endedReason = status === 'failed' && Number.isFinite(pageEndMs) && pageEndMs <= Date.now()
+    ? ENDED_REASON : null;
   const result = await db.query(
     `UPDATE tasks
      SET status = COALESCE(?, status),
+         error_msg = CASE WHEN COALESCE(error_msg, '') = '' AND ? IS NOT NULL THEN ? ELSE error_msg END,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
        AND status = 'processing'
@@ -3472,6 +3479,8 @@ router.patch('/task/:id/snapshot', async (req, res) => {
        AND NOT EXISTS (SELECT 1 FROM orders won WHERE won.task_id=tasks.id OR (won.product_id=tasks.product_id AND won.account_id=tasks.account_id))`,
     [
       status || null,
+      endedReason,
+      endedReason,
       req.params.id
     ]
   );

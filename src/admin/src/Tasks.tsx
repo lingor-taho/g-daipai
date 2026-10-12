@@ -120,7 +120,7 @@ export default function TasksPage() {
 
   const columns = [
     {title:'YH',width:64,ellipsis:true,dataIndex:'execution_account_name',render:(_:any,row:any)=>row.execution_yahoo_id || row.execution_account_name || '-'},
-    { title: '提交用户', width:100, dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
+    { title: '提交用户', width:100, ellipsis:true, dataIndex: 'username', render: (_: any, row: any) => row.username || '-' },
     {
       title: '商品ID',
       width:150,
@@ -136,7 +136,7 @@ export default function TasksPage() {
     { title: '策略', width:90, dataIndex: 'strategy', render: (_: any, row: any) => strategyLabels[row.strategy] || row.strategy || '即时拍' },
     {
       title: '状态',
-      width:100,
+      width:190,
       dataIndex: 'status',
       render: (_: any, row: any) => (
         <Tag color={statusColors[row.status] || 'default'}>{row.status === 'failed' ? getSharedTaskFailureLabel(row.error_msg) : (statusLabels[row.status] || row.status)}</Tag>
@@ -202,7 +202,7 @@ export default function TasksPage() {
       {queueVisible && <Card id="task-queue-details" title="队列任务详情">
         {queueError && <Alert type="error" showIcon message="队列详情加载失败" description={queueError} />}
         <ProTable className="admin-tasks-table" columns={columns} dataSource={queueData.items} rowKey="queue_key"
-          loading={queueLoading} search={false} options={false} scroll={{ x: 1214 }}
+          loading={queueLoading} search={false} options={false} scroll={{ x: 1304 }}
           pagination={{ current: queuePage, pageSize: 10, total: queueData.total,
             showSizeChanger: false, onChange: page => setQueuePage(page) }} />
       </Card>}
@@ -257,7 +257,7 @@ export default function TasksPage() {
         }}
         rowKey="id"
         search={false}
-        scroll={{ x: 1214 }}
+        scroll={{ x: 1304 }}
         pagination={{ pageSize: 10 }}
       />
     </Space>
