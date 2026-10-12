@@ -96,6 +96,26 @@ assert.equal((saved.auction_history_html.match(/<tr>/g)||[]).length,4);
 assert.ok(saved.auction_history_html.includes('入札の取り消し'));
 assert.deepEqual(JSON.parse(saved.auction_history_data),[{time:'10-4 21:46',username:row.username,price:81000},{time:'10-4 21:46',username:'开始',price:1000}]);
 assert.deepEqual(history.eligible(db,now),[]);
+// Newest-minute selection matches the screenshots; earlier minutes keep their first bid.
+const olderRows = [11770,12000,11500].map((price,i)=>({...row,time:'10-8 20:44',username:`older-${i}`,price}));
+for (const [prices,selected] of [
+  [[11770,12000,11500],1], [[15000,15000,12500],1],
+  [[12000,11770,11500],0], [[11770,12000],0], [[15000,15000],0], [[11770],0],
+  [[11770,12000,20000,11500],1]
+]) {
+  const latestRows = prices.map((price,i)=>({...row,time:'10-8 21:43',username:`latest-${i}`,price}));
+  const originalRows = [...latestRows,...olderRows,{...start,time:'10-1 18:55'}];
+  const before = JSON.stringify(originalRows);
+  assert.deepEqual(history.normalizeRows(originalRows),[
+    {time:'10-8 21:43',username:`latest-${selected}`,price:prices[selected]},
+    {time:'10-8 20:44',username:'older-0',price:11770},
+    {time:'10-1 18:55',username:'开始',price:1000}
+  ]);
+  assert.equal(JSON.stringify(originalRows),before,'Original HTML rows must remain unchanged');
+}
+assert.equal(history.normalizeRows([
+  {...row,price:11770},{...row,price:12000},start
+])[0].price,11770,'The start marker is not a third bid');
 assert.equal(history.correctedEndTime('2026-10-08 21:02:15','10-8 21:46'),'2026-10-08 21:46:00');
 assert.equal(history.correctedEndTime('2026-10-08T21:02:15+09:00','10-8 21:46'),'2026-10-08T21:46:00+09:00');
 assert.equal(history.correctedEndTime('2026-10-08T12:02:15.123Z','10-8 21:46'),'2026-10-08T12:46:00.000Z');
@@ -107,18 +127,28 @@ assert.equal(history.correctedEndTime('2026-10-08 22:00:00','10-8 21:46'),null);
 assert.equal(history.correctedEndTime('2026-10-08 22:00:00','2-30 21:46'),null);
 assert.equal(history.correctedEndTime('unknown','10-8 21:46'),null);
 
-function saveCase(id, endTime, {order=false,success=false,legacyOrder=false,empty=false,expired=false} = {}) {
+function saveCase(id, endTime, {order=false,success=false,legacyOrder=false,empty=false,expired=false,prices=[81000]} = {}) {
   db.prepare('INSERT INTO products(product_id,end_time,current_price) VALUES (?,?,?)').run(id,endTime,200);
   const task = db.prepare('INSERT INTO tasks(product_id,status) VALUES (?,?)').run(id,success?'success':'failed');
   if (order || legacyOrder) db.prepare('INSERT INTO orders(product_id,task_id,won_at) VALUES (?,?,?)').run(legacyOrder?null:id,task.lastInsertRowid,'2026-10-08T21:00:00+09:00');
   history.request(db,Date.parse('2026-10-09T12:00:00+09:00'));
   const job = history.next(db);
   assert.equal(job.productId,id);
-  const first = {...row,time:'10-8 21:46',price:81000};
-  history.finish(db,{...job,expired,rows:empty?[]:[first,{...start,time:'10-1 18:55'}],firstPageRows:empty?[]:[first]});
+  const bids = prices.map((price,i)=>({...row,time:'10-8 21:46',username:`bid-${i}`,price}));
+  history.finish(db,{...job,expired,rows:empty?[]:[...bids,{...start,time:'10-1 18:55'}],firstPageRows:empty?[]:bids});
+  if (!empty && !expired) {
+    const stored = db.prepare('SELECT auction_history_data,auction_history_html FROM products WHERE product_id=?').get(id);
+    const selected = prices.length > 2 && prices[0] <= prices[1] ? 1 : 0;
+    assert.deepEqual(JSON.parse(stored.auction_history_data)[0],{time:'10-8 21:46',username:`bid-${selected}`,price:prices[selected]});
+    assert.equal((stored.auction_history_html.match(/<tr>/g)||[]).length,bids.length);
+  }
   return db.prepare('SELECT end_time,current_price FROM products WHERE product_id=?').get(id);
 }
 assert.deepEqual(saveCase('correct','2026-10-08 21:02:15'),{end_time:'2026-10-08 21:46:00',current_price:81000});
+assert.deepEqual(saveCase('latest-higher','2026-10-08 21:02:15',{prices:[11770,12000,11500]}),{end_time:'2026-10-08 21:46:00',current_price:12000});
+assert.deepEqual(saveCase('latest-equal','2026-10-08 21:02:15',{prices:[15000,15000,12500]}),{end_time:'2026-10-08 21:46:00',current_price:15000});
+assert.deepEqual(saveCase('latest-won','2026-10-08 21:02:15',{order:true,prices:[11770,12000,11500]}),{end_time:'2026-10-08 21:02:15',current_price:200});
+assert.deepEqual(saveCase('latest-same-time','2026-10-08 21:46:00',{prices:[11770,12000,11500]}),{end_time:'2026-10-08 21:46:00',current_price:200});
 assert.deepEqual(saveCase('already-later','2026-10-08 22:00:00'),{end_time:'2026-10-08 22:00:00',current_price:200});
 assert.deepEqual(saveCase('won-order','2026-10-08 21:02:15',{order:true}),{end_time:'2026-10-08 21:02:15',current_price:200});
 assert.deepEqual(saveCase('won-task','2026-10-08 21:02:15',{success:true}),{end_time:'2026-10-08 21:02:15',current_price:200});

@@ -70,6 +70,7 @@ function buildHtml(rows) {
 function normalizeRows(rows) {
   if (!Array.isArray(rows) || rows.length > 100000) throw new Error('invalid history rows');
   const seen = new Set(); const result = []; let start;
+  let latestCount = 0; let latestSecond;
   for (const row of rows) {
     if (!/^\d{1,2}-\d{1,2} \d{2}:\d{2}$/.test(row.time) || typeof row.username !== 'string' || row.username.length > 512 || !Number.isSafeInteger(row.price) || row.price < 0) throw new Error('invalid history record');
     const item = {time:row.time,username:row.username,price:row.price};
@@ -83,8 +84,14 @@ function normalizeRows(rows) {
       start = {...item,username:'开始',price}; continue;
     }
     if (!seen.has(row.time)) { seen.add(row.time); result.push(item); }
+    if (row.time === result[0].time) {
+      latestCount++;
+      if (latestCount === 2) latestSecond = item;
+    }
   }
   if (rows.length && !start) throw new Error('auction start missing');
+  // Only the newest minute may prefer its second bid; older minutes keep their first.
+  if (latestCount > 2 && result[0].price <= latestSecond.price) result[0] = latestSecond;
   if (start) result.push(start);
   return result;
 }
