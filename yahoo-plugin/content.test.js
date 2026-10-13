@@ -3642,16 +3642,17 @@ function testBundleTransactionActionStateDetectsReviewButtonAsDecide() {
   assert.equal(reviewButton.clicked, true);
 }
 
-function testBundleRejectedStateFindsSingleTransactionStart(label, expected = true) {
+function testBundleRejectedStateFindsSingleTransactionStart(label, expected = true, pathname = '/trade/top?aid=w1239811853', href = '/trade/edit?aid=w1239811853', formAction = '') {
   const closeButton = createTestElement('');
   closeButton.value = '\u9589\u3058\u308b';
   closeButton.tagName = 'INPUT';
   const singleStartButton = createTestElement(label);
   singleStartButton.tagName = 'A';
-  singleStartButton.href = '/buyer/edit?aid=w1239811853';
+  singleStartButton.href = href;
+  singleStartButton.form = { action: formAction };
   const api = loadContentForTest(
     '\u53d6\u5f15\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002 \u51fa\u54c1\u8005\u304c\u5358\u54c1\u3067\u306e\u53d6\u5f15\u3092\u5e0c\u671b\u3057\u305f\u305f\u3081\u3001\u5546\u54c1\u3054\u3068\u306b\u53d6\u5f15\u3092\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
-    '/buyer/top?aid=w1239811853',
+    pathname,
     {
       querySelectorAll(selector) {
         if (selector === 'script') return [];
@@ -3672,6 +3673,37 @@ function testBundleRejectedStateFindsSingleTransactionStart(label, expected = tr
   assert.equal(state.canStartSingleTransaction, expected);
   assert.equal(clickResult.success, expected);
   assert.equal(Boolean(singleStartButton.clicked), expected);
+}
+
+function testTransactionStartDoesNotClickPaymentControls() {
+  for (const [pathname, label, action, allowed] of [
+    ['/buyer/payment/input', '確認する', 'decide', false],
+    ['/buyer/payment/confirm', '購入を確定する', 'confirm', false],
+    ['/buyer/payment/confirm', '確定する', 'confirm', false],
+    ['/buyer/payment/input', '購入手続きをする', 'singleStart', false],
+    ['/buyer/edit', '購入を確定する', 'confirm', false],
+    ['/trade/edit', '確定する', 'confirm', true],
+    ['/buyer/edit', '確定する', 'confirm', true],
+    ['/buyer/edit', '決定する', 'decide', true]
+  ]) {
+    const button = createTestElement(label);
+    button.tagName = 'BUTTON';
+    const api = loadContentForTest(label, pathname, {
+      querySelectorAll(selector) {
+        if (selector === 'script') return [];
+        if (selector === '*' || selector.includes('button, a')) return [button];
+        return [];
+      }
+    });
+    const state = api.getBundleTransactionActionState();
+    if (pathname.includes('/payment/')) {
+      assert.equal(state.canDecide, false);
+      assert.equal(state.canConfirm, false);
+      assert.equal(state.canStartSingleTransaction, false);
+    }
+    assert.equal(api.clickBundleTransactionAction(action).success, allowed, pathname + label);
+    assert.equal(Boolean(button.clicked), allowed, pathname + label);
+  }
 }
 
 function testBundleTransactionActionStateDetectsPlacementOkModal() {
@@ -5340,6 +5372,11 @@ async function run() {
   testBundleRejectedStateFindsSingleTransactionStart('  購入手続きをする  ');
   testBundleRejectedStateFindsSingleTransactionStart('まとめて取引をはじめる', false);
   testBundleRejectedStateFindsSingleTransactionStart('購入手続きすることができません', false);
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きをする', false, '/buyer/top');
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きをする', false, '/trade/top', '/buyer/payment/input');
+  testBundleRejectedStateFindsSingleTransactionStart('取引をはじめる', true, '/buyer/top');
+  testBundleRejectedStateFindsSingleTransactionStart('購入手続きをする', false, '/trade/top', '', '/buyer/payment/input');
+  testTransactionStartDoesNotClickPaymentControls();
   testBundleTransactionActionStateDetectsPlacementOkModal();
   testBundleTransactionActionStateDetectsWaitingShippingPaymentAmount();
   testBundleTransactionActionStateDetectsPaymentReadyPage();

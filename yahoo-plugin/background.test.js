@@ -4338,14 +4338,14 @@ async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShip
   assert.equal(statusCalls[0].status, 'waiting_shipping');
 }
 
-async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(purchaseProcedure = false, rejected = true) {
+async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(purchaseProcedure = false, rejected = true, legacyPurchase = false, fixedShipping = false) {
   const statusCalls = [];
   const clickedActions = [];
   let singleStartPatternMatched = false;
   let phase = rejected ? 'rejected' : 'single_start';
   const currentUrl = () => phase === 'rejected' || phase === 'single_start'
-    ? `https://contact.auctions.yahoo.co.jp/${purchaseProcedure ? 'trade' : 'buyer'}/top?aid=w1239811853`
-    : `https://contact.auctions.yahoo.co.jp/${purchaseProcedure ? 'trade' : 'buyer'}/edit?aid=w1239811853`;
+    ? `https://contact.auctions.yahoo.co.jp/${purchaseProcedure && !legacyPurchase ? 'trade' : 'buyer'}/top?aid=w1239811853`
+    : `https://contact.auctions.yahoo.co.jp/${purchaseProcedure && !legacyPurchase ? 'trade' : 'buyer'}/edit?aid=w1239811853`;
   const api = loadBackgroundForTest({
     disableAutoStart: true,
     tabs: {
@@ -4373,10 +4373,11 @@ async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(pur
             state: {
               bundleRejected: phase === 'rejected',
               canCloseBundleNotice: phase === 'rejected',
-              canStartSingleTransaction: phase === 'single_start',
+              canStartSingleTransaction: !legacyPurchase && phase === 'single_start',
               canDecide: phase === 'decide',
               canConfirm: phase === 'confirm',
               waitingShipping: phase === 'waiting_shipping',
+              paymentReady: phase === 'payment_entry',
               complete: false,
               url: currentUrl()
             }
@@ -4388,7 +4389,7 @@ async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(pur
           if (message.action === 'close' && phase === 'rejected') phase = 'single_start';
           else if (message.action === 'singleStart' && phase === 'single_start') phase = 'decide';
           else if (message.action === 'decide' && phase === 'decide') phase = 'confirm';
-          else if (message.action === 'confirm' && phase === 'confirm') phase = 'waiting_shipping';
+          else if (message.action === 'confirm' && phase === 'confirm') phase = fixedShipping ? 'payment_entry' : 'waiting_shipping';
           else return { success: false, error: `${message.action} button not found` };
           return { success: true };
         }
@@ -4415,7 +4416,7 @@ async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(pur
                 productId: 'w1239811853',
                 productType: 'normal',
                 transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=w1239811853',
-                shippingFeeText: '\u843d\u672d\u8005\u8ca0\u62c5'
+                shippingFeeText: legacyPurchase || fixedShipping ? '無料' : '\u843d\u672d\u8005\u8ca0\u62c5'
               }]
             };
           }
@@ -4433,13 +4434,53 @@ async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(pur
 
   assert.deepEqual(clickedActions, [
     ...(rejected ? ['close'] : []),
-    'singleStart', 'decide', 'confirm'
+    ...(legacyPurchase ? [] : ['singleStart', 'decide', 'confirm'])
   ]);
-  assert.equal(phase, 'waiting_shipping');
+  assert.equal(phase, legacyPurchase ? 'single_start' : fixedShipping ? 'payment_entry' : 'waiting_shipping');
   assert.equal(statusCalls.length, 1);
   assert.equal(statusCalls[0].orderId, 1160);
-  assert.equal(statusCalls[0].status, 'waiting_shipping');
+  assert.equal(statusCalls[0].status, legacyPurchase || fixedShipping ? 'pending_payment' : 'waiting_shipping');
   assert.equal(statusCalls[0].error, undefined);
+}
+
+async function testTransactionStartMainWorldPaymentBoundary() {
+  const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  const patternStart = source.indexOf('function getBundleActionPatternSource(');
+  const patternEnd = source.indexOf('\nfunction isLikelyYahooTransactionTab', patternStart);
+  const clickStart = source.indexOf('async function runMainWorldBundleActionClick(');
+  const clickEnd = source.indexOf('\nfunction isBundleStartTradePage', clickStart);
+  for (const [pathname, label, href, action, allowed, formAction] of [
+    ['/buyer/top', '購入手続きをする', '', 'singleStart', false],
+    ['/trade/top', '購入手続きをする', '/trade/edit', 'singleStart', true],
+    ['/trade/top', '購入手続きする', '/trade/edit', 'singleStart', true],
+    ['/trade/top', '購入手続きをする', '/buyer/payment/input', 'singleStart', false],
+    ['/trade/top', '購入手続きをする', '', 'singleStart', false, '/buyer/payment/input'],
+    ['/buyer/top', '取引をはじめる', '/buyer/edit', 'singleStart', true],
+    ['/buyer/payment/input', '確認する', '', 'decide', false],
+    ['/buyer/payment/confirm', '購入を確定する', '', 'confirm', false],
+    ['/buyer/edit', '購入を確定する', '', 'confirm', false],
+    ['/buyer/edit', '確定する', '', 'confirm', true],
+    ['/trade/edit', '確定する', '', 'confirm', true]
+  ]) {
+    let clicked = false;
+    const button = { textContent: label, href, form: { action: formAction }, closest() { return this; }, click() { clicked = true; } };
+    const sandbox = {
+      assertYahooWorkClaim: async () => {},
+      chrome: { scripting: { async executeScript(payload) {
+        return [{ result: vm.runInNewContext(`(${payload.func.toString()})(...args)`, {
+          args: payload.args, window: { location: { pathname } },
+          document: { querySelectorAll() { return [button]; } }
+        }) }];
+      } } }
+    };
+    vm.runInNewContext(source.slice(patternStart, patternEnd) + '\n' + source.slice(clickStart, clickEnd), sandbox);
+    for (const mode of ['click', 'requestSubmit']) {
+      button.type = 'submit'; button.form = { action: formAction, requestSubmit() { clicked = true; } };
+      clicked = false;
+      assert.equal((await sandbox.runMainWorldBundleActionClick(1, action, mode)).success, allowed, pathname + label);
+      assert.equal(clicked, allowed, pathname + label);
+    }
+  }
 }
 
 async function testRunTransactionStartCompletesFixedShippingInfoBeforePendingPayment() {
@@ -11919,6 +11960,12 @@ await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartSkipsOrderPausedAfterBatchFetch();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
+  await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, true, false, true);
+  await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, false, false, true);
+  await testRunTransactionStartContinuesSingleItemAfterBundleRejected(false, true, false, true);
+  await testTransactionStartMainWorldPaymentBoundary();
+  await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, true, true);
+  await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, false, true);
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected();
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true);
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, false);

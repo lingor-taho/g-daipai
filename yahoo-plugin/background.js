@@ -6652,7 +6652,7 @@ function getBundleActionPatternSource(action) {
     input: '\\u53d6\\u5f15\\s*\\u60c5\\u5831\\s*\\u3092\\s*\\u5165\\u529b\\s*\\u3059\\u308b',
     placementOk: '^\\s*OK\\s*$',
     decide: '^\\s*(?:\\u6c7a\\u5b9a\\u3059\\u308b|\\u78ba\\u8a8d\\u3059\\u308b)\\s*$',
-    confirm: '\\u78ba\\u5b9a\\u3059\\u308b'
+    confirm: '^\\s*\\u78ba\\u5b9a\\u3059\\u308b\\s*$'
   };
   return patterns[action] || '';
 }
@@ -6697,7 +6697,10 @@ async function runMainWorldBundleActionClick(tabId, action, mode = 'click') {
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (patternStr, clickMode) => {
+    func: (patternStr, clickMode, transactionAction) => {
+      if (/^\/buyer\/payment(?:[/?#]|$)/i.test(window.location.pathname)) {
+        return { success: false, error: 'payment page is outside transaction-start actions' };
+      }
       const pattern = new RegExp(patternStr);
       const getText = el => [
         el.textContent,
@@ -6708,7 +6711,16 @@ async function runMainWorldBundleActionClick(tabId, action, mode = 'click') {
       const clickableSelector = 'button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params]';
       const resolveClickable = el => el.closest?.(clickableSelector) || (el.matches?.(clickableSelector) ? el : null);
       const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [onclick], [tabindex], [data-cl-params], body *')];
-      const matched = controls.find(el => pattern.test(getText(el)) && resolveClickable(el));
+      const matched = controls.find(el => {
+        const text = getText(el);
+        const button = resolveClickable(el);
+        if (!pattern.test(text) || !button) return false;
+        if (transactionAction === 'singleStart' && /^\s*\u8cfc\u5165/.test(text)) {
+          return /^\/trade\/top(?:[/?#]|$)/i.test(window.location.pathname) &&
+            !/\/buyer\/payment(?:[/?#]|$)/i.test(button.href || button.form?.action || '');
+        }
+        return true;
+      });
       const button = matched ? resolveClickable(matched) : null;
       if (!button) return { success: false, error: 'button not found in MAIN world' };
       button.scrollIntoView?.({ block: 'center', inline: 'center' });
@@ -6725,7 +6737,7 @@ async function runMainWorldBundleActionClick(tabId, action, mode = 'click') {
       button.click();
       return { success: true, method: 'click', text: getText(button) };
     },
-    args: [pattern, mode]
+    args: [pattern, mode, action]
   });
   const result = injectionResult?.[0]?.result;
   return result?.success ? result : { success: false, error: result?.error || 'MAIN world click failed' };

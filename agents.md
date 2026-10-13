@@ -13,10 +13,13 @@
 - 已确认解决且不再影响后续设计的问题，可以从“当前主计划”移除。
 - 新计划优先放在本文件“当前主计划”；复杂计划再另存到 `docs/superpowers/plans/`。
 - 修改数据库、插件支付/交易/扫描、任务状态流转前，必须先确认本文件中的业务边界。
+- 兼容 Yahoo 页面改版时复用原流程，只调整页面按钮／文字识别；同捆拒绝关闭弹窗后直接走原普通商品流程，不另建业务分支或跳过原判断。后续功能能复用原流程就复用，不自行扩大规则范围。
 
 ---
 
 ## 项目概述
+
+2026-10-13 普通商品交易开始误入付款路径已本地修复：仅新版 `/trade/top` 的购买手续文案可作为交易信息入口，旧 `/buyer/top` 购买入口仍交原付款流程，直达 `/buyer/payment` 的链接不在交易开始点击。交易确认严格匹配「確定する」，不匹配「購入を確定する」；MAIN world 与 content 点击均拒绝付款页面。原运费分支、同捆、订单状态、付款资格、金额核对与失败中断规则不改。只需更新插件 background.js／content.js 并在 profile reload，未部署或改动生产订单，详见 0f。
 
 2026-10-13 按用户纠正，提交页「已结束」角标／出价表单仅在读取商品信息成功时判断并固定。本次读取未结束就始终保持原显示，超过截止时间／聚焦／可见状态变化不再更新；只有重新获取才重判。移除定时器及持续检查，提交处理仅读固定状态；API 原过期提交保护不变。仅用户端静态文件，无 API／插件／schema 改动，见 0f。
 
@@ -178,6 +181,13 @@ orders.task_id      N --- 0/1 tasks.id
 ## 当前主计划
 
 ### 0f. Yahoo 多账号本地实现与生产验收
+
+2026-10-13 交易开始／付款边界修复（替代 2026-10-12 全局购买入口兼容）：只读核对 43.165.177.49 最近 40 单，其中 8 件普通商品在北京时间 10月12日22:49:31～22:52:41 的 transaction_start 诊断停在 /buyer/payment/complete，并报 bundle confirm next page did not appear；7 件后续后台仍待支付，1 件另有付款成功回写。日志证明交易开始误入付款完成页，不据此推断真实扣款金额或重复扣款。6c31c0b 将购买手续按钮全局当作交易开始，加上旧的非整段「確定する」匹配，扩大了原业务路径。本次限定新文案只用于截图对应 /trade/top 且非直达付款的入口；旧 buyer 购买入口恢复不点。确认只匹配完整「確定する」，两种实际点击路径拒绝 buyer/payment 页面，支付仍由原付款线执行。无 API、schema、前端或历史订单修改，不修改自动重试、运费、状态回写或付款规则。
+
+按用户指定，以昨天11点前最后提交 c0dcb3b（2026-10-12 10:16:57 +08:00）为验收基线。完整函数对照 background.js 326 个中仅按钮模式和 MAIN 点击 2 个不同，content 190 个中仅入口辅助／动作点击／页面动作识别 3 个不同，plugin.js 110 个函数全一致。交易开始及支付领取、执行、状态回写、页面等待、运费／金额／鉴定／商城确认、取消／已付款及失败中断均与该基线一致。直接运行 c0dcb3b 未改的12个交易／付款测试通过。另对更早 9d22b23 核对：startNormalSingleTransaction、completeBidderPaysShippingTransaction、completeFixedShippingTransactionInfo、completeNormalBundleRequest、executePaymentJob、isDirectCashOnDeliveryPaymentEntry 函数除换行外逐字一致；executeTransactionStartJob 仅既有多账号跳过时归还领取，runPaymentJobs 仅既有多账号批次领取包装，与本次修复前相同。直接读取旧版 background.test.js 的未改测试，12 个交易／付款场景通过，包含旧购买入口不点、拒绝后旧单品流程、固定运费、落札者负担、着払い、取消、正常付款、已付款及未知页面。恢复旧购买入口免费运费测试，新增 content 与实际 MAIN 注入函数测试，覆盖付款页确认／最终购买不点、新旧入口、直达付款链接及正常交易确认。
+
+验证命令：`node yahoo-plugin/content.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/multiAccount.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/background.js`、`node --check yahoo-plugin/content.js`、`node scripts/encoding-guard.js`、`git diff --check`。上述插件专项通过；`npm run regression` 在未改的 task.won-stats.test.js:68（ended_product_count 预期4、实际0）停止，当时完整入口未通过。已只读确认统计测试将当天 UTC 00:00（北京时间08:00）写成结束／落札时间，08:00前却固定预期4件已结束；内存模拟07:00复现0，09:00通过，当前原测试也通过。属于测试依赖真实运行时间，不修改统计代码或测试。本次最终完整 `npm run regression` 已全部通过，包含原交易／付款／插件／API、两端构建和浏览器检查，90天统计原测试也通过。新增同捆拒绝后新版免费运费及无拒绝单品场景，仅完成原交易信息步骤到 pending_payment，不执行支付；落札者负担沿原 waiting_shipping 分支。编码／语法／diff 检查通过。仅本地模拟验证，真实新版交易信息后续页面仍需更新插件后验收；没有重新处理或修正生产订单。
+
 
 2026-10-13 提交页角标改为读取时固定状态（替代下条持续判断实现）：fetchAndSetProduct 成功读取商品时记录 endedAtRead，商品卡角标和表单显隐仅使用该结果。取消截止时间定时器、focus／visibilitychange 监听以及点击提交时重新计算并改变角标的分支。读取时未结束的商品即使后来超过截止时间或切回页面，也不加角标／不隐藏表单；重新获取已过期信息才出现角标并隐藏。仅提交页启用角标，其他图片不加；商品详情、原价格／策略和 API 实际提交时的过期保护保持。仅更新用户端静态文件，不需重启 API 或更新插件。验证：`node src/client/src/pages/Submit.display.test.mjs`、`npm run build --prefix src/client`、`node scripts/submit-ended-browser.test.cjs`、`node scripts/encoding-guard.js`、`git diff --check`。390／1200 浏览器覆盖获取已结束、获取未结束、跨过截止时间及 focus／visibilitychange 后仍保持、重新读取后变已结束与表单隐藏；未操作真实 Yahoo 或数据库。
 

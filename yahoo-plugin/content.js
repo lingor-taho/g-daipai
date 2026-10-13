@@ -2051,7 +2051,20 @@ function findClickableByText(pattern, options = {}) {
   return candidates[0] || null;
 }
 
+// The redesigned trade entry is transaction information, while buyer purchase
+// entries belong to the existing payment workflow.
+function findSingleTransactionStartButton() {
+  const legacy = findClickableByText(/^\s*\u53d6\u5f15\u3092\u306f\u3058\u3081\u308b\s*$/);
+  if (legacy) return legacy;
+  if (!/^\/trade\/top(?:[/?#]|$)/i.test(window.location.pathname)) return null;
+  const button = findClickableByText(/^\s*\u8cfc\u5165\u624b\u7d9a\u304d(?:\u3092)?\u3059\u308b\s*$/);
+  return button && !/\/buyer\/payment(?:[/?#]|$)/i.test(button.href || button.form?.action || '') ? button : null;
+}
+
 function clickBundleTransactionAction(action) {
+  if (/^\/buyer\/payment(?:[/?#]|$)/i.test(window.location.pathname)) {
+    return { success: false, error: 'payment page is outside transaction-start actions' };
+  }
   const patterns = {
     close: /\u9589\u3058\u308b/,
     start: /^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/,
@@ -2059,11 +2072,11 @@ function clickBundleTransactionAction(action) {
     input: /\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/,
     placementOk: /^\s*OK\s*$/,
     decide: /^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/,
-    confirm: /\u78ba\u5b9a\u3059\u308b/
+    confirm: /^\s*\u78ba\u5b9a\u3059\u308b\s*$/
   };
   const pattern = patterns[action];
   if (!pattern) return { success: false, error: 'unknown bundle action' };
-  const button = findClickableByText(pattern);
+  const button = action === 'singleStart' ? findSingleTransactionStartButton() : findClickableByText(pattern);
   if (!button) return { success: false, error: `bundle ${action} button not found` };
   clickElement(button);
   return { success: true };
@@ -2865,14 +2878,15 @@ function extractPendingShipmentScanResult(text = getBodyText()) {
   return { type: 'unknown' };
 }
 function getBundleTransactionActionState() {
+  const paymentPage = /^\/buyer\/payment(?:[/?#]|$)/i.test(window.location.pathname);
   return {
     canCloseBundleNotice: !!findClickableByText(/^\s*\u9589\u3058\u308b\s*$/),
-    canStart: !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
-    canStartSingleTransaction: !!findClickableByText(/^\s*(?:\u53d6\u5f15\u3092\u306f\u3058\u3081\u308b|\u8cfc\u5165\u624b\u7d9a\u304d(?:\u3092)?\u3059\u308b)\s*$/),
-    canInputTransaction: !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/),
-    canPlacementOk: detectPlacementDefaultModal(),
-    canDecide: !!findClickableByText(/^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/),
-    canConfirm: !!findClickableByText(/\u78ba\u5b9a\u3059\u308b/),
+    canStart: !paymentPage && !!findClickableByText(/^\s*\u307e\u3068\u3081\u3066\u53d6\u5f15\u3092(?:\u306f\u3058\u3081\u308b|\u4f9d\u983c\u3059\u308b)\s*$/),
+    canStartSingleTransaction: !paymentPage && !!findSingleTransactionStartButton(),
+    canInputTransaction: !paymentPage && !!findClickableByText(/\u53d6\u5f15\s*\u60c5\u5831\s*\u3092\s*\u5165\u529b\s*\u3059\u308b/),
+    canPlacementOk: !paymentPage && detectPlacementDefaultModal(),
+    canDecide: !paymentPage && !!findClickableByText(/^\s*(?:\u6c7a\u5b9a\u3059\u308b|\u78ba\u8a8d\u3059\u308b)\s*$/),
+    canConfirm: !paymentPage && !!findClickableByText(/^\s*\u78ba\u5b9a\u3059\u308b\s*$/),
     paymentReady: !!findClickableByText(/Yahoo!\s*\u304b\u3093\u305f\u3093\u6c7a\u6e08\u3067\u652f\u6255\u3046/),
     waitingShipping: detectWaitingShippingPaymentAmount(),
     cancelled: detectBuyerDeletedCancellation(),
