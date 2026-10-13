@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-13 付款流程兼容新版已发货文字：仅 buildPaymentPageStateFromSnapshot 的 alreadyPaid 文案识别补入「商品が発送されました」且符合原确认收货 paidOrShipped 的到货提示，复用现有识别。待结算任务读取该页面后沿原已付款成功回写到 pending_shipment（待发货），不点击支付／确认收货按钮；其他付款资格、状态回写、金额／运费及失败中断均不改。只需更新插件 background.js 并 reload，无 API／前端／schema 更新，未修改真实 x1247287408 或操作 Yahoo。
+
 2026-10-13 普通商品交易开始误入付款路径已本地修复：仅新版 `/trade/top` 的购买手续文案可作为交易信息入口，旧 `/buyer/top` 购买入口仍交原付款流程，直达 `/buyer/payment` 的链接不在交易开始点击。交易确认严格匹配「確定する」，不匹配「購入を確定する」；MAIN world 与 content 点击均拒绝付款页面。原运费分支、同捆、订单状态、付款资格、金额核对与失败中断规则不改。只需更新插件 background.js／content.js 并在 profile reload，未部署或改动生产订单，详见 0f。
 
 2026-10-13 按用户纠正，提交页「已结束」角标／出价表单仅在读取商品信息成功时判断并固定。本次读取未结束就始终保持原显示，超过截止时间／聚焦／可见状态变化不再更新；只有重新获取才重判。移除定时器及持续检查，提交处理仅读固定状态；API 原过期提交保护不变。仅用户端静态文件，无 API／插件／schema 改动，见 0f。
@@ -181,6 +183,11 @@ orders.task_id      N --- 0/1 tasks.id
 ## 当前主计划
 
 ### 0f. Yahoo 多账号本地实现与生产验收
+
+2026-10-13 付款流程兼容新版已发货文字：仅 buildPaymentPageStateFromSnapshot 的 alreadyPaid 文案识别补入「商品が発送されました」且符合原确认收货 paidOrShipped 的到货提示，复用现有识别。待结算任务读取该页面后沿原已付款成功回写到 pending_shipment（待发货），不点击支付／确认收货按钮；其他付款资格、状态回写、金额／运费及失败中断均不改。只需更新插件 background.js 并 reload，无 API／前端／schema 更新，未修改真实 x1247287408 或操作 Yahoo。
+
+验证：`node yahoo-plugin/background.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js`、`node yahoo-plugin/multiAccount.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/background.js`、`node scripts/encoding-guard.js`、`git diff --check`。新增截图文字与到货等待文字识别、仅有发货字样／未付款／处理中不误判、主交易状态优先于其他正文；运行付款任务真实解析截图文字，断言无任何付款点击注入、只回写一次成功且无错误，沿原 API pending_settlement→pending_shipment 更新。原付款／取消／金额／运费及多账号专项通过。本地模拟验证，未部署生产。
+
 
 2026-10-13 交易开始／付款边界修复（替代 2026-10-12 全局购买入口兼容）：只读核对 43.165.177.49 最近 40 单，其中 8 件普通商品在北京时间 10月12日22:49:31～22:52:41 的 transaction_start 诊断停在 /buyer/payment/complete，并报 bundle confirm next page did not appear；7 件后续后台仍待支付，1 件另有付款成功回写。日志证明交易开始误入付款完成页，不据此推断真实扣款金额或重复扣款。6c31c0b 将购买手续按钮全局当作交易开始，加上旧的非整段「確定する」匹配，扩大了原业务路径。本次限定新文案只用于截图对应 /trade/top 且非直达付款的入口；旧 buyer 购买入口恢复不点。确认只匹配完整「確定する」，两种实际点击路径拒绝 buyer/payment 页面，支付仍由原付款线执行。无 API、schema、前端或历史订单修改，不修改自动重试、运费、状态回写或付款规则。
 

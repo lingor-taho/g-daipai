@@ -2389,7 +2389,9 @@ function buildPaymentPageStateFromSnapshot(snapshot = {}) {
     || (isPurchaseCompletePage && /\u8cfc\u5165\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f/.test(bodyText));
   const alreadyPaid = structuredAlreadyPaid
     || (/\u51fa\u54c1\u8005\u306b\u652f\u6255\u3044\u5b8c\u4e86\u306e\u9023\u7d61\u3092\u3057\u307e\u3057\u305f/.test(lifecycleText) && waitingShipmentText)
-    || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) && waitingShipmentText);
+    || (/\u3054\u8cfc\u5165\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059/.test(lifecycleText) && waitingShipmentText)
+    || (/\u5546\u54c1\u304c\u767a\u9001\u3055\u308c\u307e\u3057\u305f/.test(lifecycleText) &&
+      buildConfirmReceiptPageStateFromSnapshot({ transactionStatusText: lifecycleText }).paidOrShipped);
   const cancelled = snapshot.hasStoppedTransactionDialog === true || isYahooTransactionCancelledText(lifecycleText);
   return {
     url: snapshot.url || '',

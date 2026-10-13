@@ -5247,7 +5247,22 @@ async function testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput() {
   assert.equal(calls[0].status, 'success');
 }
 
-async function testRunPaymentJobsMarksAlreadyPaidAsSuccess() {
+function testPaymentPageStateRecognizesShippedNoticeWithoutBroadeningOtherStates() {
+  const api = loadBackgroundForTest();
+  const notice = '商品が発送されました。到着後、受け取り連絡をしてください。';
+  for (const text of [notice, '商品が発送されました。到着までお待ちください。']) {
+    assert.equal(api.buildPaymentPageStateFromSnapshot({ transactionStatusText: text }).alreadyPaid, true);
+  }
+  for (const text of ['商品が発送されました', '落札おめでとうございます。購入手続きを行ってください。', 'ただいま決済処理中です']) {
+    assert.equal(api.buildPaymentPageStateFromSnapshot({ transactionStatusText: text }).alreadyPaid, false);
+  }
+  assert.equal(api.buildPaymentPageStateFromSnapshot({
+    transactionStatusText: '落札おめでとうございます。購入手続きを行ってください。',
+    bodyText: notice
+  }).alreadyPaid, false, 'Unpaid primary status must take precedence over unrelated page text');
+}
+
+async function testRunPaymentJobsMarksAlreadyPaidAsSuccess(shippedText = null) {
   const calls = [];
   const api = loadBackgroundForTest({
     tabs: {
@@ -5259,7 +5274,12 @@ async function testRunPaymentJobsMarksAlreadyPaidAsSuccess() {
       async executeScript(...args) {
         const payload = args[0] || {};
         if (payload.files) return undefined;
-        return [{ result: { success: true, state: { alreadyPaid: true, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' } } }];
+        assert.equal(Boolean(payload.args?.length), false, 'Already paid/shipped must not execute a payment click');
+        const state = shippedText ? api.buildPaymentPageStateFromSnapshot({
+          url: 'https://contact.auctions.yahoo.co.jp/trade/top?aid=x1247287408',
+          transactionStatusText: shippedText, bodyText: shippedText, controls: []
+        }) : { alreadyPaid: true, url: 'https://contact.auctions.yahoo.co.jp/buyer/top' };
+        return [{ result: { success: true, state } }];
       }
     },
     fetch: async (url, options = {}) => {
@@ -5276,6 +5296,8 @@ async function testRunPaymentJobsMarksAlreadyPaidAsSuccess() {
 
   await api.runPaymentJobs();
 
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].error, undefined);
   assert.equal(calls[0].orderId, 9);
   assert.equal(calls[0].productId, 'p9');
   assert.equal(calls[0].status, 'success');
@@ -11983,6 +12005,8 @@ await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   await testRunPaymentJobsMarksBuyerDeletedPageCancelled();
   await testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoInput();
   await testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput();
+  testPaymentPageStateRecognizesShippedNoticeWithoutBroadeningOtherStates();
+  await testRunPaymentJobsMarksAlreadyPaidAsSuccess('商品が発送されました。到着後、受け取り連絡をしてください。');
   await testRunPaymentJobsMarksAlreadyPaidAsSuccess();
   await testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure();
   await testRunPaymentJobsWaitsForRenderedStoreStatusEntryButton();
