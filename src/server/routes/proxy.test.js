@@ -1305,7 +1305,58 @@ async function testParsePersonalBuyoutFromMainSummaryOnly() {
   assert.equal(product.buyoutOnly, true);
 }
 
+async function testNextSearchResultsAndPagination() {
+  const first = {
+    auctionId: 'x1230699905', title: 'GAMEBOY & 本体', imageUrl: 'https://img.example/a.jpg',
+    price: 13001, buyNowPrice: 15000, bidCount: 10, endTime: '2026-10-16T21:32:38+09:00',
+    leftTime: 3661, currentPriceShippingFee: 750
+  };
+  const second = { ...first, auctionId: 'v1230349098', price: 799, buyNowPrice: null, isFreeShipping: true };
+  function html(items, total = 52, query = {}, root = 'pageProps') {
+    const initialState = { search: { items: {
+      listing: { items, totalResultsAvailable: total },
+      featuredListing: { items: [first, { ...first, auctionId: 'z999999999' }] }
+    } }, ranking: { items: [{ ...first, auctionId: 'a999999999' }] } };
+    return `<script type="application/json" id="__NEXT_DATA__">${JSON.stringify({
+      props: root === 'pageProps' ? { pageProps: { initialState } } : { initialState }, query
+    })}</script>`;
+  }
+  const rendered = `<div id="searchItems"><a href="https://auctions.yahoo.co.jp/jp/auction/v1230349098">second</a><a href="https://auctions.yahoo.co.jp/jp/auction/x1230699905">first</a><a href="https://auctions.yahoo.co.jp/jp/auction/x1230699905">duplicate</a></div><div id="otherSubmitTypeItems"></div>`;
+  const cards = extractSearchProductCards(rendered + html([first, second]));
+  assert.deepEqual(cards.map(item => item.auctionId), ['v1230349098', 'x1230699905']);
+  assert.equal(cards[1].title, first.title);
+  assert.equal(cards[1].imageUrl, first.imageUrl);
+  assert.equal(cards[1].currentPrice, 13001);
+  assert.equal(cards[1].buyoutPrice, 15000);
+  assert.equal(cards[1].bidCount, 10);
+  assert.equal(cards[1].shippingFeeText, '＋送料750円');
+  assert.equal(cards[1].remainingTimeText, '0日1時間1分1秒');
+  assert.equal(cards[1].endTimeEpoch, Date.parse(first.endTime) / 1000);
+  assert.equal(cards[0].buyoutPrice, 0);
+  assert.equal(cards[0].shippingFeeText, '送料無料');
+  assert.deepEqual(extractAuctionIdsFromSearchHtml(rendered + html([first, second])), ['v1230349098', 'x1230699905']);
+  assert.equal(extractSearchProductCards(html([first, second], 52, {}, 'props')).length, 2);
+  assert.equal(hasNextYahooSearchPage(html([first, second], 52)), true);
+  assert.equal(hasNextYahooSearchPage(html([first, second], 52), 2), false);
+  assert.equal(hasNextYahooSearchPage(html([first, second], 52, { b: '51' })), false);
+  assert.deepEqual(extractSearchProductCards('<script id="__NEXT_DATA__">broken</script>'), []);
+  assert.deepEqual(extractSearchProductCards('<script id="__NEXT_DATA__">{"props":{}}</script>'), []);
+  const empty = '<script id="__NEXT_DATA__">' + JSON.stringify({ props: { initialState: { search: { items: { listing: { items: [], totalResultsAvailable: 0 } } } } } }) + '</script>';
+  assert.deepEqual(extractSearchProductCards(empty), []);
+  assert.equal(hasNextYahooSearchPage(empty), false);
+  const calls = [];
+  const service = createProductService({ httpFetcher: async url => { calls.push(url); return rendered + html([first, second], 52); }, playwrightFetcher: async () => { throw new Error('unexpected browser'); } });
+  const result = await service.searchProducts('GAMEBOY', 2);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0], buildYahooSearchUrl('GAMEBOY', 2));
+  assert.equal(result.data.pageSize, 50);
+  assert.equal(result.data.nextPage, 3);
+  assert.equal(result.data.hasMore, false);
+  assert.equal(result.data.items.length, 2);
+}
+
 async function run() {
+  await testNextSearchResultsAndPagination();
   await testNormalizeAuctionUrl();
   await testParseProductHtml();
   await testParseProductHtmlUsesNextDataItemImage();

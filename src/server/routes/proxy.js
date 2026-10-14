@@ -613,9 +613,9 @@ function buildYahooSearchUrl(keyword, page = 1) {
   return `https://auctions.yahoo.co.jp/search/search?auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&fr=&p=${encodeURIComponent(String(keyword || '').trim())}&b=${start}&n=${YAHOO_SEARCH_PAGE_SIZE}`;
 }
 
-function extractProductsListHtml(html) {
+function extractProductsListHtml(html, openingPattern = /<div\b[^>]*class=["'][^"']*\bProducts__list\b[^"']*["'][^>]*>/i) {
   const source = String(html || '');
-  const openMatch = /<div\b[^>]*class=["'][^"']*\bProducts__list\b[^"']*["'][^>]*>/i.exec(source);
+  const openMatch = openingPattern.exec(source);
   if (!openMatch) return '';
 
   let depth = 1;
@@ -639,7 +639,7 @@ function extractProductsListHtml(html) {
 
 function extractAuctionIdsFromSearchHtml(html) {
   const productsHtml = extractProductsListHtml(html);
-  if (!productsHtml) return [];
+  if (!productsHtml) return extractNextSearchProductCards(html).map(item => item.auctionId);
 
   const ids = [];
   const seen = new Set();
@@ -725,7 +725,7 @@ function extractSearchPriceByLabel(cardHtml, label) {
 
 function extractSearchProductCards(html) {
   const productsHtml = extractProductsListHtml(html);
-  if (!productsHtml) return [];
+  if (!productsHtml) return extractNextSearchProductCards(html);
 
   const items = [];
   const seen = new Set();
@@ -777,12 +777,72 @@ function extractSearchProductCards(html) {
   return items;
 }
 
-function hasNextYahooSearchPage(html) {
+// Read only the search result state, never recommendations elsewhere on the page.
+function extractNextSearchState(html) {
+  const match = String(html || '').match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!match) return null;
+  try {
+    const data = JSON.parse(match[1]);
+    const search = data?.props?.pageProps?.initialState?.search || data?.props?.initialState?.search;
+    return Array.isArray(search?.items?.listing?.items) ? { items: search.items, query: data.query || {} } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function extractNextSearchProductCards(html) {
+  const state = extractNextSearchState(html);
+  if (!state) return [];
+  const listing = state.items.listing.items;
+  const featured = Array.isArray(state.items.featuredListing?.items) ? state.items.featuredListing.items : [];
+  const byId = new Map();
+  for (const item of [...featured, ...listing]) {
+    if (!item || !/^[a-zA-Z]?\d{8,10}$/.test(String(item.auctionId || ''))) continue;
+    const parsed = normalizeAuctionUrl(item.auctionId);
+    if (byId.has(parsed.auctionId)) continue;
+    const endTime = Date.parse(item.endTime);
+    const remaining = Number(item.leftTime);
+    const fee = item.currentPriceShippingFee;
+    byId.set(parsed.auctionId, {
+      auctionId: parsed.auctionId,
+      standardUrl: parsed.standardUrl,
+      title: String(item.title || ('商品 ' + parsed.auctionId)),
+      imageUrl: String(item.imageUrl || ''),
+      currentPrice: parsePriceText(item.price),
+      buyoutPrice: parsePriceText(item.buyNowPrice),
+      shippingFeeText: item.isFreeShipping ? '送料無料' :
+        fee != null && Number.isFinite(Number(fee)) ? `＋送料${Number(fee)}円` : '送料未定',
+      bidCount: parseCountValue(item.bidCount) ?? 0,
+      remainingTimeText: item.leftTime != null && Number.isFinite(remaining) ?
+        `${Math.floor(Math.max(0, remaining) / 86400)}日${Math.floor(Math.max(0, remaining) % 86400 / 3600)}時間${Math.floor(Math.max(0, remaining) % 3600 / 60)}分${Math.floor(Math.max(0, remaining) % 60)}秒` : '',
+      endTimeEpoch: Number.isFinite(endTime) ? Math.floor(endTime / 1000) : null
+    });
+  }
+  // When rendered cards are present, keep their order and exclude other modules.
+  const mainHtml = extractProductsListHtml(html, /<div\b[^>]*\bid=["']searchItems["'][^>]*>/i);
+  if (mainHtml) {
+    const ordered = new Set([...mainHtml.matchAll(/href=["'][^"']*\/jp\/auction\/([a-zA-Z]?\d{8,10})["'?]/g)].map(match => match[1].toLowerCase()));
+    const cards = [...ordered].filter(id => byId.has(id)).map(id => byId.get(id));
+    if (cards.length) return cards;
+  }
+  // Unrendered pages can also contain featured modules outside the main list.
+  // Without card positions, use only the paginated listing, in its original order.
+  const listingIds = new Set(listing.map(item => String(item?.auctionId || '').toLowerCase()));
+  return [...listingIds].filter(id => byId.has(id)).map(id => byId.get(id));
+}
+
+function hasNextYahooSearchPage(html, page = 1) {
   const anchorPattern = /<a\b[^>]*>[\s\S]*?<\/a>/gi;
   for (const match of String(html || '').matchAll(anchorPattern)) {
     const text = decodeHtmlEntities(normalizeText(match[0]));
     const href = extractHtmlAttribute(match[0], 'href');
     if (text === '次へ' && /\/search\/search/i.test(href) && /[?&]b=\d+/i.test(href)) return true;
+  }
+  const state = extractNextSearchState(html);
+  if (state) {
+    const start = Math.max(1, Number(state.query.b) || ((Math.max(1, Number(page) || 1) - 1) * YAHOO_SEARCH_PAGE_SIZE + 1));
+    const count = state.items.listing.items.length;
+    return count > 0 && start - 1 + count < Number(state.items.listing.totalResultsAvailable);
   }
   return false;
 }
@@ -1007,7 +1067,7 @@ function createProductService({
         page: normalizedPage,
         pageSize: YAHOO_SEARCH_PAGE_SIZE,
         items,
-        hasMore: hasNextYahooSearchPage(searchHtml),
+        hasMore: hasNextYahooSearchPage(searchHtml, normalizedPage),
         nextPage: normalizedPage + 1
       }
     };
