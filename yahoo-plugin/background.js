@@ -5636,9 +5636,9 @@ async function executeManualEmailAttempt(tab, emailPage) {
             if (!previousTabIds.has(candidate.id) && owned.has(candidate.openerTabId)) owned.add(candidate.id);
           }
         }
-        next = tabs.find(candidate => !previousTabIds.has(candidate.id) && owned.has(candidate.id) && isManualCaptchaTab(candidate)) || next;
+        next = tabs.find(candidate => !previousTabIds.has(candidate.id) && owned.has(candidate.id) && isManualVerificationTab(candidate)) || next;
       }
-      // Only the expected text-captcha page completes the email step.
+      // Preserve the existing text-captcha transition before checking for direct PIN.
       let captchaReady = isManualCaptchaTab(next) && next.status === 'complete';
       if (isManualCaptchaTab(next) && !captchaReady) {
         const ready = await emailAttemptStep(attempt, () => chrome.scripting.executeScript({
@@ -5654,6 +5654,12 @@ async function executeManualEmailAttempt(tab, emailPage) {
       }
       const emailState = await emailAttemptStep(attempt, () => detectManualEmailPage(next));
       if (emailState?.error) throw new Error(EMAIL_FILL_ERROR);
+      // Yahoo may skip the text captcha and go straight to the existing PIN flow.
+      if (!emailState && next?.status === 'complete' &&
+          await emailAttemptStep(attempt, () => detectManualPinPage(next))) {
+        verificationTab = next;
+        return { success: true, tab: next };
+      }
       await sleep(Math.min(500, Math.max(1, attempt.deadline - Date.now())));
     }
     throw new Error(EMAIL_FILL_ERROR);
@@ -5684,6 +5690,11 @@ async function handleManualEmailVerification(tab, context = {}) {
         return current;
       }
       const page = await detectManualEmailPage(current);
+      // Also resume a PIN page that arrived after the previous attempt timed out.
+      if (!page && current.status === 'complete' && await detectManualPinPage(current)) {
+        await closeManualCaptchaChallenge(challenge.id);
+        return current;
+      }
       const result = page ? await executeManualEmailAttempt(current, page) : { success: false, error: EMAIL_FILL_ERROR };
       if (result.success) {
         await closeManualCaptchaChallenge(challenge.id);

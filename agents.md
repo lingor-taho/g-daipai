@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-14
+**最后更新**: 2026-10-16
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-16 邮箱验证后直达 PIN 的交接已本地修复：邮箱单次提交后保留原文字验证码识别，并复用 detectManualPinPage 识别已加载且不再为邮箱页的 PIN 页面，关闭邮箱 challenge 后返回原 PIN 流程；本次新开子标签同样支持，已有无关标签不接管。上轮超时后点击继续时若原标签已为 PIN，直接交接，不再刷新 Yahoo／读取 Gmail。单次刷新与提交、60秒收信／30秒转换、错误中断及原 PIN 输入保持；只需更新插件 background.js 并 reload，无 API／前端／数据库变化，未部署或操作真实 Yahoo，详见 0f。
 
 2026-10-14 商品名称搜索已本地兼容 Yahoo 新版搜索页：旧 Products__list 解析保留，缺少旧容器时读取 __NEXT_DATA__ 的 search.items.listing；渲染页面按 searchItems 主列表顺序读取并去重，只有主列表实际出现的 featuredListing 商品参与，不混入页面其他推荐模块。未渲染页面仅读分页 listing。搜索 URL、每页 50、b=1/51/101、弹层／选中后详情与原商品业务保持；原次へ识别保留，缺少链接时通过列表总数及本页位置判断后续页。只需更新 API routes/proxy.js 并重启 API，无前端／插件／schema 更新。用户提供 HTML 与实时 Yahoo 两个关键词前两页验证通过；未部署生产或创建实际任务，详见 0g。
 
@@ -191,6 +193,10 @@ orders.task_id      N --- 0/1 tasks.id
 验证：`node scripts/run-isolated-regression.cjs src/server/routes/proxy.test.js`、`node src/client/src/components/ProductSearchPopup.display.test.mjs`、`node src/client/src/utils/api.product-info.test.mjs`、`node src/client/src/pages/Submit.display.test.mjs`、`node --check src/server/routes/proxy.js`、`node scripts/encoding-guard.js`、`git diff --check` 均通过。新增新旧结构、JSON 两种路径、重复商品／推荐排除、价格／即决／运费／入札／结束时间映射、空与损坏 JSON、第一页／第二页／末页及单次列表请求验证。只读内存验证用户整页 HTML：53 个主列表唯一商品，首件 r1247829073 的 13001 円／送料750円／入札10 与截图吻合；实时 GAMEBOY 与 GAMEBOY ADVANCE 第一／第二页各50件，页面不同且 hasMore／nextPage 正常。未运行全项目回归或真实用户浏览器端到端操作。部署仅更新 API 文件并重启 API，随后用户端确认名称搜索、加载更多、选中详情；未部署生产。
 
 ### 0f. Yahoo 多账号本地实现与生产验收
+
+2026-10-16 修复邮箱验证成功直达 PIN 时仍提示 gmail验证码填入错误：原转换仅认可 /ncaptcha，现保留该判断，并在邮箱页已消失、标签 complete 时复用原 detectManualPinPage 返回原 PIN 流程；本次新开且沿 opener 归属的 PIN 子标签纳入原查找，已有无关标签仍排除。原标签超时后已到 PIN 时，下一次人工继续直接关闭邮箱 challenge 并交接。邮箱代码不复用为 PIN；不改邮件选择、单次刷新／提交、超时、PIN 输入、账号、交易／支付／任务逻辑。仅插件 background.js 更新后 reload，无 API／前端／schema 更新。
+
+验证：`node yahoo-plugin/emailVerification.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/multiAccount.test.js`、`node yahoo-plugin/encoding.test.js`、`node --check yahoo-plugin/background.js`、`node scripts/encoding-guard.js`、`git diff --check`。邮箱专项覆盖同 URL 直接 PIN、第29秒进入 PIN、本次新子标签、旧错误继续时已到 PIN 无 Gmail／刷新、外层 email→关闭邮箱→原 PIN 提示且未输入 PIN；原文字验证码、真正邮件拒绝、超时、一次执行、重载恢复与邮件读取专项保留通过。仅本地模拟，未运行完整项目回归或服务器 Gmail／Yahoo 端到端验收，未部署生产。
 
 2026-10-13 付款流程兼容新版已发货文字：仅 buildPaymentPageStateFromSnapshot 的 alreadyPaid 文案识别补入「商品が発送されました」且符合原确认收货 paidOrShipped 的到货提示，复用现有识别。待结算任务读取该页面后沿原已付款成功回写到 pending_shipment（待发货），不点击支付／确认收货按钮；其他付款资格、状态回写、金额／运费及失败中断均不改。只需更新插件 background.js 并 reload，无 API／前端／schema 更新，未修改真实 x1247287408 或操作 Yahoo。
 
@@ -871,6 +877,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-16 邮箱验证直达 PIN 的流程交接
+
+补齐邮箱验证后直接进入 PIN 的成功返回，沿用原 PIN 提示与输入；原文字验证码、单次刷新／提交、超时保持。只更新插件 background.js 并 reload，专项及原插件／多账号回归通过，真实服务器待验收，详见 0f。
 
 ### 2026-10-14 商品名称搜索兼容新版页面
 
@@ -2353,6 +2363,16 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+邮箱验证与原 PIN 流程交接：
+
+```powershell
+node yahoo-plugin/emailVerification.test.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/multiAccount.test.js
+node yahoo-plugin/encoding.test.js
+node --check yahoo-plugin/background.js
+```
 
 商品名称搜索（新版兼容专项及原详情／运费回归）：
 
