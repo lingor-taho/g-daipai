@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-17 首页抓取卡类型全称标签已沿用成交商品页的类型配色：普通绿色、商城红色、P紫色，移除全称模式的统一蓝色覆盖；共用全称标签的搜索列表同步一致，文字和布局保持。仅用户端静态展示，更新用户端dist，验证见0ae。
+
 2026-10-17 按用户限定，仅管理端商品链接改为商品表类型权威：订单／查询订单／任务／队列／下一任务／两类报表／两类CSV／顶部Google失败、未发货、付款文字和拍卖记录提醒，全部由products.product_type选择域名，不按Z前缀或旧URL兜底。缺失／无效类型不生成链接，批处理提示后停止该件更新。管理端刷新额外传已存类型，HTTP／浏览器抓取及缓存也按该类型隔离，快照URL沿本次类型链接写回；proxy默认用户抓取行为保持。Google实际写表、插件／购买／物流／收货／拍卖采集／快照类型归一化规则未改，详见0ad。
 
 2026-10-17 P商品链接遗漏已本地统一修复：共享productUrl.cjs按类型／Z ID生成フリマ链接，缺URL及旧拍卖URL都兼容；后台查询订单／报表／任务／下一任务／订单和两类CSV、用户端成交／再入札／统计及统计API采用共享函数。后台刷新运费／类型使用正确抓取及写回URL，类型刷新支持fleamarket。普通p开头拍卖ID保持普通链接。不改真实历史数据／订单状态，部署需更新API与共享文件并重启、更新两端dist，详见0ac。
@@ -233,6 +235,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ae. 用户端类型全称标签配色统一
+
+ProductTypeTag全称模式复用简称模式的文字、底色和边框颜色，首页抓取卡及搜索列表保持普通绿／商城红／P紫；全称文字、间距和字号不变。仅更新用户端dist，无API／插件／数据库变更，未部署生产。
+
+验证：`node src/client/src/pages/Submit.display.test.mjs`、`node src/client/src/components/ProductSearchPopup.display.test.mjs`、`npm run build --prefix src/client`、`node scripts/encoding-guard.js`、`git diff --check`。
 
 ### 0ad. 仅管理端按商品表类型生成链接
 
@@ -1141,6 +1149,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-17 首页商品类型标签配色
+
+全称标签取消统一蓝色覆盖，沿用成交页普通绿色、商城红色及P紫色。仅用户端静态展示；验证和部署见0ae。
 
 ### 2026-10-16 邮箱验证直达 PIN 的流程交接
 
