@@ -28,10 +28,11 @@ function levelTag(level: string) {
   return <Tag color="blue">信息</Tag>;
 }
 
-function productLink(productId: string) {
+function productLink(row: any) {
+  const productId = row.product_id;
   if (!productId) return '-';
   return (
-    <a href={getProductItemUrl(productId)} target="_blank" rel="noreferrer">
+    <a href={getProductItemUrl(row) || undefined} target="_blank" rel="noreferrer">
       {productId}
     </a>
   );
@@ -218,7 +219,7 @@ export default function ReportsPage() {
           columns={[
             { title: '时间', dataIndex: 'created_at', width: 170, render: value => formatDateTime(value) },
             { title: '状态', dataIndex: 'level', width: 90, render: value => levelTag(value) },
-            { title: '商品ID', dataIndex: 'product_id', width: 135, render: value => productLink(value) },
+            { title: '商品ID', dataIndex: 'product_id', width: 135, render: (_: any, row: any) => productLink(row) },
             { title: '订单ID', dataIndex: 'order_id', width: 90, render: value => value || '-' },
             { title: '动作', dataIndex: 'action', width: 190, render: value => value || '-' },
             { title: '方法', dataIndex: 'method', width: 170, render: value => value || '-' },
@@ -360,7 +361,7 @@ export default function ReportsPage() {
           columns={[
             { title: '时间', dataIndex: 'created_at', width: 170, render: value => formatDateTime(value) },
             { title: '级别', dataIndex: 'level', width: 90, render: value => levelTag(value) },
-            { title: '商品ID', dataIndex: 'product_id', width: 135, render: value => productLink(value) },
+            { title: '商品ID', dataIndex: 'product_id', width: 135, render: (_: any, row: any) => productLink(row) },
             { title: '类型', dataIndex: 'action', width: 150, render: value => value || '-' },
             { title: '来源', dataIndex: 'method', width: 150, render: value => value || '-' },
             { title: '错误说明', dataIndex: 'message', width: 260, ellipsis: true, render: value => value || '-' },

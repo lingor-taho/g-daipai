@@ -1,4 +1,4 @@
-﻿const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+﻿const { addAdminAlertProductTypes, fetchAdminProduct } = require('../services/adminProductLinks');
 const express = require('express');
 const router = express.Router();
 const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
@@ -254,6 +254,7 @@ function buildAdminPendingTasksQuery() {
     sql: `SELECT t.id, t.account_id, t.execution_unknown,
             t.product_id,
             p.product_title AS product_title,
+            p.product_type AS product_type,
             CASE WHEN COALESCE(t.bid_mode, 'bid') = 'buyout'
               THEN COALESCE(t.user_max_price, t.max_price)
               ELSE t.max_price
@@ -297,6 +298,7 @@ function buildAdminOrdersListQuery({ pageSize, offset }) {
             p.shipping_fee_text AS shipping_fee_text,
             COALESCE(p.tax_type, 'tax_zero') AS tax_type,
             COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            p.product_type AS link_product_type,
             u.id AS user_id,
             u.username,
             ufo.rate_adjustment,
@@ -738,6 +740,7 @@ function buildAdminMessagesListQuery(filters = {}) {
             p.product_url,
             p.product_title,
             COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+            p.product_type AS link_product_type,
             u.id AS user_id,
             u.username,
             m.message_html,
@@ -907,7 +910,8 @@ function buildTrustedInputReportQueries(filters = {}) {
       params: [...params]
     },
     rows: {
-      sql: `SELECT id, level, product_id, order_id, action, method, message, diagnostics, url, created_at
+      sql: `SELECT id, level, product_id, order_id, action, method, message, diagnostics, url, created_at,
+                   (SELECT p.product_type FROM products p WHERE p.product_id = plugin_diagnostics.product_id) AS product_type
             FROM plugin_diagnostics
             ${whereSql}
             ORDER BY datetime(created_at) DESC, id DESC
@@ -996,7 +1000,8 @@ function buildBidFailureReportQueries(filters = {}) {
       params: [...params]
     },
     rows: {
-      sql: `SELECT id, level, product_id, order_id, action, method, message, diagnostics, url, created_at
+      sql: `SELECT id, level, product_id, order_id, action, method, message, diagnostics, url, created_at,
+                   (SELECT p.product_type FROM products p WHERE p.product_id = plugin_diagnostics.product_id) AS product_type
             FROM plugin_diagnostics
             ${whereSql}
             ORDER BY datetime(created_at) DESC, id DESC
@@ -3397,7 +3402,7 @@ async function getAccountIdleFlags() {
 router.get('/idle-flags',async(req,res)=>{
   const items=[];
   for(const a of yahooAccounts.list(db)) {
-    const flags=await accountScope.run({accountId:a.id},getAccountIdleFlags);
+    const flags=await addAdminAlertProductTypes(db, await accountScope.run({accountId:a.id},getAccountIdleFlags));
     const login=await accountScope.run({accountId:a.id},()=>db.getAll("SELECT key,value,updated_at FROM config WHERE key IN ('yahoo_login_status','yahoo_login_message')"));
     const values=Object.fromEntries(login.map(row=>[row.key,row.value]));
     const workClaims=db.raw.prepare('SELECT kind,object_id,instance_id,created_at FROM yahoo_work_claims WHERE account_id=?').all(a.id);
@@ -3566,12 +3571,12 @@ function normalizeProductRefreshId(productId) {
   return normalizeAuctionUrl(productId)?.auctionId || String(productId || '').trim().toLowerCase();
 }
 
-function buildFetchedProductSnapshot(productId, productData = {}) {
+function buildFetchedProductSnapshot(productId, productData = {}, productUrl) {
   const taxType = productData.taxType || productData.tax_type || null;
   const productType = normalizeProductType(productData.productType || productData.product_type || taxType) || null;
   return {
     product_id: productId,
-    product_url: getProductItemUrl(productId),
+    product_url: productUrl,
     product_title: productData.title || productData.productTitle || productData.product_title || null,
     product_image_url: productData.imageUrl || productData.productImageUrl || productData.product_image_url || null,
     current_price: productData.currentPrice || productData.current_price || null,
@@ -3594,14 +3599,16 @@ async function refreshProductShippingFee(database, service, productId) {
     return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
   }
 
-  const product = await service.fetchProduct(getProductItemUrl(normalizedProductId));
+  const fetched = await fetchAdminProduct(database, service, normalizedProductId);
+  if (!fetched) return { productId: normalizedProductId, success: false, error: '商品类型缺失或无效，未更新' };
+  const { url: productUrl, product } = fetched;
   const productData = product?.data || {};
   const shippingFeeText = String(productData.shippingFeeText || productData.shipping_fee_text || '').trim();
   if (!shippingFeeText) {
     return { productId: normalizedProductId, success: false, error: '未解析到运费，未更新' };
   }
   await upsertProductSnapshot(database, {
-    ...buildFetchedProductSnapshot(normalizedProductId, productData),
+    ...buildFetchedProductSnapshot(normalizedProductId, productData, productUrl),
     shipping_fee_text: shippingFeeText
   }, { source: 'admin_refresh', overwriteProductTitle: true });
   return {
@@ -3622,14 +3629,16 @@ async function refreshProductType(database, service, productId) {
     return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
   }
 
-  const product = await service.fetchProduct(getProductItemUrl(normalizedProductId));
+  const fetched = await fetchAdminProduct(database, service, normalizedProductId);
+  if (!fetched) return { productId: normalizedProductId, success: false, error: '商品类型缺失或无效，未更新' };
+  const { url: productUrl, product } = fetched;
   const productData = product?.data || {};
   const productType = normalizeProductType(productData.productType || productData.product_type || productData.taxType || productData.tax_type);
   if (!productType) {
     return { productId: normalizedProductId, success: false, error: '未解析到商品类型，未更新' };
   }
   await upsertProductSnapshot(database, {
-    ...buildFetchedProductSnapshot(normalizedProductId, productData),
+    ...buildFetchedProductSnapshot(normalizedProductId, productData, productUrl),
     product_type: productType
   }, { source: 'admin_refresh', overwriteProductTitle: true });
   return {

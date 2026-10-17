@@ -1225,7 +1225,7 @@ async function testFleamarketRefreshKeepsCanonicalUrl() {
   for (const refresh of [refreshProductShippingFee, refreshProductType]) {
     const writes = [];
     const db = {
-      async getOne() { return { count: 1 }; },
+      async getOne(sql, params) { return /FROM products/.test(sql) ? {product_id:params[0],product_type:'fleamarket'} : { count: 1 }; },
       async query(sql, params) { writes.push({ sql, params }); return { rowCount: 1 }; }
     };
     const expected = 'https://paypayfleamarket.yahoo.co.jp/item/z705858626';
@@ -1248,6 +1248,7 @@ async function testRefreshProductShippingFeeWritesProductsOnly() {
   const fakeDb = {
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
+      if (/FROM products/.test(sql)) return {product_id:params[0],product_type:'normal'};
       if (/COUNT\(\*\) AS count FROM tasks/.test(sql)) return { count: 2 };
       return null;
     },
@@ -1296,7 +1297,7 @@ async function testShippingRefreshPreservesArrivalFromYahooData() {
   for (const id of ['r1243992660', 'l1244119177']) {
     const writes = [];
     const fakeDb = {
-      async getOne() { return { count: 1 }; },
+      async getOne(sql, params) { return /FROM products/.test(sql) ? {product_id:params[0],product_type:'normal'} : { count: 1 }; },
       async query(sql, params) { writes.push({ sql, params }); return { rowCount: 1 }; }
     };
     const item = {
@@ -1328,6 +1329,7 @@ async function testRefreshProductTypeWritesProductsOnly() {
   const fakeDb = {
     async getOne(sql, params) {
       calls.push({ type: 'getOne', sql, params });
+      if (/FROM products/.test(sql)) return {product_id:params[0],product_type:'store'};
       if (/COUNT\(\*\) AS count FROM tasks/.test(sql)) return { count: 1 };
       return null;
     },

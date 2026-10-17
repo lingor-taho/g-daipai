@@ -6,6 +6,7 @@ function testBuildMessageReadCsvUsesRequestedColumnsAndEscapesValues() {
     {
       username: 'stone',
       product_id: 'm1234567890',
+      product_type: 'normal',
       product_url: 'https://auctions.yahoo.co.jp/jp/auction/m1234567890',
       product_title: '商品 "A", 未使用',
       won_at: '2026-08-18 14:35:00',
@@ -25,6 +26,7 @@ function testBuildMessageReadCsvFallsBackToYahooProductUrl() {
     {
       username: '小陈',
       product_id: 'u1234567890',
+      product_type: 'normal',
       product_title: '换行\n商品',
       won_at: null,
       tracking_number: null

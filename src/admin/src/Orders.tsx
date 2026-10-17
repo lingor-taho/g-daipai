@@ -718,7 +718,7 @@ export default function OrdersPage() {
       render: (_: any, row: any) => {
         const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
         const url = getProductItemUrl({ ...row, product_id: productId });
-        const idNode = url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : productId || '-';
+        const idNode = url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : <span title="商品类型缺失或无效">{productId || '-'}</span>;
         const hasRemark = Boolean(String(row.order_remark || '').trim());
         return <span>{idNode}{renderProductTypeTag(row.product_type)}{hasRemark ? <Tag color="blue">备</Tag> : null}</span>;
       }

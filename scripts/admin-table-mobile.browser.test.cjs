@@ -37,8 +37,8 @@ const { chromium } = require('playwright');
         if (p === '/api/admin/tasks' || p === '/api/admin/orders') data = { items: [row], total: 1 };
         if (p === '/api/admin/orders') data = { items: [row, {...row,id:2,product_id:'z705858626',product_url:'https://auctions.yahoo.co.jp/jp/auction/z705858626',product_type:'fleamarket',order_status:'pending_shipment'}, {...row,id:3,product_id:'s1247071818',product_type:'store'}], total: 3 };
         if (p === '/api/admin/idle-flags') data = {googleSheetAlerts:[
-          {id:'p-google',productId:'z705858626',error:'test P append alert'},
-          {id:'ordinary-google',productId:'r1243992660',error:'test ordinary append alert'}]};
+          {id:'p-google',productId:'z705858626',product_type:'fleamarket',error:'test P append alert'},
+          {id:'ordinary-google',productId:'r1243992660',product_type:'normal',error:'test ordinary append alert'}]};
         if (p === '/api/admin/tasks/stats') data = { total: 1, pending: 1, processing: 0, failed: 1, success: 0 };
         if (p === '/api/admin/tasks/queue') data = {items:[{...row,queue_key:'task-1',status:'preparation_pending'}],total:1};
         await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });

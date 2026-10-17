@@ -19,6 +19,7 @@ async function run() {
       updated_at TEXT, last_bid_at TEXT, start_minutes_before INTEGER, start_seconds_before INTEGER);
     CREATE TABLE bid_logs (task_id INTEGER, bid_price INTEGER, result TEXT);`);
   raw.exec(fs.readFileSync(path.join(__dirname, 'batchTaskQueue.sql'), 'utf8'));
+  raw.exec('ALTER TABLE products ADD COLUMN product_type TEXT');
   const db = {
     async getAll(sql, params = []) { return raw.prepare(sql).all(...params); },
     async getOne(sql, params = []) { return raw.prepare(sql).get(...params); }
@@ -38,7 +39,7 @@ async function run() {
     headers: { Authorization: `Bearer ${token(role)}` }
   });
   try {
-    raw.exec(`INSERT INTO products VALUES ('p1', 'https://example.com/p1', 100, 1100, '2099-01-01T00:00:00Z');
+    raw.exec(`INSERT INTO products (product_id, product_url, current_price, buyout_price, end_time) VALUES ('p1', 'https://example.com/p1', 100, 1100, '2099-01-01T00:00:00Z');
       INSERT INTO tasks VALUES
         (1,1,'p1',1000,1100,'buyout','direct','pending','2026-10-01',NULL,NULL,NULL,NULL),
         (2,1,'p1',1000,1000,'bid','5min','pending','2026-10-02',NULL,NULL,NULL,NULL),

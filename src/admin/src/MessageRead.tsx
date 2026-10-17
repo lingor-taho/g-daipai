@@ -379,7 +379,7 @@ export default function MessageReadPage() {
             width: 170,
             render: (value, row: any) => (
               <Space size={4}>
-                <a href={getProductItemUrl(row)} target="_blank" rel="noreferrer">{value}</a>
+                <a href={getProductItemUrl(row) || undefined} target="_blank" rel="noreferrer">{value}</a>
                 {renderProductTypeTag(row.product_type)}
               </Space>
             )

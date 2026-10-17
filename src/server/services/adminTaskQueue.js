@@ -2,7 +2,7 @@
 async function getAdminTaskQueue(database, { pageSize = 10, offset = 0 } = {}) {
   const items = await database.getAll(`
     SELECT * FROM (
-      SELECT 'task:' || t.id AS queue_key, t.id, t.product_id, p.product_url,
+      SELECT 'task:' || t.id AS queue_key, t.id, t.product_id, p.product_url, p.product_type,
         p.current_price, t.max_price, t.user_max_price, p.buyout_price,
         t.bid_mode, t.strategy, t.status, t.created_at, t.updated_at,
         t.last_bid_at, t.start_minutes_before, t.start_seconds_before,
@@ -15,6 +15,7 @@ async function getAdminTaskQueue(database, { pageSize = 10, offset = 0 } = {}) {
       WHERE t.status = 'pending'
       UNION ALL
       SELECT 'preparation:' || i.id, i.id, i.product_id, i.product_url,
+        (SELECT p.product_type FROM products p WHERE p.product_id = i.product_id),
         NULL, i.max_price, NULL, NULL, 'bid', 'direct', 'preparation_pending',
         b.created_at, NULL, NULL, NULL, NULL, NULL, NULL, u.username,
         i.batch_id, i.line_number

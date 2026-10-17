@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-17 按用户限定，仅管理端商品链接改为商品表类型权威：订单／查询订单／任务／队列／下一任务／两类报表／两类CSV／顶部Google失败、未发货、付款文字和拍卖记录提醒，全部由products.product_type选择域名，不按Z前缀或旧URL兜底。缺失／无效类型不生成链接，批处理提示后停止该件更新。管理端刷新额外传已存类型，HTTP／浏览器抓取及缓存也按该类型隔离，快照URL沿本次类型链接写回；proxy默认用户抓取行为保持。Google实际写表、插件／购买／物流／收货／拍卖采集／快照类型归一化规则未改，详见0ad。
+
 2026-10-17 P商品链接遗漏已本地统一修复：共享productUrl.cjs按类型／Z ID生成フリマ链接，缺URL及旧拍卖URL都兼容；后台查询订单／报表／任务／下一任务／订单和两类CSV、用户端成交／再入札／统计及统计API采用共享函数。后台刷新运费／类型使用正确抓取及写回URL，类型刷新支持fleamarket。普通p开头拍卖ID保持普通链接。不改真实历史数据／订单状态，部署需更新API与共享文件并重启、更新两端dist，详见0ac。
 
 2026-10-17 P商品列表文案统一为“购入成功／购入价／购入时间”，普通／商城保留原落札文案，共用成交商品导航及页面标题保持。仅用户端显示变更，无价格／状态／数据库变化，验证与部署见0ab。
@@ -231,6 +233,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ad. 仅管理端按商品表类型生成链接
+
+新增管理端专用shared/adminProductUrl.cjs，normal／store生成拍卖链接、fleamarket生成フリマ链接；忽略ID前缀及已有URL。后台订单与查询接口增加原始link_product_type，避免原结算／展示税类型回退被用于链接，其他财务逻辑保留。下一任务、队列、两类诊断报表补回商品表类型；idle-flags按涉及商品批量查询类型，仅补充返回数据，不重写已存提醒／任务。管理端列表、报表、两类CSV、下一任务和顶部提醒统一使用专用函数。缺失／非法类型显示无链接，批量刷新返回“商品类型缺失或无效，未更新”。
+
+管理端刷新先读商品表类型，通过fetchProduct第二参数adminProductType固定实际抓取域名及解析分支，使用独立admin缓存键，快照URL沿该类型构造。未传参数的用户抓取路径、共享旧productUrl.cjs、Google实际写表／插件／交易动作／商品快照类型归一化保持原规则；不改schema或真实数据。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/services/adminProductLinks.test.js`覆盖反向ID／URL、缺类型、两类CSV、真实报表SQL、下一任务类型、提醒只读补充及实际抓取服务HTTP地址；原admin.orders、adminTaskQueue、proxy、fleamarket与CSV／展示专项、后台build、`node scripts/admin-product-type-links.browser.test.cjs`（390／1200，管理端各列表／两类报表／下一任务／顶部提醒，含Z普通与非Z的P反例）、原admin-table-mobile浏览器检查、编码／diff检查通过。部署更新API与管理端专用shared文件，重启API，更新后台dist；用户端及插件不需更新，未部署生产。
 
 ### 0ac. P 商品链接统一生成
 

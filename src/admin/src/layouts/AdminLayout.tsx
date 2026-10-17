@@ -31,7 +31,7 @@ const orderedMenuItemsConfig = [
   ...menuItemsConfig.filter(item => item.key === '/reports')
 ];
 
-function renderPaymentAlertMessage(messageText: string) {
+function renderPaymentAlertMessage(messageText: string, productTypes: Record<string, string>) {
   const text = String(messageText || '');
   const pattern = /([a-zA-Z]?\d{8,10})/g;
   const parts: any[] = [];
@@ -45,7 +45,7 @@ function renderPaymentAlertMessage(messageText: string) {
     parts.push(
       <a
         key={`${productId}-${match.index}`}
-        href={getProductItemUrl(productId)}
+        href={getProductItemUrl({product_id:productId,product_type:productTypes[productId.toLowerCase()]}) || undefined}
         target="_blank"
         rel="noreferrer"
         style={{ color: '#1677ff' }}
@@ -70,6 +70,7 @@ export default function AdminLayout() {
   const username = localStorage.getItem('username') || 'admin';
   const [yahooAccounts,setYahooAccounts]=useState<any[]>([]);
   const [paymentAlert, setPaymentAlert] = useState('');
+  const [productTypes, setProductTypes] = useState<Record<string,string>>({});
   const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
   const [captchaChallenge, setCaptchaChallenge] = useState<any>(null);
   const [captchaAnswer, setCaptchaAnswer] = useState('');
@@ -127,6 +128,7 @@ export default function AdminLayout() {
           setYahooAccounts(flags.accounts || []);
           const nextChallenge = flags.captchaChallenge || null;
           setPaymentAlert(flags.paymentAlertMessage || '');
+          setProductTypes(flags.productTypes || {});
           setConfirmReceiptAlert(flags.confirmReceiptAlertMessage || '');
           setCaptchaChallenge(nextChallenge);
           if (nextChallenge) {
@@ -370,7 +372,7 @@ export default function AdminLayout() {
                 </Space>}
                 description={<div>{(alert.items || []).map((item: any) => (
                   <div key={item.productId}>
-                    商品 ID <a href={getProductItemUrl(item.productId)} target="_blank" rel="noreferrer">{item.productId}</a>
+                    商品 ID <a href={getProductItemUrl(item) || undefined} target="_blank" rel="noreferrer">{item.productId}</a>
                     {' '}，失败 {item.attempts} 次，原因：{item.error || '-'}
                   </div>
                 ))}</div>}
@@ -386,7 +388,7 @@ export default function AdminLayout() {
                     <Typography.Text style={{ color: '#cf1322' }}>
                       Google表格写入失败：商品ID{' '}
                       <a
-                        href={getProductItemUrl(alert.productId)}
+                        href={getProductItemUrl(alert) || undefined}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -414,7 +416,7 @@ export default function AdminLayout() {
                 showIcon
                 message={
                   <Space wrap>
-                    <Typography.Text style={{ color: '#cf1322' }}>{renderPaymentAlertMessage(paymentAlert)}</Typography.Text>
+                    <Typography.Text style={{ color: '#cf1322' }}>{renderPaymentAlertMessage(paymentAlert, productTypes)}</Typography.Text>
                     <Button size="small" danger onClick={clearPaymentAlertAndContinue}>清除并继续任务</Button>
                   </Space>
                 }
@@ -491,7 +493,7 @@ export default function AdminLayout() {
                   <Space wrap>
                     <Typography.Text>
                       <a
-                        href={getProductItemUrl(alert.productId)}
+                        href={getProductItemUrl(alert) || undefined}
                         target="_blank"
                         rel="noreferrer"
                         style={{ color: '#1677ff' }}

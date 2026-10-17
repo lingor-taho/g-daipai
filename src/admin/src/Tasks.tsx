@@ -127,7 +127,7 @@ export default function TasksPage() {
       width:150,
       dataIndex: 'product_id',
       render: (_: any, row: any) => (
-        <a href={getProductItemUrl(row)} target="_blank" rel="noreferrer">
+        <a href={getProductItemUrl(row) || undefined} target="_blank" rel="noreferrer">
           {row.product_id}
         </a>
       )
@@ -216,7 +216,7 @@ export default function TasksPage() {
               <Typography.Text strong>#{stats.nextTask.id}</Typography.Text>
               <Typography.Text>
                 <a
-                  href={getProductItemUrl(stats.nextTask)}
+                  href={getProductItemUrl(stats.nextTask) || undefined}
                   target="_blank"
                   rel="noreferrer"
                 >

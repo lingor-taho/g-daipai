@@ -648,8 +648,8 @@ function parseFleamarketProductHtml(html, auctionId, standardUrl) {
   };
 }
 
-function parseProductHtml(html, auctionId, standardUrl) {
-  if (auctionId.startsWith('z')) return parseFleamarketProductHtml(html, auctionId, standardUrl);
+function parseProductHtml(html, auctionId, standardUrl, adminProductType) {
+  if (adminProductType ? adminProductType === 'fleamarket' : auctionId.startsWith('z')) return parseFleamarketProductHtml(html, auctionId, standardUrl);
   const title = extractTitle(html, auctionId);
   const taxType = extractTaxType(html);
   const images = extractProductImages(html);
@@ -1052,7 +1052,7 @@ function createProductService({
     return product;
   }
 
-  async function fetchProduct(url) {
+  async function fetchProduct(url, { adminProductType } = {}) {
     const parsed = normalizeAuctionUrl(url);
     if (!parsed) {
       const error = new Error('invalid product url');
@@ -1060,11 +1060,17 @@ function createProductService({
       throw error;
     }
 
-    const cached = cache.get(parsed.auctionId);
+    // Only admin refresh supplies a saved type. User fetching keeps its original rules.
+    const savedType = ['fleamarket', 'normal', 'store'].includes(adminProductType) ? adminProductType : null;
+    if (savedType) parsed.standardUrl = savedType === 'fleamarket'
+      ? `https://paypayfleamarket.yahoo.co.jp/item/${parsed.auctionId}`
+      : `https://auctions.yahoo.co.jp/jp/auction/${parsed.auctionId}`;
+    const cacheKey = savedType ? `admin:${savedType}:${parsed.auctionId}` : parsed.auctionId;
+    const cached = cache.get(cacheKey);
 
     try {
       const html = await httpFetcher(parsed.standardUrl);
-      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
+      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl, savedType);
       const prefCode = await getYahooShippingPrefCode();
       const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId, prefCode);
       const attemptedShipmentLookup = shipmentUrls.length > 0;
@@ -1081,14 +1087,14 @@ function createProductService({
         }
       }
       if (isUsefulProduct(data, parsed.auctionId)) {
-        cacheProduct(data);
+        if (savedType) cache.set(cacheKey, data); else cacheProduct(data);
         return { success: true, data, source: 'http' };
       }
     } catch (_) {}
 
     try {
       const html = await playwrightFetcher(parsed.standardUrl);
-      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl);
+      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl, savedType);
       const prefCode = await getYahooShippingPrefCode();
       const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId, prefCode);
       for (const shipmentUrl of shipmentUrls) {
@@ -1102,7 +1108,7 @@ function createProductService({
         } catch (_) {}
       }
       if (isUsefulProduct(data, parsed.auctionId)) {
-        cacheProduct(data);
+        if (savedType) cache.set(cacheKey, data); else cacheProduct(data);
         return { success: true, data, source: 'playwright' };
       }
     } catch (_) {}

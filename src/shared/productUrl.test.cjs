@@ -20,7 +20,7 @@ async function main() {
   for (const id of ['p123456789', 's123456789', 'a123456789']) {
     const expectedAuction = `https://auctions.yahoo.co.jp/jp/auction/${id}`;
     assert.equal(getProductItemUrl(id), expectedAuction);
-    assert.equal(buildProductUrl({ product_id: id }), expectedAuction);
+    assert.equal(buildProductUrl({ product_id: id, product_type: 'normal' }), expectedAuction);
     assert.equal(getProductItemUrl({ product_id: id, product_url: 'https://example.com/keep' }), 'https://example.com/keep');
   }
   assert.equal(getProductItemUrl(''), '');

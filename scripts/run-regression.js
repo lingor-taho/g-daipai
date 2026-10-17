@@ -43,6 +43,7 @@ const steps = [
   ['Statistics chart calculations', process.execPath, ['src/client/src/utils/statisticsChart.test.mjs'], rootDir],
   ['Batch bid input tests', process.execPath, ['src/shared/batchBid.test.cjs'], rootDir],
   ['Product URL routing and exports', process.execPath, ['src/shared/productUrl.test.cjs'], rootDir],
+  ['Admin product links use saved type only', process.execPath, ['src/server/services/adminProductLinks.test.js'], rootDir],
   ['Batch task submission tests', process.execPath, ['src/server/routes/task.batch.test.js'], rootDir],
   ['Durable batch queue tests', process.execPath, ['src/server/services/batchTaskQueue.test.js'], rootDir],
   ['Acting user permission tests', process.execPath, ['src/server/services/actingUser.test.js'], rootDir],

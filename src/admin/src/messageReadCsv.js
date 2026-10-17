@@ -1,4 +1,4 @@
-const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+const { getProductItemUrl } = require('../../shared/adminProductUrl.cjs');
 
 function csvEscape(value) {
   const text = String(value ?? '');
