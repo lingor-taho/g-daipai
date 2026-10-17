@@ -17,9 +17,12 @@ const { chromium } = require('playwright');
   const product = { auctionId: 'z650804548', standardUrl: url, title: 'ワンフェス WF2026S Plastic Stick 影輝鋼衣龍王丸',
     currentPrice: 29700, buyoutPrice: 29700, buyoutOnly: true, isFleamarket: true,
     shippingFeeText: '送料無料', taxType: 'tax_zero', productType: 'fleamarket',
-    imageUrl: image, images: [{ url: image }, { url: image }], descriptionText: '新品\n未塗装未組立のガレージキットです', endTime: '' };
+    imageUrl: image, images: [{ url: image }, { url: image }], descriptionText: '新品\n未塗装未組立のガレージキットです', endTime: '',auctionStatus:'open' };
   const normalProduct = { ...product, auctionId: 'x1234567890', standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/x1234567890', title: '普通拍卖商品', productType: 'normal', isFleamarket: false, buyoutOnly: false, bidCount: 9, endTime: '2099-01-01T00:00:00+09:00' };
   const storeProduct = { ...normalProduct, auctionId: 'a1234567890', standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/a1234567890', title: '商城拍卖商品', productType: 'store', taxType: 'tax_included' };
+  const usedProduct = {...product, auctionId:'z705858626',standardUrl:'https://paypayfleamarket.yahoo.co.jp/item/z705858626',
+    title:'ボストン型 伊達メガネ べっ甲柄 ブルーライトカット 度なし',currentPrice:300,buyoutPrice:300,
+    conditionName:'やや傷や汚れあり',auctionStatus:'ended'};
   try {
     for (const width of [390, 1200]) {
       const page = await browser.newPage({ viewport: { width, height: 950 } });
@@ -43,7 +46,7 @@ const { chromium } = require('playwright');
         }
         if (target.pathname === '/api/proxy/fetch') {
           const input = target.searchParams.get('url'); detailRequests.push(input);
-          const detail = [normalProduct, storeProduct].find(item => input.includes(item.auctionId)) || product;
+          const detail = [normalProduct, storeProduct, usedProduct].find(item => input.includes(item.auctionId)) || product;
           data = { success: true, data: detail };
         }
         if (target.pathname === '/api/task/batch-submit') {
@@ -67,6 +70,22 @@ const { chromium } = require('playwright');
       });
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       const input = page.locator('input').first(); const fetch = page.getByRole('button', { name: '获取商品信息', exact: true });
+      await input.fill(usedProduct.standardUrl);
+      await fetch.click();
+      await page.locator('[data-auction-ended]').waitFor();
+      assert.equal(await page.getByRole('button',{name:'提交任务',exact:true}).count(),0);
+      assert.equal(await page.getByText('最高出价',{exact:true}).count(),0);
+      assert.equal(await page.getByText('出价策略',{exact:true}).count(),0);
+      const endedBadge=await page.locator('[data-auction-ended]').boundingBox();
+      const endedImage=await page.getByRole('button',{name:'查看商品详情：'+usedProduct.title,exact:true}).boundingBox();
+      assert.equal(endedBadge.x,endedImage.x);assert.equal(endedBadge.y,endedImage.y);
+      await page.screenshot({path:`.test-artifacts/fleamarket-ended-${width}.png`,fullPage:true});
+
+      await page.getByRole('button',{name:usedProduct.title,exact:true}).click();
+      await page.getByText(usedProduct.conditionName,{exact:true}).waitFor();
+      assert.equal(await page.getByText('商品状态',{exact:true}).count(),1);
+      await page.screenshot({path:`.test-artifacts/fleamarket-used-condition-${width}.png`,fullPage:true});
+      await page.getByRole('button',{name:'关闭',exact:true}).first().click();
       for (const [keyword, expectedUrl, title] of [
         ['single-normal', normalProduct.standardUrl, normalProduct.title],
         ['single-store', storeProduct.standardUrl, storeProduct.title],
@@ -185,7 +204,7 @@ const { chromium } = require('playwright');
       assert.equal(submitted.length, 1);
       await page.getByRole('link', { name: '成交商品', exact: true }).click();
       await page.getByText('成交商品', { exact: true }).last().waitFor();
-      for (const [item, prefix] of [[product, '成交'], [normalProduct, '落札'], [storeProduct, '落札']]) {
+      for (const [item, prefix] of [[product, '购入'], [normalProduct, '落札'], [storeProduct, '落札']]) {
         const row = page.locator('.adm-list-item').filter({ hasText: item.title });
         await row.getByText(prefix + '成功', { exact: true }).waitFor();
         assert.ok((await row.textContent()).includes(prefix + '价：'));
@@ -195,7 +214,10 @@ const { chromium } = require('playwright');
         assert.equal(await row.getByRole('button', { name: '订单未暂停', exact: true }).count(), flea ? 0 : 1);
         assert.equal(await row.getByRole('button', { name: '查看拍卖记录图表', exact: true }).count(), flea ? 0 : 1);
         assert.equal(await row.getByRole('group', { name: '历史提交最高价对比', exact: true }).count(), flea ? 0 : 1);
-        if (flea) assert.equal((await row.textContent()).includes('落札'), false);
+        if (flea) {
+          assert.equal((await row.textContent()).includes('落札'), false);
+          assert.equal((await row.textContent()).includes('成交'), false);
+        }
       }
       await page.screenshot({ path: `.test-artifacts/fleamarket-won-${width}.png`, fullPage: true });
       const fleaRow = page.locator('.adm-list-item').filter({ hasText: product.title });

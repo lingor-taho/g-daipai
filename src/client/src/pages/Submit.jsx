@@ -337,7 +337,7 @@ export default function Submit() {
         shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
         imageUrl: data.imageUrl || '',
         endTime: data.endTime || '',
-        endedAtRead: isAuctionEnded(data.endTime)
+        endedAtRead: isAuctionEnded(data.endTime) || (isFleamarketProduct(data) && data.auctionStatus === 'ended')
       };
       setProduct(nextProduct);
       setStoreBidPriceMode('tax_before');

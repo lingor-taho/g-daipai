@@ -24,6 +24,36 @@ async function run() {
   assert.equal(product.endTime, '');
   assert.equal(product.descriptionText, '新品\n未塗装未組立のガレージキットです');
   assert.equal(product.auctionStatus, 'open');
+  const noPurchaseButton=productHtml.replace(/<a id="item_buy_button"[\s\S]*?<\/a>/,'');
+  assert.equal(parseProductHtml(noPurchaseButton,id,url).auctionStatus,'ended','InStock JSON-LD without a purchase control is delisted');
+  for(const extra of [
+    '<p>購入手続きへ</p>',
+    '<script>const buttonText="購入手続きへ";</script>',
+    `<div id="description"><a id="item_buy_button">購入手続きへ</a></div>`,
+    `<a href="https://paypayfleamarket-sec.yahoo.co.jp/item/z123456789/order">購入手続きへ</a>`,
+    '<a id="item_buy_button" aria-disabled="true">購入手続きへ</a>',
+    '<a id="item_buy_button" style="display:none">購入手続きへ</a>'
+  ]) assert.equal(parseProductHtml(noPurchaseButton+extra,id,url).auctionStatus,'ended','unrelated/hidden/script/description text is not a purchase button');
+  assert.equal(parseProductHtml(noPurchaseButton+`<a href="https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/order"><span>購入手続きへ</span></a>`,id,url).auctionStatus,'open');
+
+  assert.equal(product.conditionName,'新品','keep the original JSON-LD new-condition fallback');
+  const usedHtml=fs.readFileSync(path.join(__dirname,'fixtures/fleamarket-used-product.html'),'utf8');
+  const usedId='z705858626',usedUrl=`https://paypayfleamarket.yahoo.co.jp/item/${usedId}`;
+  const used=parseProductHtml(usedHtml,usedId,usedUrl);
+  assert.equal(used.conditionName,'やや傷や汚れあり','read the exact rendered condition from the matching item table');
+  assert.equal(used.currentPrice,300);assert.equal(used.auctionStatus,'ended','sale status is independent of item condition');
+  assert.equal(parseProductHtml(usedHtml.replace('UsedCondition','NewCondition'),usedId,usedUrl).conditionName,'やや傷や汚れあり','precise visible condition takes priority over generic JSON-LD');
+  for(const condition of ['未使用','目立った傷や汚れなし','傷や汚れあり']) {
+    assert.equal(parseProductHtml(usedHtml.replace('やや傷や汚れあり',condition),usedId,usedUrl).conditionName,condition);
+  }
+  const otherTable='<table><tr><th>商品の状態</th><td>未使用</td></tr><tr><th>商品ID</th><td>z123456789</td></tr></table>';
+  assert.equal(parseProductHtml(otherTable+usedHtml,usedId,usedUrl).conditionName,'やや傷や汚れあり','ignore other product tables');
+  const withoutTable=usedHtml.replace(/<table\b[\s\S]*?<\/table>/i,'');
+  assert.equal(parseProductHtml(otherTable+withoutTable,usedId,usedUrl).conditionName,'','do not guess a used item grade from another product');
+  assert.equal(parseProductHtml(withoutTable,usedId,usedUrl).conditionName,'');
+  const usedService=createProductService({httpFetcher:async()=>usedHtml});
+  assert.equal((await usedService.fetchProduct(usedUrl)).data.conditionName,'やや傷や汚れあり','proxy/cache payload retains the extracted condition');
+
   assert.equal(parseProductHtml(productHtml.replace('InStock', 'OutOfStock'), id, url).auctionStatus, 'ended');
   assert.throws(() => parseProductHtml('<title>Yahoo generic page</title>', id, url));
   assert.throws(() => parseProductHtml(productHtml.replace(id, 'z123456789'), id, url));
@@ -116,6 +146,7 @@ async function run() {
     for (const result of [
       { success: true, source: 'cache-fallback', data: product },
       { success: true, data: { ...product, auctionStatus: 'ended' } },
+      { success: true, data: parseProductHtml(noPurchaseButton,id,url) },
       { success: true, data: { ...product, buyoutPrice: 0 } },
       { success: true, data: { ...product, buyoutPrice: 30000 } },
       { success: true, data: { ...product, auctionId: 'z123456789' } }

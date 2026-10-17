@@ -19,6 +19,12 @@
 
 ## 项目概述
 
+2026-10-17 P商品列表文案统一为“购入成功／购入价／购入时间”，普通／商城保留原落札文案，共用成交商品导航及页面标题保持。仅用户端显示变更，无价格／状态／数据库变化，验证与部署见0ab。
+
+2026-10-17 P下架商品已本地接入原已结束展示：抓取P页若缺少有效“購入手続きへ”购买按钮（主item_buy_button或同商品secure order入口）即auctionStatus=ended；原JSON-LD缺货判断仍保留。用户提交页在本次读取时固定P结束标志，复用图片红色已结束角标并隐藏全部出价设置／提交表单，不加其他页面角标或定时刷新。服务端原P最新信息结束校验直接阻止任务创建。需更新API proxy.js并重启及用户端dist，无schema／插件／后台变化，详见0aa。
+
+2026-10-17 P商品成色显示已本地修复：原解析仅把JSON-LD NewCondition映射新品，UsedCondition忽略具体成色而返回空，导致z705858626详情显示未显示。现优先读取商品信息表“商品の状態”右侧文本，并用同表商品ID匹配目标，返回“やや傷や汚れあり”等原站具体成色；缺表仍保留原NewCondition新品回退，不猜二手等级。成色提取本身不改价格、普通商城解析或交易流程；P出售状态的最新按钮规则见0aa。仅更新API proxy.js并重启，无schema／插件／两端静态变化，详见0z。
+
 2026-10-17 P商品Google写表失败已本地修复：生产z705858626订单2339已待收货且物流完整，但C列商品链接校验仅支持拍卖URL，P/item/链接被拦在Google请求之前。productIdsFromSheetCell补齐官方P链接识别，写前校验及已有行查重共用；后台各商品提醒链接统一按P／普通选择正确域名。P扫描HTTP测试改为经过真实appendRows服务、只模拟Google传输，覆盖此前漏测校验。需更新API googleSheets.js并重启及后台dist，无schema／插件／用户端变化；部署后用原待收货补表格修复历史失败单，已存在则跳过。未操作生产或真实表格，详见0y。
 
 2026-10-17 P确认收货新增中间成功提示适配：提交评价后可先出现“受取評価と取引が完了しました”弹窗，仅读该可见弹窗内OK并单次点击，再等待“すべての取引が完了しました”最终标题才沿原API回写完了；打开时已有该弹窗也先关OK再只读核对，不重新评价。普通／商城流程不变，仅插件background.js更新后reload，无API／数据库／两端静态变更，详见0x。
@@ -223,6 +229,28 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ab. P 商品列表购入文案
+
+P商品成交列表条目按既有类型判断统一使用“购入成功／购入价／购入时间”，普通／商城仍显示“落札成功／落札价／落札时间”。共用导航及页面标题不变，不修改订单状态或金额。验证：`node src/client/src/pages/WonItems.display.test.mjs`、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`（390／1200，覆盖三类商品文案）、编码／diff检查。部署更新用户端dist，未部署生产。
+
+### 0aa. P 商品购买按钮缺失与已结束只读卡
+
+P解析在原availability缺货判断外新增主购买按钮检查：剔除script／style／原description后，精确匹配a／button的“購入手続きへ”，须为item_buy_button或同商品secure /item/{id}/order链接；忽略disabled／hidden／内联隐藏控件、其他商品入口及纯文字。按钮缺失即ended，不依靠P并不存在的截止时间。普通／商城解析不改。
+
+Submit仅P在读取成功时把auctionStatus=ended合入endedAtRead，复用现有ProductCard的已结束角标与整段product&&!productEnded表单隐藏，商品信息和详情仍保留。读取时固定、无新增计时器或聚焦检查，普通截止时间规则保持。API原submitAuctionTask对P会重新抓取并在写商品／任务／账号分配前拒绝ended，新增按钮判断沿此校验生效，无需新增任务状态或schema。
+
+验证：隔离fleamarket与proxy解析回归、task.endedSubmit、Submit.display、用户端构建、fleamarket浏览器和submit-ended浏览器、编码／语法／diff检查。fixture补充真实平台item_buy_button结构；覆盖InStock但缺按钮、仅文字／脚本／说明／其他商品／隐藏禁用按钮仍结束、匹配同商品购买链接仍开放、缺按钮商品不能创建任务。390／1200验证无截止时间的P结束图片角标位置、最高价／策略／提交隐藏、成色及详情仍可查看，切换正常商品恢复原表单，普通截止时固定显示及重抓判断回归保留。未运行全项目回归或提交真实购买。
+
+部署API routes/proxy.js（含0z成色提取）并重启、更新用户端dist；无数据库结构／插件／后台更新，未部署生产。
+
+### 0z. P 商品信息表成色读取
+
+用户提供z705858626 HTML：JSON-LD只有UsedCondition，商品信息表明确“商品の状態／やや傷や汚れあり”。原parseFleamarketProductHtml仅支持NewCondition→新品，其余空；现P专用extractFleamarketConditionName在去除脚本／样式／原description后读取table的th／td（允许嵌套span），匹配同表商品ID后返回具体成色。页面表值优先于通用JSON-LD新品；无目标表／无成色不读取其他商品表，仍只保留原新品回退，Unknown Used不自行改为新品或猜等级。普通／商城共用condition提取器不变，成色与auctionStatus独立，最新出售状态由availability及0aa购买按钮判断。
+
+验证：隔离`src/server/routes/fleamarket.test.js`以用户JSON-LD＋商品信息表摘录fixture验证やや傷や汚れあり／未使用／目立った傷や汚れなし／傷や汚れあり、嵌套标签、商品ID隔离、可见成色优先、无表回退、价格300与已结束状态保持，以及service/cache输出字段。原proxy解析专项通过。`node scripts/fleamarket-browser.test.cjs`在390／1200用对应商品接口数据验证抓取后详情显示成色，并继续原P／普通商城搜索／收藏／提交展示检查；API与页面两层分别验证，不操作真实商品。编码／语法／diff检查通过，未运行全项目回归。
+
+部署仅更新API routes/proxy.js并重启，用户重新获取／打开详情后读取新成色；用户端已有conditionName展示支持，无需更新前端／插件／数据库，也不修改历史任务／订单。未部署生产。
 
 ### 0y. P Google 写表校验／查重与提醒链接
 

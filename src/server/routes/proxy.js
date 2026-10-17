@@ -572,6 +572,42 @@ function extractTitle(html, auctionId) {
   return '商品 ' + auctionId;
 }
 
+// The item information table contains the precise condition; JSON-LD only
+// distinguishes new/used. Match its product ID to avoid unrelated item tables.
+function extractFleamarketConditionName(html, auctionId) {
+  const source = stripScriptAndStyleHtml(stripProductDescriptionHtml(html));
+  for (const table of source.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)) {
+    const fields = new Map();
+    for (const row of table[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+      const label = row[1].match(/<th\b[^>]*>([\s\S]*?)<\/th>/i);
+      const value = row[1].match(/<td\b[^>]*>([\s\S]*?)<\/td>/i);
+      if (label && value) fields.set(normalizeComparableText(label[1]), normalizeComparableText(value[1]));
+    }
+    if (String(fields.get('商品ID') || '').toLowerCase() === auctionId) {
+      return fields.get('商品の状態') || '';
+    }
+  }
+  return '';
+}
+
+function hasFleamarketPurchaseButton(html, auctionId) {
+  const source = stripScriptAndStyleHtml(stripProductDescriptionHtml(html));
+  for (const match of source.matchAll(/<(a|button)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
+    const attributes = match[2];
+    if (normalizeComparableText(match[3]) !== '購入手続きへ') continue;
+    if (/(?:^|\s)(?:disabled|hidden)(?:\s|=|$)|aria-(?:disabled|hidden)=["']true["']|display\s*:\s*none|visibility\s*:\s*hidden/i.test(attributes)) continue;
+    if (/\bid=["']item_buy_button["']/i.test(attributes)) return true;
+    const href = attributes.match(/\bhref=["']([^"']+)["']/i)?.[1];
+    if (href) {
+      try {
+        const target = new URL(href, 'https://paypayfleamarket-sec.yahoo.co.jp');
+        if (target.origin === 'https://paypayfleamarket-sec.yahoo.co.jp' && target.pathname === `/item/${auctionId}/order`) return true;
+      } catch (_) {}
+    }
+  }
+  return false;
+}
+
 // Fleamarket pages expose the main product as JSON-LD, including all photos.
 function parseFleamarketProductHtml(html, auctionId, standardUrl) {
   let product;
@@ -596,7 +632,8 @@ function parseFleamarketProductHtml(html, auctionId, standardUrl) {
   const details = offer?.shippingDetails;
   const shipping = Array.isArray(details) ? details[0] : details;
   const shippingValue = shipping?.shippingRate?.value;
-  const unavailable = /\/(?:OutOfStock|SoldOut|Discontinued)$/.test(offer?.availability || '');
+  const unavailable = /\/(?:OutOfStock|SoldOut|Discontinued)$/.test(offer?.availability || '') ||
+    !hasFleamarketPurchaseButton(html, auctionId);
   return {
     auctionId, standardUrl, title: String(product.name), currentPrice: price, buyoutPrice: price,
     buyoutOnly: true, isFleamarket: true, bidCount: 0, taxType: 'tax_zero', productType: 'fleamarket',
@@ -605,7 +642,7 @@ function parseFleamarketProductHtml(html, auctionId, standardUrl) {
     endTime: '', imageUrl: images[0]?.url || '', images, descriptionText,
     descriptionHtml: escapeHtml(descriptionText).replace(/\r?\n/g, '<br>'),
     detailDisplayPrice: null,
-    conditionName: /\/NewCondition$/.test(offer?.itemCondition || '') ? '新品' : '',
+    conditionName: extractFleamarketConditionName(html, auctionId) || (/\/NewCondition$/.test(offer?.itemCondition || '') ? '新品' : ''),
     auctionStatus: unavailable ? 'ended' : 'open',
     auctionStatusText: unavailable ? '已结束' : '出售中'
   };
