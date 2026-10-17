@@ -18,7 +18,9 @@ function normalizeAuctionUrl(input) {
   const auctionId = match[0].toLowerCase();
   return {
     auctionId,
-    standardUrl: `https://auctions.yahoo.co.jp/jp/auction/${auctionId}`
+    standardUrl: auctionId.startsWith('z')
+      ? `https://paypayfleamarket.yahoo.co.jp/item/${auctionId}`
+      : `https://auctions.yahoo.co.jp/jp/auction/${auctionId}`
   };
 }
 
@@ -570,7 +572,47 @@ function extractTitle(html, auctionId) {
   return '商品 ' + auctionId;
 }
 
+// Fleamarket pages expose the main product as JSON-LD, including all photos.
+function parseFleamarketProductHtml(html, auctionId, standardUrl) {
+  let product;
+  for (const match of String(html || '').matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const value = JSON.parse(match[1]);
+      const entries = Array.isArray(value) ? value : value['@graph'] || [value];
+      product = entries.find(item => item?.['@type'] === 'Product' &&
+        normalizeAuctionUrl(item.url)?.auctionId === auctionId);
+      if (product) break;
+    } catch (_) {}
+  }
+  if (!product) throw new Error('Yahoo!フリマ商品信息不完整');
+  const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+  const price = parsePriceText(offer?.price);
+  if (!product.name || price <= 0) throw new Error('Yahoo!フリマ商品信息不完整');
+  const rawImages = Array.isArray(product.image) ? product.image : [product.image];
+  const images = [...new Set(rawImages.map(value => normalizeProductImageUrl(typeof value === 'string' ? value : value?.url)).filter(Boolean))]
+    .map(url => ({ url, thumbnailUrl: url, width: null, height: null }));
+  const descriptionText = String(product.description || '');
+  const escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const details = offer?.shippingDetails;
+  const shipping = Array.isArray(details) ? details[0] : details;
+  const shippingValue = shipping?.shippingRate?.value;
+  const unavailable = /\/(?:OutOfStock|SoldOut|Discontinued)$/.test(offer?.availability || '');
+  return {
+    auctionId, standardUrl, title: String(product.name), currentPrice: price, buyoutPrice: price,
+    buyoutOnly: true, isFleamarket: true, bidCount: 0, taxType: 'tax_zero', productType: 'normal',
+    shippingFeeText: shippingValue != null && Number.isFinite(Number(shippingValue))
+      ? Number(shippingValue) === 0 ? '送料無料' : `送料${Number(shippingValue)}円` : '',
+    endTime: '', imageUrl: images[0]?.url || '', images, descriptionText,
+    descriptionHtml: escapeHtml(descriptionText).replace(/\r?\n/g, '<br>'),
+    detailDisplayPrice: null,
+    conditionName: /\/NewCondition$/.test(offer?.itemCondition || '') ? '新品' : '',
+    auctionStatus: unavailable ? 'ended' : 'open',
+    auctionStatusText: unavailable ? '已结束' : '出售中'
+  };
+}
+
 function parseProductHtml(html, auctionId, standardUrl) {
+  if (auctionId.startsWith('z')) return parseFleamarketProductHtml(html, auctionId, standardUrl);
   const title = extractTitle(html, auctionId);
   const taxType = extractTaxType(html);
   const images = extractProductImages(html);
@@ -643,7 +685,7 @@ function extractAuctionIdsFromSearchHtml(html) {
 
   const ids = [];
   const seen = new Set();
-  for (const match of productsHtml.matchAll(/\/jp\/auction\/([a-zA-Z]?\d{8,10})/g)) {
+  for (const match of productsHtml.matchAll(/\/(?:jp\/auction|item)\/([a-zA-Z]?\d{8,10})/g)) {
     const auctionId = match[1].toLowerCase();
     if (seen.has(auctionId)) continue;
     seen.add(auctionId);
@@ -738,9 +780,8 @@ function extractSearchProductCards(html) {
     const titleLink = extractElementByClassToken(cardHtml, 'a', 'Product__titleLink');
     const imageLink = extractElementByClassToken(cardHtml, 'a', 'Product__imageLink');
     const linkHtml = titleLink || imageLink;
-    const parsed = normalizeAuctionUrl(
-      extractHtmlAttribute(linkHtml, 'data-auction-id') || extractHtmlAttribute(linkHtml, 'href')
-    );
+    const parsed = normalizeAuctionUrl(extractHtmlAttribute(linkHtml, 'href')) ||
+      normalizeAuctionUrl(extractHtmlAttribute(linkHtml, 'data-auction-id'));
     if (!parsed || seen.has(parsed.auctionId)) continue;
 
     const bonusHtml = extractElementByClassToken(cardHtml, 'div', 'Product__bonus');
@@ -763,6 +804,7 @@ function extractSearchProductCards(html) {
     items.push({
       auctionId: parsed.auctionId,
       standardUrl: parsed.standardUrl,
+      ...(parsed.auctionId.startsWith('z') ? { isFleamarket: true, buyoutOnly: true } : {}),
       title: title || ('商品 ' + parsed.auctionId),
       imageUrl: extractHtmlAttribute(titleLink || imageLink, 'data-auction-img') ||
         extractHtmlAttribute(imageHtml, 'src'),
@@ -806,6 +848,7 @@ function extractNextSearchProductCards(html) {
     byId.set(parsed.auctionId, {
       auctionId: parsed.auctionId,
       standardUrl: parsed.standardUrl,
+      ...(item.isFleamarketItem || parsed.auctionId.startsWith('z') ? { isFleamarket: true, buyoutOnly: true } : {}),
       title: String(item.title || ('商品 ' + parsed.auctionId)),
       imageUrl: String(item.imageUrl || ''),
       currentPrice: parsePriceText(item.price),
@@ -821,7 +864,7 @@ function extractNextSearchProductCards(html) {
   // When rendered cards are present, keep their order and exclude other modules.
   const mainHtml = extractProductsListHtml(html, /<div\b[^>]*\bid=["']searchItems["'][^>]*>/i);
   if (mainHtml) {
-    const ordered = new Set([...mainHtml.matchAll(/href=["'][^"']*\/jp\/auction\/([a-zA-Z]?\d{8,10})["'?]/g)].map(match => match[1].toLowerCase()));
+    const ordered = new Set([...mainHtml.matchAll(/href=["'][^"']*\/(?:jp\/auction|item)\/([a-zA-Z]?\d{8,10})["'?]/g)].map(match => match[1].toLowerCase()));
     const cards = [...ordered].filter(id => byId.has(id)).map(id => byId.get(id));
     if (cards.length) return cards;
   }
@@ -940,6 +983,7 @@ function createProductService({
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
       bidCount: Number(rawProduct.bidCount ?? rawProduct.bid_count ?? 0),
       buyoutOnly: Boolean(rawProduct.buyoutOnly || rawProduct.buyout_only),
+      ...(parsed.auctionId.startsWith('z') ? { isFleamarket: true } : {}),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
       productType: rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
       shippingFeeText: rawProduct.shippingFeeText || rawProduct.shipping_fee_text || '',
@@ -1047,7 +1091,7 @@ function createProductService({
       throw error;
     }
 
-    return fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${auctionIds[0]}`);
+    return fetchProduct(auctionIds[0]);
   }
 
   async function searchProducts(keyword, page = 1) {

@@ -7,7 +7,7 @@ async function run() {
   raw.exec(`CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER, product_id TEXT, max_price INTEGER,
     user_max_price INTEGER, strategy TEXT, status TEXT, created_at TEXT, pending_followup_max_price INTEGER, client_request_id TEXT,account_id INTEGER DEFAULT 1);
     CREATE TABLE products (product_id TEXT PRIMARY KEY, product_url TEXT, product_title TEXT, product_image_url TEXT,
-      current_price INTEGER, tax_type TEXT, end_time TEXT, auction_history_data TEXT);
+      current_price INTEGER, tax_type TEXT, product_type TEXT, end_time TEXT, auction_history_data TEXT);
     CREATE TABLE bidding_items (product_id TEXT, status TEXT,account_id INTEGER DEFAULT 1,PRIMARY KEY(account_id,product_id));
     CREATE TABLE orders (id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT,account_id INTEGER);`);
   const db = { getAll: async (sql, params = []) => raw.prepare(sql).all(...params), getOne: async (sql, params = []) => raw.prepare(sql).get(...params) };
@@ -60,6 +60,8 @@ async function run() {
     assert.equal(result.data.find(item=>item.product_id==='split').has_auction_history,1);
     assert.equal(result.data.find(item=>item.product_id==='expired-pending').has_auction_history,0);
     assert.equal(history.current_price, 3500);
+    assert.equal(history.product_type, 'normal');
+    assert.equal(result.data.find(item => item.product_id === 'split').product_type, 'store');
     assert.equal(history.final_bid, 2000);
     const multiBid = result.data.find(item => item.product_id === 'expired-pending');
     assert.equal(multiBid.current_price, 2000);

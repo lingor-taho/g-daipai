@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { isFleamarketProduct, FLEAMARKET_PURCHASE_BLOCKED_MESSAGE } = require('../../shared/fleamarket.cjs');
 const { isAuctionEnded } = require('../../shared/auctionDeadline.cjs');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
 const db = require('../models');
@@ -62,6 +63,7 @@ function extractAuctionId(input) {
 function buildSubmitTaskInput(user, body) {
   if (!user?.id) throw new Error('not logged in');
   const { product_url, max_price, bid_mode, buyout_only } = body;
+  if (isFleamarketProduct(product_url)) throw submitError(FLEAMARKET_PURCHASE_BLOCKED_MESSAGE);
   if (!product_url || !max_price) {
     const error = new Error('product_url, max_price are required');
     error.statusCode = 400;
@@ -606,6 +608,7 @@ async function submitAuctionTask(context, body, {
   fetchProduct = productService.fetchProduct,
   strictBatch = false
 } = {}) {
+  if (isFleamarketProduct(body.product_url)) throw submitError(FLEAMARKET_PURCHASE_BLOCKED_MESSAGE);
   if (strictBatch) {
     const { normalizeBatchProduct, normalizeBatchPrice } = require('../../shared/batchBid.cjs');
     let parsed, maxPrice;

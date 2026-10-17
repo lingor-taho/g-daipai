@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-16
+**最后更新**: 2026-10-17
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,10 @@
 ---
 
 ## 项目概述
+
+2026-10-17 用户端商品类型标识已本地统一：首页抓取后的商品卡在标题前显示标识，替换原独立的普通／商城文字标签；入札中、落札商品、失败分析列表在商品 ID 后显示同一组件。样式对齐后台：普通绿色「普」、商城红色「商」，优先使用 product_type／productType，缺少时沿原共享 normalizeProductType 按税类型回退；フリマ不标成普通／商城，保持只读禁购。失败分析仅补充返回既有 products.product_type，不改筛选、价格、历史或状态。需更新 API 的 failureAnalysis.js 与用户端静态文件并重启 API，无 schema／插件／后台改动，未部署生产，详见 0i。
+
+2026-10-17 Yahoo!フリマ现仅开放用户端搜索和详情，购买流程待业务明确后另行设计。Z/z ID 与 paypayfleamarket URL 使用正确 `/item/{id}` 抓取，搜索列表标题下显示原站标识；详情保留标题、价格、图片、说明、运费等只读信息。撤销上轮仅即决提交支持：商品卡下提示「Yahoo!フリマ 暂时无法购买，请联系管理员！」并隐藏全部出价设置与提交按钮；前端提交处理、单条 API、严格批量提交及批量解析均拦截，在抓取／商品写入／任务创建／账号分配前拒绝。普通／商城商品维持原流程。需更新 API、共享工具与用户端静态文件并重启 API，无插件／schema 改动，未部署或操作真实购买，详见 0h。
 
 2026-10-16 邮箱验证后直达 PIN 的交接已本地修复：邮箱单次提交后保留原文字验证码识别，并复用 detectManualPinPage 识别已加载且不再为邮箱页的 PIN 页面，关闭邮箱 challenge 后返回原 PIN 流程；本次新开子标签同样支持，已有无关标签不接管。上轮超时后点击继续时若原标签已为 PIN，直接交接，不再刷新 Yahoo／读取 Gmail。单次刷新与提交、60秒收信／30秒转换、错误中断及原 PIN 输入保持；只需更新插件 background.js 并 reload，无 API／前端／数据库变化，未部署或操作真实 Yahoo，详见 0f。
 
@@ -185,6 +189,22 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0i. 用户端普通／商城标识
+
+2026-10-17 本地新增共用 ProductTypeTag：首页商品卡标题前、入札中／失败分析／落札列表的商品 ID 后显示后台同款绿色「普」或红色「商」。显式商品类型优先，缺失才按税类型回退，フリマ隐藏此二分类标识。失败分析只读查询补回既有 product_type（采用其他列表的同款 COALESCE 回退），避免只按税类型展示导致与后台不一致；无数据库写入或业务规则改变。
+
+验证：`node src/client/src/pages/ActiveBidding.display.test.mjs`、`node src/client/src/pages/WonItems.display.test.mjs`、`node src/client/src/components/ProductSearchPopup.display.test.mjs`、`node src/server/services/failureAnalysis.test.js`、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`、编码／diff 检查通过。临时浏览器脚本在390／1200覆盖入札、失败分析、落札两类标识及首页标题前标识，并用显式类型与税类型相反的样本确认类型优先；截图已检查。原フリマ搜索详情及禁购浏览器检查通过。本轮未运行完整项目回归。部署更新 `src/server/services/failureAnalysis.js` 并重启 API，以及用户端 dist；无插件／schema／后台更新，未部署。
+
+### 0h. Yahoo!フリマ只读商品信息与购买禁用
+
+2026-10-17 按用户最新边界，フリマ与普通／商城商品的购物流程不同，当前只支持搜索、查看商品信息，购买功能待业务明确后另行设计；上轮 buyout＋direct 提交已撤销。关键词搜索结果使用正确 `/item/` URL，标题下仅在搜索列表显示原站图标；直接输入フリマ URL 或大写／小写 Z 商品 ID 均走フリマ详情抓取。详情使用与目标 ID 匹配的主商品 JSON-LD，显示标题、价格、全部图片、说明、运费与出售状态；没有截止时间不虚构。
+
+只读边界：商品信息下显示「Yahoo!フリマ 暂时无法购买，请联系管理员！」，隐藏即决／最高价／策略／提交按钮；前端 handleSubmit 保留兜底。共享 fleamarket.cjs 按フリマ标志、Z/z ID 或 paypayfleamarket 商品 URL 识别，单条 API／严格批量提交／批量文本解析均使用同一提示拒绝。拦截在抓取／商品写入／任务创建／账号分配之前，不允许通过 buyout、普通竞拍或旧拍卖域名的 z 链接绕过。普通拍卖／商城及其原价格策略不变。未修改插件、任务状态、真实历史数据或数据库结构。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/routes/fleamarket.test.js`、原 `task.test.js`／`task.batch.test.js`、`node src/shared/batchBid.test.cjs`、用户端 `ProductSearchPopup.display.test.mjs`／`Submit.display.test.mjs`、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`、语法／编码／diff 检查通过。新增测试已纳入 regression 入口，本轮未运行完整项目回归。390／1200 浏览器验证搜索标识、详情及返回、URL／大写 Z 输入、禁止购买提示及表单隐藏、无提交请求，以及普通拍卖切换后仍显示原表单；内存库验证各输入与竞拍／即决／批量组合均返回400和指定提示，商品／任务表零写入，且未调用抓取。上轮只读实时核对3件商品：z650807476为21500円、z650805568为26200円、z650804548为29700円，各2张图片及送料無料，本轮未重复联网。
+
+部署：更新 `src/server/routes/proxy.js`、`src/server/routes/task.js`、`src/shared/fleamarket.cjs`、`src/shared/batchBid.cjs`，重新构建并更新用户端 dist（含 yahoo-assets/fleamarket-icon.svg），重启 API。未部署生产。后续须先明确フリマ完整业务，再单独接入与验收购物／支付流程；当前不允许提交任务。
 
 ### 0g. 新版商品名称搜索兼容与部署验收
 

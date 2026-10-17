@@ -6,6 +6,7 @@ import { getApiErrorMessage, getClientBidConfig, getProductInfo, getProductSearc
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import auctionDeadline from '../../../shared/auctionDeadline.cjs';
+import fleamarket from '../../../shared/fleamarket.cjs';
 import useProductFavorites from '../utils/useProductFavorites';
 import ProductSearchPopup from '../components/ProductSearchPopup';
 import BatchSubmitPopup from '../components/BatchSubmitPopup';
@@ -14,6 +15,7 @@ import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
 import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
 const { isAuctionEnded } = auctionDeadline;
+const { isFleamarketProduct, FLEAMARKET_PURCHASE_BLOCKED_MESSAGE } = fleamarket;
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -168,6 +170,7 @@ export default function Submit() {
     intervalMinutes: 5,
     minPrice: 5000
   });
+  const fleamarketProduct = isFleamarketProduct(product);
   const buyoutOnly = isBuyoutOnlyProduct(product);
   const isLoginClientAdmin = Number(localStorage.getItem('userLevel') || 1) >= 3;
   const isDirectOnlyUser = !isLoginClientAdmin && bidStrategyScope === 'direct_only';
@@ -319,6 +322,8 @@ export default function Submit() {
     if (data?.title && data.title !== '商品 ' + auctionId) {
       const nextProduct = {
         auctionId,
+        standardUrl: data.standardUrl,
+        isFleamarket: Boolean(data.isFleamarket),
         title: data.title || ('商品 ' + auctionId),
         currentPrice: data.currentPrice || 0,
         buyoutPrice: data.buyoutPrice ?? data.buyout_price ?? 0,
@@ -392,7 +397,7 @@ export default function Submit() {
 
   async function loadSearchProductDetail(item) {
     try {
-      const res = await getProductInfo(item.auctionId);
+      const res = await getProductInfo(item.standardUrl || item.auctionId);
       const data = res.data?.data;
       if (!data?.auctionId) throw new Error('商品详情数据不完整');
       return data;
@@ -486,6 +491,10 @@ export default function Submit() {
       Toast.show({ content: '出价功能被一时限制，请联系管理员。' });
       return;
     }
+    if (fleamarketProduct) {
+      Toast.show({ content: FLEAMARKET_PURCHASE_BLOCKED_MESSAGE });
+      return;
+    }
     if (productEnded) {
       Toast.show({ content: '商品已结束，不能提交任务' });
       return;
@@ -538,9 +547,11 @@ export default function Submit() {
     }
     setSubmitting(true);
     try {
-      const standardUrl = product?.auctionId
-        ? `https://auctions.yahoo.co.jp/jp/auction/${product.auctionId}`
-        : url;
+      const standardUrl = product?.standardUrl || (product?.auctionId
+        ? product.auctionId.startsWith('z')
+          ? `https://paypayfleamarket.yahoo.co.jp/item/${product.auctionId}`
+          : `https://auctions.yahoo.co.jp/jp/auction/${product.auctionId}`
+        : url);
       const auctionId = product?.auctionId || extractAuctionId(standardUrl);
       if (selectedStrategy !== 'direct' && auctionId) {
         const taskRes = await getTaskList({ limit: 100 });
@@ -707,7 +718,13 @@ export default function Submit() {
         />
       )}
 
-      {product && !productEnded && (
+      {product && fleamarketProduct && (
+        <div role="alert" style={{ ...cardStyle, marginTop: 12, padding: 14, color: '#d4380d' }}>
+          {FLEAMARKET_PURCHASE_BLOCKED_MESSAGE}
+        </div>
+      )}
+
+      {product && !productEnded && !fleamarketProduct && (
         <>
           <List style={{ ...listStyle, marginTop: 12 }}>
             {getBuyoutPrice(product) > 0 && (

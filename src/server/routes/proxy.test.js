@@ -28,7 +28,7 @@ async function testNormalizeAuctionUrl() {
 
   const paypay = normalizeAuctionUrl('https://paypayfleamarket.yahoo.co.jp/item/z562177666');
   assert.equal(paypay.auctionId, 'z562177666');
-  assert.equal(paypay.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/z562177666');
+  assert.equal(paypay.standardUrl, 'https://paypayfleamarket.yahoo.co.jp/item/z562177666');
 
   const numericNine = normalizeAuctionUrl('https://example.com/item/562177666');
   assert.equal(numericNine.auctionId, '562177666');

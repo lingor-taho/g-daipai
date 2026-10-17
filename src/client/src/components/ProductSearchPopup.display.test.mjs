@@ -40,7 +40,7 @@ assert.equal(
 
 assert.equal(
   source.includes('const product = await onLoadDetail(item)') &&
-    submitSource.includes('const res = await getProductInfo(item.auctionId)') &&
+    submitSource.includes('const res = await getProductInfo(item.standardUrl || item.auctionId)') &&
     submitSource.includes('onLoadDetail={loadSearchProductDetail}'),
   true,
   'Opening the detail view should fetch the complete Yahoo product details again'

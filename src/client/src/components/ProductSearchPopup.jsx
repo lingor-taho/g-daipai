@@ -704,6 +704,14 @@ export default function ProductSearchPopup({
                         >
                           {item.title}
                         </button>
+                        {!favoritesOnly && item.isFleamarket && (
+                          <div style={{ marginTop: 4 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #d0d0d0', borderRadius: 2, padding: '0 3px', fontSize: 10, lineHeight: '14px', color: '#555', fontWeight: 700 }}>
+                              <img src="/yahoo-assets/fleamarket-icon.svg" alt="" width="12" height="12" />
+                              Yahoo!フリマ
+                            </span>
+                          </div>
+                        )}
                         <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.55, color: colors.muted }}>
                           {favoritesOnly ? (
                             <div>到期：{remainingFavoriteDays(item.endTime, now) === null ? '未知' : `${remainingFavoriteDays(item.endTime, now)}天`}</div>

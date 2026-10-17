@@ -17,6 +17,7 @@ async function getFailureAnalysis(database, { userId, page = 1, limit = 10 }) {
       CASE WHEN LENGTH(COALESCE(p.auction_history_data, '')) > 0 THEN 1 ELSE 0 END AS has_auction_history,
       p.current_price, ${auctionEndTimeSql} AS end_time,
       ${hasWinningOrderSql} AS ended_by_win, COALESCE(p.tax_type, 'tax_zero') AS tax_type,
+      COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
       bi.status AS bidding_status
     FROM tasks t
     LEFT JOIN products p ON p.product_id = t.product_id

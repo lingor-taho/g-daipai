@@ -1,3 +1,4 @@
+import ProductTypeTag from '../components/ProductTypeTag';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
@@ -548,7 +549,7 @@ export default function WonItems() {
                     {title}
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
-                    商品ID：{item.product_id}<br />
+                    商品ID：{item.product_id} <ProductTypeTag product={item} /><br />
                     落札价：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(finalPrice)}</span>
                     {item.shipping_fee_text ? (
                       <span>　运费：{item.shipping_fee_text}</span>

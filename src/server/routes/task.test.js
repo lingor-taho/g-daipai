@@ -175,15 +175,9 @@ function testSubmitAcceptsThirdPartyAndNumericAuctionUrls() {
   assert.equal(numeric.productId, '1229405242');
   assert.equal(numeric.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/1229405242');
 
-  const paypay = buildSubmitTaskInput(
-    { id: 7 },
-    {
-      product_url: 'https://paypayfleamarket.yahoo.co.jp/item/z562177666',
-      max_price: 1200
-    }
-  );
-  assert.equal(paypay.productId, 'z562177666');
-  assert.equal(paypay.standardUrl, 'https://auctions.yahoo.co.jp/jp/auction/z562177666');
+  assert.throws(() => buildSubmitTaskInput({ id: 7 }, {
+    product_url: 'https://paypayfleamarket.yahoo.co.jp/item/z562177666', max_price: 1200
+  }), /Yahoo!フリマ 暂时无法购买，请联系管理员！/);
 
   const numericNine = buildSubmitTaskInput(
     { id: 7 },

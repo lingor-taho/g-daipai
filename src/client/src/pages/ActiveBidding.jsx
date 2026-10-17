@@ -1,3 +1,4 @@
+import ProductTypeTag from '../components/ProductTypeTag';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, InfiniteScroll, List, SpinLoading, Tag, Toast } from 'antd-mobile';
 import { useNavigate } from 'react-router-dom';
@@ -271,7 +272,7 @@ export default function ActiveBidding() {
                     {title}
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
-                    商品ID：{item.product_id}<br />
+                    商品ID：{item.product_id} <ProductTypeTag product={item} /><br />
                     {analysisMode ? (
                       <>
                         最终出价 <span style={{ color: colors.text, fontWeight: 600 }}>{formatJPY(item.final_bid)}</span>

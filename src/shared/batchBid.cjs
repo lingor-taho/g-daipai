@@ -1,8 +1,10 @@
+const { isFleamarketProduct, FLEAMARKET_PURCHASE_BLOCKED_MESSAGE } = require('./fleamarket.cjs');
 const MAX_BATCH_BID_ITEMS = 50;
 const AUCTION_ID_PATTERN = /^[a-z]?\d{8,10}$/i;
 
 function normalizeBatchProduct(input) {
   const value = String(input || '').trim();
+  if (isFleamarketProduct(value)) throw new Error(FLEAMARKET_PURCHASE_BLOCKED_MESSAGE);
   let productId = value;
   if (!AUCTION_ID_PATTERN.test(value)) {
     let url;
