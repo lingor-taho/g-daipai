@@ -286,8 +286,11 @@ export default function Submit() {
         }
         if (searchItems.length === 1 && !searchData.hasMore) {
           const onlyItem = searchItems[0];
-          setUrl(onlyItem.auctionId);
-          await fetchAndSetProduct(onlyItem.auctionId, onlyItem.auctionId);
+          const productUrl = isFleamarketProduct(onlyItem)
+            ? `https://paypayfleamarket.yahoo.co.jp/item/${String(onlyItem.auctionId).toLowerCase()}`
+            : onlyItem.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${onlyItem.auctionId}`;
+          setUrl(productUrl);
+          await fetchAndSetProduct(productUrl, onlyItem.auctionId);
           return;
         }
         setProduct(null);

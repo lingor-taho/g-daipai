@@ -2,6 +2,7 @@ import ProductTypeTag from './ProductTypeTag';
 import { getBuyoutPrice } from '../utils/bidPrice';
 import { formatTotalAmount } from '../utils/totalAmount';
 import { cardStyle, colors } from '../styles';
+import fleamarket from '../../../shared/fleamarket.cjs';
 
 function getDisplayPrice(price, taxType) {
   const value = Number(price || 0);
@@ -35,6 +36,7 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
   const shippingFeeText = product.shippingFeeText || product.shipping_fee_text || '';
   const taxLabel = taxType === 'tax_included' ? '税込' : '税0円';
   const bidCount = Number(product.bidCount ?? product.bid_count ?? 0);
+  const isFleamarket = fleamarket.isFleamarketProduct(product);
 
   return (
     <div style={{ ...cardStyle, margin: '14px 0', overflow: 'hidden', display: 'flex' }}>
@@ -71,10 +73,10 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
         <div style={{ color: colors.text, fontSize: 14, fontWeight: 500, marginTop: 4 }}>
           当前合计金额：{formatTotalAmount(displayPrice, shippingFeeText)}
         </div>
-        <div style={{ color: colors.muted, fontSize: 13, marginTop: 5, display: 'flex', alignItems: 'center', gap: 4 }}>
+        {!isFleamarket && <div style={{ color: colors.muted, fontSize: 13, marginTop: 5, display: 'flex', alignItems: 'center', gap: 4 }}>
           <BidCountIcon />
           <span>拍卖次数：{Number.isFinite(bidCount) && bidCount >= 0 ? bidCount : 0}件</span>
-        </div>
+        </div>}
         {product.endTime && (
           <div style={{ fontSize: 12, color: colors.faint, marginTop: 4 }}>截止: {product.endTime}</div>
         )}

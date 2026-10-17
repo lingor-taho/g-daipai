@@ -98,6 +98,8 @@ function ForceCleanupSummary({ summary }: { summary: any }) {
       <Descriptions.Item label="出价日志">{countText(summary.bidLogCount)}</Descriptions.Item>
       <Descriptions.Item label="订单状态日志">{countText(summary.orderStatusLogCount)}</Descriptions.Item>
       <Descriptions.Item label="入札缓存">{countText(summary.biddingItemCount)}</Descriptions.Item>
+      <Descriptions.Item label="商品账号归属">{countText(summary.assignmentCount)}</Descriptions.Item>
+      <Descriptions.Item label="其他关联记录">{countText(['messageCount', 'diagnosticCount', 'workClaimCount', 'transferCount', 'manualImportItemCount', 'batchItemCount'].reduce((sum, key) => sum + Number(summary[key] || 0), 0))}</Descriptions.Item>
     </Descriptions>
   );
 }
@@ -217,8 +219,8 @@ export default function DataCleanupPage() {
     const preview = forcePreview?.cutoffDate === cleanupDate ? forcePreview : await previewWonDateCleanup(cleanupDate);
     setForcePreview(preview);
     Modal.confirm({
-      title: '确认按落札日期强制清理？',
-      content: `将删除 ${cleanupDate} 及之前落札订单关联的任务、订单、商品信息和日志，共 ${Number(preview.totalCount || 0)} 条关联数据。执行前请确认已经备份数据库。`,
+      title: '确认按成交日期强制清理？',
+      content: `将按 ${cleanupDate} 及之前的成交时间选中商品（含 P 商品），删除这些商品在所有用户、所有 Yahoo 账号下的全部任务、订单、快照、账号归属和关联记录，共 ${Number(preview.totalCount || 0)} 条关联数据。执行前请确认已经备份数据库。`,
       okText: '确认清理',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -304,8 +306,8 @@ export default function DataCleanupPage() {
       <Alert
         type="warning"
         showIcon
-        message="按日期强制清理会删除成功落札订单"
-        description="清理依据为落札日期 won_at。选择某一天后，会清理这一天及之前落札订单关联的任务、落札订单、商品信息、出价日志、订单状态日志和入札缓存。执行前请先备份 SQLite 数据库。"
+        message="按日期强制清理会删除成交订单及同商品全部关联数据"
+        description="按成交日期 won_at 选择这一天及之前的商品，包含 P 商品。选中商品的所有用户、所有 Yahoo 账号的任务、订单、商品快照、账号归属及关联数据都会一起清理，不只删除日期前的单条订单；其他商品保留。预览包含账号归属等关联记录，执行失败整体回滚。执行前请先备份 SQLite 数据库。"
       />
       <Card title="按日期强制清理">
         <Form form={forceForm} layout="vertical" style={{ maxWidth: 560 }}>

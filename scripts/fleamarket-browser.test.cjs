@@ -36,6 +36,11 @@ const { chromium } = require('playwright');
         const request = route.request(); const target = new URL(request.url());
         let data = { success: true, data: [], total: 0 };
         if (target.pathname === '/api/proxy/search') data = { success: true, data: { items: [product, normalProduct, storeProduct], hasMore: false } };
+        if (target.pathname === '/api/proxy/search' && target.searchParams.get('keyword').startsWith('single-')) {
+          const selected = { 'single-normal': normalProduct, 'single-store': { ...storeProduct, standardUrl: undefined },
+            'single-flea': { ...product, standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/z650804548' } }[target.searchParams.get('keyword')];
+          data = { success: true, data: { items: [selected], hasMore: false } };
+        }
         if (target.pathname === '/api/proxy/fetch') {
           const input = target.searchParams.get('url'); detailRequests.push(input);
           const detail = [normalProduct, storeProduct].find(item => input.includes(item.auctionId)) || product;
@@ -44,6 +49,11 @@ const { chromium } = require('playwright');
         if (target.pathname === '/api/task/batch-submit') {
           batchRequests.push(request.postDataJSON()); data = { success: true, count: request.postDataJSON().text.trim().split('\n').length, batch_id: batchRequests.length };
         }
+        if (target.pathname === '/api/task/bidding') data = { success: true, total: 2,
+          data: [normalProduct, storeProduct].map((item,index)=>({id:index+10,product_id:item.auctionId,
+            product_title:item.title,product_type:item.productType,product_image_url:image,
+            status:'bidding',strategy:'direct',current_price:29150,max_price:index ? 12345678 : 41000,user_max_price:index ? 12345678 : 41000,
+            bidding_status:'highest',is_highest_bidder:1,end_time:'2099-01-01T00:00:00+09:00'})) };
         if (target.pathname === '/api/task/won') data = { success: true, total: 3,
           data: [product, normalProduct, storeProduct].map((item, index) => ({ id: index + 1, order_id: index + 1,
             product_id: item.auctionId, product_title: item.title, product_type: item.productType,
@@ -57,6 +67,17 @@ const { chromium } = require('playwright');
       });
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       const input = page.locator('input').first(); const fetch = page.getByRole('button', { name: '获取商品信息', exact: true });
+      for (const [keyword, expectedUrl, title] of [
+        ['single-normal', normalProduct.standardUrl, normalProduct.title],
+        ['single-store', storeProduct.standardUrl, storeProduct.title],
+        ['single-flea', url, product.title]
+      ]) {
+        await input.fill(keyword);
+        await Promise.all([page.waitForResponse(response => response.url().includes('/api/proxy/fetch')), fetch.click()]);
+        await page.getByRole('button', { name: title, exact: true }).waitFor();
+        assert.equal(await input.inputValue(), expectedUrl, 'single-result search fills the complete product URL');
+        assert.equal(detailRequests.at(-1), expectedUrl, 'detail fetch uses the same complete URL');
+      }
       for (const [title, expectedUrl] of [['旧收藏フリマ商品', url], ['旧收藏普通商品', normalProduct.standardUrl]]) {
         await page.getByRole('button', { name: '打开商品收藏', exact: true }).click();
         await Promise.all([
@@ -115,6 +136,7 @@ const { chromium } = require('playwright');
       assert.equal(await page.locator('input[type=checkbox]').isChecked(), true);
       assert.equal(await page.locator('input[type=checkbox]').isDisabled(), true);
       assert.equal(await page.getByText('フリマ 商品', { exact: true }).count(), 1);
+      assert.equal(await page.getByText(/拍卖次数：/).count(), 0);
       assert.equal(await page.getByRole('button', { name: product.title, exact: true }).locator('[data-product-type]').count(), 0);
       for (const value of [url, 'Z650804548']) {
         await input.fill(value);
@@ -138,6 +160,7 @@ const { chromium } = require('playwright');
       await page.getByRole('button', { name: '提交任务', exact: true }).waitFor();
       assert.equal(await page.getByText(oldBlockedMessage, { exact: true }).count(), 0);
       assert.equal(await page.getByRole('button', { name: normalProduct.title, exact: true }).locator('[data-product-type]').count(), 0);
+      assert.equal(await page.getByText(/拍卖次数：/).count(), 1);
       assert.equal(submitted.length, 1);
       await page.screenshot({ path: `.test-artifacts/fleamarket-submit-${width}.png`, fullPage: true });
       await page.getByRole('button', { name: '批量添加', exact: true }).click();
@@ -172,6 +195,17 @@ const { chromium } = require('playwright');
       await fleaRow.getByRole('button', { name: '添加商品备注', exact: true }).click();
       const remark = page.getByRole('dialog', { name: '商品备注：' + product.auctionId, exact: true });
       await remark.waitFor(); await remark.getByRole('button', { name: '关闭', exact: true }).click();
+      await page.getByRole('link', { name: '入札中', exact: true }).click();
+      await page.getByRole('button', { name: '再入札', exact: true }).first().waitFor();
+      for (const item of [normalProduct,storeProduct]) {
+        const row=page.locator('.adm-list-item').filter({hasText:item.title});
+        const thumbnail=await row.locator('img').boundingBox();
+        const button=await row.getByRole('button',{name:'再入札',exact:true}).boundingBox();
+        const price=await row.locator('[aria-label^="最高出价："]').boundingBox();
+        assert.ok(Math.abs(thumbnail.x+thumbnail.width-button.x-button.width)<1, `rebid right edge equals thumbnail right edge ${JSON.stringify({thumbnail,button,price})}`);
+        assert.ok(button.y>=price.y+price.height,'rebid sits below price');
+      }
+      await page.screenshot({path:`.test-artifacts/rebid-right-aligned-${width}.png`,fullPage:true});
       console.log(`${width}px: existing fleamarket/ordinary favorites use correct URLs; three product types, detail tags and labels passed; fleamarket single buyout, batch skip feedback, deal labels/flag-only/no-chart and ordinary auction display passed`);
       await page.close();
     }

@@ -80,132 +80,54 @@ async function collectWonDateCleanupTargets(database, cleanupDate) {
   };
 }
 
-async function countRows(database, sql, params) {
-  const row = await database.getOne(sql, params);
-  return Number(row?.count || 0);
-}
+const { deleteProductData } = require('./deleteProductData');
+const { withProductSubmissionLock } = require('./productSubmissionLock');
+const accountScope = require('./yahooAccountContext');
+const countFields = [
+  'taskCount', 'orderCount', 'bidLogCount', 'biddingItemCount', 'orderStatusLogCount', 'productCount',
+  'assignmentCount', 'messageCount', 'diagnosticCount', 'workClaimCount', 'transferCount',
+  'manualImportItemCount', 'batchItemCount'
+];
 
-function emptyResult(targets, dryRun) {
+function summarize(targets, results, dryRun) {
+  const counts = Object.fromEntries(countFields.map(key => [
+    key, results.reduce((sum, item) => sum + Number(item[key] || 0), 0)
+  ]));
   return {
-    dryRun,
     ...targets,
-    taskCount: 0,
-    orderCount: 0,
-    bidLogCount: 0,
-    biddingItemCount: 0,
-    orderStatusLogCount: 0,
-    productCount: 0,
-    totalCount: 0
+    dryRun,
+    productIds: results.map(item => item.productId),
+    taskIds: sortIds(uniqueValues(results.flatMap(item => item.taskIds))),
+    orderIds: sortIds(uniqueValues(results.flatMap(item => item.orderIds))),
+    ...counts,
+    totalCount: Object.values(counts).reduce((sum, count) => sum + count, 0)
   };
 }
 
 async function previewWonDateCleanup(database, cleanupDate) {
-  const targets = await collectWonDateCleanupTargets(database, cleanupDate);
-  if (targets.productIds.length === 0 && targets.taskIds.length === 0 && targets.orderIds.length === 0) {
-    return emptyResult(targets, true);
-  }
-
-  const taskPlaceholders = targets.taskIds.length ? buildPlaceholders(targets.taskIds) : '';
-  const orderPlaceholders = targets.orderIds.length ? buildPlaceholders(targets.orderIds) : '';
-  const productPlaceholders = targets.productIds.length ? buildPlaceholders(targets.productIds) : '';
-
-  const bidLogCount = targets.taskIds.length
-    ? await countRows(database, `SELECT COUNT(*) AS count FROM bid_logs WHERE task_id IN (${taskPlaceholders})`, targets.taskIds)
-    : 0;
-  const orderCount = targets.orderIds.length
-    ? await countRows(database, `SELECT COUNT(*) AS count FROM orders WHERE id IN (${orderPlaceholders})`, targets.orderIds)
-    : 0;
-  const orderStatusLogCount = targets.orderIds.length || targets.productIds.length
-    ? await countRows(
-      database,
-      `SELECT COUNT(*) AS count
-       FROM order_status_change_logs
-       WHERE ${[
-        targets.orderIds.length ? `order_id IN (${orderPlaceholders})` : '',
-        targets.productIds.length ? `product_id IN (${productPlaceholders})` : ''
-      ].filter(Boolean).join(' OR ')}`,
-      [...targets.orderIds, ...targets.productIds]
-    )
-    : 0;
-  const biddingItemCount = targets.productIds.length
-    ? await countRows(database, `SELECT COUNT(*) AS count FROM bidding_items WHERE product_id IN (${productPlaceholders})`, targets.productIds)
-    : 0;
-  const taskCount = targets.taskIds.length
-    ? await countRows(database, `SELECT COUNT(*) AS count FROM tasks WHERE id IN (${taskPlaceholders})`, targets.taskIds)
-    : 0;
-  const productCount = targets.productIds.length
-    ? await countRows(database, `SELECT COUNT(*) AS count FROM products WHERE product_id IN (${productPlaceholders})`, targets.productIds)
-    : 0;
-
-  return {
-    dryRun: true,
-    ...targets,
-    taskCount,
-    orderCount,
-    bidLogCount,
-    biddingItemCount,
-    orderStatusLogCount,
-    productCount,
-    totalCount: taskCount + orderCount + bidLogCount + biddingItemCount + orderStatusLogCount + productCount
-  };
-}
-
-async function deleteRows(database, sql, params) {
-  const result = await database.query(sql, params);
-  return Number(result?.rowCount || 0);
+  const targets = await accountScope.run(null, () => collectWonDateCleanupTargets(database, cleanupDate));
+  return accountScope.run(null, () => database.raw.transaction(() => summarize(
+    targets, targets.productIds.map(id => deleteProductData(database.raw, id, { dryRun: true })), true
+  )).deferred());
 }
 
 async function runWonDateCleanup(database, cleanupDate) {
-  const preview = await previewWonDateCleanup(database, cleanupDate);
-  if (preview.totalCount === 0) return { ...preview, dryRun: false };
-
-  const taskPlaceholders = preview.taskIds.length ? buildPlaceholders(preview.taskIds) : '';
-  const orderPlaceholders = preview.orderIds.length ? buildPlaceholders(preview.orderIds) : '';
-  const productPlaceholders = preview.productIds.length ? buildPlaceholders(preview.productIds) : '';
-
-  const orderStatusLogCount = (preview.orderIds.length || preview.productIds.length)
-    ? await deleteRows(
-      database,
-      `DELETE FROM order_status_change_logs
-       WHERE ${[
-        preview.orderIds.length ? `order_id IN (${orderPlaceholders})` : '',
-        preview.productIds.length ? `product_id IN (${productPlaceholders})` : ''
-      ].filter(Boolean).join(' OR ')}`,
-      [...preview.orderIds, ...preview.productIds]
-    )
-    : 0;
-  const bidLogCount = preview.taskIds.length
-    ? await deleteRows(database, `DELETE FROM bid_logs WHERE task_id IN (${taskPlaceholders})`, preview.taskIds)
-    : 0;
-  const orderCount = preview.orderIds.length
-    ? await deleteRows(database, `DELETE FROM orders WHERE id IN (${orderPlaceholders})`, preview.orderIds)
-    : 0;
-  const biddingItemCount = preview.productIds.length
-    ? await deleteRows(database, `DELETE FROM bidding_items WHERE product_id IN (${productPlaceholders})`, preview.productIds)
-    : 0;
-  const taskCount = preview.taskIds.length
-    ? await deleteRows(database, `DELETE FROM tasks WHERE id IN (${taskPlaceholders})`, preview.taskIds)
-    : 0;
-  const productCount = preview.productIds.length
-    ? await deleteRows(database, `DELETE FROM products WHERE product_id IN (${productPlaceholders})`, preview.productIds)
-    : 0;
-
-  return {
-    ...preview,
-    dryRun: false,
-    taskCount,
-    orderCount,
-    bidLogCount,
-    biddingItemCount,
-    orderStatusLogCount,
-    productCount,
-    totalCount: taskCount + orderCount + bidLogCount + biddingItemCount + orderStatusLogCount + productCount
-  };
+  const initial = await accountScope.run(null, () => collectWonDateCleanupTargets(database, cleanupDate));
+  const ids = initial.productIds.slice().sort();
+  const run = () => accountScope.run(null, () => database.raw.transaction(() => {
+    // Recheck eligibility after waiting for in-flight submissions/deletions. A
+    // product freshly recreated without an old order must not be deleted again.
+    const eligible = database.raw.prepare(`SELECT 1 FROM orders o LEFT JOIN tasks t ON t.id=o.task_id
+      WHERE COALESCE(o.product_id,t.product_id)=? AND o.won_at IS NOT NULL
+        AND datetime(o.won_at)<datetime(?) LIMIT 1`);
+    const results = ids.filter(id => eligible.get(id, initial.cutoffExclusive))
+      .map(id => deleteProductData(database.raw, id));
+    return summarize(initial, results, false);
+  }).immediate());
+  // Stable lock order prevents overlapping date cleanups from deadlocking.
+  return ids.reduceRight((next, id) => () => withProductSubmissionLock(id, next), run)();
 }
 
 module.exports = {
-  buildWonDateCleanupCutoff,
-  collectWonDateCleanupTargets,
-  previewWonDateCleanup,
-  runWonDateCleanup
+  buildWonDateCleanupCutoff, collectWonDateCleanupTargets, previewWonDateCleanup, runWonDateCleanup
 };

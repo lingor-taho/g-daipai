@@ -3645,93 +3645,10 @@ function buildPlaceholders(values) {
 }
 
 async function deleteProductDataByProductId(database, productId) {
-  const normalizedProductId = normalizeAuctionUrl(productId)?.auctionId || String(productId || '').trim();
-  if (!normalizedProductId) {
-    return { productId: '', success: false, error: '商品 ID 无效' };
-  }
-
-  const tasks = await database.getAll(
-    'SELECT id FROM tasks WHERE product_id = ? ORDER BY id ASC',
-    [normalizedProductId]
-  );
-  const taskIds = tasks.map(task => task.id).filter(id => id !== null && id !== undefined);
-  let orderIds = [];
-  let orderStatusLogCount = 0;
-  let bidLogCount = 0;
-  let orderCount = 0;
-  let biddingItemCount = 0;
-  let taskCount = 0;
-  let productCount = 0;
-
-  if (taskIds.length > 0) {
-    const taskPlaceholders = buildPlaceholders(taskIds);
-    const orders = await database.getAll(
-      `SELECT id FROM orders WHERE task_id IN (${taskPlaceholders})`,
-      taskIds
-    );
-    orderIds = orders.map(order => order.id).filter(id => id !== null && id !== undefined);
-  }
-
-  if (orderIds.length > 0) {
-    const orderPlaceholders = buildPlaceholders(orderIds);
-    orderStatusLogCount = (await database.query(
-      `DELETE FROM order_status_change_logs
-       WHERE product_id = ?
-          OR order_id IN (${orderPlaceholders})`,
-      [normalizedProductId, ...orderIds]
-    )).rowCount || 0;
-  } else {
-    orderStatusLogCount = (await database.query(
-      'DELETE FROM order_status_change_logs WHERE product_id = ?',
-      [normalizedProductId]
-    )).rowCount || 0;
-  }
-
-  if (taskIds.length > 0) {
-    const taskPlaceholders = buildPlaceholders(taskIds);
-    bidLogCount = (await database.query(
-      `DELETE FROM bid_logs WHERE task_id IN (${taskPlaceholders})`,
-      taskIds
-    )).rowCount || 0;
-    orderCount = (await database.query(
-      `DELETE FROM orders WHERE task_id IN (${taskPlaceholders})`,
-      taskIds
-    )).rowCount || 0;
-  }
-
-  biddingItemCount = (await database.query(
-    'DELETE FROM bidding_items WHERE product_id = ?',
-    [normalizedProductId]
-  )).rowCount || 0;
-
-  if (taskIds.length > 0) {
-    const taskPlaceholders = buildPlaceholders(taskIds);
-    taskCount = (await database.query(
-      `DELETE FROM tasks WHERE id IN (${taskPlaceholders})`,
-      taskIds
-    )).rowCount || 0;
-  }
-
-  productCount = (await database.query(
-    'DELETE FROM products WHERE product_id = ?',
-    [normalizedProductId]
-  )).rowCount || 0;
-
-  const totalCount = taskCount + orderCount + bidLogCount + biddingItemCount + orderStatusLogCount + productCount;
-  return {
-    productId: normalizedProductId,
-    success: totalCount > 0,
-    taskIds,
-    orderIds,
-    taskCount,
-    orderCount,
-    bidLogCount,
-    biddingItemCount,
-    productCount,
-    orderStatusLogCount,
-    totalCount,
-    error: totalCount > 0 ? undefined : '系统中没有这个商品数据'
-  };
+  const normalizedProductId = normalizeAuctionUrl(productId)?.auctionId || String(productId || '').trim().toLowerCase();
+  if (!normalizedProductId) return {productId:'',success:false,error:'商品 ID 无效'};
+  return require('../services/productSubmissionLock').withProductSubmissionLock(normalizedProductId, () =>
+    require('../services/deleteProductData').deleteProductData(database.raw, normalizedProductId));
 }
 
 router.post('/shipping-refresh/run', async (req, res) => {
@@ -3917,7 +3834,8 @@ router.post('/product-data-delete/run', async (req, res) => {
 
   const results = [];
   for (const productId of productIds) {
-    results.push(await deleteProductDataByProductId(db, productId));
+    try { results.push(await deleteProductDataByProductId(db, productId)); }
+    catch (error) { results.push({productId,success:false,error:error.message || '删除失败，已回滚'}); }
   }
 
   res.json({

@@ -13,6 +13,8 @@ if(process.env.GDAIPAI_ISOLATED_TESTS!=='1') {
   process.exit(isolated.status || 0);
 }
 const steps = [
+  ['Atomic won-date cleanup',process.execPath,['src/server/services/forceDateCleanup.test.js'],rootDir],
+  ['Product deletion and different-user resubmission',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/admin.productDelete.test.js'],rootDir],
   ['Fleamarket purchase HTTP and atomic order completion', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/fleamarketPurchase.test.js'], rootDir],
   ['Fleamarket purchase browser and executor', process.execPath, ['yahoo-plugin/fleamarketPurchase.test.js'], rootDir],
   ['Fleamarket trade scan and deferred receipt', process.execPath, ['yahoo-plugin/fleamarketTrade.test.js'], rootDir],

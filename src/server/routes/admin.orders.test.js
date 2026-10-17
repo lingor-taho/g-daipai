@@ -1010,49 +1010,22 @@ async function testClearPaymentAlertAndContinueClearsMessageAndSetsFlag() {
   assert.equal(queries[1].params[0], '1');
 }
 
+function createProductDeletionTestDb() {
+  const raw = new (require('better-sqlite3'))(':memory:');
+  raw.exec('CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT); CREATE TABLE orders(id INTEGER PRIMARY KEY,task_id INTEGER,product_id TEXT); CREATE TABLE products(product_id TEXT); CREATE TABLE bid_logs(task_id INTEGER); CREATE TABLE bidding_items(product_id TEXT); CREATE TABLE order_status_change_logs(product_id TEXT,order_id INTEGER);');
+  return {raw};
+}
 async function testDeleteProductDataRemovesTaskOrderAndBiddingAssociations() {
-  const calls = [];
-  const fakeDb = {
-    async getAll(sql, params) {
-      calls.push({ type: 'getAll', sql, params });
-      if (/FROM tasks/.test(sql)) {
-        return [{ id: 276 }, { id: 277 }];
-      }
-      if (/FROM orders/.test(sql)) {
-        return [{ id: 67 }, { id: 68 }];
-      }
-      return [];
-    },
-    async query(sql, params) {
-      calls.push({ type: 'query', sql, params });
-      if (/order_status_change_logs/.test(sql)) return { rowCount: 3 };
-      if (/bid_logs/.test(sql)) return { rowCount: 2 };
-      if (/orders/.test(sql)) return { rowCount: 2 };
-      if (/bidding_items/.test(sql)) return { rowCount: 1 };
-      if (/tasks/.test(sql)) return { rowCount: 2 };
-      if (/products/.test(sql)) return { rowCount: 1 };
-      return { rowCount: 0 };
-    }
-  };
-
-  const result = await deleteProductDataByProductId(fakeDb, 'v1231866422');
-
-  assert.equal(result.success, true);
-  assert.equal(result.taskCount, 2);
-  assert.equal(result.orderCount, 2);
-  assert.equal(result.bidLogCount, 2);
-  assert.equal(result.biddingItemCount, 1);
-  assert.equal(result.productCount, 1);
-  assert.equal(result.orderStatusLogCount, 3);
-  assert.equal(result.totalCount, 11);
-  assert.equal(calls[0].params[0], 'v1231866422');
-  assert.match(calls[2].sql, /DELETE FROM order_status_change_logs/);
-  assert.match(calls[3].sql, /DELETE FROM bid_logs/);
-  assert.match(calls[4].sql, /DELETE FROM orders/);
-  assert.match(calls[5].sql, /DELETE FROM bidding_items/);
-  assert.match(calls[6].sql, /DELETE FROM tasks/);
-  assert.match(calls[7].sql, /DELETE FROM products WHERE product_id = \?/);
-  assert.deepEqual(calls[7].params, ['v1231866422']);
+  const database=createProductDeletionTestDb();
+  try {
+    database.raw.exec("INSERT INTO tasks VALUES(276,'v1231866422'),(277,'v1231866422'); INSERT INTO orders VALUES(67,276,'v1231866422'),(68,277,NULL); INSERT INTO bid_logs VALUES(276),(277); INSERT INTO products VALUES('v1231866422'); INSERT INTO bidding_items VALUES('v1231866422'); INSERT INTO order_status_change_logs VALUES('v1231866422',67),('v1231866422',68),(NULL,67);");
+    const result=await deleteProductDataByProductId(database,'v1231866422');
+    assert.equal(result.success,true);assert.equal(result.taskCount,2);assert.equal(result.orderCount,2);
+    assert.equal(result.bidLogCount,2);assert.equal(result.biddingItemCount,1);assert.equal(result.productCount,1);
+    assert.equal(result.orderStatusLogCount,3);assert.equal(result.totalCount,11);
+    assert.deepEqual(result.taskIds,[276,277]);assert.deepEqual(result.orderIds,[67,68]);
+    for(const table of ['tasks','orders','products','bid_logs','bidding_items','order_status_change_logs']) assert.equal(database.raw.prepare('SELECT COUNT(*) n FROM '+table).get().n,0);
+  } finally {database.raw.close();}
 }
 
 async function testBackfillStoreBundleMarksMainPendingShipmentAndChildrenCompleted() {
@@ -1129,20 +1102,12 @@ async function testBackfillStoreBundleRejectsNormalProduct() {
 }
 
 async function testDeleteProductDataCanRemoveOrphanBiddingItem() {
-  const fakeDb = {
-    async getAll() {
-      return [];
-    },
-    async query(sql) {
-      return { rowCount: /bidding_items/.test(sql) ? 1 : 0 };
-    }
-  };
-
-  const result = await deleteProductDataByProductId(fakeDb, 'v1231866422');
-
-  assert.equal(result.success, true);
-  assert.equal(result.taskCount, 0);
-  assert.equal(result.biddingItemCount, 1);
+  const database=createProductDeletionTestDb();
+  try {
+    database.raw.exec("INSERT INTO bidding_items VALUES('v1231866422')");
+    const result=await deleteProductDataByProductId(database,'v1231866422');
+    assert.equal(result.success,true);assert.equal(result.taskCount,0);assert.equal(result.biddingItemCount,1);
+  } finally {database.raw.close();}
 }
 
 async function testReassignOrderOwnerUpdatesSourceAndSameProductTasks() {

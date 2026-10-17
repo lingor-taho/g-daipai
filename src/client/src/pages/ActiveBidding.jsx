@@ -252,15 +252,17 @@ export default function ActiveBidding() {
                     </div>
                   ) : null}
                   {canRebid ? (
+                    <div style={{ width: imageThumbStyle.width + 2 }}>
                     <Button
                       size="mini"
                       color="danger"
                       fill="outline"
                       onClick={() => navigate(getRebidSubmitPath(item))}
-                      style={{ ...outlineButtonStyle, flex: '0 0 auto', marginTop: 8, '--text-color': colors.danger }}
+                      style={{ ...outlineButtonStyle, display: 'block', marginLeft: 'auto', width: 'max-content', marginTop: 8, '--text-color': colors.danger }}
                     >
                       再入札
                     </Button>
+                    </div>
                   ) : null}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>

@@ -549,26 +549,12 @@ function buildActiveBiddingTaskListQuery(input) {
   };
 }
 
-// Serialize both entry points by product, including concurrent network retries.
-const submissionLocks = new Map();
+const { withProductSubmissionLock } = require('../services/productSubmissionLock');
 
 function submitError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
-}
-
-async function withProductSubmissionLock(productId, action) {
-  const previous = submissionLocks.get(productId) || Promise.resolve();
-  let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  const tail = previous.then(() => gate);
-  submissionLocks.set(productId, tail);
-  await previous;
-  try { return await action(); } finally {
-    release();
-    if (submissionLocks.get(productId) === tail) submissionLocks.delete(productId);
-  }
 }
 
 async function fetchBatchProduct(fetchProduct, url, timeoutMs = 75000) {
@@ -626,6 +612,12 @@ async function submitAuctionTask(context, body, {
   }
   const productId = buildSubmitTaskInput(context.user, body).productId;
   return withProductSubmissionLock(productId, async () => {
+    if (strictBatch && database.raw) {
+      const queued = String(body.client_request_id || '').match(/^batch-queue-(\d+)-(\d+)$/);
+      if (queued && !database.raw.prepare("SELECT 1 FROM batch_task_submission_items WHERE batch_id=? AND line_number=? AND product_id=? AND status='processing'").get(Number(queued[1]),Number(queued[2]),productId)) {
+        throw submitError('商品批量记录已删除或已结束，停止旧提交',409);
+      }
+    }
     const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = body;
     const input = buildSubmitTaskInput(context.user, body);
     const fleamarketProduct = isFleamarketProduct(input);

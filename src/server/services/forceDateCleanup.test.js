@@ -1,115 +1,82 @@
 const assert = require('assert/strict');
+const Database = require('better-sqlite3');
+const { buildWonDateCleanupCutoff, previewWonDateCleanup, runWonDateCleanup } = require('./forceDateCleanup');
+const { withProductSubmissionLock } = require('./productSubmissionLock');
 
-const {
-  buildWonDateCleanupCutoff,
-  previewWonDateCleanup,
-  runWonDateCleanup
-} = require('./forceDateCleanup');
-
-function makeFakeDb({ targetRows = [], taskRows = [], orderRows = [], countMap = {} } = {}) {
-  const calls = [];
-  return {
-    calls,
-    async getAll(sql, params) {
-      calls.push({ type: 'getAll', sql, params });
-      if (/FROM orders o\s+LEFT JOIN tasks t/.test(sql)) return targetRows;
-      if (/SELECT id FROM tasks/.test(sql)) return taskRows;
-      if (/SELECT id FROM orders/.test(sql)) return orderRows;
-      return [];
-    },
-    async getOne(sql, params) {
-      calls.push({ type: 'getOne', sql, params });
-      const key = Object.keys(countMap).find(pattern => new RegExp(pattern).test(sql));
-      return { count: key ? countMap[key] : 0 };
-    },
-    async query(sql, params) {
-      calls.push({ type: 'query', sql, params });
-      const key = Object.keys(countMap).find(pattern => new RegExp(pattern).test(sql));
-      return { rowCount: key ? countMap[key] : 0 };
-    }
-  };
+function fixture() {
+  const raw = new Database(':memory:');
+  raw.exec(`CREATE TABLE products(product_id TEXT PRIMARY KEY);
+    CREATE TABLE tasks(id INTEGER PRIMARY KEY, product_id TEXT, account_id INTEGER, user_id INTEGER);
+    CREATE TABLE orders(id INTEGER PRIMARY KEY, product_id TEXT, task_id INTEGER, won_at TEXT);
+    CREATE TABLE yahoo_product_assignments(product_id TEXT, account_id INTEGER, user_id INTEGER, task_id INTEGER);
+    CREATE TABLE bidding_items(product_id TEXT);
+    CREATE TABLE bid_logs(task_id INTEGER);
+    CREATE TABLE order_status_change_logs(product_id TEXT,order_id INTEGER);
+    CREATE TABLE yahoo_trade_messages(product_id TEXT,order_id INTEGER);
+    CREATE TABLE plugin_diagnostics(product_id TEXT,order_id INTEGER);
+    CREATE TABLE yahoo_work_claims(kind TEXT,object_id INTEGER);
+    CREATE TABLE yahoo_account_transfers(task_id INTEGER);
+    CREATE TABLE manual_order_import_items(product_id TEXT,task_id INTEGER,order_id INTEGER);
+    CREATE TABLE batch_task_submission_items(product_id TEXT,task_id INTEGER);
+    INSERT INTO products VALUES('a111111111'),('z222222222'),('c333333333'),('d444444444');
+    INSERT INTO tasks VALUES(1,'a111111111',1,1),(2,'a111111111',2,2),(3,'z222222222',1,1),(4,'c333333333',1,1),(5,'d444444444',1,1);
+    INSERT INTO orders VALUES(11,NULL,1,'2026-06-08 23:59:59'),(12,'a111111111',2,'2026-10-17'),
+      (13,'z222222222',NULL,'2026-06-07'),(14,'c333333333',4,'2026-06-09 00:00:00'),(15,'d444444444',5,NULL);
+    INSERT INTO yahoo_product_assignments VALUES('a111111111',1,1,1),('a111111111',2,2,NULL),('z222222222',1,1,3),('c333333333',1,1,4);
+    INSERT INTO bidding_items VALUES('a111111111'),('z222222222'),('c333333333');
+    INSERT INTO bid_logs VALUES(1),(2),(3),(4);
+    INSERT INTO order_status_change_logs VALUES(NULL,11),('z222222222',13);
+    INSERT INTO yahoo_trade_messages VALUES(NULL,12),('z222222222',13);
+    INSERT INTO plugin_diagnostics VALUES('a111111111',11),('z222222222',13);
+    INSERT INTO yahoo_work_claims VALUES('scan',11),('payment',12),('confirm-receipt',13),('manual-order-import',11);
+    INSERT INTO yahoo_account_transfers VALUES(1),(3);
+    INSERT INTO manual_order_import_items VALUES('a111111111',NULL,NULL),(NULL,NULL,13);
+    INSERT INTO batch_task_submission_items VALUES('a111111111',NULL),(NULL,3);`);
+  return {raw, getAll:async(sql,params=[])=>raw.prepare(sql).all(...params)};
 }
-
-function testBuildWonDateCleanupCutoffIncludesSelectedDate() {
-  assert.deepEqual(buildWonDateCleanupCutoff('2026-06-08'), {
-    cutoffDate: '2026-06-08',
-    cutoffExclusive: '2026-06-09 00:00:00'
-  });
-  assert.throws(() => buildWonDateCleanupCutoff('2026-6-8'), /valid cleanup date/);
+function snapshot(db) {
+  return db.raw.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all()
+    .map(({name})=>[name,db.raw.prepare(`SELECT * FROM ${name}`).all()]);
 }
-
-async function testPreviewWonDateCleanupUsesWonAtAndDoesNotDelete() {
-  const db = makeFakeDb({
-    targetRows: [
-      { product_id: 'a123456789', task_id: 11 },
-      { product_id: 'b123456789', task_id: 21 }
-    ],
-    taskRows: [{ id: 11 }, { id: 12 }, { id: 21 }],
-    orderRows: [{ id: 101 }, { id: 102 }],
-    countMap: {
-      'FROM bid_logs': 3,
-      'FROM order_status_change_logs': 2,
-      'FROM bidding_items': 1,
-      'FROM tasks': 3,
-      'FROM orders': 2,
-      'FROM products': 2
-    }
-  });
-
-  const result = await previewWonDateCleanup(db, '2026-06-08');
-
-  assert.equal(result.dryRun, true);
-  assert.equal(result.cutoffDate, '2026-06-08');
-  assert.equal(result.cutoffExclusive, '2026-06-09 00:00:00');
-  assert.deepEqual(result.productIds, ['a123456789', 'b123456789']);
-  assert.deepEqual(result.taskIds, [11, 12, 21]);
-  assert.deepEqual(result.orderIds, [101, 102]);
-  assert.equal(result.totalCount, 13);
-  assert.match(db.calls[0].sql, /datetime\(o\.won_at\) < datetime\(\?\)/);
-  assert.deepEqual(db.calls[0].params, ['2026-06-09 00:00:00']);
-  assert.equal(db.calls.some(call => call.type === 'query' && /DELETE FROM/.test(call.sql)), false);
-}
-
-async function testRunWonDateCleanupDeletesAssociationsBeforeProducts() {
-  const db = makeFakeDb({
-    targetRows: [{ product_id: 'a123456789', task_id: 11 }],
-    orderRows: [{ id: 101 }],
-    countMap: {
-      'FROM order_status_change_logs': 2,
-      'FROM bid_logs': 3,
-      'FROM orders': 1,
-      'FROM bidding_items': 1,
-      'FROM tasks': 1,
-      'FROM products': 1,
-      'DELETE FROM order_status_change_logs': 2,
-      'DELETE FROM bid_logs': 3,
-      'DELETE FROM orders': 1,
-      'DELETE FROM bidding_items': 1,
-      'DELETE FROM tasks': 1,
-      'DELETE FROM products': 1
-    }
-  });
-
-  const result = await runWonDateCleanup(db, '2026-06-08');
-  const deleteSql = db.calls
-    .filter(call => call.type === 'query' && /DELETE FROM/.test(call.sql))
-    .map(call => call.sql);
-
-  assert.equal(result.dryRun, false);
-  assert.equal(result.totalCount, 9);
-  assert.match(deleteSql[0], /DELETE FROM order_status_change_logs/);
-  assert.match(deleteSql[1], /DELETE FROM bid_logs/);
-  assert.match(deleteSql[2], /DELETE FROM orders/);
-  assert.match(deleteSql[3], /DELETE FROM bidding_items/);
-  assert.match(deleteSql[4], /DELETE FROM tasks/);
-  assert.match(deleteSql[5], /DELETE FROM products/);
-}
-
-testBuildWonDateCleanupCutoffIncludesSelectedDate();
-Promise.all([
-  testPreviewWonDateCleanupUsesWonAtAndDoesNotDelete(),
-  testRunWonDateCleanupDeletesAssociationsBeforeProducts()
-]).catch(err => {
-  console.error(err);
-  process.exitCode = 1;
-});
+(async()=>{
+  assert.deepEqual(buildWonDateCleanupCutoff('2026-06-08'),{cutoffDate:'2026-06-08',cutoffExclusive:'2026-06-09 00:00:00'});
+  assert.equal(buildWonDateCleanupCutoff('2024-02-29').cutoffExclusive,'2024-03-01 00:00:00');
+  for(const date of ['2026-6-8','2026-02-29','invalid']) assert.throws(()=>buildWonDateCleanupCutoff(date),/valid cleanup date/);
+  const db=fixture();
+  try {
+    const before=snapshot(db);
+    const preview=await previewWonDateCleanup(db,'2026-06-08');
+    assert.deepEqual(snapshot(db),before,'preview is read-only');
+    assert.deepEqual(preview.productIds,['a111111111','z222222222']);
+    assert.equal(preview.assignmentCount,3);assert.equal(preview.taskCount,3);assert.equal(preview.orderCount,3);
+    assert.equal(preview.workClaimCount,3);assert.equal(preview.batchItemCount,2);
+    assert.equal(preview.manualImportItemCount,2);
+    db.raw.exec("CREATE TRIGGER reject_delete BEFORE DELETE ON products WHEN OLD.product_id='z222222222' BEGIN SELECT RAISE(ABORT,'rollback whole date batch'); END");
+    await assert.rejects(runWonDateCleanup(db,'2026-06-08'),/rollback whole date batch/);
+    assert.deepEqual(snapshot(db),before,'failure on the second product restores the entire date batch');
+    db.raw.exec('DROP TRIGGER reject_delete');
+    const result=await runWonDateCleanup(db,'2026-06-08');
+    assert.deepEqual({...result,dryRun:true},preview,'preview and actual counts match');
+    assert.deepEqual(db.raw.prepare('SELECT product_id FROM products ORDER BY product_id').all(),[{product_id:'c333333333'},{product_id:'d444444444'}]);
+    assert.equal(db.raw.prepare('SELECT count(*) n FROM tasks').get().n,2);
+    assert.equal(db.raw.prepare('SELECT count(*) n FROM orders').get().n,2);
+    assert.deepEqual(db.raw.prepare('SELECT * FROM yahoo_work_claims').all(),[{kind:'manual-order-import',object_id:11}]);
+    assert.equal((await runWonDateCleanup(db,'2026-06-08')).totalCount,0);
+  } finally {db.raw.close();}
+  const waiting=fixture();
+  try {
+    let release,entered;
+    const ready=new Promise(resolve=>{entered=resolve;});const gate=new Promise(resolve=>{release=resolve;});
+    const hold=withProductSubmissionLock('a111111111',async()=>{entered();await gate;
+      waiting.raw.exec("DELETE FROM orders WHERE id IN (11,12); DELETE FROM tasks WHERE product_id='a111111111'; INSERT INTO tasks VALUES(99,'a111111111',1,2)");
+    });
+    await ready;
+    const deleting=runWonDateCleanup(waiting,'2026-06-08');
+    await new Promise(resolve=>setImmediate(resolve));release();await hold;
+    const result=await deleting;
+    assert.deepEqual(result.productIds,['z222222222']);
+    assert.equal(waiting.raw.prepare('SELECT user_id FROM tasks WHERE id=99').get().user_id,2,'new submission survives eligibility recheck');
+    assert.ok(waiting.raw.prepare("SELECT 1 FROM products WHERE product_id='a111111111'").get());
+  } finally {waiting.raw.close();}
+  console.log('forceDateCleanup real SQLite tests passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
