@@ -1,3 +1,4 @@
+import fleamarket from '../../../shared/fleamarket.cjs';
 import ProductTypeTag from '../components/ProductTypeTag';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -314,7 +315,7 @@ export default function WonItems() {
       setPage(1);
     } catch (e) {
       if (requestGenerationRef.current !== requestGeneration) return;
-      Toast.show({ content: e.response?.data?.error || '落札商品加载失败' });
+      Toast.show({ content: e.response?.data?.error || '成交商品加载失败' });
       setItems([]);
       setTotal(0);
       setPage(0);
@@ -334,7 +335,7 @@ export default function WonItems() {
       setTotal(Number(res.data?.total || 0));
       setPage(Number(res.data?.page || nextPage));
     } catch (e) {
-      Toast.show({ content: e.response?.data?.error || '更多落札商品加载失败' });
+      Toast.show({ content: e.response?.data?.error || '更多成交商品加载失败' });
       throw e;
     }
   }, [page, searchKeyword]);
@@ -385,7 +386,7 @@ export default function WonItems() {
 
   function openRemarkEditor(item) {
     if (!item.order_id) {
-      Toast.show({ content: '该落札商品尚未生成订单，暂时无法备注' });
+      Toast.show({ content: '该成交商品尚未生成订单，暂时无法备注' });
       return;
     }
     setRemarkEditor(item);
@@ -454,12 +455,12 @@ export default function WonItems() {
         style={listStyle}
         header={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: colors.text, fontWeight: 500, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
-            <span style={{ flex: '0 0 auto' }}>落札商品</span>
+            <span style={{ flex: '0 0 auto' }}>成交商品</span>
             <SearchBar
               value={searchInput}
               onChange={setSearchInput}
               placeholder="商品ID或商品标题"
-              aria-label="搜索落札商品"
+              aria-label="搜索成交商品"
               style={{ flex: 1, minWidth: 0, '--height': '32px', '--border-radius': '4px' }}
             />
             <Button size="mini" fill="outline" style={{ ...outlineButtonStyle, flex: '0 0 auto' }} onClick={resetWonItems}>刷新</Button>
@@ -473,10 +474,12 @@ export default function WonItems() {
         )}
         {!loading && items.length === 0 && (
           <div style={{ padding: 24 }}>
-            <Empty description={searchKeyword ? '未找到匹配的落札商品' : '暂无落札商品'} />
+            <Empty description={searchKeyword ? '未找到匹配的成交商品' : '暂无成交商品'} />
           </div>
         )}
         {!loading && items.map(item => {
+          const fleamarketProduct = fleamarket.isFleamarketProduct(item);
+          const dealLabel = fleamarketProduct ? '成交' : '落札';
           const title = item.product_title || `商品 ${item.product_id}`;
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
           const finalPrice = getFinalPrice(item);
@@ -509,23 +512,25 @@ export default function WonItems() {
                     >
                       <RemarkFlag active={Boolean(String(item.user_remark || '').trim())} />
                     </button>
-                    <button
-                      type="button"
-                      aria-label={item.order_status === 'paused' ? '恢复订单' : '订单未暂停'}
-                      title={item.order_status === 'paused' ? '点击恢复订单' : '订单未暂停'}
-                      disabled={item.order_status !== 'paused' || Boolean(resumingOrderId)}
-                      onClick={() => handleResumeOrder(item)}
-                      style={{ border: 0, background: 'transparent', padding: '5px 4px 0', lineHeight: 0, cursor: item.order_status === 'paused' ? 'pointer' : 'default' }}
-                    >
-                      <PauseIcon active={item.order_status === 'paused'} />
-                    </button>
-                    <AuctionHistoryChartButton item={item} onClick={() => setHistoryChartItem(item)} />
+                    {!fleamarketProduct && (<>
+                      <button
+                        type="button"
+                        aria-label={item.order_status === 'paused' ? '恢复订单' : '订单未暂停'}
+                        title={item.order_status === 'paused' ? '点击恢复订单' : '订单未暂停'}
+                        disabled={item.order_status !== 'paused' || Boolean(resumingOrderId)}
+                        onClick={() => handleResumeOrder(item)}
+                        style={{ border: 0, background: 'transparent', padding: '5px 4px 0', lineHeight: 0, cursor: item.order_status === 'paused' ? 'pointer' : 'default' }}
+                      >
+                        <PauseIcon active={item.order_status === 'paused'} />
+                      </button>
+                      <AuctionHistoryChartButton item={item} onClick={() => setHistoryChartItem(item)} />
+                    </>)}
                   </div>
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
-                      {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">落札成功</Tag>}
+                      {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">{dealLabel}成功</Tag>}
                       {!isCancelled && renderOrderStatusTag(item.order_status)}
                       <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                     </div>
@@ -550,7 +555,7 @@ export default function WonItems() {
                   </a>
                   <div style={{ fontSize: 12, color: colors.muted, lineHeight: 1.7 }}>
                     商品ID：{item.product_id} <ProductTypeTag product={item} /><br />
-                    落札价：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(finalPrice)}</span>
+                    {dealLabel}价：<span style={{ color: colors.danger, fontWeight: 600 }}>{formatJPY(finalPrice)}</span>
                     {item.shipping_fee_text ? (
                       <span>　运费：{item.shipping_fee_text}</span>
                     ) : null}
@@ -559,11 +564,11 @@ export default function WonItems() {
                     {wonTime ? (
                       <>
                         <br />
-                        落札时间：{wonTime}
+                        {dealLabel}时间：{wonTime}
                       </>
                     ) : null}
                   </div>
-                  <BidPriceTimeline currentPrice={finalPrice} bids={item.bid_history || []} endpointLabel="落札价" />
+                  {!fleamarketProduct && <BidPriceTimeline currentPrice={finalPrice} bids={item.bid_history || []} endpointLabel="落札价" />}
                   {item.seller_message_html ? (
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
                       <Button

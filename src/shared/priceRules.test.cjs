@@ -30,3 +30,6 @@ assert.equal(getDisplayPrice(9, 'tax_included'), 9);
 assert.equal(getDisplayPrice(5000, 'tax_zero'), 5000);
 
 console.log('price rules tests passed');
+
+assert.equal(normalizeProductType('fleamarket', 'tax_zero'), 'fleamarket');
+assert.equal(normalizeProductType('fleamarket', 'tax_included'), 'fleamarket');

@@ -15,7 +15,7 @@ import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
 import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
 const { isAuctionEnded } = auctionDeadline;
-const { isFleamarketProduct, FLEAMARKET_PURCHASE_BLOCKED_MESSAGE } = fleamarket;
+const { isFleamarketProduct } = fleamarket;
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -171,7 +171,7 @@ export default function Submit() {
     minPrice: 5000
   });
   const fleamarketProduct = isFleamarketProduct(product);
-  const buyoutOnly = isBuyoutOnlyProduct(product);
+  const buyoutOnly = fleamarketProduct || isBuyoutOnlyProduct(product);
   const isLoginClientAdmin = Number(localStorage.getItem('userLevel') || 1) >= 3;
   const isDirectOnlyUser = !isLoginClientAdmin && bidStrategyScope === 'direct_only';
   const isBidBlockedUser = bidStrategyScope === 'bid_blocked';
@@ -409,7 +409,9 @@ export default function Submit() {
   function handleSearchBid(item) {
     setFavoritesVisible(false);
     closeProductSearch();
-    const productUrl = item.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${item.auctionId}`;
+    const productUrl = isFleamarketProduct(item)
+      ? `https://paypayfleamarket.yahoo.co.jp/item/${String(item.auctionId).toLowerCase()}`
+      : item.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${item.auctionId}`;
     handleRebid(productUrl);
   }
 
@@ -489,10 +491,6 @@ export default function Submit() {
     if (submitting) return;
     if (isBidBlockedUser) {
       Toast.show({ content: '出价功能被一时限制，请联系管理员。' });
-      return;
-    }
-    if (fleamarketProduct) {
-      Toast.show({ content: FLEAMARKET_PURCHASE_BLOCKED_MESSAGE });
       return;
     }
     if (productEnded) {
@@ -718,13 +716,7 @@ export default function Submit() {
         />
       )}
 
-      {product && fleamarketProduct && (
-        <div role="alert" style={{ ...cardStyle, marginTop: 12, padding: 14, color: '#d4380d' }}>
-          {FLEAMARKET_PURCHASE_BLOCKED_MESSAGE}
-        </div>
-      )}
-
-      {product && !productEnded && !fleamarketProduct && (
+      {product && !productEnded && (
         <>
           <List style={{ ...listStyle, marginTop: 12 }}>
             {getBuyoutPrice(product) > 0 && (

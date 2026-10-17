@@ -13,7 +13,8 @@ if(process.env.GDAIPAI_ISOLATED_TESTS!=='1') {
   process.exit(isolated.status || 0);
 }
 const steps = [
-  ['Fleamarket product search and purchase blocking', process.execPath, ['src/server/routes/fleamarket.test.js'], rootDir],
+  ['Manual order import excludes fleamarket', process.execPath, ['src/server/routes/manualOrderImport.fleamarket.test.js'], rootDir],
+  ['Fleamarket product search and single buyout submission', process.execPath, ['src/server/routes/fleamarket.test.js'], rootDir],
   ['Multi-account migration and routing',process.execPath,['src/server/services/yahooAccounts.test.js'],rootDir],
   ['Multi-account HTTP workflow',process.execPath,['src/server/routes/yahooMultiAccount.test.js'],rootDir],
   ['Multi-account recovery regressions',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/yahooMultiAccount.regressions.test.js'],rootDir],

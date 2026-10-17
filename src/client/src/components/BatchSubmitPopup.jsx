@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Popup, TextArea, Toast } from 'antd-mobile';
 import batchBid from '../../../shared/batchBid.cjs';
+import fleamarket from '../../../shared/fleamarket.cjs';
 import { createClientRequestId, enqueueBatchTasks, getApiErrorMessage } from '../utils/api';
 import { createBatchRequestStore, getBatchClientContext, getBatchScope, isBatchContextCurrent } from '../utils/batchSubmit';
 import { colors, outlineButtonStyle, primaryButtonStyle } from '../styles';
 
 const { MAX_BATCH_BID_ITEMS, parseBatchBidText } = batchBid;
+const { FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = fleamarket;
 
 export default function BatchSubmitPopup({ visible, onClose, onSubmitted, bidBlocked }) {
   const [text, setText] = useState('');
@@ -39,7 +41,9 @@ export default function BatchSubmitPopup({ visible, onClose, onSubmitted, bidBlo
   async function handleSubmit() {
     if (busy.current) return;
     if (bidBlocked) { Toast.show({ content: '出价功能被一时限制，请联系管理员。' }); return; }
-    try { parseBatchBidText(text); } catch (error) { Toast.show({ content: error.message }); return; }
+    let parsedRows;
+    try { parsedRows = parseBatchBidText(text); } catch (error) { Toast.show({ content: error.message }); return; }
+    const unsupportedCount = parsedRows.filter(row => row.error === FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE).length;
     const context = getBatchClientContext();
     const scope = getBatchScope();
     if (!stores.current.has(scope)) stores.current.set(scope, createBatchRequestStore(sessionStorage, scope, createClientRequestId));
@@ -59,7 +63,11 @@ export default function BatchSubmitPopup({ visible, onClose, onSubmitted, bidBlo
         onClose();
         onSubmittedRef.current();
         window.dispatchEvent(new Event('batch-tasks-enqueued'));
-        Toast.show({ content: `已接收 ${response.data.count} 件，后台正在补全商品并排队出价` });
+        Toast.show({ content: unsupportedCount > 0
+          ? unsupportedCount === parsedRows.length
+            ? `${FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE}已跳过本批全部商品`
+            : `${FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE}已跳过 ${unsupportedCount} 件，其他商品照常处理`
+          : `已接收 ${response.data.count} 件，后台正在补全商品并排队出价` });
       }
     } catch (error) {
       if (error.response) store.settle(submittedText);
@@ -77,6 +85,7 @@ export default function BatchSubmitPopup({ visible, onClose, onSubmitted, bidBlo
         <div style={{ fontSize: 13, color: colors.muted, lineHeight: 1.7, marginBottom: 12 }}>
           每行输入商品 ID 或链接和税前日元最高价，以空格、Tab、逗号或分号分隔。每批最多 {MAX_BATCH_BID_ITEMS} 件。<br />
           有税商品另计税，例如最高价 11800 円，含税金额为 12980 円。仅支持即时拍，不支持仅即决商品。<br />
+          フリマ商品将跳过，其他商品照常提交。<br />
           当前价不足 1000 円且最高价超过 10000 円时，沿用两步出价规则：先出 9000 円，价格突破 1000 円后再按原最高价出价。
           <br />提交后关闭窗口，每件商品补全后立即排队出价；仅有提交失败时显示提示。刷新或关闭页面不影响已接收任务。
         </div>

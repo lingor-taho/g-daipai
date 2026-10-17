@@ -102,15 +102,15 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('onClick={() => onBid(detailProduct || selectedItem)}') && />\s*去竞拍\s*<\/Button>/.test(source),
+  source.includes('onClick={() => onBid(detailProduct || selectedItem)}') && source.includes("detailIsFleamarket ? '去購入' : '去竞拍'"),
   true,
-  'The detail view should expose only the existing bid-selection action as 去竞拍'
+  'Detail actions should preserve the existing callback and distinguish fleamarket purchase labels'
 );
 
 assert.equal(
-  source.includes('onClick={() => onBid(item)}') && />\s*入札\s*<\/Button>/.test(source),
+  source.includes('onClick={() => onBid(item)}') && source.includes("fleamarket.isFleamarketProduct(item) ? '購入' : '入札'"),
   true,
-  'Every search result should expose an 入札 action'
+  'Search actions should distinguish auction and fleamarket items'
 );
 
 assert.equal(
@@ -121,9 +121,11 @@ assert.equal(
 );
 
 assert.equal(
-  /function handleSearchBid\(item\) \{\s*setFavoritesVisible\(false\);\s*closeProductSearch\(\);\s*const productUrl = item\.standardUrl \|\| `https:\/\/auctions\.yahoo\.co\.jp\/jp\/auction\/\$\{item\.auctionId\}`;\s*handleRebid\(productUrl\);\s*\}/.test(submitSource),
+  submitSource.includes('const productUrl = isFleamarketProduct(item)') &&
+    submitSource.includes('https://paypayfleamarket.yahoo.co.jp/item/${String(item.auctionId).toLowerCase()}') &&
+    /function handleSearchBid\(item\) \{\s*setFavoritesVisible\(false\);\s*closeProductSearch\(\);[\s\S]*?handleRebid\(productUrl\);/.test(submitSource),
   true,
-  'Search bid actions should close the popup and fill the standard Yahoo product URL'
+  'Search and existing favorites should close the popup and select the correct auction or fleamarket URL'
 );
 
 assert.equal(

@@ -1,6 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
-const { isFleamarketProduct, FLEAMARKET_PURCHASE_BLOCKED_MESSAGE } = require('../../shared/fleamarket.cjs');
+const { isFleamarketProduct, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = require('../../shared/fleamarket.cjs');
 const { isAuctionEnded } = require('../../shared/auctionDeadline.cjs');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
 const db = require('../models');
@@ -63,7 +63,6 @@ function extractAuctionId(input) {
 function buildSubmitTaskInput(user, body) {
   if (!user?.id) throw new Error('not logged in');
   const { product_url, max_price, bid_mode, buyout_only } = body;
-  if (isFleamarketProduct(product_url)) throw submitError(FLEAMARKET_PURCHASE_BLOCKED_MESSAGE);
   if (!product_url || !max_price) {
     const error = new Error('product_url, max_price are required');
     error.statusCode = 400;
@@ -71,12 +70,15 @@ function buildSubmitTaskInput(user, body) {
   }
 
   const productId = extractAuctionId(product_url);
+  const fleamarketProduct = isFleamarketProduct(body);
   return {
     userId: user.id,
     productId,
-    standardUrl: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+    standardUrl: fleamarketProduct
+      ? `https://paypayfleamarket.yahoo.co.jp/item/${productId}`
+      : `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
     maxPrice: parseInt(max_price, 10),
-    bidMode: bid_mode === 'buyout' || buyout_only === true || buyout_only === 'true' ? 'buyout' : 'bid'
+    bidMode: fleamarketProduct || bid_mode === 'buyout' || buyout_only === true || buyout_only === 'true' ? 'buyout' : 'bid'
   };
 }
 
@@ -589,6 +591,7 @@ function validateBatchProduct(result, productId, nowMs = Date.now()) {
   if (!result?.success || result.source === 'cache-fallback' || product?.auctionId !== productId) {
     throw submitError('无法确认最新商品信息，请稍后重试', 502);
   }
+  if (isFleamarketProduct(product)) throw submitError(FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE);
   if (/closed|ended|sold|cancel|suspend/.test(product.auctionStatus || '') || Date.parse(product.endTime) <= nowMs) {
     throw submitError('商品已结束或已取消，不能提交');
   }
@@ -608,7 +611,7 @@ async function submitAuctionTask(context, body, {
   fetchProduct = productService.fetchProduct,
   strictBatch = false
 } = {}) {
-  if (isFleamarketProduct(body.product_url)) throw submitError(FLEAMARKET_PURCHASE_BLOCKED_MESSAGE);
+  if (strictBatch && isFleamarketProduct(body)) throw submitError(FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE);
   if (strictBatch) {
     const { normalizeBatchProduct, normalizeBatchPrice } = require('../../shared/batchBid.cjs');
     let parsed, maxPrice;
@@ -625,6 +628,7 @@ async function submitAuctionTask(context, body, {
   return withProductSubmissionLock(productId, async () => {
     const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = body;
     const input = buildSubmitTaskInput(context.user, body);
+    const fleamarketProduct = isFleamarketProduct(input);
     input.userId = context.actingUser.id;
     const batchTaxExcludedMaxPrice = strictBatch ? input.maxPrice : null;
     const clientRequestId = String(client_request_id || '').trim() || null;
@@ -668,6 +672,15 @@ async function submitAuctionTask(context, body, {
       input.maxPrice = productInfo.taxType === 'tax_included' && input.maxPrice >= 10
         ? Math.ceil(input.maxPrice * 1.1 - 1e-6)
         : input.maxPrice;
+    } else if (fleamarketProduct) {
+      const result = await fetchProduct(input.standardUrl);
+      productInfo = result?.data;
+      if (!result?.success || result.source === 'cache-fallback' || productInfo?.auctionId !== input.productId ||
+          !isFleamarketProduct(productInfo) || !(Number(productInfo?.buyoutPrice) > 0)) {
+        throw submitError('无法获取最新的フリマ商品信息，请重新获取后提交');
+      }
+      if (productInfo.auctionStatus === 'ended') throw submitError('商品已结束，不能提交任务');
+      if (Number(productInfo.buyoutPrice) !== input.maxPrice) throw submitError('商品即决价格已变化，请重新获取商品信息后提交');
     } else if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
       try {
         const result = await fetchProduct(input.standardUrl);
@@ -676,8 +689,8 @@ async function submitAuctionTask(context, body, {
     }
     const endTime = end_time || productInfo?.endTime || null;
     if (isAuctionEnded(endTime) || isAuctionEnded(productInfo?.endTime)) throw submitError('商品已结束，不能提交任务');
-    const resolvedTaxType = normalizeTaxType(tax_type || productInfo?.taxType);
-    const resolvedProductType = normalizeProductType(product_type || productInfo?.productType, resolvedTaxType);
+    const resolvedTaxType = normalizeTaxType(fleamarketProduct ? productInfo?.taxType : tax_type || productInfo?.taxType);
+    const resolvedProductType = fleamarketProduct ? 'fleamarket' : normalizeProductType(product_type || productInfo?.productType, resolvedTaxType);
     const fetchedBuyoutPrice = Number(productInfo?.buyoutPrice || 0) || 0;
     const submittedBuyoutPrice = Number(buyout_price || 0) || 0;
     const buyoutPrices = resolveBuyoutTaskPrices({
@@ -707,7 +720,7 @@ async function submitAuctionTask(context, body, {
     const bidCountValue = Number(bid_count ?? productInfo?.bidCount ?? productInfo?.bid_count ?? 0);
     const bidCount = Number.isFinite(bidCountValue) && bidCountValue >= 0 ? Math.floor(bidCountValue) : 0;
     const followupMaxPriceRaw = Number(pending_followup_max_price || 0);
-    let followupMaxPrice = Number.isFinite(followupMaxPriceRaw) && followupMaxPriceRaw > userMaxPrice
+    let followupMaxPrice = !fleamarketProduct && Number.isFinite(followupMaxPriceRaw) && followupMaxPriceRaw > userMaxPrice
       ? Math.floor(followupMaxPriceRaw)
       : null;
 
@@ -764,8 +777,8 @@ async function submitAuctionTask(context, body, {
         multiBidIncrement,
         incomingStrategy,
         input.bidMode,
-        start_minutes_before || null,
-        start_seconds_before || null,
+        fleamarketProduct ? null : start_minutes_before || null,
+        fleamarketProduct ? null : start_seconds_before || null,
         clientRequestId,
         followupMaxPrice
       ];

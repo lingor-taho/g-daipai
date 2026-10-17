@@ -255,6 +255,7 @@ export default function ManualOrderImportPage() {
       render: (v: any) => {
         if (v === 'pending_user') return <Tag color="blue">待分配</Tag>;
         if (v === 'imported') return <Tag color="green">已导入</Tag>;
+        if (v === 'skipped_unsupported') return <Tag>不支持跳过</Tag>;
         if (v === 'skipped_unassigned') return <Tag>未分配跳过</Tag>;
         return <Tag>{v || '-'}</Tag>;
       }

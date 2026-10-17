@@ -894,6 +894,7 @@ async function testCreateManualOrderImportBatchDoesNotMutateScanCounter() {
 
 async function testConfirmManualOrderImportRejectsAdminUserAssignment() {
   const fakeDb = {
+    async getAll() { return []; },
     async getOne(sql) {
       if (/FROM manual_order_import_batches/.test(sql)) return { id: 9, status: 'ready' };
       if (/FROM users/.test(sql)) return null;

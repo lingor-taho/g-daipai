@@ -19,6 +19,16 @@
 
 ## 项目概述
 
+2026-10-17 本轮最终集成检查：`npm run regression` 完整通过，覆盖P单条即决／批量逐行跳过、后台导入排除P、多账号任务／订单、原交易／付款／验证码、两端构建及手机／PC浏览器。商品类型／详情／收藏URL、再入札布局及成交列表展示按0j～0m的最新要求整合；历史分阶段验证记录保留。P实际购物流程仍未接入，未操作真实购买或生产数据。本轮改动随本次提交同步GitHub，未部署生产。
+
+2026-10-17 用户端批量及成交列表已本地调整：批量逐行跳过P商品，统一提示「不支持フリマ商品！」，普通／商城行仍原顺序入队；全P批次也无详情抓取／任务写入。现有批量持久化结果保留逐行跳过原因，前端入队后立即提示。导航与页面标题改「成交商品」；仅P列表项使用成交成功／成交价／成交时间，图片下仅保留可编辑备注旗子，暂停图标、拍卖记录图标及最高价小图表隐藏。普通／商城条目的落札文案、图标与图表不变；无订单状态或时间数据改写。需更新API task.js、共享fleamarket.cjs／batchBid.cjs和用户端dist并重启API，无schema／插件改动，未部署，详见0m。
+
+2026-10-17 按最新要求开放P（fleamarket）单条即决任务提交（替代0h禁购）：移除首页暂不可购买提示和表单隐藏，P强制即决／direct，价格与策略控件沿原仅即决规则锁定；API保留フリマURL与商品类型，核对最新商品和精确即决价格，拒绝缓存兜底、已售出、缺价格、价格变化及ID不符，不生成定时／跟随加价任务。原批量入口仅支持普通即时竞价，P仍提示改用单商品入口。后台导入P跳过规则保持。首页抓取卡移除标题前的普／商／P，仅保留原全称标签与信息；详情和列表类型标识不改。只开放任务提交，不接入插件フリマ实际购物流程；未操作真实购买或生产数据，详见0l。
+
+2026-10-17 后台导入订单已本地跳过 P（fleamarket）商品：插件扫描落札列表时先按类型／Z ID／フリマURL过滤，不抓详情、不上报候选；若补抓快照才识别フリマ也不加入。API接收再过滤，旧批次确认时先把待处理フリマ标为 skipped_unsupported 并忽略其分配，不创建商品／任务／订单；普通（含小写p开头拍卖ID）和商城原流程保留。仅影响手动导入线，不改自动落札同步、支付／交易、历史已导入订单。需更新插件background.js并reload、API及共享识别文件并重启、后台静态文件；无schema迁移，未部署，详见0k。
+
+2026-10-17 新增独立 fleamarket 商品类型：复用既有 product_type 字段，不新增数据库列；共享归一化、详情／搜索返回、缓存及商品快照写入均保留此类型。用户端フリマ全称「フリマ 商品」为紫色底，简写「P」；详情标题前统一显示普／商／P，搜索普通／商城商品标题下显示原全称类型标签，フリマ保留原站 logo。フリマ列表入口改「購入」、详情行动按钮改「去購入」，详情不显示拍卖次数／截止时间；原关闭按钮及普通／商城详情保持。入札中再入札按钮移到左图最高价下方，资格和跳转不改。フリマ购买／提交／批量禁令继续生效，仅新增类型和显示，不接入实际购物或付款。需更新 API／共享文件和用户端静态文件并重启 API；无插件／schema 变化，未部署，详见 0j。
+
 2026-10-17 用户端商品类型标识已本地统一：首页抓取后的商品卡保留原独立的普通／商城文字标签和所有商品信息，仅在标题前追加标识；入札中、落札商品、失败分析列表在商品 ID 后显示同一组件。样式对齐后台：普通绿色「普」、商城红色「商」，优先使用 product_type／productType，缺少时沿原共享 normalizeProductType 按税类型回退；フリマ不标成普通／商城，保持只读禁购。失败分析仅补充返回既有 products.product_type，不改筛选、价格、历史或状态。需更新 API 的 failureAnalysis.js 与用户端静态文件并重启 API，无 schema／插件／后台改动，未部署生产，详见 0i。
 
 2026-10-17 Yahoo!フリマ现仅开放用户端搜索和详情，购买流程待业务明确后另行设计。Z/z ID 与 paypayfleamarket URL 使用正确 `/item/{id}` 抓取，搜索列表标题下显示原站标识；详情保留标题、价格、图片、说明、运费等只读信息。撤销上轮仅即决提交支持：商品卡下提示「Yahoo!フリマ 暂时无法购买，请联系管理员！」并隐藏全部出价设置与提交按钮；前端提交处理、单条 API、严格批量提交及批量解析均拦截，在抓取／商品写入／任务创建／账号分配前拒绝。普通／商城商品维持原流程。需更新 API、共享工具与用户端静态文件并重启 API，无插件／schema 改动，未部署或操作真实购买，详见 0h。
@@ -189,6 +199,48 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0m. 批量跳过P与成交商品列表展示
+
+最终验证：2026-10-17 完整 `npm run regression` 已全部通过，包括后台／用户端构建、原API与插件业务回归及浏览器检查；补充WonItems／ProductSearchPopup展示检查、priceRules与productRepository测试也通过。随后重新生成生产模式用户端dist，并通过最终编码／diff检查。本次统一提交0j～0m及旧收藏URL修正，无生产部署。
+
+2026-10-17 批量添加包含P时逐项跳过，指定文案为「不支持フリマ商品！」（替代原请用单商品入口提示）；前端入队成功后立即提示跳过数／全批跳过，其余行照原队列提交。共享逐行解析把P记录为原有行级失败结果，不阻断其后商品、不中断批次；持久化结果仍可查看行号和指定原因，不另加任务或订单状态。服务端严格批量入口及补抓后识别P均使用同一提示；P不进入详情抓取或任务创建。原仅即决普通商品的提示不改；单条P即决提交与后台导入跳过P继续沿0l／0k。
+
+用户端导航按钮、成交列表标题及该页通用加载／空列表文案统一「成交商品」。P类型条目把落札成功／落札价／落札时间改为成交成功／成交价／成交时间，图片下保留原备注旗子及编辑能力，隐藏暂停和拍卖记录图标，隐藏时间下面的BidPriceTimeline；普通／商城条目仍用落札文案并保留原图标／小图表。仅按共享类型识别进行展示，不改金额、时间、状态、订单恢复权限、备注保存或API列表路由。
+
+验证：`node src/shared/batchBid.test.cjs`、`node src/client/src/utils/batchSubmit.test.mjs`、原WonItems／ActiveBidding／ProductSearchPopup展示检查、`node scripts/run-isolated-regression.cjs src/server/services/batchTaskQueue.test.js`、原task.batch.test.js／fleamarket.test.js隔离回归、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`、编码／语法／diff检查通过。内存队列覆盖P ID、P URL混普通与p前缀普通商品：仅正常行调用提交，两个P无抓取／无任务，逐行结果为指定文案；全P批次也无任务。390／1200浏览器验证混合／全P提示、成交导航与标题、P三项成交文案／仅备注旗子／无图表、备注旗子可打开编辑，以及普通商城原文案／两图标／小图表完整；单条P即决、收藏与详情展示原验证继续通过。未运行完整项目回归或操作真实购买／生产订单。
+
+部署：更新API routes/task.js、shared/fleamarket.cjs及batchBid.cjs，更新用户端dist并重启API；无数据库迁移、插件或后台更新。随本次提交同步GitHub，未部署生产。
+
+### 0l. P商品单条即决提交与首页标题恢复
+
+2026-10-17 用户最新要求覆盖0h的全面禁购边界：P商品恢复单条提交，只支持即决一口价，去掉红色禁购提示与表单隐藏。前端复用原仅即决表单锁定价格、勾选和direct策略；API统一规范为フリマURL，强制buyout＋direct，提交前读取最新商品，ID、有效正价格和出售状态必须通过，缓存兜底／失败／已售出／价格变化均不创建任务。即决金额与用户提交一致后才创建，不带定时字段或后续加价。保存product_type=fleamarket；普通／商城原提交与权限流程保持。批量原本只提供竞价即时拍，P仍拒绝并提示「该商品仅支持即决购买，请使用单商品入口」，不是全面禁购。0k后台手动导入跳过P继续保留，收藏正确URL也保留。
+
+首页抓取商品卡只移除标题前的小普／商／P标识，保留原全称标签（含紫色フリマ 商品）及全部原信息；详情标题、搜索和入札／落札列表标识不在本次删除范围。本次没有接入插件フリマ实际购买／支付流程，不能据任务入队推断真实购物已支持，尚需后续独立设计与验收。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/routes/fleamarket.test.js`、原task.test.js／task.batch.test.js／yahooMultiAccount.test.js隔离回归、`node scripts/run-isolated-regression.cjs src/server/routes/manualOrderImport.fleamarket.test.js`、`node src/shared/batchBid.test.cjs`、Submit／ProductSearchPopup原展示检查、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`、`node scripts/submit-ended-browser.test.cjs`、语法／编码／diff检查通过。内存库覆盖URL／大小写Z／旧拍卖Z链接＋bid/buyout请求均保存为buyout＋direct／正确金额与URL／fleamarket类型、幂等、禁定时跟随、价格与状态失败不写入；批量仍拒绝P。390／1200浏览器验证旧收藏正确链接、P勾选锁定和真实submit payload、禁购提示消失、首页标题无小标识、普通商品表单及详情标识保留。后台导入跳过P专项和原截止时间展示测试通过。未运行完整项目回归或真实Yahoo购买，未部署。
+
+部署：更新API routes/task.js、shared/fleamarket.cjs／batchBid.cjs和用户端dist，重启API；本项无额外schema／插件购买流程变更。随本次提交同步GitHub，未部署生产。
+
+### 0k. 手动导入订单跳过 P 商品
+
+2026-10-17 用户明确后台导入订单不考虑P（フリマ）类型。插件 executeManualOrderImportJob 在列表行进入日期判断与详情抓取前过滤フリマ类型、既有标记、Z/z ID与フリマURL；补抓快照才识别的P同样不入候选。忽略旧日期P行也不会提前终止普通订单的分页扫描。API updateManualOrderImportStatus 接收旧插件结果时直接跳过，计数只统计支持的行；确认旧批次时先将 pending_user 的P记录标记 skipped_unsupported，忽略其用户分配，且在创建商品／任务／订单前保留兜底。后台仅增加「不支持跳过」状态标签。普通与商城资格、金额、归属、去重及原导入状态流程保持；小写p开头的普通拍卖ID不属于P类型，不拦截。没有修改历史已导入订单、自动落札同步、付款或交易流程。
+
+验证：`node yahoo-plugin/background.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/manualOrderImport.fleamarket.test.js`、原 admin.orders.test.js／plugin.test.js 隔离回归、`node yahoo-plugin/multiAccount.test.js`、`node yahoo-plugin/encoding.test.js`、`npm run build --prefix src/admin`、语法／编码／diff检查通过。新API专项纳入regression入口；模拟混合P／普通p前缀／商城，断言插件P零详情tab／零快照、仅上报普通商城，API仅两条候选，旧P确认跳过且无商品／任务／订单写入。旧P的无效用户分配也直接忽略，不阻断支持商品。未运行完整项目回归或真实Yahoo导入，未操作生产数据库。
+
+部署：更新 yahoo-plugin/background.js 并在各profile重载；更新 API routes/admin.js、routes/plugin.js与shared/fleamarket.cjs并重启API；更新后台dist用于跳过状态展示。无数据库迁移。本轮改动随本次提交同步GitHub，未部署生产。
+
+### 0j. 独立フリマ类型、三类标识与入口布局
+
+2026-10-17 补充修复旧收藏跳转 URL：收藏原只保存 ID／展示字段，不带 standardUrl，handleSearchBid 的兜底此前统一拼拍卖 URL；现按既有フリマ识别先构造 `https://paypayfleamarket.yahoo.co.jp/item/{小写ID}`，普通／商城仍用原 URL。现有收藏不需重存或清理，禁购保持。仅新增用户端静态文件更新需求，无额外 API／插件／schema 改动。`node scripts/fleamarket-browser.test.cjs` 在390／1200模拟旧格式收藏，验证点击后输入框 URL 与实际详情请求均正确、普通收藏仍走拍卖URL且收藏不丢失，フリマ无提交；原收藏工具／提交展示检查、用户端构建及编码／diff检查通过。
+
+2026-10-17 按用户五项要求：新增 `PRODUCT_TYPE_FLEAMARKET = fleamarket`，共享 normalizeProductType 接受第三类型，フリマ识别兼容类型字段／既有标记／Z ID／URL；详情及搜索返回 productType、缓存与 normalizeProductSnapshot 均保留 fleamarket，使用原 product_type 字段即可，无新增列或历史回填。普通／商城判定及价格换算维持原规则。搜索摘要类型读取实际 seller.isStore／taxFlag，旧列表兼容原店铺 class 标记，且仅加入类型字段，不改变商品顺序、分页或价格。
+
+显示：共用 ProductTypeTag 支持全称与普／商／P 简写；首页原普通／商城全称标签和商品信息保留，フリマ全称改「フリマ 商品」并用紫色底，标题前加 P；各商品详情标题前加对应普／商／P。搜索普通／商城商品标题下加全称标签，フリマ原站 logo 保留。入札中原 direct 可再入札按钮移至左侧图片的最高价下面，multi_bid／失败分析资格及原跳转不变。フリマ搜索右侧按钮改「購入」，可行动详情页底部改「去購入」（原只读详情关闭按钮不改），仅フリマ详情隐藏拍卖次数与截止时间；普通／商城仍显示两项和「入札／去竞拍」。点击フリマ购买入口仍沿原商品展示页显示暂不可购买提示，无任务或实际购买；API及批量对新类型字段也继续拒绝。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/routes/proxy.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/fleamarket.test.js`、原 task.test.js／task.batch.test.js／yahooMultiAccount.test.js 隔离回归、`node src/shared/priceRules.test.cjs`、`node src/server/services/productRepository.test.js`、原 ActiveBidding／WonItems／ProductSearchPopup 展示检查、bidPrice 检查、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`、语法／编码／diff 检查通过。390／1200浏览器覆盖三类搜索标签／详情标题、普通商城拍卖信息保留、フリマ信息隐藏、購入和去購入两入口仍无提交、URL／Z输入；独立临时浏览器检查再入札位于左图最高价下方、direct唯一按钮、原跳转不变。只读实时「ワンフェス」搜索解析53件，普通52／商城1，源数据 seller／taxFlag 与类型相符。截图已检查。本轮未运行完整项目回归、未改生产数据或操作真实购买。
+
+部署：API更新 proxy.js、task.js、services/productRepository.js，共享更新 domainConstants.cjs／priceRules.cjs／fleamarket.cjs，更新用户端 dist 并重启 API。无数据库迁移、插件或后台更新；随本次提交同步GitHub，未部署生产。后续フリマ购买流程仍待另行设计。
 
 ### 0i. 用户端普通／商城标识
 

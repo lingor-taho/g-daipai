@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const db = require('../models');
 const { deleteUser } = require('../services/deleteUser');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
@@ -3042,8 +3043,26 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
     throw error;
   }
 
+  const unsupportedItemIds = new Set();
+  const pendingItems = await database.getAll(
+    `SELECT id, product_id, product_url, product_type
+     FROM manual_order_import_items WHERE batch_id = ? AND status = 'pending_user'`,
+    [batch.id]
+  );
+  for (const item of pendingItems) {
+    if (!isFleamarketProduct(item)) continue;
+    unsupportedItemIds.add(Number(item.id));
+    await database.query(
+      `UPDATE manual_order_import_items
+       SET status = 'skipped_unsupported', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND batch_id = ? AND status = 'pending_user'`,
+      [item.id, batch.id]
+    );
+  }
+
   for (const item of Array.isArray(assignments) ? assignments : []) {
     const itemId = Number(item?.itemId || item?.id || 0);
+    if (unsupportedItemIds.has(itemId)) continue;
     const userId = Number(item?.userId || item?.assignedUserId || 0);
     const shippingFeeText = String(item?.shippingFeeText ?? item?.shipping_fee_text ?? '').trim();
     if (!Number.isInteger(itemId) || itemId <= 0) continue;
@@ -3103,6 +3122,16 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
   let skippedExisting = 0;
 
   for (const item of items) {
+    if (unsupportedItemIds.has(Number(item.id))) continue;
+    if (isFleamarketProduct(item)) {
+      await database.query(
+        `UPDATE manual_order_import_items
+         SET status = 'skipped_unsupported', updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND batch_id = ? AND status = 'pending_user'`,
+        [item.id, batch.id]
+      );
+      continue;
+    }
     const productId = normalizeImportProductId(item.product_id);
     if (!productId || !item.assigned_user_id) continue;
     if(database.raw && batch.account_id) {

@@ -23,3 +23,7 @@ assert.equal(parseBatchBidText('wrong 100\nd1246248584 11800')[1].error, undefin
 assert.throws(() => parseBatchBidText(' \n'));
 assert.throws(() => parseBatchBidText(Array(51).fill('d1246248584 11800').join('\n')), /50/);
 console.log('Batch bid parser tests passed.');
+
+const mixedFleamarket = parseBatchBidText('z650804548 29700\np1246403282 21800\nhttps://paypayfleamarket.yahoo.co.jp/item/z650805568 26200\nd1246248584 11800');
+assert.deepEqual(mixedFleamarket.map(row => row.error || null), ['不支持フリマ商品！', null, '不支持フリマ商品！', null]);
+assert.deepEqual(mixedFleamarket.filter(row => !row.error).map(row => row.productId), ['p1246403282', 'd1246248584']);

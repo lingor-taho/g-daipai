@@ -599,7 +599,7 @@ function parseFleamarketProductHtml(html, auctionId, standardUrl) {
   const unavailable = /\/(?:OutOfStock|SoldOut|Discontinued)$/.test(offer?.availability || '');
   return {
     auctionId, standardUrl, title: String(product.name), currentPrice: price, buyoutPrice: price,
-    buyoutOnly: true, isFleamarket: true, bidCount: 0, taxType: 'tax_zero', productType: 'normal',
+    buyoutOnly: true, isFleamarket: true, bidCount: 0, taxType: 'tax_zero', productType: 'fleamarket',
     shippingFeeText: shippingValue != null && Number.isFinite(Number(shippingValue))
       ? Number(shippingValue) === 0 ? '送料無料' : `送料${Number(shippingValue)}円` : '',
     endTime: '', imageUrl: images[0]?.url || '', images, descriptionText,
@@ -765,10 +765,20 @@ function extractSearchPriceByLabel(cardHtml, label) {
   return parsePriceText(normalizeText(priceHtml));
 }
 
+function getSearchProductType(item, cardHtml = '') {
+  if (item?.isFleamarketItem || String(item?.auctionId || '').toLowerCase().startsWith('z')) return 'fleamarket';
+  const store = item?.seller?.isStore === true || item?.seller?.type === 'STORE' || Number(item?.taxFlag) === 1 ||
+    /class=["'][^"']*Product__(?:label|icon)[^"']*--store\b/i.test(cardHtml);
+  return store ? 'store' : 'normal';
+}
+
 function extractSearchProductCards(html) {
   const productsHtml = extractProductsListHtml(html);
   if (!productsHtml) return extractNextSearchProductCards(html);
 
+  const searchState = extractNextSearchState(html);
+  const searchItemsById = new Map([...(searchState?.items?.listing?.items || []), ...(searchState?.items?.featuredListing?.items || [])]
+    .map(item => [String(item.auctionId || '').toLowerCase(), item]));
   const items = [];
   const seen = new Set();
   const listItemPattern = /<li\b[^>]*>[\s\S]*?<\/li>/gi;
@@ -805,6 +815,8 @@ function extractSearchProductCards(html) {
       auctionId: parsed.auctionId,
       standardUrl: parsed.standardUrl,
       ...(parsed.auctionId.startsWith('z') ? { isFleamarket: true, buyoutOnly: true } : {}),
+      productType: getSearchProductType(
+        searchItemsById.get(parsed.auctionId) || { auctionId: parsed.auctionId }, cardHtml),
       title: title || ('商品 ' + parsed.auctionId),
       imageUrl: extractHtmlAttribute(titleLink || imageLink, 'data-auction-img') ||
         extractHtmlAttribute(imageHtml, 'src'),
@@ -849,6 +861,7 @@ function extractNextSearchProductCards(html) {
       auctionId: parsed.auctionId,
       standardUrl: parsed.standardUrl,
       ...(item.isFleamarketItem || parsed.auctionId.startsWith('z') ? { isFleamarket: true, buyoutOnly: true } : {}),
+      productType: getSearchProductType(item),
       title: String(item.title || ('商品 ' + parsed.auctionId)),
       imageUrl: String(item.imageUrl || ''),
       currentPrice: parsePriceText(item.price),
@@ -985,7 +998,7 @@ function createProductService({
       buyoutOnly: Boolean(rawProduct.buyoutOnly || rawProduct.buyout_only),
       ...(parsed.auctionId.startsWith('z') ? { isFleamarket: true } : {}),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
-      productType: rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
+      productType: parsed.auctionId.startsWith('z') ? 'fleamarket' : rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
       shippingFeeText: rawProduct.shippingFeeText || rawProduct.shipping_fee_text || '',
       endTime: rawProduct.endTime || '',
       imageUrl: rawProduct.imageUrl || '',

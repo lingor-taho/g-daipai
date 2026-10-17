@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const { ENDED_REASON } = require('../services/endedTaskReason');
 const { execFile } = require('child_process');
 const db = require('../models');
@@ -2342,6 +2343,7 @@ async function updateManualOrderImportStatus(payload = {}, database = db) {
   let skippedExisting = 0;
   let scannedCount = 0;
   for (const item of items) {
+    if (isFleamarketProduct(item) || isFleamarketProduct(item.url)) continue;
     const productId = normalizeManualImportProductId(item.productId || item.product_id || item.url);
     if (!productId) continue;
     scannedCount += 1;
@@ -3610,3 +3612,4 @@ module.exports.YAHOO_LOW_PRICE_INITIAL_BID = YAHOO_LOW_PRICE_INITIAL_BID;
 module.exports.resolveOrderFinalPrice = resolveOrderFinalPrice;
 module.exports.normalizeYahooWonTimeText = normalizeYahooWonTimeText;
 module.exports.buildPluginTaskSnapshotUpdate = buildPluginTaskSnapshotUpdate;
+module.exports.updateManualOrderImportStatus = updateManualOrderImportStatus;

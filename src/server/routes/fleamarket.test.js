@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { normalizeAuctionUrl, parseProductHtml, extractSearchProductCards, createProductService } = require('./proxy');
-const { buildSubmitTaskInput, submitAuctionTask } = require('./task');
+const { buildSubmitTaskInput, submitAuctionTask, validateBatchProduct } = require('./task');
 const productHtml = fs.readFileSync(path.join(__dirname, 'fixtures/fleamarket-product.html'), 'utf8');
 const searchHtml = fs.readFileSync(path.join(__dirname, 'fixtures/fleamarket-search.html'), 'utf8');
 const id = 'z650804548';
@@ -17,6 +17,7 @@ async function run() {
   assert.equal(product.currentPrice, 29700);
   assert.equal(product.buyoutPrice, 29700);
   assert.equal(product.buyoutOnly, true);
+  assert.equal(product.productType, 'fleamarket');
   assert.equal(product.images.length, 2);
   assert.match(product.title, /影輝鋼衣龍王丸/);
   assert.equal(product.shippingFeeText, '送料無料');
@@ -31,6 +32,7 @@ async function run() {
   for (const card of cards) {
     assert.equal(card.standardUrl, `https://paypayfleamarket.yahoo.co.jp/item/${card.auctionId}`);
     assert.equal(card.isFleamarket, true);
+    assert.equal(card.productType, 'fleamarket');
   }
   const oldCards = extractSearchProductCards(`<div class="Products__list">
     <li class="Product"><a class="Product__titleLink" data-auction-id="${id}" href="${url}">フリマ</a></li>
@@ -80,24 +82,45 @@ async function run() {
   };
   const context = { user: { id: 1, user_level: 3 }, actingUser: { id: 1 } };
   const body = { product_url: url, max_price: 29700, strategy: 'multi_bid', bid_mode: 'bid', client_request_id: 'flea-submit' };
-  const message = 'Yahoo!フリマ 暂时无法购买，请联系管理员！';
-  const options = { database, fetchProduct: async () => { throw new Error('blocked products must not be fetched for purchase'); } };
+  const message = '不支持フリマ商品！';
+  assert.throws(() => validateBatchProduct({ success: true, data: product }, id), { message });
+  const options = { database, fetchProduct: async target => {
+    assert.equal(target, url); return { success: true, source: 'http', data: product };
+  } };
   try {
+    let count = 0;
     for (const product_url of [url, id, id.toUpperCase(), `https://auctions.yahoo.co.jp/jp/auction/${id}`]) {
       for (const bid_mode of ['bid', 'buyout']) {
-        assert.throws(() => buildSubmitTaskInput(context.user, { ...body, product_url, bid_mode }),
-          error => error.statusCode === 400 && error.message === message);
-        for (const strictBatch of [false, true]) {
-          await assert.rejects(submitAuctionTask(context, { ...body, product_url, bid_mode }, { ...options, strictBatch }),
-            error => error.statusCode === 400 && error.message === message);
-        }
+        const input = buildSubmitTaskInput(context.user, { ...body, product_url, bid_mode });
+        assert.equal(input.standardUrl, url);
+        assert.equal(input.bidMode, 'buyout');
+        const result = await submitAuctionTask(context, { ...body, product_url, bid_mode,
+          client_request_id: `single-${++count}`, start_minutes_before: 5, pending_followup_max_price: 99999 }, options);
+        const task = await database.getOne('SELECT * FROM tasks WHERE id=?', [result.task_id]);
+        assert.equal(task.bid_mode, 'buyout'); assert.equal(task.strategy, 'direct');
+        assert.equal(task.max_price, 29700); assert.equal(task.user_max_price, 29700);
+        assert.equal(task.start_minutes_before, null); assert.equal(task.pending_followup_max_price, null);
+        await assert.rejects(submitAuctionTask(context, { ...body, product_url, bid_mode }, { ...options, strictBatch: true }), { message });
       }
     }
+    const stored = await database.getOne('SELECT * FROM products WHERE product_id=?', [id]);
+    assert.equal(stored.product_type, 'fleamarket'); assert.equal(stored.product_url, url);
+    const once = await submitAuctionTask(context, body, options);
+    assert.equal((await submitAuctionTask(context, body, options)).duplicate, true);
+    assert.ok(once.task_id);
+    for (const result of [
+      { success: true, source: 'cache-fallback', data: product },
+      { success: true, data: { ...product, auctionStatus: 'ended' } },
+      { success: true, data: { ...product, buyoutPrice: 0 } },
+      { success: true, data: { ...product, buyoutPrice: 30000 } },
+      { success: true, data: { ...product, auctionId: 'z123456789' } }
+    ]) await assert.rejects(submitAuctionTask(context, { ...body, client_request_id: 'reject' }, {
+      database, fetchProduct: async () => result
+    }));
     const { normalizeBatchProduct } = require('../../shared/batchBid.cjs');
     for (const value of [url, id, id.toUpperCase()]) assert.throws(() => normalizeBatchProduct(value), { message });
-    assert.equal((await database.getOne('SELECT COUNT(*) AS n FROM tasks')).n, 0);
-    assert.equal((await database.getOne('SELECT COUNT(*) AS n FROM products')).n, 0);
+    assert.equal((await database.getOne('SELECT COUNT(*) AS n FROM tasks')).n, count + 1);
   } finally { raw.close(); }
-  console.log('Fleamarket parsing, mixed search, URL routing, fallback and purchase blocking passed');
+  console.log('Fleamarket parsing, mixed search, URL routing, fallback and single buyout submission passed');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

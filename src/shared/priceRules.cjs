@@ -2,7 +2,8 @@ const {
   TAX_TYPE_ZERO,
   TAX_TYPE_INCLUDED,
   PRODUCT_TYPE_NORMAL,
-  PRODUCT_TYPE_STORE
+  PRODUCT_TYPE_STORE,
+  PRODUCT_TYPE_FLEAMARKET
 } = require('./domainConstants.cjs');
 
 function normalizeTaxType(value) {
@@ -10,7 +11,7 @@ function normalizeTaxType(value) {
 }
 
 function normalizeProductType(value, taxType) {
-  if (value === PRODUCT_TYPE_STORE || value === PRODUCT_TYPE_NORMAL) return value;
+  if (value === PRODUCT_TYPE_STORE || value === PRODUCT_TYPE_NORMAL || value === PRODUCT_TYPE_FLEAMARKET) return value;
   return normalizeTaxType(taxType) === TAX_TYPE_INCLUDED ? PRODUCT_TYPE_STORE : PRODUCT_TYPE_NORMAL;
 }
 

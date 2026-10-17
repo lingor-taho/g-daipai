@@ -8,7 +8,7 @@ import { applyClientTheme, colors, getClientTheme, themeOptions } from '../style
 const items = [
   { to: '/submit', label: '提交任务' },
   { to: '/bidding', label: '入札中' },
-  { to: '/won', label: '落札商品' },
+  { to: '/won', label: '成交商品' },
   { to: '/stats', label: '统计页面' }
 ];
 

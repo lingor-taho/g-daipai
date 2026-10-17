@@ -1,9 +1,9 @@
-const FLEAMARKET_PURCHASE_BLOCKED_MESSAGE = 'Yahoo!フリマ 暂时无法购买，请联系管理员！';
+const FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE = '不支持フリマ商品！';
 
 function isFleamarketProduct(input) {
   if (input && typeof input === 'object') {
-    if (input.isFleamarket || input.isFleamarketItem) return true;
-    return [input.auctionId, input.product_id, input.standardUrl, input.product_url]
+    if (input.isFleamarket || input.isFleamarketItem || input.productType === 'fleamarket' || input.product_type === 'fleamarket') return true;
+    return [input.auctionId, input.product_id, input.productId, input.standardUrl, input.product_url, input.productUrl]
       .some(value => isFleamarketProduct(value));
   }
   const value = String(input || '').trim();
@@ -11,4 +11,4 @@ function isFleamarketProduct(input) {
     /^(?:https?:\/\/)?paypayfleamarket\.yahoo\.co\.jp\/item\//i.test(value);
 }
 
-module.exports = { isFleamarketProduct, FLEAMARKET_PURCHASE_BLOCKED_MESSAGE };
+module.exports = { isFleamarketProduct, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE };

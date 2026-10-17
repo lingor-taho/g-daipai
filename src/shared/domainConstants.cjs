@@ -3,6 +3,7 @@ const TAX_TYPE_INCLUDED = 'tax_included';
 
 const PRODUCT_TYPE_NORMAL = 'normal';
 const PRODUCT_TYPE_STORE = 'store';
+const PRODUCT_TYPE_FLEAMARKET = 'fleamarket';
 
 const BID_MODE_BID = 'bid';
 const BID_MODE_BUYOUT = 'buyout';
@@ -59,6 +60,7 @@ module.exports = {
   TAX_TYPE_INCLUDED,
   PRODUCT_TYPE_NORMAL,
   PRODUCT_TYPE_STORE,
+  PRODUCT_TYPE_FLEAMARKET,
   BID_MODE_BID,
   BID_MODE_BUYOUT,
   TASK_STATUS_PENDING,

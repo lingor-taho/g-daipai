@@ -11682,6 +11682,43 @@ async function testRunWorkflowActionRunsManualImportSeparatelyFromScan() {
   assert.match(completeCall?.body || '', /manual_order_import/);
 }
 
+async function testManualOrderImportSkipsFleamarketBeforeSnapshots() {
+  const requests = [];
+  const createdUrls = [];
+  let snapshots = 0;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    fetch: async (url, options = {}) => {
+      requests.push({ url: String(url), options });
+      return { ok: true, async json() { return {}; } };
+    },
+    tabs: {
+      async create(info) { createdUrls.push(info.url); return { id: createdUrls.length, status: 'complete', url: info.url }; },
+      async get(id) { return { id, status: 'complete' }; },
+      async sendMessage(tabId, message) {
+        if (message?.type === 'EXTRACT_ORDER_IMPORT_PAGE') return {
+          success: true, nextPageUrl: '', orders: [
+            { productId: 'z650804548', wonTimeText: '6/24 23:48', productType: 'normal' },
+            { productId: 'x1234567890', wonTimeText: '6/25 23:48', productType: 'fleamarket' },
+            { productId: 'a1234567890', wonTimeText: '6/25 23:48', url: 'https://paypayfleamarket.yahoo.co.jp/item/z650805568' },
+            { productId: 'p1234567890', wonTimeText: '6/25 23:48', productType: 'normal' },
+            { productId: 'g1234567890', wonTimeText: '6/25 23:48', productType: 'store' }
+          ]
+        };
+        if (message?.type === 'GET_PRODUCT_SNAPSHOT') { snapshots++; return { auctionId: message.auctionId, title: 'allowed order' }; }
+        return {};
+      }
+    }
+  });
+  const result = await api.executeManualOrderImportJob({ batchId: 9, startDate: '2026-06-25', endDate: '2026-06-25', maxPages: 1 });
+  assert.equal(result.count, 2);
+  assert.equal(snapshots, 2);
+  assert.equal(createdUrls.some(url => /fleamarket|z650/.test(url)), false);
+  const payload = JSON.parse(requests.find(item => /manual-order-import\/status$/.test(item.url)).options.body);
+  assert.deepEqual(Array.from(payload.items, item => item.productId), ['p1234567890', 'g1234567890']);
+  assert.deepEqual(Array.from(payload.items, item => item.productType), ['normal', 'store']);
+}
+
 async function testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType() {
   const fetchCalls = [];
   let sendMessageCount = 0;
@@ -12108,6 +12145,7 @@ await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   await testBidRetryKeepsActiveRunSlotUntilRetryFinishes();
   await testRunWorkflowActionHandlesAnsweredPinBeforeThrottle();
   await testRunWorkflowActionRunsManualImportSeparatelyFromScan();
+  await testManualOrderImportSkipsFleamarketBeforeSnapshots();
   await testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType();
   await testYahooMessagesRunWhileWorkflowIsBusy();
   await testYahooMessagesDoNotOverlapTheirOwnClaim();

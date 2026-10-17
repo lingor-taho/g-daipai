@@ -1137,6 +1137,7 @@ function testExtractsYahooSearchProductSummaries() {
   assert.deepEqual(products[0], {
     auctionId: 'x1230699905',
     standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/x1230699905',
+    productType: 'normal',
     title: 'テスト & 商品',
     imageUrl: 'https://img.example/x1230699905.jpg?x=1&y=2',
     currentPrice: 2450,
@@ -1334,6 +1335,14 @@ async function testNextSearchResultsAndPagination() {
   assert.equal(cards[1].endTimeEpoch, Date.parse(first.endTime) / 1000);
   assert.equal(cards[0].buyoutPrice, 0);
   assert.equal(cards[0].shippingFeeText, '送料無料');
+  assert.equal(cards[1].productType, 'normal');
+  const typed = extractSearchProductCards(html([{ ...second, seller: { isStore: true } }, { ...first, auctionId: 'a1234567890' }]));
+  assert.equal(typed[0].productType, 'store');
+  assert.equal(typed[1].productType, 'normal');
+  assert.equal(extractSearchProductCards(html([{ ...second, taxFlag: 1 }]))[0].productType, 'store');
+  assert.equal(extractSearchProductCards(html([{ ...second, taxFlag: 0 }]))[0].productType, 'normal');
+  const legacyStore = `<div class="Products__list">${buildSearchProductCard().replace('<div class="Product__detail">', '<div class="Product__detail"><span class="Product__label Product__label--store">ストア</span>')}</div>`;
+  assert.equal(extractSearchProductCards(legacyStore)[0].productType, 'store');
   assert.deepEqual(extractAuctionIdsFromSearchHtml(rendered + html([first, second])), ['v1230349098', 'x1230699905']);
   assert.equal(extractSearchProductCards(html([first, second], 52, {}, 'props')).length, 2);
   assert.equal(hasNextYahooSearchPage(html([first, second], 52)), true);

@@ -5201,6 +5201,13 @@ async function getProductSnapshotForImport(productId, productUrl) {
   }
 }
 
+function isFleamarketManualImportItem(item) {
+  if (item?.productType === 'fleamarket' || item?.product_type === 'fleamarket' || item?.isFleamarket || item?.isFleamarketItem) return true;
+  return [item?.productId, item?.product_id, item?.auctionId, item?.url, item?.productUrl, item?.product_url, item?.standardUrl]
+    .some(value => /^z\d{8,10}$/i.test(String(value || '').match(/[a-zA-Z]?\d{8,10}/)?.[0] || '') ||
+      /^(?:https?:\/\/)?paypayfleamarket\.yahoo\.co\.jp\/item\//i.test(String(value || '').trim()));
+}
+
 async function executeManualOrderImportJob(job) {
   const batchId = job?.batchId;
   const maxPages = Math.max(1, Math.min(50, Number(job?.maxPages || 10)));
@@ -5226,6 +5233,7 @@ async function executeManualOrderImportJob(job) {
       }
       scannedPages += 1;
       for (const order of pageResult.orders || []) {
+        if (isFleamarketManualImportItem(order)) continue;
         const productId = normalizeAuctionId(order.productId || order.url);
         if (!productId) continue;
         const wonMs = parseYahooWonTimeMs(order.wonTimeText);
@@ -5254,6 +5262,7 @@ async function executeManualOrderImportJob(job) {
     const items = [];
     for (const item of itemsByProduct.values()) {
       const snapshot = await getProductSnapshotForImport(item.productId, item.productUrl);
+      if (isFleamarketManualImportItem(snapshot)) continue;
       const productType = item.productType === 'store' || snapshot?.productType === 'store' ? 'store' : 'normal';
       items.push({
         ...item,

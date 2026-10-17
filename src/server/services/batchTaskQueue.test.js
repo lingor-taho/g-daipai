@@ -211,6 +211,21 @@ async function run() {
     assert.equal(starts.length, 6, 'Each product is fetched exactly once');
     console.log(`Batch submission simulation: enqueue=${enqueueElapsedMs}ms; background preparation=${elapsedMs}ms; 6 products, one fetch each, serial worker`);
   } finally { parallel.close(); }
+  const mixed = fixture();
+  try {
+    mixed.queue.enqueue(mixed.context, { text: 'z650804548 29700\nd1246248584 11800\nhttps://paypayfleamarket.yahoo.co.jp/item/z650805568 26200\np1246403282 21800', client_request_id: 'mixed-flea' });
+    await mixed.queue.processPending();
+    assert.deepEqual(mixed.calls.map(url => url.split('/').pop()), ['d1246248584', 'p1246403282']);
+    assert.equal(mixed.raw.prepare('SELECT COUNT(*) AS n FROM tasks').get().n, 2);
+    const result = mixed.queue.listResults(7)[0];
+    assert.equal(result.submit_success_count, 2);
+    assert.equal(result.submit_failed_count, 2);
+    assert.ok(result.items.every(row => row.error === '不支持フリマ商品！' || row.error_msg === '不支持フリマ商品！'));
+    mixed.queue.enqueue(mixed.context, { text: 'z650804548 29700', client_request_id: 'only-flea' });
+    await mixed.queue.processPending();
+    assert.equal(mixed.calls.length, 2, 'All-fleamarket batches never call the submitter');
+    assert.equal(mixed.raw.prepare('SELECT COUNT(*) AS n FROM tasks').get().n, 2);
+  } finally { mixed.close(); }
   const schema = fs.readFileSync(path.join(__dirname, 'batchTaskQueue.sql'), 'utf8').trim();
   assert.ok(fs.readFileSync(path.join(__dirname, '../../db/init.sql'), 'utf8').includes(schema));
   console.log('Durable batch queue tests passed: quick enqueue, per-item task creation, continued submissions, restart recovery, submission-only results and user isolation.');

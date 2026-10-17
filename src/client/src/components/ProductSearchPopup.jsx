@@ -1,3 +1,5 @@
+import ProductTypeTag from './ProductTypeTag';
+import fleamarket from '../../../shared/fleamarket.cjs';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Popup, SpinLoading } from 'antd-mobile';
 import FavoriteButton from './FavoriteButton';
@@ -357,6 +359,7 @@ export default function ProductSearchPopup({
   const isFavorite = item => favorites.some(value => value.auctionId === String(item.auctionId || '').toLowerCase());
   const [selectedItem, setSelectedItem] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
+  const detailIsFleamarket = fleamarket.isFleamarketProduct(detailProduct || selectedItem);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [history, setHistory] = useState({loading:false,html:'',message:''});
   useEffect(() => { setHistoryVisible(false); }, [visible, selectedItem?.auctionId]);
@@ -619,7 +622,7 @@ export default function ProductSearchPopup({
                     </div>
                   ) : null}
 
-                  <h2 className="product-search-detail-title">{detailProduct.title}</h2>
+                  <h2 className="product-search-detail-title"><ProductTypeTag product={detailProduct} />{detailProduct.title}</h2>
                   <div className="product-search-detail-price">
                     当前：{detailProduct.detailDisplayPrice?.currentPriceText || formatJPY(detailProduct.currentPrice)}
                   </div>
@@ -637,14 +640,16 @@ export default function ProductSearchPopup({
                       <span className="product-search-detail-meta-label">运费</span>
                       <span>{detailProduct.shippingFeeText || '未显示'}</span>
                     </div>
-                    <div className="product-search-detail-meta-row">
-                      <span className="product-search-detail-meta-label">拍卖次数</span>
-                      <button type="button" style={{padding:0,border:0,background:'transparent',font:'inherit',textAlign:'left',color:'#2563eb',cursor:'pointer',textDecoration:'underline'}} onClick={() => setHistoryVisible(true)} aria-label="查看拍卖记录">{Number(detailProduct.bidCount || 0)}</button>
-                    </div>
-                    <div className="product-search-detail-meta-row">
-                      <span className="product-search-detail-meta-label">截止时间</span>
-                      <span>{formatYahooEndTime(detailProduct.endTime)}</span>
-                    </div>
+                    {!detailIsFleamarket && (<>
+                      <div className="product-search-detail-meta-row">
+                        <span className="product-search-detail-meta-label">拍卖次数</span>
+                        <button type="button" style={{padding:0,border:0,background:'transparent',font:'inherit',textAlign:'left',color:'#2563eb',cursor:'pointer',textDecoration:'underline'}} onClick={() => setHistoryVisible(true)} aria-label="查看拍卖记录">{Number(detailProduct.bidCount || 0)}</button>
+                      </div>
+                      <div className="product-search-detail-meta-row">
+                        <span className="product-search-detail-meta-label">截止时间</span>
+                        <span>{formatYahooEndTime(detailProduct.endTime)}</span>
+                      </div>
+                    </>)}
                     <div className="product-search-detail-meta-row">
                       <span className="product-search-detail-meta-label">商品状态</span>
                       <span>{detailProduct.conditionName || '未显示'}</span>
@@ -712,6 +717,9 @@ export default function ProductSearchPopup({
                             </span>
                           </div>
                         )}
+                        {!favoritesOnly && !fleamarket.isFleamarketProduct(item) && (
+                          <div style={{ marginTop: 4 }}><ProductTypeTag product={item} fullName /></div>
+                        )}
                         <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.55, color: colors.muted }}>
                           {favoritesOnly ? (
                             <div>到期：{remainingFavoriteDays(item.endTime, now) === null ? '未知' : `${remainingFavoriteDays(item.endTime, now)}天`}</div>
@@ -738,7 +746,7 @@ export default function ProductSearchPopup({
                           onClick={() => onBid(item)}
                           style={{ ...outlineButtonStyle, flex: '0 0 auto', '--text-color': colors.danger }}
                         >
-                          入札
+                          {fleamarket.isFleamarketProduct(item) ? '購入' : '入札'}
                         </Button>}
                       </div>
                     </div>
@@ -770,7 +778,7 @@ export default function ProductSearchPopup({
                   onClick={() => onBid(detailProduct || selectedItem)}
                   style={{ '--background-color': colors.danger, '--border-color': colors.danger, fontSize: 17, fontWeight: 700 }}
                 >
-                  去竞拍
+                  {detailIsFleamarket ? '去購入' : '去竞拍'}
                 </Button>
               )}
             </div>
