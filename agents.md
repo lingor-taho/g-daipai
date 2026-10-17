@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-17 P商品Google写表失败已本地修复：生产z705858626订单2339已待收货且物流完整，但C列商品链接校验仅支持拍卖URL，P/item/链接被拦在Google请求之前。productIdsFromSheetCell补齐官方P链接识别，写前校验及已有行查重共用；后台各商品提醒链接统一按P／普通选择正确域名。P扫描HTTP测试改为经过真实appendRows服务、只模拟Google传输，覆盖此前漏测校验。需更新API googleSheets.js并重启及后台dist，无schema／插件／用户端变化；部署后用原待收货补表格修复历史失败单，已存在则跳过。未操作生产或真实表格，详见0y。
+
 2026-10-17 P确认收货新增中间成功提示适配：提交评价后可先出现“受取評価と取引が完了しました”弹窗，仅读该可见弹窗内OK并单次点击，再等待“すべての取引が完了しました”最终标题才沿原API回写完了；打开时已有该弹窗也先关OK再只读核对，不重新评价。普通／商城流程不变，仅插件background.js更新后reload，无API／数据库／两端静态变更，详见0x。
 
 2026-10-17 P确认收货已按真实HTML本地接入：沿原Google颜色匹配与工作领取，进入同商品trade/buyer后勾选“商品の内容を確認しました”，按钮可用才点击“受取評価をして取引を完了する”，如出现0x的结果提示先单次点击OK，仅读到可见完成标题“すべての取引が完了しました”后沿原API更新completed（完了）。已人工完成页面直接already_completed回写，不点击；失败不写成功。新增动作仅P分支，普通／商城原收货主体不变。批量弹窗P跳过提示移到输入标题正上方并全行标红。需更新插件并reload及用户端dist，无API／schema更新，详见0w。
@@ -221,6 +223,16 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0y. P Google 写表校验／查重与提醒链接
+
+只读生产确认z705858626订单2339：order_status=pending_receipt、shipping_company=お問い合わせ、tracking_number=646960564235、google_sheet_appended_at为空。报错“Google Sheets append requires a valid matching product ID for every row”在服务端appendRowsChecked的C列商品ID校验触发，不是Google网络／权限失败。原productIdsFromSheetCell仅读取裸ID及拍卖URL；现补齐paypayfleamarket.yahoo.co.jp/item/z...官方链接，保留完整ID边界和所有原普通／商城规则，识别纯链接、大小写／查询参数、HYPERLINK公式、hyperlink和富文本URL。写入校验与已有行查重使用同一函数；读取失败不追加、响应丢失不盲目重试、格式失败只是警告、已有数据跳过并标记完成均保持。
+
+后台新增utils/productUrl.ts复用共享P识别，AdminLayout的Google写表提醒／未发货提醒／错误文本商品链接使用正确商品域名，普通／商城仍原拍卖URL。无商品类型、订单状态或表格金额改变。自动写表与原待收货补表格共用appendPendingReceiptOrderToGoogleSheet，部署后原失败单可通过原补表格入口处理；不需重新购买或确认收货。
+
+验证通过：`node src/server/services/googleSheets.test.js` 覆盖P URL完整ID与域名／路径边界、五种链接表达，以及P混普通的已有行跳过／部分追加／读取失败／未知响应／格式失败／并发串行；四种P已有链接仅追加缺失一行，再次补写无重复。`node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.test.js` 不再把appendRows整个函数替换为成功，改为调用真实服务且只模拟Google读取／追加／格式请求，证明P扫描→真实商品链接校验→追加→appended_at标记的完整本地链路。原admin.orders／plugin API、AdminLayout展示、后台构建及360／390／1200浏览器（P和普通错误提醒href及原表格布局）通过，编码／语法／diff检查通过。未运行全项目回归，未部署或对生产表格补写。
+
+部署更新API services/googleSheets.js并重启，同时发布后台dist（含新商品链接工具）。无schema／插件／用户端更新。历史失败提醒在原补表格成功或确认已有行后由原机制清理；不可因为本地修复就宣称生产已补写。
 
 ### 0x. P 确认收货中间结果弹窗
 

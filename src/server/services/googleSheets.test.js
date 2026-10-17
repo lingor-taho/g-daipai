@@ -299,14 +299,25 @@ function testSheetProductIdsMatchExactly() {
     { textFormatRuns: [{ format: { link: { uri: 'https://auctions.yahoo.co.jp/jp/auction/r1243992660' } } }] }
   ]) assert.deepEqual([...productIdsFromSheetCell(cell)], ['r1243992660']);
   assert.deepEqual([...productIdsFromSheetCell({ userEnteredValue: { numberValue: 1240369268 } })], ['1240369268']);
+  const url='https://paypayfleamarket.yahoo.co.jp/item/z705858626';
+  for (const cell of [
+    {formattedValue:url},
+    {userEnteredValue:{stringValue:url.toUpperCase()+'?source=sheet'}},
+    {userEnteredValue:{formulaValue:`=HYPERLINK("${url}","商品")`}},
+    {hyperlink:url+'#detail',formattedValue:'商品'},
+    {textFormatRuns:[{format:{link:{uri:url}}}]}
+  ]) assert.deepEqual([...productIdsFromSheetCell(cell)],['z705858626']);
+  for (const text of ['https://example.com/item/z705858626',url+'00',url.replace('.co.jp','.co.jp.evil.test'),url.replace('/item/','/other/')]) {
+    assert.equal(productIdsFromSheetCell({formattedValue:text}).has('z705858626'),false,'P URL must have the right host/path and complete ID');
+  }
+
   for (const text of ['备注 r1243992660', 'r12439926600', 'https://example.com/r1243992660']) {
     assert.equal(productIdsFromSheetCell({ formattedValue: text }).has('r1243992660'), false);
   }
 }
 
-async function testAppendChecksExistingRowsAndUncertainResults() {
-  const ids = ['r1243992660', 'l1244119177'];
-  const rows = ids.map(id => ['', '', `https://auctions.yahoo.co.jp/jp/auction/${id}`, 'title']);
+async function testAppendChecksExistingRowsAndUncertainResults(ids = ['r1243992660', 'l1244119177']) {
+  const rows = ids.map(id => ['', '', id.startsWith('z') ? `https://paypayfleamarket.yahoo.co.jp/item/${id}` : `https://auctions.yahoo.co.jp/jp/auction/${id}`, 'title']);
   let present = [ids[0]];
   let appendCalls = 0;
   let readError = null;
@@ -376,9 +387,36 @@ async function testAppendChecksExistingRowsAndUncertainResults() {
   await assert.rejects(appendRows({ rows, productIds: [ids[1], ids[0]] }, options), /matching product ID/);
 }
 
+async function testFleamarketExistingLinkedRows() {
+  const url = id=>`https://paypayfleamarket.yahoo.co.jp/item/${id}`;
+  const ids = ['z705858626','z705858627','z705858628','z705858629','z705858630'];
+  const existing = [
+    {formattedValue:url(ids[0])},
+    {userEnteredValue:{formulaValue:`=HYPERLINK("${url(ids[1])}","商品")`}},
+    {hyperlink:url(ids[2]),formattedValue:'商品'},
+    {textFormatRuns:[{format:{link:{uri:url(ids[3])}}}],formattedValue:'商品'}
+  ];
+  let writes=0;
+  const rows=ids.map(id=>['','',url(id)]);
+  const options={config:{spreadsheetId:'p-url-dedupe-test',sheetName:'orders'},prepareSheet:async()=>{},
+    request:async()=>({sheets:[{data:[{rowData:existing.map(cell=>({values:[cell]}))}]}]}),
+    appendRequest:async(path,options)=>{
+      writes++;const values=JSON.parse(options.body).values;
+      assert.deepEqual(values,[rows[4]],'existing P rows in all link formats are skipped');
+      existing.push({formattedValue:values[0][2]});
+      return {updates:{updatedRows:1}};
+    }};
+  const result=await appendRows({rows,productIds:ids},options);
+  assert.equal(result.existingRows,4);assert.equal(result.appendedRows,1);
+  const repeated=await appendRows({rows,productIds:ids},options);
+  assert.equal(repeated.alreadyExists,true);assert.equal(writes,1,'backfill after success appends no duplicates');
+}
+
 async function run() {
   testSheetProductIdsMatchExactly();
   await testAppendChecksExistingRowsAndUncertainResults();
+  await testAppendChecksExistingRowsAndUncertainResults(['z705858626','l1244119177']);
+  await testFleamarketExistingLinkedRows();
   testCredentialPathUsesGoogleApplicationCredentials();
   testCredentialPathIsEmptyWithoutFileEnv();
   testExtractSpreadsheetIdFromUrl();

@@ -36,6 +36,9 @@ const { chromium } = require('playwright');
         let data = { success: true, items: [], total: 0 };
         if (p === '/api/admin/tasks' || p === '/api/admin/orders') data = { items: [row], total: 1 };
         if (p === '/api/admin/orders') data = { items: [row, {...row,id:2,product_id:'z705858626',product_type:'fleamarket',order_status:'pending_shipment'}, {...row,id:3,product_id:'s1247071818',product_type:'store'}], total: 3 };
+        if (p === '/api/admin/idle-flags') data = {googleSheetAlerts:[
+          {id:'p-google',productId:'z705858626',error:'test P append alert'},
+          {id:'ordinary-google',productId:'r1243992660',error:'test ordinary append alert'}]};
         if (p === '/api/admin/tasks/stats') data = { total: 1, pending: 1, processing: 0, failed: 1, success: 0 };
         if (p === '/api/admin/tasks/queue') data = {items:[{...row,queue_key:'task-1',status:'preparation_pending'}],total:1};
         await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
@@ -44,6 +47,12 @@ const { chromium } = require('playwright');
         await page.goto(`http://127.0.0.1:${server.address().port}/#/${name}`);
         const table = page.locator(`.admin-${name}-table`);
         await table.getByText(row.product_id, { exact: true }).waitFor();
+        const pAlert=page.locator('.ant-alert').filter({hasText:'test P append alert'});
+        await pAlert.waitFor();
+        assert.equal(await pAlert.getByRole('link',{name:'z705858626',exact:true}).getAttribute('href'),'https://paypayfleamarket.yahoo.co.jp/item/z705858626');
+        const ordinaryAlert=page.locator('.ant-alert').filter({hasText:'test ordinary append alert'});
+        assert.equal(await ordinaryAlert.getByRole('link',{name:'r1243992660',exact:true}).getAttribute('href'),'https://auctions.yahoo.co.jp/jp/auction/r1243992660');
+
         if (name === 'orders') {
           for (const [id,tag,color] of [[1,'普','green'],[2,'P','purple'],[3,'商','red']]) {
             const productCell=table.locator(`tbody tr[data-row-key="${id}"] td`).nth(3);

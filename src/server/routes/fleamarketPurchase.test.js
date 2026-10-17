@@ -9,7 +9,21 @@ const sheets = require('../services/googleSheets');
 sheets.applyGoogleSheetsConfigFromDb = async () => {};
 sheets.isGoogleSheetsConfigured = () => true;
 sheets.findRowsByProductIdsWithAnyColor = async ids => Object.fromEntries(ids.map(id=>[id,{matched:true}]));
-sheets.appendRows = async payload => {sheetWrites.push(payload);return {skipped:false};};
+// Exercise the REAL validation/dedupe/append service; mock only Google transport.
+const appendRows = sheets.appendRows;
+const googleRows = [];
+sheets.appendRows = async payload => {
+  sheetWrites.push(payload);
+  return appendRows(payload, {
+    config:{spreadsheetId:'isolated-fleamarket-sheet',sheetName:'orders'},
+    prepareSheet:async()=>{}, getSheetId:async()=>1,
+    request:async path=>path.endsWith(':batchUpdate')?{}:{sheets:[{data:[{rowData:googleRows.map(row=>({values:[{formattedValue:row[2]}]}))}]}]},
+    appendRequest:async(path,options)=>{
+      const values=JSON.parse(options.body).values;googleRows.push(...values);
+      return {updates:{updatedRows:values.length,updatedRange:`orders!A2:K${values.length+1}`}};
+    }
+  });
+};
 const plugin = require('./plugin');
 const {submitAuctionTask} = require('./task');
 
@@ -88,6 +102,9 @@ const {submitAuctionTask} = require('./task');
     assert.equal(raw.prepare('SELECT order_status FROM orders WHERE id=?').get(order.id).order_status,'pending_receipt');
     assert.equal(sheetWrites.length,1,'shared shipped status automatically invokes the existing sheet writer');
     assert.equal(sheetWrites[0].rows[0][2],'https://paypayfleamarket.yahoo.co.jp/item/z705860836');
+    assert.equal(googleRows.length,1,'real Google Sheets validation accepts and appends the P item URL');
+    assert.equal(googleRows[0][2],sheetWrites[0].rows[0][2]);
+    assert.ok(raw.prepare('SELECT google_sheet_appended_at FROM orders WHERE id=?').get(order.id).google_sheet_appended_at);
     assert.equal(sheetWrites[0].rows[0][8],'お問い合わせ');
     assert.equal(sheetWrites[0].rows[0][9],'646960564235');
     const shipment = raw.prepare('SELECT shipping_company,tracking_number FROM orders WHERE id=?').get(order.id);

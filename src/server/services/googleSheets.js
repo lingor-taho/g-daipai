@@ -359,6 +359,7 @@ function productIdsFromSheetCell(cell = {}) {
     const text = String(value ?? '').trim().toLowerCase();
     if (/^[a-z]?\d{8,10}$/.test(text)) ids.add(text);
     for (const match of text.matchAll(/https?:\/\/(?:page\.)?auctions\.yahoo\.co\.jp\/jp\/auction\/([a-z]?\d{8,10})(?=[/?#\s"'&)]|$)/g)) ids.add(match[1]);
+    for (const match of text.matchAll(/https?:\/\/paypayfleamarket\.yahoo\.co\.jp\/item\/(z\d{8,10})(?=[/?#\s"'&)]|$)/g)) ids.add(match[1]);
   }
   return ids;
 }

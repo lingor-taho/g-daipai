@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Input, Layout, Menu, Space, Typography, message } from 'antd';
 import { CloseOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
+import { getProductItemUrl } from '../utils/productUrl';
 import YahooAccountAlerts from '../YahooAccountAlerts';
 import YahooAccountStatusLights from '../YahooAccountStatusLights';
 import { getManualVerificationDisplayState } from '../manualVerificationState';
@@ -44,7 +45,7 @@ function renderPaymentAlertMessage(messageText: string) {
     parts.push(
       <a
         key={`${productId}-${match.index}`}
-        href={`https://auctions.yahoo.co.jp/jp/auction/${productId}`}
+        href={getProductItemUrl(productId)}
         target="_blank"
         rel="noreferrer"
         style={{ color: '#1677ff' }}
@@ -369,7 +370,7 @@ export default function AdminLayout() {
                 </Space>}
                 description={<div>{(alert.items || []).map((item: any) => (
                   <div key={item.productId}>
-                    商品 ID <a href={`https://auctions.yahoo.co.jp/jp/auction/${item.productId}`} target="_blank" rel="noreferrer">{item.productId}</a>
+                    商品 ID <a href={getProductItemUrl(item.productId)} target="_blank" rel="noreferrer">{item.productId}</a>
                     {' '}，失败 {item.attempts} 次，原因：{item.error || '-'}
                   </div>
                 ))}</div>}
@@ -385,7 +386,7 @@ export default function AdminLayout() {
                     <Typography.Text style={{ color: '#cf1322' }}>
                       Google表格写入失败：商品ID{' '}
                       <a
-                        href={`https://auctions.yahoo.co.jp/jp/auction/${alert.productId}`}
+                        href={getProductItemUrl(alert.productId)}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -490,7 +491,7 @@ export default function AdminLayout() {
                   <Space wrap>
                     <Typography.Text>
                       <a
-                        href={`https://auctions.yahoo.co.jp/jp/auction/${alert.productId}`}
+                        href={getProductItemUrl(alert.productId)}
                         target="_blank"
                         rel="noreferrer"
                         style={{ color: '#1677ff' }}
