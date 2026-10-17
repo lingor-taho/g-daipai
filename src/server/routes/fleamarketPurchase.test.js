@@ -27,7 +27,8 @@ const {submitAuctionTask} = require('./task');
     raw.prepare(`INSERT INTO tasks(id,user_id,account_id,product_id,max_price,strategy,bid_mode,status,claim_token,claim_instance,execution_unknown)
       VALUES(?,1,?,?,300,'direct','buyout',?,'claim-flea',?,?)`).run(id,accountId,product,status,context.instanceId,unknown);
   };
-  const call = async (id,action,body={},expected=200,customHeaders=headers) => {
+  const call = async (id,action,body,expected=200,customHeaders=headers) => {
+    body ??= action === 'fleamarket/begin' ? {itemPrice:300} : {};
     const response = await fetch(`${base}/task/${id}/${action}`,{method:'POST',headers:customHeaders,body:JSON.stringify(body)});
     const result = await response.json(); assert.equal(response.status,expected,JSON.stringify(result)); return result;
   };
@@ -39,14 +40,14 @@ const {submitAuctionTask} = require('./task');
     await assert.rejects(duplicateSubmit('z705860836'),/已有待执行任务/);
     await call(1,'fleamarket/complete',evidence('z705860836'),409);
     await call(1,'fleamarket/begin',{},409,{...headers,'X-Yahoo-Claim':'stale'});
+    for (const itemPrice of [null,0,200,301,'300']) await call(1,'fleamarket/begin',{itemPrice},409);
+    await call(1,'fleamarket/begin',{},409);
+    assert.equal(raw.prepare('SELECT execution_unknown FROM tasks WHERE id=1').get().execution_unknown,0);
     await call(1,'fleamarket/begin');
     await call(1,'fleamarket/begin',{},409);
     await call(1,'retry',{},409);
     await call(1,'fleamarket/complete',evidence('z999999999'),409);
     await call(1,'fleamarket/complete',{...evidence('z705860836'),successText:'出品者の発送をお待ちください'},409);
-    await call(1,'fleamarket/complete',{...evidence('z705860836'),paidAmount:301},409);
-    for (const paidAmount of [200,0]) await call(1,'fleamarket/complete',{...evidence('z705860836'),paidAmount},409);
-    await call(1,'fleamarket/complete',{...evidence('z705860836'),discountApplied:true},409);
     const biddingResponse = await fetch(`${base}/task/1/status`,{method:'PATCH',headers,body:JSON.stringify({status:'bidding',bid_price:300})});
     assert.equal(biddingResponse.status,409,'P cannot enter the intermediate bidding state');
     assert.equal(raw.prepare('SELECT status FROM tasks WHERE id=1').get().status,'processing');
@@ -120,6 +121,17 @@ const {submitAuctionTask} = require('./task');
     seed(6,'p123456788'); raw.prepare("UPDATE products SET product_type='normal' WHERE product_id='p123456788'").run();
     await call(6,'fleamarket/begin',{},409);
     raw.prepare("UPDATE tasks SET status='failed',execution_unknown=0 WHERE id IN (2,4,6)").run();
+    // Discounted, zero and absent actual payments never change the gross deal price.
+    for (const [offset, paidAmount] of [[0,10880],[1,0],[2,null],[3,undefined]]) {
+      const taskId=20+offset, product='z70586085'+offset;
+      seed(taskId,product);
+      raw.prepare('UPDATE tasks SET max_price=11700 WHERE id=?').run(taskId);
+      await call(taskId,'fleamarket/begin',{itemPrice:11700});
+      const result=await call(taskId,'fleamarket/complete',{...evidence(product),paidAmount,discountApplied:true});
+      const created=raw.prepare('SELECT final_price,order_status FROM orders WHERE id=?').get(result.orderId);
+      assert.equal(created.final_price,11700,'order stores submitted product price, never discounted payment');
+      assert.equal(created.order_status,'pending_shipment');
+    }
     seed(7,'z705860839','failed',1);
     raw.prepare("UPDATE tasks SET updated_at=datetime('now','-3 minutes') WHERE id=7").run();
     seed(8,'z705860840','failed',1); // Fresh failure backs off rather than reloading each poll.

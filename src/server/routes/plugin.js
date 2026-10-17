@@ -1107,7 +1107,7 @@ router.post('/task/:id/retry', (req,res)=>{
   res.json({success:true,claim_token:token});
 });
 router.post('/task/:id/fleamarket/begin', (req, res) => {
-  try { res.json(fleamarketPurchase.beginPurchase(db.raw, Number(req.params.id), accountScope.context(), req.get('X-Yahoo-Claim'))); }
+  try { res.json(fleamarketPurchase.beginPurchase(db.raw, Number(req.params.id), accountScope.context(), req.get('X-Yahoo-Claim'), req.body)); }
   catch (error) { res.status(error.statusCode || 500).json({error:error.message}); }
 });
 router.get('/fleamarket/recovery/jobs', (req, res) => {

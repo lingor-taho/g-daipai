@@ -11,12 +11,14 @@ function purchaseTask(raw, id, context, claim) {
   return task;
 }
 
-function beginPurchase(raw, id, context, claim) {
+function beginPurchase(raw, id, context, claim, evidence) {
   return raw.transaction(() => {
     const task = purchaseTask(raw, id, context, claim);
     if (task.status !== 'processing' || task.execution_unknown ||
         raw.prepare('SELECT 1 FROM tasks WHERE product_id=? AND execution_unknown=1 AND id<>?').get(task.product_id,id) ||
         raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(task.product_id)) fail('购买已确认或结果待核对，不可重复购买');
+    const itemPrice = evidence?.itemPrice;
+    if (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 || itemPrice !== Number(task.max_price)) fail('フリマ确认商品价格必须等于任务提交价格');
     // Persist BEFORE the irreversible click. An interrupted worker must never buy again.
     raw.prepare('UPDATE tasks SET execution_unknown=1,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(id);
     return { success: true };
@@ -61,8 +63,10 @@ function completePurchase(raw, id, context, claim, evidence) {
       fail('该商品已有其他订单，拒绝覆盖');
     }
     if (!['processing', 'failed'].includes(task.status) || !task.execution_unknown) fail('购买任务状态已改变');
-    const amount = Number(evidence.paidAmount);
-    if (!Number.isSafeInteger(amount) || amount <= 0 || amount !== task.max_price || evidence.discountApplied === true) fail('フリマ暂不支持优惠券或积分，完成页金额必须等于提交价格');
+    // P orders settle at the submitted product price, already verified before
+    // final confirmation. Coupons/points and the actual payment are irrelevant.
+    const amount = Number(task.max_price);
+    if (!Number.isSafeInteger(amount) || amount <= 0) fail('フリマ任务商品价格无效');
     const transactionUrl = `https://paypayfleamarket-sec.yahoo.co.jp/item/${productId}/trade/buyer`;
     const now = new Date();
     const japan = new Date(now.getTime() + 9 * 3600000);

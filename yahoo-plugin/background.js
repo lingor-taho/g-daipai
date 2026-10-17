@@ -8568,20 +8568,22 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
   const body = String(document.body?.innerText || '').replace(/\s+/g,'');
   const buttons = root => [...root.querySelectorAll('button,a,[role="button"],input[type="submit"]')].filter(visible);
   const exactButton = (root, label) => buttons(root).find(node => text(node) === label || node.value === label);
-  const total = (root = document) => {
-    const rows = [...root.querySelectorAll('div,li,tr,dl,p')].filter(node => visible(node) &&
-      /お支払い金額[（(]合計[）)]/.test(text(node)) && text(node).length < 160);
-    rows.sort((a,b) => text(a).length - text(b).length);
-    const amount = text(rows[0]).match(/お支払い金額[（(]合計[）)].*?([\d,]+)円/);
-    return amount ? Number(amount[1].replace(/,/g, '')) : null;
+  const productPrice = root => {
+    // Use only the product summary inside this confirmation modal, never the
+    // payment method, discounted total, or checkout behind the modal.
+    const summaries = [...root.querySelectorAll('li')].filter(node => visible(node) &&
+      node.querySelector('img[alt="商品画像"]'));
+    if (summaries.length !== 1) return null;
+    const summary = summaries[0];
+    const labels = [...summary.querySelectorAll('div,p,span')].filter(node => visible(node) &&
+      text(node) === '送料無料' && ![...node.children].some(child => text(child) === '送料無料'));
+    if (labels.length !== 1) return null;
+    for (let row = labels[0].parentElement; row && summary.contains(row); row = row.parentElement) {
+      const match = text(row).match(/^送料無料([\d,]+)円$/);
+      if (match) return Number(match[1].replace(/,/g, ''));
+    }
+    return null;
   };
-  const discountApplied = root => [...root.querySelectorAll('div,li,tr,dl,p')].some(node => {
-    if (!visible(node)) return false;
-    const value = text(node);
-    if (value.length > 160) return false;
-    const match = value.match(/^(?:クーポン(?:の)?(?:使用|利用)|(?:PayPay)?ポイント(?:の)?(?:利用|使用)|利用ポイント)(.+)$/);
-    return !!match && !/^(?:適用されていません|適用なし|利用しない|利用なし|使用しない|未使用|なし|0円|0ポイント|0pt)$/i.test(match[1]);
-  });
   const dialogFor = label => {
     const headings = [...document.querySelectorAll('h1,h2,h3,h4,p,div,span')]
       .filter(node => visible(node) && text(node).includes(label) && text(node).length < 160)
@@ -8596,7 +8598,7 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
   if (done) {
     if (!body.includes('購入が完了しました')) return {state:'waiting'};
     const link = [...document.querySelectorAll('a[href]')].find(node => text(node) === '取引ページへ');
-    return {state:'success',doneUrl:`${url.origin}${url.pathname}`,successText:'購入が完了しました',paidAmount:total(),discountApplied:discountApplied(document),transactionUrl:link?.href || null};
+    return {state:'success',doneUrl:`${url.origin}${url.pathname}`,successText:'購入が完了しました',transactionUrl:link?.href || null};
   }
   if (body.includes('決済処理中')) return {state:'processing'};
   let state = 'waiting', target = null, confirmationDialog = null;
@@ -8609,25 +8611,23 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
     else if ([...document.querySelectorAll('[role="dialog"],[aria-modal="true"],dialog[open]')].some(visible)) { state = 'waiting'; }
     else { state = 'review'; target = exactButton(document, '購入内容を確認する'); }
   }
-  const paidAmount = state === 'confirm' ? total(confirmationDialog) : null;
-  const discounted = state === 'confirm' && discountApplied(confirmationDialog);
-  if (state === 'confirm' && discounted) return {state:'unsupported-discount'};
+  const itemPrice = state === 'confirm' ? productPrice(confirmationDialog) : null;
   if (action && action === state && target && !target.disabled && target.getAttribute('aria-disabled') !== 'true') {
-    if (state === 'confirm' && (!Number.isSafeInteger(paidAmount) || paidAmount <= 0 || paidAmount !== maxPrice)) return {state:'invalid-price'};
+    if (state === 'confirm' && (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 || itemPrice !== maxPrice)) return {state:'invalid-price'};
     const key = `__gdaipaiFleamarket_${id}_${state}`;
     if (!window[key]) {
       window[key] = true;
       target.click();
-      return {state,clicked:true,paidAmount};
+      return {state,clicked:true,itemPrice};
     }
   }
-  return {state,ready:!!target,paidAmount};
+  return {state,ready:!!target,itemPrice};
 }
 
 async function executeFleamarketPurchaseTask(task, options = {}) {
   const id = String(task.product_id || normalizeAuctionId(task.product_url) || '').toLowerCase();
   const recoveryOnly = task.fleamarket_recovery_only === true;
-  let tab, armed = recoveryOnly, completed = false, confirmedAmount;
+  let tab, armed = recoveryOnly, completed = false;
   const acted = new Set();
   const request = async (name, body) => {
     const response = await apiFetch(`/api/plugin/task/${task.id}/fleamarket/${name}`, {
@@ -8674,7 +8674,7 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
       }
       if (snapshot?.state === 'success') {
         if (!armed) throw new Error('购买完成页没有本次确认记录');
-        const evidence = {...snapshot,paidAmount:snapshot.paidAmount ?? confirmedAmount};
+        const evidence = snapshot;
         for (let attempt = 0; attempt < 3; attempt++) {
           try { await request('complete',evidence); completed = true; break; }
           catch (error) { if (attempt === 2) throw error; await sleep(1000); }
@@ -8682,20 +8682,19 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
         return;
       }
       const state = snapshot?.state;
-      if (state === 'unsupported-discount') throw new Error('フリマ暂不支持优惠券或积分，请取消抵扣后重新提交');
       if (!armed && snapshot?.ready && ['item','placement','review','confirm'].includes(state) && !acted.has(state)) {
         if (state === 'confirm') {
-          if (!Number.isSafeInteger(snapshot.paidAmount) || snapshot.paidAmount <= 0 || snapshot.paidAmount !== Number(task.max_price)) throw new Error('フリマ确认金额必须等于提交价格，暂不支持优惠券或积分');
+          if (!Number.isSafeInteger(snapshot.itemPrice)) throw new Error('フリマ确认页商品价格读取失败，未点击购买确认');
+          if (snapshot.itemPrice <= 0 || snapshot.itemPrice !== Number(task.max_price)) throw new Error(`フリマ商品价格 ${snapshot.itemPrice}円 与提交价格 ${Number(task.max_price)}円 不一致`);
           // Treat even a lost response as uncertain; never resend the purchase click.
           armed = true;
-          try { await request('begin'); }
+          try { await request('begin',{itemPrice:snapshot.itemPrice}); }
           catch (error) { if (error.definiteRejection) armed = false; throw error; }
-          confirmedAmount = snapshot.paidAmount;
         }
         acted.add(state);
         try {
           const results = await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketPageStep,args:[id,state,Number(task.max_price)]});
-          if (results?.[0]?.result?.state === 'invalid-price') throw new Error('購入确认金额已改变');
+          if (results?.[0]?.result?.state === 'invalid-price') throw new Error('購入确认商品价格已改变');
         } catch (error) {
           if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;
         }
