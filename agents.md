@@ -19,7 +19,7 @@
 
 ## 项目概述
 
-2026-10-17 用户端商品类型标识已本地统一：首页抓取后的商品卡在标题前显示标识，替换原独立的普通／商城文字标签；入札中、落札商品、失败分析列表在商品 ID 后显示同一组件。样式对齐后台：普通绿色「普」、商城红色「商」，优先使用 product_type／productType，缺少时沿原共享 normalizeProductType 按税类型回退；フリマ不标成普通／商城，保持只读禁购。失败分析仅补充返回既有 products.product_type，不改筛选、价格、历史或状态。需更新 API 的 failureAnalysis.js 与用户端静态文件并重启 API，无 schema／插件／后台改动，未部署生产，详见 0i。
+2026-10-17 用户端商品类型标识已本地统一：首页抓取后的商品卡保留原独立的普通／商城文字标签和所有商品信息，仅在标题前追加标识；入札中、落札商品、失败分析列表在商品 ID 后显示同一组件。样式对齐后台：普通绿色「普」、商城红色「商」，优先使用 product_type／productType，缺少时沿原共享 normalizeProductType 按税类型回退；フリマ不标成普通／商城，保持只读禁购。失败分析仅补充返回既有 products.product_type，不改筛选、价格、历史或状态。需更新 API 的 failureAnalysis.js 与用户端静态文件并重启 API，无 schema／插件／后台改动，未部署生产，详见 0i。
 
 2026-10-17 Yahoo!フリマ现仅开放用户端搜索和详情，购买流程待业务明确后另行设计。Z/z ID 与 paypayfleamarket URL 使用正确 `/item/{id}` 抓取，搜索列表标题下显示原站标识；详情保留标题、价格、图片、说明、运费等只读信息。撤销上轮仅即决提交支持：商品卡下提示「Yahoo!フリマ 暂时无法购买，请联系管理员！」并隐藏全部出价设置与提交按钮；前端提交处理、单条 API、严格批量提交及批量解析均拦截，在抓取／商品写入／任务创建／账号分配前拒绝。普通／商城商品维持原流程。需更新 API、共享工具与用户端静态文件并重启 API，无插件／schema 改动，未部署或操作真实购买，详见 0h。
 
@@ -192,7 +192,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 ### 0i. 用户端普通／商城标识
 
-2026-10-17 本地新增共用 ProductTypeTag：首页商品卡标题前、入札中／失败分析／落札列表的商品 ID 后显示后台同款绿色「普」或红色「商」。显式商品类型优先，缺失才按税类型回退，フリマ隐藏此二分类标识。失败分析只读查询补回既有 product_type（采用其他列表的同款 COALESCE 回退），避免只按税类型展示导致与后台不一致；无数据库写入或业务规则改变。
+2026-10-17 本地新增共用 ProductTypeTag：首页商品卡标题前、入札中／失败分析／落札列表的商品 ID 后显示后台同款绿色「普」或红色「商」。按用户纠正，首页仅追加标题前标识，原独立类型标签和商品信息保持；撤销此前删除原类型标签的额外改动。显式商品类型优先，缺失才按税类型回退，フリマ隐藏此二分类标识。失败分析只读查询补回既有 product_type（采用其他列表的同款 COALESCE 回退），避免只按税类型展示导致与后台不一致；无数据库写入或业务规则改变。
 
 验证：`node src/client/src/pages/ActiveBidding.display.test.mjs`、`node src/client/src/pages/WonItems.display.test.mjs`、`node src/client/src/components/ProductSearchPopup.display.test.mjs`、`node src/server/services/failureAnalysis.test.js`、`npm run build --prefix src/client`、`node scripts/fleamarket-browser.test.cjs`、编码／diff 检查通过。临时浏览器脚本在390／1200覆盖入札、失败分析、落札两类标识及首页标题前标识，并用显式类型与税类型相反的样本确认类型优先；截图已检查。原フリマ搜索详情及禁购浏览器检查通过。本轮未运行完整项目回归。部署更新 `src/server/services/failureAnalysis.js` 并重启 API，以及用户端 dist；无插件／schema／后台更新，未部署。
 

@@ -28,6 +28,8 @@ export function BidCountIcon() {
 
 export default function ProductCard({ product, onOpenDetail, ended = false }) {
   const taxType = product.taxType || product.tax_type || 'tax_zero';
+  const productType = product.productType || product.product_type || (taxType === 'tax_included' ? 'store' : 'normal');
+  const productTypeLabel = productType === 'store' ? '商城商品' : '普通商品';
   const displayPrice = getDisplayPrice(product.currentPrice, taxType);
   const displayBuyoutPrice = getBuyoutPrice(product);
   const price = Number(displayPrice || 0).toLocaleString('ja-JP');
@@ -51,6 +53,9 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
         </button>
       )}
       <div style={{ padding: 12, minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'inline-block', color: productType === 'store' ? '#1d4ed8' : colors.accent, background: '#eff6ff', border: `1px solid ${colors.border}`, borderRadius: 6, padding: '2px 7px', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+          {productTypeLabel}
+        </div>
         <button
           type="button"
           onClick={onOpenDetail}
