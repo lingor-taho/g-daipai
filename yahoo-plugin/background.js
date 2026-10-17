@@ -7607,6 +7607,28 @@ function fleamarketReceiptStep(productId, action = '') {
   if (url.origin !== 'https://paypayfleamarket-sec.yahoo.co.jp' || url.pathname !== `/item/${id}/trade/buyer`) return {type:'foreign'};
   const visible = node => !!node?.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
   const text = node => String(node?.innerText || '').replace(/\s+/g,'');
+  // Yahoo may require acknowledging this result notice before rendering the
+  // final heading. Scope OK to that exact visible modal, never another dialog.
+  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"],dialog[open],.ReactModal__Content')].filter(visible);
+  const notices = dialogs.filter(dialog => text(dialog) === '受取評価と取引が完了しましたOK' ||
+    [...dialog.querySelectorAll('div,p,span,h1,h2,h3')]
+      .some(node => visible(node) && text(node) === '受取評価と取引が完了しました'));
+  const okButtons = [...new Set(notices.flatMap(dialog => [...dialog.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]')]
+    .filter(node => visible(node) && (text(node) === 'OK' || node.value === 'OK'))))];
+  if (okButtons.length === 1) {
+    const ok = okButtons[0];
+    const ready = !ok.disabled && ok.getAttribute('aria-disabled') !== 'true';
+    if (action === 'notice-ok' && ready) {
+      const key = `__gdaipaiFleamarketReceiptNotice_${id}`;
+      if (!window[key]) {
+        window[key] = true;
+        ok.click();
+        return {type:'receipt_notice',clicked:true};
+      }
+    }
+    return {type:'receipt_notice',ready};
+  }
+  if (dialogs.length) return {type:'waiting'};
   const complete = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')]
     .some(node => visible(node) && text(node) === 'すべての取引が完了しました');
   if (complete) return {type:'completed'};
@@ -7640,7 +7662,7 @@ async function executeFleamarketReceiptInTab(tab, job) {
     await releaseWorkJobs('confirm-receipt',[job]);
     return {success:true,deferred:true};
   }
-  let checked = false, submitted = false, seenReady = false;
+  let checked = false, submitted = false, seenReady = false, noticeAcknowledged = false;
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     let state;
@@ -7655,7 +7677,18 @@ async function executeFleamarketReceiptInTab(tab, job) {
       return {success:true,alreadyCompleted:!submitted};
     }
     if (state?.type === 'foreign') throw new Error('フリマ确认收货页面商品不匹配');
-    if (state?.type === 'receipt_ready' && !submitted) {
+    if (state?.type === 'receipt_notice') {
+      seenReady = true;
+      if (state.ready && !noticeAcknowledged) {
+        noticeAcknowledged = true;
+        try {
+          await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketReceiptStep,args:[job.productId,'notice-ok']});
+        } catch (error) {
+          if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;
+        }
+      }
+    }
+    if (state?.type === 'receipt_ready' && !submitted && !noticeAcknowledged) {
       seenReady = true;
       let action = '';
       if (!state.checked && !checked) { checked = true; action = 'check'; }
@@ -7670,7 +7703,7 @@ async function executeFleamarketReceiptInTab(tab, job) {
     }
     await sleep(500);
   }
-  if (seenReady || submitted) throw new Error(submitted ? 'フリマ确认收货后未读取到交易完成文字' : 'フリマ确认收货按钮未就绪');
+  if (seenReady || submitted) throw new Error(submitted || noticeAcknowledged ? 'フリマ确认收货后未读取到交易完成文字' : 'フリマ确认收货按钮未就绪');
   await releaseWorkJobs('confirm-receipt',[job]);
   return {success:true,deferred:true};
 }

@@ -60,6 +60,26 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
     await read('<h1 style="display:none">すべての取引が完了しました</h1>');assert.equal((await receipt()).type,'waiting');
     await read('<script>window.message="すべての取引が完了しました"</script>');assert.equal((await receipt()).type,'waiting');
     await read(receiptHtml,url.replace(id,'z123456789'));assert.equal((await receipt('check')).type,'foreign');
+    const notice = '<div class="ReactModal__Content" role="dialog" aria-modal="true"><p>受取評価と取引が完了しました</p><a onclick="window.noticeClicks=(window.noticeClicks||0)+1">OK</a></div>';
+    await read(notice+'<button onclick="window.otherClicks=1">OK</button>');
+    assert.equal((await receipt()).type,'receipt_notice');
+    await receipt('notice-ok');await receipt('notice-ok');
+    assert.equal(await page.evaluate('window.noticeClicks'),1,'acknowledge only this exact result modal once');
+    assert.equal(await page.evaluate('window.otherClicks'),undefined,'unrelated page OK stays untouched');
+    await read(notice+'<h1>すべての取引が完了しました</h1>');
+    assert.equal((await receipt()).type,'receipt_notice','result modal is acknowledged before the heading behind it');
+    await page.evaluate(()=>document.querySelector('[role="dialog"] a').onclick=()=>{document.querySelector('[role="dialog"]').remove();});
+    await receipt('notice-ok');assert.equal((await receipt()).type,'completed');
+    await read(notice.replace('<a onclick=', '<a aria-disabled="true" onclick='));
+    assert.equal((await receipt()).ready,false);await receipt('notice-ok');assert.equal(await page.evaluate('window.noticeClicks'),undefined);
+    await read(notice.replace('受取評価と取引が完了しました','別の確認です'));
+    assert.equal((await receipt('notice-ok')).type,'waiting');assert.equal(await page.evaluate('window.noticeClicks'),undefined);
+    await read(notice.replace('<div class=', '<div style="display:none" class='));
+    assert.equal((await receipt('notice-ok')).type,'waiting');assert.equal(await page.evaluate('window.noticeClicks'),undefined);
+    await read('<p>受取評価と取引が完了しました</p><button onclick="window.otherClicks=1">OK</button>');
+    assert.equal((await receipt('notice-ok')).type,'waiting');assert.equal(await page.evaluate('window.otherClicks'),undefined,'seller message cannot authorize an unrelated OK');
+    await read(notice,url.replace(id,'z123456789'));assert.equal((await receipt('notice-ok')).type,'foreign');
+
 
 
   } finally {await browser.close();}
@@ -89,8 +109,8 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
     else {assert.equal(updates.length,0);assert.equal(releases.length,1);assert.equal(releases[0].kind,kind);}
   }
   // Run the real P executor with controlled page transitions and task callbacks.
-  for (const scenario of ['normal','already','checked','navigation','timeout','disabled','foreign','waiting','cancel-check']) {
-    let time=0,checked=scenario==='checked',submitted=false,checks=0,submits=0,closed=0,reads=0;
+  for (const scenario of ['normal','already','checked','navigation','timeout','disabled','foreign','waiting','cancel-check','notice','notice-existing','notice-navigation','notice-timeout']) {
+    let time=0,checked=scenario==='checked',submitted=false,checks=0,submits=0,closed=0,reads=0,noticeClicks=0;
     const updates=[],released=[];
     class TestDate extends Date {static now(){return time;}}
     const context={URL,Date:TestDate,console,async sleep(ms){time+=ms;},async waitForTabComplete(){},
@@ -100,22 +120,26 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
         const action=args[1];
         if(action==='check'){checks++;checked=true;return [{result:{type:'receipt_ready',checked:true}}];}
         if(action==='submit'){assert(checked);submits++;submitted=true;if(scenario==='navigation')throw Error('Execution context destroyed during navigation');return [{result:{type:'receipt_ready',clicked:true}}];}
+        if(action==='notice-ok'){noticeClicks++;if(scenario==='notice-navigation')throw Error('Execution context destroyed during navigation');return [{result:{type:'receipt_notice',clicked:true}}];}
         reads++;
-        const type=scenario==='foreign'?'foreign':scenario==='already'||(submitted&&scenario!=='timeout')?'completed':scenario==='waiting'?'waiting':'receipt_ready';
-        return [{result:{type,checked,disabled:scenario==='disabled'||!checked}}];
+        const inNotice=scenario.startsWith('notice')&&(submitted||scenario==='notice-existing');
+        const type=inNotice ? (noticeClicks&&scenario!=='notice-timeout'?'completed':'receipt_notice')
+          :scenario==='foreign'?'foreign':scenario==='already'||(submitted&&scenario!=='timeout')?'completed':scenario==='waiting'?'waiting':'receipt_ready';
+        return [{result:{type,checked,ready:true,disabled:scenario==='disabled'||!checked}}];
       }}}};
     vm.runInNewContext(`${code}\nthis.execute=executeFleamarketTradeJob`,context);
     const job={orderId:9,productId:id,orderStatus:'pending_receipt',jobType:scenario==='cancel-check'?'cancel_check':'confirm_receipt'};
-    if(['timeout','disabled','foreign'].includes(scenario)) {
+    if(['timeout','disabled','foreign','notice-timeout'].includes(scenario)) {
       await assert.rejects(context.execute(job,'confirm-receipt'),/フリマ/);
       assert.equal(updates.length,0,'no success without a matching rendered completion heading');
     } else {
       await context.execute(job,'confirm-receipt');
       if(['waiting','cancel-check'].includes(scenario)){assert.equal(updates.length,0);assert.deepEqual(released,['confirm-receipt']);}
-      else {assert.equal(updates.length,1);assert.equal(updates[0].status,scenario==='already'?'already_completed':'success');assert.equal(updates[0].orderId,9);}
+      else {assert.equal(updates.length,1);assert.equal(updates[0].status,['already','notice-existing'].includes(scenario)?'already_completed':'success');assert.equal(updates[0].orderId,9);}
     }
     assert.equal(closed,1,'close only this P job tab');
-    if(['already','waiting','cancel-check','foreign'].includes(scenario)){assert.equal(checks,0);assert.equal(submits,0);}
+    assert.equal(noticeClicks,scenario.startsWith('notice')?1:0,'notice OK is single-use, including timeout/navigation');
+    if(['already','waiting','cancel-check','foreign','notice-existing'].includes(scenario)){assert.equal(checks,0);assert.equal(submits,0);}
     else {assert.equal(checks,scenario==='checked'?0:1);assert.equal(submits,scenario==='disabled'?0:1);}
   }
   assert.match(source,/executePendingShipmentScanJob\(job\)\s*\{\s*if \(isFleamarketManualImportItem\(job\)\) return executeFleamarketTradeJob/);
