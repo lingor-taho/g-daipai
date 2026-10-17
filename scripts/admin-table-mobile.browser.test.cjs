@@ -29,12 +29,13 @@ const { chromium } = require('playwright');
         error_msg: 'Rebid required: current bid is not high enough',
         created_at: '2026-10-12T13:08:00+08:00', next_execute_at: '2026-10-12T13:43:00+08:00',
         end_time: '2026-10-12T14:04:00+08:00', won_at: '2026-10-12T13:08:00+08:00',
-        shipping_fee_text: '落札者负担', final_price: 10454, order_status: 'waiting_shipping'
+        product_type: 'normal', shipping_fee_text: '落札者负担', final_price: 10454, order_status: 'waiting_shipping'
       };
       await page.route('**/api/**', async route => {
         const p = new URL(route.request().url()).pathname;
         let data = { success: true, items: [], total: 0 };
         if (p === '/api/admin/tasks' || p === '/api/admin/orders') data = { items: [row], total: 1 };
+        if (p === '/api/admin/orders') data = { items: [row, {...row,id:2,product_id:'z705858626',product_type:'fleamarket',order_status:'pending_shipment'}, {...row,id:3,product_id:'s1247071818',product_type:'store'}], total: 3 };
         if (p === '/api/admin/tasks/stats') data = { total: 1, pending: 1, processing: 0, failed: 1, success: 0 };
         if (p === '/api/admin/tasks/queue') data = {items:[{...row,queue_key:'task-1',status:'preparation_pending'}],total:1};
         await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
@@ -43,6 +44,12 @@ const { chromium } = require('playwright');
         await page.goto(`http://127.0.0.1:${server.address().port}/#/${name}`);
         const table = page.locator(`.admin-${name}-table`);
         await table.getByText(row.product_id, { exact: true }).waitFor();
+        if (name === 'orders') {
+          for (const [id,tag,color] of [[1,'普','green'],[2,'P','purple'],[3,'商','red']]) {
+            const productCell=table.locator(`tbody tr[data-row-key="${id}"] td`).nth(3);
+            assert.equal(await productCell.locator(`.ant-tag-${color}`).textContent(),tag,'product ID has the corresponding type tag');
+          }
+        }
         const yh = await table.getByRole('columnheader', { name: 'YH', exact: true }).boundingBox();
         assert(Math.abs(yh.width - 64) < 1, `${name}: YH must be 64px, got ${yh.width}`);
         const headers = await table.locator('thead th').evaluateAll(nodes => nodes.map(el => ({

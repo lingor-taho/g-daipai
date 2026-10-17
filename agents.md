@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-17 后台订单管理及查询订单中，商品ID后的类型标识补齐紫色P（product_type=fleamarket），普通绿色普／商城红色商保持原样。仅后台静态展示，需更新后台dist，无API／数据库／插件变化，详见0u。
+
 2026-10-17 P购买金额规则已按用户最新要求改为商品原价：最终弹窗仅核对商品摘要“送料無料”旁价格与任务提交价；不读取支付合计，不因优惠券／积分或0元实付中止。API begin校验itemPrice后沿原方式保存确认意图，成功页仍需同商品done URL＋「購入が完了しました」，订单final_price取任务已核对原价（11700商品即使实付10880仍存11700）。需同步更新API并重启、插件background.js并reload，无schema／两端静态变化，未部署或真实购买，详见0t。
 
 2026-10-17 用户端关键词搜索仅一件且无后续页时，输入框改回填完整商品链接，并使用同一链接抓取详情；普通／商城优先原 standardUrl、缺失时使用原拍卖详情URL，P始终使用paypayfleamarket的/item/URL。多结果选择与直接ID输入流程保持。仅更新用户端dist，无API／插件／数据库结构变化；验证见0s。
@@ -213,6 +215,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0u. 后台订单 P 类型标识
+
+Orders和MessageRead原商品ID后已有普通／商城Tag，新增fleamarket分支显示紫色P，订单管理原“-”占位和查询订单原误归普通由此修正。不改商品类型数据、状态、按钮、查询条件或其他业务；任务报表原本无普通／商城标签，本轮不新增另一套显示。
+
+验证：`node src/admin/src/Orders.display.test.js`、`node src/admin/src/MessageRead.display.test.js`、`npm run build --prefix src/admin`、`node scripts/admin-table-mobile.browser.test.cjs`、编码与diff检查。浏览器360／390／1200在同一订单表核对普通／商城／P标签与原横向滚动和单行布局。仅需部署后台dist，未部署生产。
 
 ### 0t. P 商品原价核对与成交金额
 

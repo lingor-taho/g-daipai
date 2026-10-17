@@ -161,6 +161,7 @@ function renderStatusChangeSource(row: any) {
 }
 
 function renderProductTypeTag(productType: string | null | undefined) {
+  if (productType === 'fleamarket') return <Tag color="purple" style={{ marginLeft: 6 }}>P</Tag>;
   if (productType === 'store') return <Tag color="red" style={{ marginLeft: 6 }}>商</Tag>;
   if (productType === 'normal') return <Tag color="green" style={{ marginLeft: 6 }}>普</Tag>;
   return <span style={{ marginLeft: 6 }}>-</span>;

@@ -119,6 +119,7 @@ function renderTradeHtml(html: string) {
 }
 
 function renderProductTypeTag(productType: string | null | undefined) {
+  if (productType === 'fleamarket') return <Tag color="purple">P</Tag>;
   if (productType === 'store') return <Tag color="red">商</Tag>;
   return <Tag color="green">普</Tag>;
 }
