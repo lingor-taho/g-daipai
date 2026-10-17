@@ -164,6 +164,13 @@ const { chromium } = require('playwright');
       assert.equal(submitted.length, 1);
       await page.screenshot({ path: `.test-artifacts/fleamarket-submit-${width}.png`, fullPage: true });
       await page.getByRole('button', { name: '批量添加', exact: true }).click();
+      const batchNotice=page.getByText('フリマ商品将跳过，其他商品照常提交。',{exact:true});
+      const noticeLayout=await batchNotice.evaluate(el=>({bottom:el.getBoundingClientRect().bottom,
+        labelTop:document.querySelector('label[for="batch-bid-input"]').getBoundingClientRect().top,
+        color:getComputedStyle(el).color,nextIsLabel:el.nextElementSibling?.matches('label[for="batch-bid-input"]')}));
+      assert.ok(noticeLayout.bottom<=noticeLayout.labelTop && noticeLayout.nextIsLabel,'red notice is directly before the input label');
+      assert.equal(noticeLayout.color,'rgb(220, 38, 38)');
+      await page.screenshot({path:`.test-artifacts/fleamarket-batch-notice-${width}.png`,fullPage:true,animations:'disabled'});
       await page.locator('textarea').fill('z650804548 29700\nx1234567890 2000\na1234567890 3000');
       await page.getByRole('button', { name: '提交批量任务', exact: true }).click();
       await page.getByText('不支持フリマ商品！已跳过 1 件，其他商品照常处理', { exact: true }).waitFor();

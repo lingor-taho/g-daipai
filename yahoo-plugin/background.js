@@ -7577,14 +7577,102 @@ function readFleamarketTradePage(productId) {
   const expected = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
   if (`${url.origin}${url.pathname}` !== expected) return {type:'unknown',pageVariant:'fleamarket',reason:'unexpected trade URL'};
   const text = String(document.body?.innerText || '').replace(/\s+/g,'');
-  // Shipped/tracking/receipt selectors await real page examples. Never infer shipment
-  // from the generic progress bar (配送中/受取評価) or a seller's message.
+  const visible = node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
+  const normalized = node => String(node.innerText || '').replace(/\s+/g,'');
+  // Only the actual page heading confirms shipment; progress labels and seller
+  // messages mentioning delivery are not shipment evidence.
+  const shipped = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')]
+    .some(node => visible(node) && normalized(node) === '商品の到着をお待ちください');
+  if (shipped) {
+    const numbers = [...document.querySelectorAll('#deliverystatus a[href]')]
+      .filter(visible).map(node => normalized(node).replace(/[-－]/g,''))
+      .filter(value => /^\d{8,20}$/.test(value));
+    const unique = [...new Set(numbers)];
+    const trackingNumber = unique.length === 1 ? unique[0] : '';
+    return {type:'shipped',pageVariant:'fleamarket',transactionUrl:expected,
+      shippingCompany:'お問い合わせ',trackingNumber,shipmentDetailsRendered:!!trackingNumber,
+      textSample:text.slice(0,1000),reason:trackingNumber?'':'フリマ物流单号尚未完整加载'};
+  }
   const pending = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"],div,p,span')]
-    .some(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' &&
-      String(node.innerText || '').replace(/\s+/g,'') === '出品者の発送をお待ちください');
+    .some(node => visible(node) && normalized(node) === '出品者の発送をお待ちください');
   return {type:pending?'pending_shipment':'unknown',pageVariant:'fleamarket',
     transactionUrl:expected,textSample:text.slice(0,1000),
-    reason:pending?'':'フリマ发货／收货页面待适配'};
+    reason:pending?'':'フリマ页面待适配'};
+}
+
+// Only P receipt jobs call this function, in their own matching buyer trade tab.
+function fleamarketReceiptStep(productId, action = '') {
+  const id = String(productId || '').toLowerCase();
+  const url = new URL(location.href);
+  if (url.origin !== 'https://paypayfleamarket-sec.yahoo.co.jp' || url.pathname !== `/item/${id}/trade/buyer`) return {type:'foreign'};
+  const visible = node => !!node?.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
+  const text = node => String(node?.innerText || '').replace(/\s+/g,'');
+  const complete = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')]
+    .some(node => visible(node) && text(node) === 'すべての取引が完了しました');
+  if (complete) return {type:'completed'};
+  const labels = [...document.querySelectorAll('label')].filter(node => visible(node) && text(node) === '商品の内容を確認しました');
+  const buttons = [...document.querySelectorAll('#rating button')].filter(node => visible(node) && text(node) === '受取評価をして取引を完了する');
+  if (labels.length !== 1 || buttons.length !== 1) return {type:'waiting'};
+  const checkbox = labels[0].querySelector('input[type="checkbox"]');
+  const button = buttons[0];
+  if (!checkbox) return {type:'waiting'};
+  const checked = checkbox.checked;
+  const disabled = button.disabled || button.getAttribute('aria-disabled') === 'true';
+  if (action === 'check' && !checked && !checkbox.disabled) {
+    labels[0].click();
+    return {type:'receipt_ready',checked:checkbox.checked,clicked:true};
+  }
+  if (action === 'submit' && checked && !disabled) {
+    const key = `__gdaipaiFleamarketReceipt_${id}`;
+    if (!window[key]) {
+      window[key] = true;
+      button.click();
+      return {type:'receipt_ready',clicked:true};
+    }
+  }
+  return {type:'receipt_ready',checked,disabled};
+}
+
+async function executeFleamarketReceiptInTab(tab, job) {
+  // Keep the existing API's receipt eligibility (including sheet color matching).
+  // Old/abnormal P cancel-check jobs must never perform receipt actions.
+  if (job.jobType !== 'confirm_receipt' || job.orderStatus !== 'pending_receipt') {
+    await releaseWorkJobs('confirm-receipt',[job]);
+    return {success:true,deferred:true};
+  }
+  let checked = false, submitted = false, seenReady = false;
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    let state;
+    try {
+      state = (await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketReceiptStep,args:[job.productId]}))?.[0]?.result;
+    } catch (error) {
+      if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;
+    }
+    if (state?.type === 'completed') {
+      await updateConfirmReceiptStatus({orderId:job.orderId,productId:job.productId,
+        status:submitted?'success':'already_completed',bundleGroupId:job.bundleGroupId || ''});
+      return {success:true,alreadyCompleted:!submitted};
+    }
+    if (state?.type === 'foreign') throw new Error('フリマ确认收货页面商品不匹配');
+    if (state?.type === 'receipt_ready' && !submitted) {
+      seenReady = true;
+      let action = '';
+      if (!state.checked && !checked) { checked = true; action = 'check'; }
+      else if (state.checked && !state.disabled) { submitted = true; action = 'submit'; }
+      if (action) {
+        try {
+          await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketReceiptStep,args:[job.productId,action]});
+        } catch (error) {
+          if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;
+        }
+      }
+    }
+    await sleep(500);
+  }
+  if (seenReady || submitted) throw new Error(submitted ? 'フリマ确认收货后未读取到交易完成文字' : 'フリマ确认收货按钮未就绪');
+  await releaseWorkJobs('confirm-receipt',[job]);
+  return {success:true,deferred:true};
 }
 
 async function executeFleamarketTradeJob(job, kind = 'scan') {
@@ -7594,23 +7682,24 @@ async function executeFleamarketTradeJob(job, kind = 'scan') {
     if (!/^z\d{8,10}$/.test(id)) throw new Error('Invalid fleamarket product ID');
     tab = await chrome.tabs.create({url:`https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`,active:false});
     await waitForTabComplete(tab.id,20000);
+    if (kind === 'confirm-receipt') return await executeFleamarketReceiptInTab(tab,job);
     let result;
     const deadline = Date.now() + PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS;
     do {
       result = (await chrome.scripting.executeScript({target:{tabId:tab.id},func:readFleamarketTradePage,args:[id]}))?.[0]?.result;
-      if (result?.type === 'pending_shipment') break;
+      if (result?.type === 'pending_shipment' || (result?.type === 'shipped' && result.shipmentDetailsRendered !== false)) break;
       await sleep(PENDING_SHIPMENT_SCAN_POLL_MS);
     } while (Date.now() < deadline);
     if (kind === 'scan') {
       const payload = buildScanStatusPayload({...job,result});
       if (payload) { await updateScanStatus(payload); return {stop:false}; }
-      await postScanDiagnostic(job,result,'フリマ页面待适配，保留订单状态，未读取物流或点击收货').catch(()=>{});
+      await postScanDiagnostic(job,result,'フリマ物流信息尚未完整加载或页面待适配，保留订单状态，未点击收货').catch(()=>{});
     }
-    // Receipt clicks will be added only after its actual page/button is supplied.
     await releaseWorkJobs(kind,[job]);
     return {stop:false,success:true,deferred:true};
   } catch (error) {
     console.warn('[Yahoo Fleamarket] Trade page unavailable:',job.productId,error.message);
+    if (kind === 'confirm-receipt') throw error;
     await releaseWorkJobs(kind,[job]).catch(()=>{});
     return {stop:false,success:false,deferred:true};
   } finally {

@@ -8,6 +8,7 @@ const sheetWrites = [];
 const sheets = require('../services/googleSheets');
 sheets.applyGoogleSheetsConfigFromDb = async () => {};
 sheets.isGoogleSheetsConfigured = () => true;
+sheets.findRowsByProductIdsWithAnyColor = async ids => Object.fromEntries(ids.map(id=>[id,{matched:true}]));
 sheets.appendRows = async payload => {sheetWrites.push(payload);return {skipped:false};};
 const plugin = require('./plugin');
 const {submitAuctionTask} = require('./task');
@@ -81,14 +82,16 @@ const {submitAuctionTask} = require('./task');
     await scanRequest('status',{orderId:order.id,pendingShipment:true,productId:'z705860836',daysOverdue:0,claim_token:scan.claimToken});
     assert.equal(raw.prepare('SELECT order_status FROM orders WHERE id=?').get(order.id).order_status,'pending_shipment');
     assert.equal(sheetWrites.length,0);
-    // This supplies a future parser's verified shipment payload, not a guessed DOM selector.
+    // Payload verified from the supplied P shipped-page fixture; shared scan/sheet flow stays unchanged.
     scan = (await scanRequest('jobs')).jobs[0];
-    await scanRequest('status',{orderId:order.id,shipped:true,shippingCompany:'ヤマト運輸',trackingNumber:'123456789012',claim_token:scan.claimToken});
+    await scanRequest('status',{orderId:order.id,shipped:true,shippingCompany:'お問い合わせ',trackingNumber:'646960564235',claim_token:scan.claimToken});
     assert.equal(raw.prepare('SELECT order_status FROM orders WHERE id=?').get(order.id).order_status,'pending_receipt');
     assert.equal(sheetWrites.length,1,'shared shipped status automatically invokes the existing sheet writer');
     assert.equal(sheetWrites[0].rows[0][2],'https://paypayfleamarket.yahoo.co.jp/item/z705860836');
-    assert.equal(sheetWrites[0].rows[0][8],'ヤマト運輸');
-    assert.equal(sheetWrites[0].rows[0][9],'123456789012');
+    assert.equal(sheetWrites[0].rows[0][8],'お問い合わせ');
+    assert.equal(sheetWrites[0].rows[0][9],'646960564235');
+    const shipment = raw.prepare('SELECT shipping_company,tracking_number FROM orders WHERE id=?').get(order.id);
+    assert.equal(shipment.shipping_company,'お問い合わせ');assert.equal(shipment.tracking_number,'646960564235');
     const receiptJobs = await scope.run(context,()=>plugin.getConfirmReceiptJobs(db,{
       findRowsByProductIdsWithAnyColor:async()=>({'z705860836':{matched:true}})
     }));
@@ -131,6 +134,18 @@ const {submitAuctionTask} = require('./task');
       const created=raw.prepare('SELECT final_price,order_status FROM orders WHERE id=?').get(result.orderId);
       assert.equal(created.final_price,11700,'order stores submitted product price, never discounted payment');
       assert.equal(created.order_status,'pending_shipment');
+    }
+    // P receipt uses the unchanged, claimed original status endpoint after sheet eligibility.
+    for (const status of ['success','already_completed']) {
+      raw.prepare("UPDATE orders SET order_status='pending_receipt' WHERE id=?").run(order.id);
+      const jobsResponse=await fetch(`${base}/confirm-receipt/jobs`,{headers});
+      assert.equal(jobsResponse.status,200);
+      const receipt=(await jobsResponse.json()).jobs.find(job=>job.orderId===order.id);
+      assert.equal(receipt.productType,'fleamarket');assert.equal(receipt.jobType,'confirm_receipt');
+      const response=await fetch(`${base}/confirm-receipt/status`,{method:'POST',headers,
+        body:JSON.stringify({orderId:order.id,productId:'z705860836',status,claim_token:receipt.claimToken})});
+      assert.equal(response.status,200,JSON.stringify(await response.json()));
+      assert.equal(raw.prepare('SELECT order_status FROM orders WHERE id=?').get(order.id).order_status,'completed');
     }
     seed(7,'z705860839','failed',1);
     raw.prepare("UPDATE tasks SET updated_at=datetime('now','-3 minutes') WHERE id=7").run();

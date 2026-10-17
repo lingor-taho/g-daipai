@@ -85,10 +85,10 @@ export default function BatchSubmitPopup({ visible, onClose, onSubmitted, bidBlo
         <div style={{ fontSize: 13, color: colors.muted, lineHeight: 1.7, marginBottom: 12 }}>
           每行输入商品 ID 或链接和税前日元最高价，以空格、Tab、逗号或分号分隔。每批最多 {MAX_BATCH_BID_ITEMS} 件。<br />
           有税商品另计税，例如最高价 11800 円，含税金额为 12980 円。仅支持即时拍，不支持仅即决商品。<br />
-          フリマ商品将跳过，其他商品照常提交。<br />
           当前价不足 1000 円且最高价超过 10000 円时，沿用两步出价规则：先出 9000 円，价格突破 1000 円后再按原最高价出价。
           <br />提交后关闭窗口，每件商品补全后立即排队出价；仅有提交失败时显示提示。刷新或关闭页面不影响已接收任务。
         </div>
+        <div style={{ color: colors.danger, fontSize: 13, lineHeight: 1.7, marginBottom: 8 }}>フリマ商品将跳过，其他商品照常提交。</div>
         <label htmlFor="batch-bid-input" style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>批量商品和最高价</label>
         <div style={{ border: '1px solid var(--client-border-strong)', borderRadius: 10, padding: 12 }}>
           <TextArea id="batch-bid-input" value={text} onChange={setText} disabled={running}
