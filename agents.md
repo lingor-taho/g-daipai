@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-17 P商品链接遗漏已本地统一修复：共享productUrl.cjs按类型／Z ID生成フリマ链接，缺URL及旧拍卖URL都兼容；后台查询订单／报表／任务／下一任务／订单和两类CSV、用户端成交／再入札／统计及统计API采用共享函数。后台刷新运费／类型使用正确抓取及写回URL，类型刷新支持fleamarket。普通p开头拍卖ID保持普通链接。不改真实历史数据／订单状态，部署需更新API与共享文件并重启、更新两端dist，详见0ac。
+
 2026-10-17 P商品列表文案统一为“购入成功／购入价／购入时间”，普通／商城保留原落札文案，共用成交商品导航及页面标题保持。仅用户端显示变更，无价格／状态／数据库变化，验证与部署见0ab。
 
 2026-10-17 P下架商品已本地接入原已结束展示：抓取P页若缺少有效“購入手続きへ”购买按钮（主item_buy_button或同商品secure order入口）即auctionStatus=ended；原JSON-LD缺货判断仍保留。用户提交页在本次读取时固定P结束标志，复用图片红色已结束角标并隐藏全部出价设置／提交表单，不加其他页面角标或定时刷新。服务端原P最新信息结束校验直接阻止任务创建。需更新API proxy.js并重启及用户端dist，无schema／插件／后台变化，详见0aa。
@@ -229,6 +231,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ac. P 商品链接统一生成
+
+新增共享productUrl.cjs：P商品强制规范为https://paypayfleamarket.yahoo.co.jp/item/{id}，兼容缺失与历史错误拍卖URL；普通商品保留已有URL及原拍卖兜底，普通p前缀不视为P。覆盖后台查询订单／报表／任务表与下一任务／订单／两类CSV、用户端成交列表／再入札／统计及统计API；后台刷新运费与商品类型修正抓取与快照写入URL，同时允许既有fleamarket类型。未批量修改历史快照，显示时纠正，后续正常刷新写正确链接。购买／付款／扫描／收货动作不改。
+
+验证：`node src/shared/productUrl.test.cjs`（含CSV与再入札真实调用，旧／缺／正确URL及普通p反例）、`node scripts/run-isolated-regression.cjs src/server/routes/admin.orders.test.js`（刷新服务及products写入参数）、原task接口与两类CSV／相关展示测试、两端build、`node scripts/fleamarket-browser.test.cjs`、`node scripts/admin-table-mobile.browser.test.cjs`、编码／diff检查。部署更新API admin.js／task.js及shared/productUrl.cjs，重启API，更新两端dist；无schema／插件更新，未部署生产或写真实Google／Yahoo。
 
 ### 0ab. P 商品列表购入文案
 

@@ -1221,6 +1221,28 @@ async function testMarkTrackingRescanByProductIdMarksPendingReceiptOrders() {
   assert.deepEqual(calls[1].params, [201, 202]);
 }
 
+async function testFleamarketRefreshKeepsCanonicalUrl() {
+  for (const refresh of [refreshProductShippingFee, refreshProductType]) {
+    const writes = [];
+    const db = {
+      async getOne() { return { count: 1 }; },
+      async query(sql, params) { writes.push({ sql, params }); return { rowCount: 1 }; }
+    };
+    const expected = 'https://paypayfleamarket.yahoo.co.jp/item/z705858626';
+    const service = { async fetchProduct(url) {
+      assert.equal(url, expected);
+      return { data: { productType: 'fleamarket', taxType: 'tax_zero', shippingFeeText: '送料無料', currentPrice: 300 } };
+    } };
+    const result = await refresh(db, service, 'https://auctions.yahoo.co.jp/jp/auction/Z705858626');
+    assert.equal(result.success, true);
+    const insert = writes.find(write => /INSERT INTO products/.test(write.sql));
+    assert.equal(insert.params[1], expected);
+    assert.equal(insert.params[8], 'fleamarket');
+    assert.equal(writes.some(write => /UPDATE tasks/.test(write.sql)), false);
+    if (refresh === refreshProductType) assert.equal(result.productTypeText, 'フリマ商品');
+  }
+}
+
 async function testRefreshProductShippingFeeWritesProductsOnly() {
   const calls = [];
   const fakeDb = {
@@ -1475,6 +1497,7 @@ Promise.all([
   testReassignOrderOwnerRejectsAdminUser(),
   testMarkProductOrdersForResyncPrefersExistingOrderTasks(),
   testMarkTrackingRescanByProductIdMarksPendingReceiptOrders(),
+  testFleamarketRefreshKeepsCanonicalUrl(),
   testRefreshProductShippingFeeWritesProductsOnly(),
   testShippingRefreshPreservesArrivalFromYahooData(),
   testRefreshProductTypeWritesProductsOnly(),

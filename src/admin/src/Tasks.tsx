@@ -1,3 +1,4 @@
+import { getProductItemUrl } from './utils/productUrl';
 import { ProTable } from '@ant-design/pro-components';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Col, Row, Space, Statistic, Tag, Typography } from 'antd';
@@ -126,7 +127,7 @@ export default function TasksPage() {
       width:150,
       dataIndex: 'product_id',
       render: (_: any, row: any) => (
-        <a href={row.product_url || `https://auctions.yahoo.co.jp/jp/auction/${row.product_id}`} target="_blank" rel="noreferrer">
+        <a href={getProductItemUrl(row)} target="_blank" rel="noreferrer">
           {row.product_id}
         </a>
       )
@@ -215,7 +216,7 @@ export default function TasksPage() {
               <Typography.Text strong>#{stats.nextTask.id}</Typography.Text>
               <Typography.Text>
                 <a
-                  href={`https://auctions.yahoo.co.jp/jp/auction/${stats.nextTask.product_id}`}
+                  href={getProductItemUrl(stats.nextTask)}
                   target="_blank"
                   rel="noreferrer"
                 >

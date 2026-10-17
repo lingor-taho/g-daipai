@@ -1,4 +1,5 @@
-﻿const express = require('express');
+﻿const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+const express = require('express');
 const router = express.Router();
 const { isFleamarketProduct, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = require('../../shared/fleamarket.cjs');
 const { isAuctionEnded } = require('../../shared/auctionDeadline.cjs');
@@ -994,7 +995,7 @@ router.get('/won-stats', async (req, res) => {
           topProduct: performanceRow?.top_product_id ? {
             productId: performanceRow.top_product_id,
             title: performanceRow.top_product_title || performanceRow.top_product_id,
-            url: performanceRow.top_product_url || `https://auctions.yahoo.co.jp/jp/auction/${performanceRow.top_product_id}`,
+            url: getProductItemUrl({ product_id: performanceRow.top_product_id, product_url: performanceRow.top_product_url }),
             finalPrice: Number(performanceRow.top_final_price || 0),
             wonAt: performanceRow.top_won_at || null,
             taskCount: Number(performanceRow.top_product_task_count || 0)

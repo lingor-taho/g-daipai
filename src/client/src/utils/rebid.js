@@ -1,9 +1,7 @@
-export function getAuctionProductUrl(item) {
-  const productUrl = String(item?.product_url || '').trim();
-  if (productUrl) return productUrl;
+import productUrl from '../../../shared/productUrl.cjs';
 
-  const productId = String(item?.product_id || '').trim();
-  return productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '';
+export function getAuctionProductUrl(item) {
+  return productUrl.getProductItemUrl(item);
 }
 
 export function getRebidSubmitPath(item) {

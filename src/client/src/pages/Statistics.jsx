@@ -1,3 +1,4 @@
+import productUrl from '../../../shared/productUrl.cjs';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Empty, SpinLoading, Toast } from 'antd-mobile';
 import { getWonStats } from '../utils/api';
@@ -227,7 +228,7 @@ export default function Statistics() {
             {topProduct ? (
               <>
                 拍到的最高价商品为{' '}
-                <a href={topProduct.url || `https://auctions.yahoo.co.jp/jp/auction/${topProduct.productId}`} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
+                <a href={productUrl.getProductItemUrl({ ...topProduct, product_url: topProduct.url })} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
                   {topProduct.title || topProduct.productId}
                 </a>
                 （{formatJPY(topProduct.finalPrice)}），总共提交任务 <strong>{topProduct.taskCount || 0}</strong> 次，恭喜您。

@@ -35,7 +35,7 @@ const { chromium } = require('playwright');
         const p = new URL(route.request().url()).pathname;
         let data = { success: true, items: [], total: 0 };
         if (p === '/api/admin/tasks' || p === '/api/admin/orders') data = { items: [row], total: 1 };
-        if (p === '/api/admin/orders') data = { items: [row, {...row,id:2,product_id:'z705858626',product_type:'fleamarket',order_status:'pending_shipment'}, {...row,id:3,product_id:'s1247071818',product_type:'store'}], total: 3 };
+        if (p === '/api/admin/orders') data = { items: [row, {...row,id:2,product_id:'z705858626',product_url:'https://auctions.yahoo.co.jp/jp/auction/z705858626',product_type:'fleamarket',order_status:'pending_shipment'}, {...row,id:3,product_id:'s1247071818',product_type:'store'}], total: 3 };
         if (p === '/api/admin/idle-flags') data = {googleSheetAlerts:[
           {id:'p-google',productId:'z705858626',error:'test P append alert'},
           {id:'ordinary-google',productId:'r1243992660',error:'test ordinary append alert'}]};
@@ -54,6 +54,7 @@ const { chromium } = require('playwright');
         assert.equal(await ordinaryAlert.getByRole('link',{name:'r1243992660',exact:true}).getAttribute('href'),'https://auctions.yahoo.co.jp/jp/auction/r1243992660');
 
         if (name === 'orders') {
+          assert.equal(await table.getByRole('link',{name:'z705858626',exact:true}).getAttribute('href'),'https://paypayfleamarket.yahoo.co.jp/item/z705858626');
           for (const [id,tag,color] of [[1,'普','green'],[2,'P','purple'],[3,'商','red']]) {
             const productCell=table.locator(`tbody tr[data-row-key="${id}"] td`).nth(3);
             assert.equal(await productCell.locator(`.ant-tag-${color}`).textContent(),tag,'product ID has the corresponding type tag');

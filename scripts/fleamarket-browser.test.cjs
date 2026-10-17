@@ -60,7 +60,7 @@ const { chromium } = require('playwright');
         if (target.pathname === '/api/task/won') data = { success: true, total: 3,
           data: [product, normalProduct, storeProduct].map((item, index) => ({ id: index + 1, order_id: index + 1,
             product_id: item.auctionId, product_title: item.title, product_type: item.productType,
-            product_url: item.standardUrl, product_image_url: image, tax_type: item.taxType,
+            product_url: item.productType === 'fleamarket' ? 'https://auctions.yahoo.co.jp/jp/auction/z650804548' : item.standardUrl, product_image_url: image, tax_type: item.taxType,
             final_price: item.buyoutPrice, won_time_text: '10/17 12:00', order_status: 'pending_shipment', strategy: 'direct',
             has_auction_history: 1, bid_history: [{ task_id: 1, amount: 30000, submitted_at: '2026-10-17T00:00:00Z' }] })) };
         if (target.pathname.includes('website-rate')) data = { success: true, rate: 0.05 };
@@ -215,6 +215,7 @@ const { chromium } = require('playwright');
         assert.equal(await row.getByRole('button', { name: '查看拍卖记录图表', exact: true }).count(), flea ? 0 : 1);
         assert.equal(await row.getByRole('group', { name: '历史提交最高价对比', exact: true }).count(), flea ? 0 : 1);
         if (flea) {
+          assert.equal(await row.locator('a[href="https://paypayfleamarket.yahoo.co.jp/item/z650804548"]').count(), 1);
           assert.equal((await row.textContent()).includes('落札'), false);
           assert.equal((await row.textContent()).includes('成交'), false);
         }

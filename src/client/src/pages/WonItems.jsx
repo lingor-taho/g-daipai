@@ -1,3 +1,4 @@
+import productUrl from '../../../shared/productUrl.cjs';
 import fleamarket from '../../../shared/fleamarket.cjs';
 import ProductTypeTag from '../components/ProductTypeTag';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -233,7 +234,7 @@ function getWonTimeDisplay(item) {
 }
 
 function getProductUrl(item) {
-  return item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${item.product_id}`;
+  return productUrl.getProductItemUrl(item);
 }
 
 function renderOrderStatusTag(status) {

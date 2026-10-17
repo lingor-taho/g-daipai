@@ -1,3 +1,4 @@
+import { getProductItemUrl } from './utils/productUrl';
 ﻿import { ProTable } from '@ant-design/pro-components';
 import type { Key } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -716,7 +717,7 @@ export default function OrdersPage() {
       onCell: () => noWrapCell,
       render: (_: any, row: any) => {
         const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
-        const url = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
+        const url = getProductItemUrl({ ...row, product_id: productId });
         const idNode = url ? <a href={url} target="_blank" rel="noreferrer">{productId || url}</a> : productId || '-';
         const hasRemark = Boolean(String(row.order_remark || '').trim());
         return <span>{idNode}{renderProductTypeTag(row.product_type)}{hasRemark ? <Tag color="blue">备</Tag> : null}</span>;

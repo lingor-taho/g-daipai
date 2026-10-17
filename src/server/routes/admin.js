@@ -1,4 +1,5 @@
-﻿const express = require('express');
+﻿const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+const express = require('express');
 const router = express.Router();
 const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const db = require('../models');
@@ -3555,7 +3556,7 @@ async function markTrackingRescanByProductId(database, productId) {
 }
 
 function normalizeProductType(value) {
-  if (value === 'normal' || value === 'store') return value;
+  if (value === 'normal' || value === 'store' || value === 'fleamarket') return value;
   if (value === 'tax_zero') return 'normal';
   if (value === 'tax_included') return 'store';
   return '';
@@ -3570,7 +3571,7 @@ function buildFetchedProductSnapshot(productId, productData = {}) {
   const productType = normalizeProductType(productData.productType || productData.product_type || taxType) || null;
   return {
     product_id: productId,
-    product_url: `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+    product_url: getProductItemUrl(productId),
     product_title: productData.title || productData.productTitle || productData.product_title || null,
     product_image_url: productData.imageUrl || productData.productImageUrl || productData.product_image_url || null,
     current_price: productData.currentPrice || productData.current_price || null,
@@ -3593,7 +3594,7 @@ async function refreshProductShippingFee(database, service, productId) {
     return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
   }
 
-  const product = await service.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${normalizedProductId}`);
+  const product = await service.fetchProduct(getProductItemUrl(normalizedProductId));
   const productData = product?.data || {};
   const shippingFeeText = String(productData.shippingFeeText || productData.shipping_fee_text || '').trim();
   if (!shippingFeeText) {
@@ -3621,7 +3622,7 @@ async function refreshProductType(database, service, productId) {
     return { productId: normalizedProductId, success: false, error: '系统中没有这个商品' };
   }
 
-  const product = await service.fetchProduct(`https://auctions.yahoo.co.jp/jp/auction/${normalizedProductId}`);
+  const product = await service.fetchProduct(getProductItemUrl(normalizedProductId));
   const productData = product?.data || {};
   const productType = normalizeProductType(productData.productType || productData.product_type || productData.taxType || productData.tax_type);
   if (!productType) {
@@ -3635,7 +3636,7 @@ async function refreshProductType(database, service, productId) {
     productId: normalizedProductId,
     success: true,
     productType,
-    productTypeText: productType === 'store' ? '商城商品' : '普通商品',
+    productTypeText: productType === 'fleamarket' ? 'フリマ商品' : productType === 'store' ? '商城商品' : '普通商品',
     updatedCount: Number(taskCount?.count || 0)
   };
 }

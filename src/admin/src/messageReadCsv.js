@@ -1,13 +1,12 @@
+const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+
 function csvEscape(value) {
   const text = String(value ?? '');
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function buildProductUrl(row) {
-  const productUrl = String(row?.product_url || '').trim();
-  if (productUrl) return productUrl;
-  const productId = String(row?.product_id || '').trim();
-  return productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '';
+  return getProductItemUrl(row);
 }
 
 function buildMessageReadCsv(rows = [], formatDateTime = value => String(value || '')) {

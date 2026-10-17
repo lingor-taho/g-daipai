@@ -1,3 +1,5 @@
+const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+
 function formatDateTime(value) {
   if (!value) return '-';
   const raw = String(value).trim();
@@ -110,7 +112,7 @@ function buildOrdersCsv(rows = [], shippingOverrides = {}) {
       userPayableCount += 1;
     }
     const productId = row.product_id || row.product_url?.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '';
-    const productUrl = row.product_url || (productId ? `https://auctions.yahoo.co.jp/jp/auction/${productId}` : '');
+    const productUrl = getProductItemUrl({ ...row, product_id: productId });
     lines.push([
       formatDateOnly(row.won_at),
       username,

@@ -1,3 +1,4 @@
+import { getProductItemUrl } from './utils/productUrl';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Statistic, Table, Tabs, Tag, Typography, message } from 'antd';
 import { fetchAdminJson } from './utils/auth';
@@ -30,7 +31,7 @@ function levelTag(level: string) {
 function productLink(productId: string) {
   if (!productId) return '-';
   return (
-    <a href={`https://auctions.yahoo.co.jp/jp/auction/${productId}`} target="_blank" rel="noreferrer">
+    <a href={getProductItemUrl(productId)} target="_blank" rel="noreferrer">
       {productId}
     </a>
   );
