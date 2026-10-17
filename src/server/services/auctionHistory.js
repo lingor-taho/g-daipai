@@ -2,6 +2,7 @@ const { randomUUID } = require('crypto');
 const accountScope = require('./yahooAccountContext');
 const yahooAccounts = require('./yahooAccounts');
 const { hasWinningOrderSql, auctionEndTimeSql } = require('./productAuctionTime');
+const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const EXPIRED = '数据已过期';
 function raw(database) { return database.raw || database.db || database; }
 function get(database, key, fallback = '') {
@@ -10,13 +11,18 @@ function get(database, key, fallback = '') {
 function set(database, key, value) {
   raw(database).prepare('INSERT INTO config (key,value,updated_at) VALUES (?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP').run(key, String(value));
 }
+function canCollectProduct(product) {
+  return !!product && !isFleamarketProduct(product) &&
+    (product.auction_history_html ?? '') === '' && (product.auction_history_data ?? '') === '';
+}
 function eligible(database, now = Date.now()) {
-  return raw(database).prepare(`SELECT p.product_id, ${auctionEndTimeSql} AS ended_at
+  return raw(database).prepare(`SELECT p.*, ${auctionEndTimeSql} AS ended_at
     FROM products p
     WHERE COALESCE(p.auction_history_html,'')='' AND COALESCE(p.auction_history_data,'')=''
     AND (EXISTS(SELECT 1 FROM tasks t WHERE t.product_id=p.product_id)
       OR ${hasWinningOrderSql})
     ORDER BY p.end_time DESC,p.product_id`).all().filter(p => {
+      if (!canCollectProduct(p)) return false;
       // A winning order, including a manual import, ends at its recorded win time.
       // Missing win times must not fall back to the original auction deadline.
       const text = String(p.ended_at || '');
@@ -44,6 +50,16 @@ function next(database, now = Date.now(), excluded = []) {
   return raw(database).transaction(() => {
     if (get(database,'auction_history_requested') !== '1') return null;
     const queue = JSON.parse(get(database,'auction_history_queue','{}'));
+    const previousHead = queue.ids?.[0];
+    const previousIds = queue.ids || [];
+    const productQuery = raw(database).prepare('SELECT * FROM products WHERE product_id=?');
+    queue.ids = previousIds.filter(id => canCollectProduct(productQuery.get(id)));
+    if (previousHead !== queue.ids[0]) { delete queue.claim; delete queue.leaseUntil; }
+    if (previousIds.length !== queue.ids.length) {
+      const retained = new Set(queue.ids);
+      for (const id of previousIds) if (!retained.has(id) && queue.failures) delete queue.failures[id];
+      set(database,'auction_history_queue',JSON.stringify(queue));
+    }
     if (!queue.ids?.length) { set(database,'auction_history_requested','0'); return null; }
     if (queue.leaseUntil > now) return null;
     const ctx=accountScope.context();
@@ -129,17 +145,19 @@ function finish(database, payload) {
     const ctx=accountScope.context();
     if(ctx && (queue.accountId!==ctx.accountId || queue.instanceId!==ctx.instanceId)) return {success:false,stale:true};
     let failure = String(payload.error || '').slice(0,500);
+    const skip = !canCollectProduct(raw(database).prepare('SELECT * FROM products WHERE product_id=?').get(payload.productId));
+    if (skip) failure = '';
     let data; let html;
-    if (!payload.expired && !failure) {
+    if (!skip && !payload.expired && !failure) {
       try {
         data = normalizeRows(payload.rows);
         if (!Array.isArray(payload.firstPageRows) || payload.firstPageRows.length > 100) throw new Error('invalid first page');
         html = buildHtml(payload.firstPageRows);
       } catch (error) { failure = error.message; }
     }
-    if (payload.expired === true) {
+    if (!skip && payload.expired === true) {
       raw(database).prepare("UPDATE products SET auction_history_html=?,auction_history_data=? WHERE product_id=? AND COALESCE(auction_history_html,'')='' AND COALESCE(auction_history_data,'')=''").run(EXPIRED,EXPIRED,payload.productId);
-    } else if (!failure) {
+    } else if (!skip && !failure) {
       const saved = raw(database).prepare("UPDATE products SET auction_history_html=?,auction_history_data=? WHERE product_id=? AND COALESCE(auction_history_html,'')='' AND COALESCE(auction_history_data,'')=''").run(html,JSON.stringify(data),payload.productId);
       if (saved.changes && data.length) {
         const product = raw(database).prepare(`SELECT p.end_time,

@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
 const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
+const fleamarketPurchase = require('../services/fleamarketPurchase');
 const { ENDED_REASON } = require('../services/endedTaskReason');
 const { execFile } = require('child_process');
 const db = require('../models');
@@ -398,6 +399,12 @@ async function failPricedOutPendingTasks(database = db) {
 
 async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
   const cutoffIso = new Date(nowMs - 60 * 1000).toISOString();
+  if (database.raw) database.raw.prepare(`UPDATE tasks SET status='failed',
+    error_msg='フリマ购买结果待核对，请勿重复购买',updated_at=CURRENT_TIMESTAMP
+    WHERE status='processing' AND execution_unknown=1 AND datetime(updated_at)<=datetime(?)
+    AND (? IS NULL OR account_id=?)
+    AND (LOWER(product_id) GLOB 'z[0-9]*' OR product_id IN (SELECT product_id FROM products WHERE product_type='fleamarket'))`)
+    .run(cutoffIso,accountScope.accountId() || null,accountScope.accountId() || null);
   const result = await database.query(
     `UPDATE tasks
      SET status = 'pending',
@@ -1092,15 +1099,31 @@ router.post('/idle-action/complete', async (req, res) => {
 
 // Keep the original one-time plugin retry, with a fresh credential for the new tab.
 router.post('/task/:id/retry', (req,res)=>{
+  if (isFleamarketProduct(req.yahooTask)) return res.status(409).json({error:'フリマ购买任务不自动重试'});
   const token=yahooAccounts.randomUUID();
   const result=db.raw.prepare("UPDATE tasks SET status='processing',error_msg=NULL,execution_unknown=0,claim_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND account_id=? AND status IN ('processing','failed') AND claim_token=? AND claim_instance=? AND NOT EXISTS (SELECT 1 FROM tasks AS other WHERE other.account_id=tasks.account_id AND other.product_id=tasks.product_id AND other.id<>tasks.id AND other.status='processing')")
     .run(token,req.yahooTask.id,accountScope.accountId(),req.yahooTask.claim_token,accountScope.context().instanceId);
   if(!result.changes) return res.status(409).json({error:'任务领取已失效，停止当前操作'});
   res.json({success:true,claim_token:token});
 });
+router.post('/task/:id/fleamarket/begin', (req, res) => {
+  try { res.json(fleamarketPurchase.beginPurchase(db.raw, Number(req.params.id), accountScope.context(), req.get('X-Yahoo-Claim'))); }
+  catch (error) { res.status(error.statusCode || 500).json({error:error.message}); }
+});
+router.get('/fleamarket/recovery/jobs', (req, res) => {
+  try { res.json({success:true,tasks:fleamarketPurchase.claimRecovery(db.raw,accountScope.context(),req.query.limit || 1)}); }
+  catch (error) { res.status(error.statusCode || 500).json({error:error.message}); }
+});
+router.post('/task/:id/fleamarket/complete', (req, res) => {
+  try { res.json(fleamarketPurchase.completePurchase(db.raw, Number(req.params.id), accountScope.context(), req.get('X-Yahoo-Claim'), req.body)); }
+  catch (error) { res.status(error.statusCode || 500).json({error:error.message}); }
+});
 // PATCH /api/plugin/task/:id/status
 router.patch('/task/:id/status', async (req, res) => {
   const { status, error_msg, bid_price, no_bid, not_highest } = req.body;
+  if (isFleamarketProduct(req.yahooTask) && (['success','bidding','pending'].includes(status) || (status==='processing' && req.yahooTask.execution_unknown))) {
+    return res.status(409).json({error:'フリマ购买必须通过独立購入完成回写，不可重新入队'});
+  }
   if (status === 'processing') {
     const result = await claimTaskForProcessing(req.params.id,db,{allowExisting:true});
     return res.json(result);
@@ -1464,6 +1487,7 @@ async function getTransactionStartJobs(database = db, options = {}) {
   let storeUpdated = 0;
   let missingTransactionUrl = 0;
   for (const row of rows) {
+    if (isFleamarketProduct(row)) continue;
     if (row.product_type === 'store') {
       const beforeRows = await getOrderStatusAuditRows(database, [row.order_id]);
       const result = await database.query(
@@ -1510,7 +1534,7 @@ async function getTransactionStartJobs(database = db, options = {}) {
     jobs.push(job);
     logJobs.push(job);
   }
-  return { jobs, logJobs, storeUpdated, missingTransactionUrl, total: rows.length };
+  return { jobs, logJobs, storeUpdated, missingTransactionUrl, total: rows.filter(row => !isFleamarketProduct(row)).length };
 }
 
 function normalizeOrderStatus(value) {
@@ -1753,6 +1777,7 @@ function formatSheetDate(value) {
 
 function buildYahooAuctionUrl(productId) {
   const id = String(productId || '').trim().toLowerCase();
+  if (isFleamarketProduct(id)) return `https://paypayfleamarket.yahoo.co.jp/item/${id}`;
   return id ? `https://auctions.yahoo.co.jp/jp/auction/${id}` : '';
 }
 
@@ -2036,6 +2061,7 @@ async function syncYahooWonOrders(orders = [], database = db) {
   let forcedResync = 0;
   let missingPrice = 0;
   for (const order of orders) {
+    if (isFleamarketProduct(order) || isFleamarketProduct(order.url)) continue;
     const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
@@ -3028,12 +3054,14 @@ async function getPaymentJobs(database = db, options = {}) {
      WHERE o.order_status = ?
        AND o.total_amount_cny IS NOT NULL
        AND t.status = 'success'
+       AND COALESCE(p.product_type,'') <> 'fleamarket'
+       AND LOWER(t.product_id) NOT GLOB 'z[0-9]*'
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC
      LIMIT ?`,
     [ORDER_STATUS_PENDING_SETTLEMENT, ORDER_STATUS_BUNDLE_COMPLETED, ORDER_STATUS_PENDING_SETTLEMENT, limit]
   );
   return {
-    jobs: rows.map(row => ({
+    jobs: rows.filter(row => !isFleamarketProduct(row)).map(row => ({
       orderId: row.order_id,
       productId: row.product_id,
       productUrl: row.product_url,
@@ -3048,7 +3076,7 @@ async function getPaymentJobs(database = db, options = {}) {
       effectiveShippingFeeText: getEffectiveShippingFeeText(row),
       bundleGroupId: row.bundle_group_id || ''
     })),
-    total: rows.length,
+    total: rows.filter(row => !isFleamarketProduct(row)).length,
     limit,
     limitMin: range.min,
     limitMax: range.max

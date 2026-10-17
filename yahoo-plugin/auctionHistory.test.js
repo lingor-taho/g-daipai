@@ -62,6 +62,7 @@ async function testAuthenticatedPagination() {
   const visited = []; const closed = []; const writes = [];
   let pageNumber = 1;
   const context = {
+    isFleamarketManualImportItem:require('../src/shared/fleamarket.cjs').isFleamarketProduct,
     console,Date,setTimeout,encodeURIComponent,
     chrome:{tabs:{
       create:async ({url})=>{ visited.push(url); return {id:7}; },
@@ -77,6 +78,9 @@ async function testAuthenticatedPagination() {
     apiFetch:async (url,options)=>{writes.push(JSON.parse(options.body));return {ok:true,json:async()=>({success:true})};}
   };
   vm.createContext(context);vm.runInContext(jobSource,context);
+  await context.executeAuctionHistoryJob({productId:'z705860836',token:'p-batch',claim:'p-claim'});
+  assert.equal(visited.length,0,'P history must not open an auction page');
+  assert.equal(writes.pop().skippedUnsupported,true);
   assert.equal(await context.executeAuctionHistoryJob({productId:'u1246662246',token:'batch',claim:'claim'}),true);
   assert.equal(visited.length,2);
   assert.equal(writes[0].rows.length,3);

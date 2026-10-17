@@ -95,7 +95,9 @@ async function run() {
         assert.equal(input.standardUrl, url);
         assert.equal(input.bidMode, 'buyout');
         const result = await submitAuctionTask(context, { ...body, product_url, bid_mode,
-          client_request_id: `single-${++count}`, start_minutes_before: 5, pending_followup_max_price: 99999 }, options);
+          client_request_id: `single-${++count}`, start_minutes_before: 5, pending_followup_max_price: 99999,
+          end_time:'2000-01-01T00:00:00Z',product_title:'old title',product_image_url:'https://example.com/old.png',
+          current_price:1,shipping_fee_text:'old shipping',bid_count:99 }, options);
         const task = await database.getOne('SELECT * FROM tasks WHERE id=?', [result.task_id]);
         assert.equal(task.bid_mode, 'buyout'); assert.equal(task.strategy, 'direct');
         assert.equal(task.max_price, 29700); assert.equal(task.user_max_price, 29700);
@@ -105,6 +107,9 @@ async function run() {
     }
     const stored = await database.getOne('SELECT * FROM products WHERE product_id=?', [id]);
     assert.equal(stored.product_type, 'fleamarket'); assert.equal(stored.product_url, url);
+    assert.equal(stored.product_title,product.title);assert.equal(stored.current_price,29700);
+    assert.equal(stored.product_image_url,product.imageUrl);assert.equal(stored.shipping_fee_text,'送料無料');
+    assert.equal(stored.bid_count,0);assert.equal(stored.end_time,null);
     const once = await submitAuctionTask(context, body, options);
     assert.equal((await submitAuctionTask(context, body, options)).duplicate, true);
     assert.ok(once.task_id);

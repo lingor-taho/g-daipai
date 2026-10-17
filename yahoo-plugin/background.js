@@ -7570,7 +7570,56 @@ function buildScanStatusPayload(job) {
   };
 }
 
+// P trade pages deliberately do not use the ordinary/store transaction parser.
+function readFleamarketTradePage(productId) {
+  const id = String(productId || '').toLowerCase();
+  const url = new URL(location.href);
+  const expected = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
+  if (`${url.origin}${url.pathname}` !== expected) return {type:'unknown',pageVariant:'fleamarket',reason:'unexpected trade URL'};
+  const text = String(document.body?.innerText || '').replace(/\s+/g,'');
+  // Shipped/tracking/receipt selectors await real page examples. Never infer shipment
+  // from the generic progress bar (配送中/受取評価) or a seller's message.
+  const pending = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"],div,p,span')]
+    .some(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' &&
+      String(node.innerText || '').replace(/\s+/g,'') === '出品者の発送をお待ちください');
+  return {type:pending?'pending_shipment':'unknown',pageVariant:'fleamarket',
+    transactionUrl:expected,textSample:text.slice(0,1000),
+    reason:pending?'':'フリマ发货／收货页面待适配'};
+}
+
+async function executeFleamarketTradeJob(job, kind = 'scan') {
+  let tab;
+  const id = String(job.productId || '').toLowerCase();
+  try {
+    if (!/^z\d{8,10}$/.test(id)) throw new Error('Invalid fleamarket product ID');
+    tab = await chrome.tabs.create({url:`https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`,active:false});
+    await waitForTabComplete(tab.id,20000);
+    let result;
+    const deadline = Date.now() + PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS;
+    do {
+      result = (await chrome.scripting.executeScript({target:{tabId:tab.id},func:readFleamarketTradePage,args:[id]}))?.[0]?.result;
+      if (result?.type === 'pending_shipment') break;
+      await sleep(PENDING_SHIPMENT_SCAN_POLL_MS);
+    } while (Date.now() < deadline);
+    if (kind === 'scan') {
+      const payload = buildScanStatusPayload({...job,result});
+      if (payload) { await updateScanStatus(payload); return {stop:false}; }
+      await postScanDiagnostic(job,result,'フリマ页面待适配，保留订单状态，未读取物流或点击收货').catch(()=>{});
+    }
+    // Receipt clicks will be added only after its actual page/button is supplied.
+    await releaseWorkJobs(kind,[job]);
+    return {stop:false,success:true,deferred:true};
+  } catch (error) {
+    console.warn('[Yahoo Fleamarket] Trade page unavailable:',job.productId,error.message);
+    await releaseWorkJobs(kind,[job]).catch(()=>{});
+    return {stop:false,success:false,deferred:true};
+  } finally {
+    if (tab?.id) await closeTabIfExists(tab.id).catch(()=>{});
+  }
+}
+
 async function executePendingShipmentScanJob(job) {
+  if (isFleamarketManualImportItem(job)) return executeFleamarketTradeJob(job,'scan');
   let tab = null;
   const beforeTabIds = await getTabIds();
   try {
@@ -7843,7 +7892,9 @@ async function runScanJobs() {
   for (const job of jobs) {
     if (job.bundleGroupId && processedBundleGroups.has(job.bundleGroupId)) continue;
     started(job);
-    const result = job.orderStatus === 'pending_bundle'
+    const result = isFleamarketManualImportItem(job)
+      ? await executeFleamarketTradeJob(job,'scan')
+      : job.orderStatus === 'pending_bundle'
       ? await executePendingBundleScanJob(job)
       : (job.orderStatus === 'pending_shipment'
         ? await executePendingShipmentScanJob(job)
@@ -8079,6 +8130,7 @@ async function runPaymentJobs() {
 }
 
 async function executeConfirmReceiptJob(job) {
+  if (isFleamarketManualImportItem(job)) return executeFleamarketTradeJob(job,'confirm-receipt');
   if (job.jobType === 'cancel_check') {
     let tab = null;
     const beforeTabIds = await getTabIds();
@@ -8392,6 +8444,13 @@ async function runWorkflowAction() {
 }
 
 async function executeAuctionHistoryJob(job) {
+  if (isFleamarketManualImportItem(job)) {
+    const response = await apiFetch('/api/plugin/auction-history/status',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...job,skippedUnsupported:true})
+    });
+    if (!response.ok || (await response.json()).success !== true) throw new Error('history skip was not acknowledged');
+    return true;
+  }
   let tab;
   const rows = [];
   let firstPageRows;
@@ -8494,8 +8553,171 @@ async function renewBidRetryClaim(task) {
   return { ...task, claim_token: result.claim_token };
 }
 
+// Executed only in this task's own PayPay item/checkout tab. No auction DOM code is used.
+function fleamarketPageStep(productId, action = '', maxPrice = 0) {
+  const id = String(productId).toLowerCase();
+  const url = new URL(location.href);
+  const item = url.origin === 'https://paypayfleamarket.yahoo.co.jp' && url.pathname === `/item/${id}`;
+  const secure = url.origin === 'https://paypayfleamarket-sec.yahoo.co.jp';
+  const checkout = secure && url.pathname === `/item/${id}/order`;
+  const done = secure && url.pathname === `/item/${id}/order/done`;
+  if (!item && !checkout && !done) return { state: 'foreign' };
+  const text = node => String(node?.innerText || node?.textContent || '').replace(/\s+/g, '');
+  const visible = node => !!node?.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none';
+  // Success requires rendered text, never a phrase embedded in hydration scripts.
+  const body = String(document.body?.innerText || '').replace(/\s+/g,'');
+  const buttons = root => [...root.querySelectorAll('button,a,[role="button"],input[type="submit"]')].filter(visible);
+  const exactButton = (root, label) => buttons(root).find(node => text(node) === label || node.value === label);
+  const total = (root = document) => {
+    const rows = [...root.querySelectorAll('div,li,tr,dl,p')].filter(node => visible(node) &&
+      /お支払い金額[（(]合計[）)]/.test(text(node)) && text(node).length < 160);
+    rows.sort((a,b) => text(a).length - text(b).length);
+    const amount = text(rows[0]).match(/お支払い金額[（(]合計[）)].*?([\d,]+)円/);
+    return amount ? Number(amount[1].replace(/,/g, '')) : null;
+  };
+  const discountApplied = root => [...root.querySelectorAll('div,li,tr,dl,p')].some(node => {
+    if (!visible(node)) return false;
+    const value = text(node);
+    if (value.length > 160) return false;
+    const match = value.match(/^(?:クーポン(?:の)?(?:使用|利用)|(?:PayPay)?ポイント(?:の)?(?:利用|使用)|利用ポイント)(.+)$/);
+    return !!match && !/^(?:適用されていません|適用なし|利用しない|利用なし|使用しない|未使用|なし|0円|0ポイント|0pt)$/i.test(match[1]);
+  });
+  const dialogFor = label => {
+    const headings = [...document.querySelectorAll('h1,h2,h3,h4,p,div,span')]
+      .filter(node => visible(node) && text(node).includes(label) && text(node).length < 160)
+      .sort((a,b) => text(a).length - text(b).length);
+    for (const heading of headings) {
+      for (let root = heading; root && root !== document.body; root = root.parentElement) {
+        if (exactButton(root, 'OK')) return root;
+      }
+    }
+    return null;
+  };
+  if (done) {
+    if (!body.includes('購入が完了しました')) return {state:'waiting'};
+    const link = [...document.querySelectorAll('a[href]')].find(node => text(node) === '取引ページへ');
+    return {state:'success',doneUrl:`${url.origin}${url.pathname}`,successText:'購入が完了しました',paidAmount:total(),discountApplied:discountApplied(document),transactionUrl:link?.href || null};
+  }
+  if (body.includes('決済処理中')) return {state:'processing'};
+  let state = 'waiting', target = null, confirmationDialog = null;
+  if (item) { state = 'item'; target = exactButton(document, '購入手続きへ'); }
+  if (checkout) {
+    const confirm = dialogFor('購入を確定しますか');
+    const placement = dialogFor('初期設定されました');
+    if (confirm) { state = 'confirm'; confirmationDialog = confirm; target = exactButton(confirm, 'OK'); }
+    else if (placement && text(placement).includes('置き配場所')) { state = 'placement'; target = exactButton(placement, 'OK'); }
+    else if ([...document.querySelectorAll('[role="dialog"],[aria-modal="true"],dialog[open]')].some(visible)) { state = 'waiting'; }
+    else { state = 'review'; target = exactButton(document, '購入内容を確認する'); }
+  }
+  const paidAmount = state === 'confirm' ? total(confirmationDialog) : null;
+  const discounted = state === 'confirm' && discountApplied(confirmationDialog);
+  if (state === 'confirm' && discounted) return {state:'unsupported-discount'};
+  if (action && action === state && target && !target.disabled && target.getAttribute('aria-disabled') !== 'true') {
+    if (state === 'confirm' && (!Number.isSafeInteger(paidAmount) || paidAmount <= 0 || paidAmount !== maxPrice)) return {state:'invalid-price'};
+    const key = `__gdaipaiFleamarket_${id}_${state}`;
+    if (!window[key]) {
+      window[key] = true;
+      target.click();
+      return {state,clicked:true,paidAmount};
+    }
+  }
+  return {state,ready:!!target,paidAmount};
+}
+
+async function executeFleamarketPurchaseTask(task, options = {}) {
+  const id = String(task.product_id || normalizeAuctionId(task.product_url) || '').toLowerCase();
+  const recoveryOnly = task.fleamarket_recovery_only === true;
+  let tab, armed = recoveryOnly, completed = false, confirmedAmount;
+  const acted = new Set();
+  const request = async (name, body) => {
+    const response = await apiFetch(`/api/plugin/task/${task.id}/fleamarket/${name}`, {
+      method:'POST',headers:{'Content-Type':'application/json','X-Yahoo-Claim':task.claim_token},body:JSON.stringify(body || {}),
+      signal:AbortSignal.timeout(10000)
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      const error = new Error(result.error || 'フリマ购买回写失败');
+      error.definiteRejection = response.status >= 400 && response.status < 500;
+      throw error;
+    }
+    return result;
+  };
+  try {
+    if (!/^z\d{8,10}$/.test(id) || task.bid_mode !== 'buyout' || task.strategy !== 'direct') throw new Error('フリマ仅支持即决一口价');
+    if (!options.alreadyClaimed) {
+      const claim = await markTaskStatus(task.id,'processing',null,{executionClaim:task.claim_token});
+      if (!claim?.success) return;
+      task.claim_token = claim.claim_token || task.claim_token;
+    }
+    yahooActiveBidClaims.set(Number(task.id), task.claim_token);
+    const previousIds = new Set((await chrome.tabs.query({})).map(value => value.id));
+    tab = await chrome.tabs.create({url:recoveryOnly
+      ? `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/order/done`
+      : `https://paypayfleamarket.yahoo.co.jp/item/${id}`,active:!recoveryOnly});
+    registerManagedTaskTab(task.id, tab.id);
+    const deadline = Date.now() + (recoveryOnly ? 30000 : 180000);
+    while (Date.now() < deadline) {
+      if (!(await heartbeatProcessingTask(task.id,task.claim_token))?.success) throw new Error('任务领取已失效，停止購入');
+      // Follow only new child tabs belonging to this run, never an existing checkout.
+      const tabs = await chrome.tabs.query({});
+      const owned = managedTaskTabIdsByTaskId.get(task.id) || new Set([tab.id]);
+      const child = tabs.find(value => !previousIds.has(value.id) && !owned.has(value.id) && owned.has(value.openerTabId) &&
+        new RegExp(`^https://paypayfleamarket-sec\\.yahoo\\.co\\.jp/item/${id}/order(?:[/?#]|$)`).test(value.url || value.pendingUrl || ''));
+      if (child) { registerManagedTaskTab(task.id, child.id); tab = child; }
+      let snapshot;
+      try {
+        const results = await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketPageStep,args:[id]});
+        snapshot = results?.[0]?.result;
+      } catch (error) {
+        // A navigation can destroy the script context, including immediately after OK.
+        if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;
+      }
+      if (snapshot?.state === 'success') {
+        if (!armed) throw new Error('购买完成页没有本次确认记录');
+        const evidence = {...snapshot,paidAmount:snapshot.paidAmount ?? confirmedAmount};
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try { await request('complete',evidence); completed = true; break; }
+          catch (error) { if (attempt === 2) throw error; await sleep(1000); }
+        }
+        return;
+      }
+      const state = snapshot?.state;
+      if (state === 'unsupported-discount') throw new Error('フリマ暂不支持优惠券或积分，请取消抵扣后重新提交');
+      if (!armed && snapshot?.ready && ['item','placement','review','confirm'].includes(state) && !acted.has(state)) {
+        if (state === 'confirm') {
+          if (!Number.isSafeInteger(snapshot.paidAmount) || snapshot.paidAmount <= 0 || snapshot.paidAmount !== Number(task.max_price)) throw new Error('フリマ确认金额必须等于提交价格，暂不支持优惠券或积分');
+          // Treat even a lost response as uncertain; never resend the purchase click.
+          armed = true;
+          try { await request('begin'); }
+          catch (error) { if (error.definiteRejection) armed = false; throw error; }
+          confirmedAmount = snapshot.paidAmount;
+        }
+        acted.add(state);
+        try {
+          const results = await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketPageStep,args:[id,state,Number(task.max_price)]});
+          if (results?.[0]?.result?.state === 'invalid-price') throw new Error('購入确认金额已改变');
+        } catch (error) {
+          if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;
+        }
+      }
+      await sleep(1000);
+    }
+    throw new Error(armed ? 'フリマ购买结果待核对，请勿重复购买' : 'フリマ購入页面等待超时');
+  } catch (error) {
+    await markTaskStatus(task.id,'failed',error.message,{executionClaim:task.claim_token,result_unknown:armed});
+    console.error('[Yahoo Fleamarket] Purchase stopped:',task.id,error.message);
+  } finally {
+    // Retain an uncertain payment tab for inspection; it must not be refreshed/replayed.
+    if (completed || !armed || recoveryOnly) await closeManagedTaskTabs(task.id,tab?.id).catch(() => {});
+    else releaseManagedTaskTabs(task.id);
+    yahooActiveBidClaims.delete(Number(task.id));
+    if (!options.preserveActiveRun) activeBidRuns.delete(task.id);
+  }
+}
+
 async function executeBidTask(task, options = {}) {
   if (!task?.id) return;
+  if (isFleamarketManualImportItem(task)) return executeFleamarketPurchaseTask(task,options);
   const reportStatus=(id,status,error,extra={})=>markTaskStatus(id,status,error,{...extra,executionClaim:task.claim_token});
   if(task.claim_token) yahooActiveBidClaims.set(Number(task.id),task.claim_token);
   console.log('[Yahoo Bid] Executing task:', task.product_url);
@@ -8701,7 +8923,12 @@ async function pollBidPool() {
   await refreshPluginConfig();
   const slots = Math.max(0, bidConcurrencyLimit - activeBidRuns.size);
   if (slots <= 0) return;
-  const tasks = await fetchPendingTasks(slots);
+  let recoveries = [];
+  try {
+    const response = await apiFetch(`/api/plugin/fleamarket/recovery/jobs?limit=${slots}`);
+    recoveries = (await response.json()).tasks || [];
+  } catch (error) { logBackgroundIssue('[Yahoo Fleamarket] Recovery lookup failed:',error); }
+  const tasks = [...recoveries,...(recoveries.length < slots ? await fetchPendingTasks(slots-recoveries.length) : [])];
   if (!tasks.length) return;
   for (const task of tasks) {
     if (!task?.id || activeBidRuns.has(task.id)) continue;
@@ -8734,6 +8961,10 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 
 globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
+  readFleamarketTradePage,
+  executeFleamarketTradeJob,
+  fleamarketPageStep,
+  executeFleamarketPurchaseTask,
   ensureTaskReadyByCurrentEndTime,
   isNormalBidCompleteSnapshot,
   shouldKeepTaskTabOpen,

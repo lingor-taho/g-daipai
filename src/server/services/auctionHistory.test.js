@@ -14,7 +14,7 @@ CREATE TABLE products(product_id TEXT PRIMARY KEY,end_time TEXT,auction_history_
 CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT,status TEXT,strategy TEXT,account_id INTEGER);
 CREATE TABLE orders(id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT,order_status TEXT,account_id INTEGER);`);
 function eligibilityCase(id, {end='2026-10-01T00:00:00+09:00',won,legacy=false,imported=false,linked=true,html=null,data=null} = {}) {
-  eligibilityDb.prepare('INSERT INTO products VALUES (?,?,?,?)').run(id,end,html,data);
+  eligibilityDb.prepare('INSERT INTO products(product_id,end_time,auction_history_html,auction_history_data) VALUES (?,?,?,?)').run(id,end,html,data);
   const taskId = linked ? eligibilityDb.prepare('INSERT INTO tasks(product_id,status,strategy,account_id) VALUES (?,?,?,2)').run(id,won===undefined?'failed':'success',imported?'manual_import':'direct').lastInsertRowid : null;
   if (won !== undefined) eligibilityDb.prepare('INSERT INTO orders(product_id,task_id,won_at,order_status,account_id) VALUES (?,?,?,?,2)').run(legacy?null:id,taskId,won,imported?'completed':'pending_payment');
 }
@@ -37,8 +37,13 @@ eligibilityCase('won-one-ms-later',{won:new Date(eligibilityNow+1).toISOString()
 eligibilityCase('won-has-html',{won:'2026-10-07T00:00:00Z',html:'saved'});
 eligibilityCase('won-has-data',{won:'2026-10-07T00:00:00Z',data:'[]'});
 eligibilityCase('won-expired',{won:'2026-10-07T00:00:00Z',html:history.EXPIRED,data:history.EXPIRED});
+eligibilityDb.exec('ALTER TABLE products ADD COLUMN product_type TEXT');
+eligibilityCase('z705860836',{end:null,won:'2026-10-07T00:00:00Z'});
+eligibilityCase('typed-fleamarket',{won:'2026-10-07T00:00:00Z'});
+eligibilityDb.prepare("UPDATE products SET product_type='fleamarket' WHERE product_id='typed-fleamarket'").run();
+eligibilityCase('p123456789');
 const beforeEligibility = eligibilityDb.serialize();
-const expectedEligible = ['non-won-ended','v1247947416','r1232702461','won-invalid-deadline','won-offset','legacy-order','order-only','won-boundary'].sort();
+const expectedEligible = ['non-won-ended','v1247947416','r1232702461','won-invalid-deadline','won-offset','legacy-order','order-only','won-boundary','p123456789'].sort();
 assert.deepEqual(history.eligible(eligibilityDb,eligibilityNow).sort(),expectedEligible);
 assert.deepEqual(eligibilityDb.serialize(),beforeEligibility,'Eligibility must not change product, task or order data');
 history.request(eligibilityDb,eligibilityNow);
@@ -213,5 +218,21 @@ assert.equal(history.get(retryDb,'auction_history_requested'),'0');
 assert.deepEqual(history.getAlerts(retryDb)[0].items,[{productId:'a',attempts:3,error:'login required'}]);
 assert.equal(history.getAlerts(retryDb)[0].items.some(item=>item.productId==='b'),false,'Successful retry must not remain in the failure summary');
 retryDb.close();
+
+const pDb = new Database(':memory:');
+pDb.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
+  CREATE TABLE products(product_id TEXT PRIMARY KEY,product_type TEXT,auction_history_html TEXT,auction_history_data TEXT);
+  INSERT INTO products VALUES('z705860836','fleamarket',NULL,NULL),('typed-p','fleamarket',NULL,NULL),('saved','normal','old',NULL),('p123456789','normal',NULL,NULL);`);
+history.set(pDb,'auction_history_requested','1');
+history.set(pDb,'auction_history_queue',JSON.stringify({token:'old-queue',ids:['z705860836','typed-p','saved','p123456789'],claim:'old-p-claim',leaseUntil:now+10000}));
+const normalPJob = history.next(pDb,now);
+assert.equal(normalPJob.productId,'p123456789','old queues skip P and nonempty history, retaining ordinary p IDs');
+assert.equal(history.finish(pDb,{productId:'z705860836',token:'old-queue',claim:'old-p-claim',expired:true}).stale,true);
+for(const productId of ['z705860836','typed-p']) {
+  history.set(pDb,'auction_history_queue',JSON.stringify({token:'legacy-active',ids:[productId],claim:'old'}));
+  assert.equal(history.finish(pDb,{productId,token:'legacy-active',claim:'old',expired:true}).success,true);
+  assert.deepEqual(pDb.prepare('SELECT auction_history_html,auction_history_data FROM products WHERE product_id=?').get(productId),{auction_history_html:null,auction_history_data:null});
+}
+pDb.close();
 db.close();
 console.log('Auction history queue, atomic storage and non-won end-time/price correction tests passed');

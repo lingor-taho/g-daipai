@@ -673,6 +673,12 @@ async function submitAuctionTask(context, body, {
         ? Math.ceil(input.maxPrice * 1.1 - 1e-6)
         : input.maxPrice;
     } else if (fleamarketProduct) {
+      if (database.raw) {
+        if (database.raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(input.productId)) throw submitError('该フリマ商品已有成交订单，请勿重复提交',409);
+        if (database.raw.prepare("SELECT 1 FROM tasks WHERE product_id=? AND (execution_unknown=1 OR status IN ('pending','processing'))").get(input.productId)) {
+          throw submitError('该フリマ商品已有待执行任务或购买结果待核对，请勿重复提交',409);
+        }
+      }
       const result = await fetchProduct(input.standardUrl);
       productInfo = result?.data;
       if (!result?.success || result.source === 'cache-fallback' || productInfo?.auctionId !== input.productId ||
@@ -687,7 +693,7 @@ async function submitAuctionTask(context, body, {
         productInfo = result.data || null;
       } catch (_) {}
     }
-    const endTime = end_time || productInfo?.endTime || null;
+    const endTime = fleamarketProduct ? productInfo?.endTime || null : end_time || productInfo?.endTime || null;
     if (isAuctionEnded(endTime) || isAuctionEnded(productInfo?.endTime)) throw submitError('商品已结束，不能提交任务');
     const resolvedTaxType = normalizeTaxType(fleamarketProduct ? productInfo?.taxType : tax_type || productInfo?.taxType);
     const resolvedProductType = fleamarketProduct ? 'fleamarket' : normalizeProductType(product_type || productInfo?.productType, resolvedTaxType);
@@ -716,8 +722,8 @@ async function submitAuctionTask(context, body, {
     const buyoutPrice = input.bidMode === 'buyout'
       ? buyoutPrices.buyoutPrice
       : (submittedBuyoutPrice || fetchedBuyoutPrice || null);
-    const shippingFeeText = shipping_fee_text || productInfo?.shippingFeeText || null;
-    const bidCountValue = Number(bid_count ?? productInfo?.bidCount ?? productInfo?.bid_count ?? 0);
+    const shippingFeeText = (fleamarketProduct ? productInfo?.shippingFeeText : shipping_fee_text || productInfo?.shippingFeeText) || null;
+    const bidCountValue = fleamarketProduct ? 0 : Number(bid_count ?? productInfo?.bidCount ?? productInfo?.bid_count ?? 0);
     const bidCount = Number.isFinite(bidCountValue) && bidCountValue >= 0 ? Math.floor(bidCountValue) : 0;
     const followupMaxPriceRaw = Number(pending_followup_max_price || 0);
     let followupMaxPrice = !fleamarketProduct && Number.isFinite(followupMaxPriceRaw) && followupMaxPriceRaw > userMaxPrice
@@ -755,9 +761,9 @@ async function submitAuctionTask(context, body, {
     await upsertProductSnapshot(database, buildSubmitProductSnapshot({
       input,
       productInfo,
-      productTitle: product_title,
-      productImageUrl: product_image_url,
-      currentPrice: current_price,
+      productTitle: fleamarketProduct ? productInfo?.title : product_title,
+      productImageUrl: fleamarketProduct ? productInfo?.imageUrl : product_image_url,
+      currentPrice: fleamarketProduct ? productInfo?.currentPrice : current_price,
       buyoutPrice,
       bidCount,
       resolvedTaxType,
