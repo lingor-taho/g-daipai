@@ -679,11 +679,23 @@ async function submitAuctionTask(context, body, {
           throw submitError('该フリマ商品已有待执行任务或购买结果待核对，请勿重复提交',409);
         }
       }
-      const result = await fetchProduct(input.standardUrl, {recordedProductType:savedType || undefined});
+      // Like auction submissions, reuse the detail already fetched by the client.
+      // P has no auction deadline; its absence must not force a second fetch.
+      // The plugin checks availability and the exact price before purchase.
+      const hasProductSnapshot = product_title && product_image_url && Number(current_price) > 0 &&
+        Number(buyout_price) > 0 && tax_type && product_type && shipping_fee_text;
+      const result = hasProductSnapshot ? {
+        success: true,
+        data: {
+          auctionId: input.productId, productType: 'fleamarket', taxType: tax_type,
+          title: product_title, imageUrl: product_image_url, currentPrice: Number(current_price),
+          buyoutPrice: Number(buyout_price), shippingFeeText: shipping_fee_text, endTime: null
+        }
+      } : await fetchProduct(input.standardUrl, {recordedProductType:savedType || undefined});
       productInfo = result?.data;
       if (!result?.success || result.source === 'cache-fallback' || productInfo?.auctionId !== input.productId ||
           !isStoredFleamarketProduct(productInfo) || !(Number(productInfo?.buyoutPrice) > 0)) {
-        throw submitError('无法获取最新的フリマ商品信息，请重新获取后提交');
+        throw submitError('无法确认フリマ商品信息，请重新获取后提交');
       }
       if (productInfo.auctionStatus === 'ended') throw submitError('商品已结束，不能提交任务');
       if (Number(productInfo.buyoutPrice) !== input.maxPrice) throw submitError('商品即决价格已变化，请重新获取商品信息后提交');

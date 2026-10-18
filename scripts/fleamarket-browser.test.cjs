@@ -127,10 +127,10 @@ const { chromium } = require('playwright');
       assert.equal(savedFavorites.find(row=>row.auctionId==='x1234567890').productType,'normal');
       assert.equal(submitted.length, 0);
       await input.fill('ワンフェス WF2026S Plastic Stick'); await fetch.click();
-      const badges = page.locator('.product-search-result:visible img[src="/yahoo-assets/fleamarket-icon.svg"]');
+      const searchPopup=page.locator('.adm-popup').filter({has:page.getByText('商品搜索结果',{exact:true})});
+      const badges = searchPopup.locator('.product-search-result:visible img[src="/yahoo-assets/fleamarket-icon.svg"]');
       await badges.waitFor(); assert.equal(await badges.count(), 1);
       assert.equal(await badges.evaluate(img => img.complete && img.naturalWidth > 0), true);
-      const searchPopup=page.locator('.adm-popup').filter({has:page.getByText('商品搜索结果',{exact:true})});
       for (const [item, tag] of [[normalProduct, '普'], [storeProduct, '商']]) {
         const card = searchPopup.locator('.product-search-result').filter({ hasText: item.title });
         assert.equal(await card.locator('[data-product-type]').textContent(), item.productType === 'store' ? '商城商品' : '普通商品');

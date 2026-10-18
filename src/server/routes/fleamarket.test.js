@@ -143,6 +143,24 @@ async function run() {
     const once = await submitAuctionTask(context, body, options);
     assert.equal((await submitAuctionTask(context, body, options)).duplicate, true);
     assert.ok(once.task_id);
+    const snapshotBody = {
+      ...body, product_title: product.title, product_image_url: product.imageUrl,
+      current_price: product.currentPrice, buyout_price: product.buyoutPrice,
+      tax_type: product.taxType, product_type: product.productType,
+      shipping_fee_text: product.shippingFeeText, end_time: null
+    };
+    const noFetch = { database, fetchProduct: async () => { throw new Error('complete P snapshot must not fetch again'); } };
+    const fast = await submitAuctionTask(context, { ...snapshotBody, client_request_id: 'fast-submit' }, noFetch);
+    assert.ok(fast.task_id, 'P without an auction deadline submits using the client snapshot');
+    assert.equal(raw.prepare('SELECT product_title FROM products WHERE product_id=?').get(id).product_title, product.title);
+    await assert.rejects(submitAuctionTask(context, {
+      ...snapshotBody, client_request_id: 'fast-wrong-price', buyout_price: 30000
+    }, noFetch), /商品即决价格已变化/);
+    let incompleteFetches = 0;
+    await submitAuctionTask(context, { ...snapshotBody, product_title: null, client_request_id: 'incomplete-submit' }, {
+      database, fetchProduct: async target => { incompleteFetches++; return options.fetchProduct(target); }
+    });
+    assert.equal(incompleteFetches, 1, 'incomplete P details keep the existing fetch fallback');
     for (const result of [
       { success: true, source: 'cache-fallback', data: product },
       { success: true, data: { ...product, auctionStatus: 'ended' } },
@@ -155,7 +173,7 @@ async function run() {
     }));
     const { normalizeBatchProduct } = require('../../shared/batchBid.cjs');
     for (const value of [url, id, id.toUpperCase()]) assert.throws(() => normalizeBatchProduct(value), { message });
-    assert.equal((await database.getOne('SELECT COUNT(*) AS n FROM tasks')).n, count + 1);
+    assert.equal((await database.getOne('SELECT COUNT(*) AS n FROM tasks')).n, count + 3);
   } finally { raw.close(); }
   console.log('Fleamarket parsing, mixed search, URL routing, fallback and single buyout submission passed');
 }

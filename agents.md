@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-18 P单条任务提交改用普通／商城类似的信息复用：前端商品快照齐全时直接创建任务，不再强制访问Yahoo；P无截止时间不触发补抓，信息缺失仍沿原抓取兜底。重复任务／已有订单／结果未知拦截保留，实时可购买性及最终商品价格由原插件领取后核验。仅需更新API task.js并重启，无插件／两端静态／schema变化；未部署或操作真实购买，详见0ag。
+
 2026-10-18 收藏列表标题下复用搜索列表类型展示：普通绿色全称标签、商城红色全称标签、P使用Yahoo!フリマ标识；仅读收藏已保存类型，旧收藏缺类型时不猜测，沿原查看后补齐机制。仅用户端展示，更新用户端dist；验证：ProductSearchPopup展示检查、用户端构建、390／1200浏览器检查、编码与diff检查，无API／插件／数据库变化。
 
 2026-10-18 按用户新范围补齐此前暂缓的P类型判断：已入库任务／订单／恢复／交易与付款排除／拍卖记录／Google商品链接改以products.product_type为准，移除后续流程的Z ID及旧URL兜底，快照归一化不再把Z自动改P。插件按任务／订单下发类型分流；缺类型停止执行，P合法ID及同商品URL核验保留。收藏补存productType及按类型生成的URL，旧收藏先读取商品详情，优先核对商品表类型再回填本地；再入札／详情跳转携带类型，初次无类型的用户输入仍走原识别。无schema变更，需同步更新API／shared、用户端dist及各账号插件background.js并reload，详见0af。
@@ -239,6 +241,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ag. P提交复用已读取商品信息
+
+P单条提交在标题、图片、当前价、即决价、税类型、商品类型及运费齐全时复用前端快照，不再强制重抓Yahoo；无拍卖截止时间不视为缺失。旧客户端信息不全时保留原抓取及结果校验；商品表已有类型仍优先，P保持direct／buyout，不接入批量。提交时已有订单、待执行任务及购买结果未知拦截不变。原插件仅在同商品页面沿可用购买入口执行，最终确认弹窗商品原价必须等于任务价格，API begin再次校验后才允许最终OK；下架无入口沿原等待超时失败，不写成功，价格变化在购买确认前停止。结果未知不重买、成功页双标识及原子建单保持。替代此前0l／0p等记录中“每次提交强制实时重抓”的规则。
+
+提交前完整回归补正浏览器测试：P图标定位限定在“商品搜索结果”弹层，避免收藏弹层关闭动画期间的同款图标造成strict mode多匹配；产品代码和断言数量不变。完整验证`node scripts/run-isolated-regression.cjs`已通过，隔离数据库运行原`npm run regression`全部步骤，包含原交易／付款／扫描、多账号、两端构建及390／1200浏览器检查。
+
+验证命令：`node scripts/run-isolated-regression.cjs src/server/routes/fleamarket.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/task.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/task.batch.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/task.endedSubmit.test.js`、`node yahoo-plugin/fleamarketPurchase.test.js`、`node scripts/encoding-guard.js`、`git diff --check`。新增覆盖完整P快照不重抓、无截止时间、信息缺失补抓、提交金额矛盾及插件无购买入口失败；复核原价格变化、未知结果、重复购买保护。仅更新API routes/task.js并重启；插件只补测试，不需reload，无两端静态或schema更新，未部署生产或操作真实Yahoo。
 
 ### 0af. 后续P流程及收藏统一使用保存类型
 
@@ -1161,6 +1171,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-18 P商品快速提交
+
+P信息齐全时复用用户端已读取快照，取消提交必经的Yahoo重抓；插件领取后沿原购买入口及最终金额校验执行。重复任务、订单、结果未知保护保持，仅更新API并重启，验证见0ag。
 
 ### 2026-10-17 首页商品类型标签配色
 

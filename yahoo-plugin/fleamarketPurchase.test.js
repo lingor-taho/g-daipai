@@ -27,6 +27,9 @@ async function domTests() {
     assert.equal((await step('item')).clicked,true);
     assert.equal((await step('item')).clicked,undefined);
     assert.equal(await page.evaluate('window.clicks'),1);
+    await load(itemUrl,'<h1>商品</h1><p>売り切れました</p>');
+    assert.equal((await step('item')).ready,false,'unavailable product cannot enter checkout');
+    assert.equal(await page.evaluate('window.clicks'),undefined);
     await load(orderUrl,`<div role="dialog"><h2>置き配場所（玄関前）が<br>初期設定されました</h2>${button('OK')}</div>${button('購入内容を確認する')}`);
     assert.equal((await step('review')).state,'placement');
     assert.equal(await page.evaluate('window.clicks'),undefined);
@@ -87,7 +90,7 @@ async function domTests() {
   } finally {await browser.close();}
 }
 
-async function executorTest({placement=false,child=false,loseBegin=false,rejectBegin=false,loseLease=false,timeout=false,navigation=false,wrongPrice=false,missingPrice=false,discountPrice=false,appliedDiscount=false,loseComplete=false,recoveryOnly=false,recoveryMissing=false}={}) {
+async function executorTest({placement=false,child=false,loseBegin=false,rejectBegin=false,loseLease=false,timeout=false,navigation=false,wrongPrice=false,missingPrice=false,discountPrice=false,appliedDiscount=false,loseComplete=false,recoveryOnly=false,recoveryMissing=false,unavailable=false}={}) {
   let clock=0,state=recoveryOnly?(recoveryMissing?'confirm':'success'):'item',begin=0,complete=0,created=0,closed=0,released=0,finalClicks=0;
   const actions=[],statuses=[],owned=new Map(); let taskTab=1;
   class TestDate extends Date {static now(){return clock;}}
@@ -115,7 +118,7 @@ async function executorTest({placement=false,child=false,loseBegin=false,rejectB
       const action=args[1];
       if(!action){
         if(state==='processing'&&!timeout)state='success';
-        return [{result:state==='success'?{state,doneUrl,successText:'購入が完了しました',paidAmount:300}:{state,ready:true,itemPrice:missingPrice?null:wrongPrice?301:300,paidAmount:discountPrice?200:300,discountApplied:appliedDiscount}}];
+        return [{result:state==='success'?{state,doneUrl,successText:'購入が完了しました',paidAmount:300}:{state,ready:!unavailable,itemPrice:missingPrice?null:wrongPrice?301:300,paidAmount:discountPrice?200:300,discountApplied:appliedDiscount}}];
       }
       actions.push(action);
       if(action==='item')state=placement?'placement':'review';
@@ -129,6 +132,7 @@ async function executorTest({placement=false,child=false,loseBegin=false,rejectB
   await sandbox.execute({id:9,product_id:id,product_url:itemUrl,max_price:300,bid_mode:'buyout',strategy:'direct',claim_token:'claim',fleamarket_recovery_only:recoveryOnly},{alreadyClaimed:true});
   assert.equal(created,1);assert.equal(sandbox.activeBidRuns.size,0);
   if(recoveryOnly){assert.equal(begin,0);assert.equal(finalClicks,0);assert.equal(actions.length,0);assert.equal(closed,1);assert.equal(complete,recoveryMissing?0:1);if(recoveryMissing)assert.equal(statuses[0].extra.result_unknown,true);}
+  else if(unavailable){assert.equal(actions.length,0);assert.equal(begin,0);assert.equal(complete,0);assert.equal(closed,1);assert.equal(statuses[0].status,'failed');assert.equal(statuses[0].extra.result_unknown,false);}
   else if(rejectBegin){assert.equal(finalClicks,0);assert.equal(closed,1);assert.equal(statuses[0].extra.result_unknown,false);}
   else if(loseBegin||timeout){assert.equal(released,1);assert.equal(closed,0);assert.equal(complete,0);assert.equal(statuses[0].extra.result_unknown,true);}
   else if(loseLease||wrongPrice||missingPrice){assert.equal(finalClicks,0);assert.equal(begin,0);assert.equal(closed,1);assert.equal(statuses[0].status,'failed');assert.equal(statuses[0].extra.result_unknown,false);}
@@ -142,7 +146,7 @@ async function executorTest({placement=false,child=false,loseBegin=false,rejectB
 
 (async()=>{
   await domTests();
-  for(const options of [{},{placement:true,child:true},{navigation:true},{loseBegin:true},{rejectBegin:true},{loseLease:true},{wrongPrice:true},{missingPrice:true},{discountPrice:true},{appliedDiscount:true},{timeout:true},{loseComplete:true},{recoveryOnly:true},{recoveryOnly:true,recoveryMissing:true}])await executorTest(options);
+  for(const options of [{},{unavailable:true},{placement:true,child:true},{navigation:true},{loseBegin:true},{rejectBegin:true},{loseLease:true},{wrongPrice:true},{missingPrice:true},{discountPrice:true},{appliedDiscount:true},{timeout:true},{loseComplete:true},{recoveryOnly:true},{recoveryOnly:true,recoveryMissing:true}])await executorTest(options);
   assert.match(source,/if \(isFleamarketManualImportItem\(task\)\) return executeFleamarketPurchaseTask/);
   console.log('Fleamarket executor, child tab, lost-response, navigation and no-repeat tests passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
