@@ -2,7 +2,7 @@ const { randomUUID } = require('crypto');
 const accountScope = require('./yahooAccountContext');
 const yahooAccounts = require('./yahooAccounts');
 const { hasWinningOrderSql, auctionEndTimeSql } = require('./productAuctionTime');
-const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
+const { getStoredProductType } = require('../../shared/fleamarket.cjs');
 const EXPIRED = '数据已过期';
 function raw(database) { return database.raw || database.db || database; }
 function get(database, key, fallback = '') {
@@ -12,7 +12,7 @@ function set(database, key, value) {
   raw(database).prepare('INSERT INTO config (key,value,updated_at) VALUES (?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP').run(key, String(value));
 }
 function canCollectProduct(product) {
-  return !!product && !isFleamarketProduct(product) &&
+  return !!product && ['normal','store'].includes(getStoredProductType(product)) &&
     (product.auction_history_html ?? '') === '' && (product.auction_history_data ?? '') === '';
 }
 function eligible(database, now = Date.now()) {
@@ -76,7 +76,7 @@ function next(database, now = Date.now(), excluded = []) {
     queue.claim = randomUUID(); queue.leaseUntil = now + 10 * 60 * 1000;
     queue.accountId=ctx?.accountId; queue.instanceId=ctx?.instanceId;
     set(database,'auction_history_queue',JSON.stringify(queue));
-    return { productId: queue.ids[0], token: queue.token, claim: queue.claim };
+    return { productId: queue.ids[0], productType: getStoredProductType(productQuery.get(queue.ids[0])), token: queue.token, claim: queue.claim };
   })();
 }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

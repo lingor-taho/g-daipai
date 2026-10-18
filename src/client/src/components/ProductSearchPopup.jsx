@@ -345,6 +345,7 @@ export default function ProductSearchPopup({
   onBid,
   favorites = [],
   onToggleFavorite = () => {},
+  onRefreshFavorite = () => {},
   favoritesOnly = false,
   detailOnlyItem = null,
   detailAction = 'close'
@@ -359,7 +360,7 @@ export default function ProductSearchPopup({
   const isFavorite = item => favorites.some(value => value.auctionId === String(item.auctionId || '').toLowerCase());
   const [selectedItem, setSelectedItem] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
-  const detailIsFleamarket = fleamarket.isFleamarketProduct(detailProduct || selectedItem);
+  const detailIsFleamarket = fleamarket.isStoredFleamarketProduct(detailProduct || selectedItem);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [history, setHistory] = useState({loading:false,html:'',message:''});
   useEffect(() => { setHistoryVisible(false); }, [visible, selectedItem?.auctionId]);
@@ -437,6 +438,7 @@ export default function ProductSearchPopup({
       const product = await onLoadDetail(item);
       if (detailRequestRef.current !== requestId) return;
       setDetailProduct({ ...item, ...product });
+      onRefreshFavorite({ ...item, ...product });
     } catch (error) {
       if (detailRequestRef.current !== requestId) return;
       setDetailError(error?.message || '商品详情加载失败，请稍后重试');
@@ -717,7 +719,7 @@ export default function ProductSearchPopup({
                             </span>
                           </div>
                         )}
-                        {!favoritesOnly && !fleamarket.isFleamarketProduct(item) && (
+                        {!favoritesOnly && !fleamarket.isStoredFleamarketProduct(item) && (
                           <div style={{ marginTop: 4 }}><ProductTypeTag product={item} fullName /></div>
                         )}
                         <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.55, color: colors.muted }}>
@@ -746,7 +748,7 @@ export default function ProductSearchPopup({
                           onClick={() => onBid(item)}
                           style={{ ...outlineButtonStyle, flex: '0 0 auto', '--text-color': colors.danger }}
                         >
-                          {fleamarket.isFleamarketProduct(item) ? '購入' : '入札'}
+                          {fleamarket.isStoredFleamarketProduct(item) ? '購入' : '入札'}
                         </Button>}
                       </div>
                     </div>

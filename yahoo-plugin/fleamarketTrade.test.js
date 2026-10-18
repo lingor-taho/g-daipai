@@ -142,17 +142,18 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
     if(['already','waiting','cancel-check','foreign','notice-existing'].includes(scenario)){assert.equal(checks,0);assert.equal(submits,0);}
     else {assert.equal(checks,scenario==='checked'?0:1);assert.equal(submits,scenario==='disabled'?0:1);}
   }
-  assert.match(source,/executePendingShipmentScanJob\(job\)\s*\{\s*if \(isFleamarketManualImportItem\(job\)\) return executeFleamarketTradeJob/);
-  assert.match(source,/executeConfirmReceiptJob\(job\)\s*\{\s*if \(isFleamarketManualImportItem\(job\)\) return executeFleamarketTradeJob/);
+  assert.match(source,/executePendingShipmentScanJob\(job\)\s*\{[\s\S]*?if \(isFleamarketManualImportItem\(job\)\) return executeFleamarketTradeJob/);
+  assert.match(source,/executeConfirmReceiptJob\(job\)\s*\{[\s\S]*?if \(isFleamarketManualImportItem\(job\)\) return executeFleamarketTradeJob/);
   const dispatched = [];
   const dispatchContext = {
-    isFleamarketManualImportItem:require('../src/shared/fleamarket.cjs').isFleamarketProduct,
+    savedProductType:require('../src/shared/fleamarket.cjs').getStoredProductType,
+    isFleamarketManualImportItem:require('../src/shared/fleamarket.cjs').isStoredFleamarketProduct,
     async fetchScanJobs(){return [
-      {productId:id,orderStatus:'pending_shipment'},
-      {productId:id,orderStatus:'waiting_shipping'},
-      {productId:'p123456789',orderStatus:'pending_shipment'},
-      {productId:'a123456789',orderStatus:'pending_bundle'},
-      {productId:'a123456788',orderStatus:'waiting_shipping'}
+      {productType:'fleamarket',productId:id,orderStatus:'pending_shipment'},
+      {productType:'fleamarket',productId:id,orderStatus:'waiting_shipping'},
+      {productType:'normal',productId:'p123456789',orderStatus:'pending_shipment'},
+      {productType:'normal',productId:'a123456789',orderStatus:'pending_bundle'},
+      {productType:'normal',productId:'a123456788',orderStatus:'waiting_shipping'}
     ];},
     async withWorkBatch(kind,jobs,callback){assert.equal(kind,'scan');return callback(()=>{});},
     async executeFleamarketTradeJob(){dispatched.push('P');},

@@ -889,6 +889,7 @@ async function testProcessPendingFollowupTasksCreatesDirectTaskAndClearsMarker()
         id: 42,
         user_id: 7,
         product_id: 'a123456789',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789',
         product_title: 'sample',
         product_image_url: 'https://example.com/img.jpg',
@@ -934,6 +935,7 @@ async function testProcessPendingFollowupTasksConvertsTaxIncludedMaxPriceToTaxEx
         id: 42,
         user_id: 7,
         product_id: 'a123456789',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/a123456789',
         current_price: 1210,
         buyout_price: null,
@@ -1191,6 +1193,7 @@ async function testSyncYahooWonOrdersContinuesAfterExistingAndCreatesWonOrder() 
       id: 110,
       product_id: 'u1231877298',
       product_title: 'buyout item',
+      product_type: 'normal',
       product_url: 'https://auctions.yahoo.co.jp/jp/auction/u1231877298'
     }]
   ]);
@@ -1450,6 +1453,7 @@ async function testSyncYahooWonOrdersUpdatesExistingFinalPriceWithCoalesce() {
           id: 77,
           product_id: 'k1230268385',
           product_title: 'store item',
+          product_type: 'normal',
           product_url: 'https://auctions.yahoo.co.jp/jp/auction/k1230268385',
           current_price: 1200,
           tax_type: 'tax_included',
@@ -1562,6 +1566,7 @@ async function testGetScanJobsReturnsWaitingShippingOnly() {
         order_id: 11,
         transaction_url: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m111111111',
         product_id: 'm111111111',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/m111111111',
         product_title: 'sample',
         order_status: ORDER_STATUS_WAITING_SHIPPING,
@@ -1599,6 +1604,7 @@ async function testGetScanJobsReturnsTrackingRescanAsPendingShipment() {
         order_id: 12,
         transaction_url: 'https://contact.auctions.yahoo.co.jp/seller/top?aid=m222222222',
         product_id: 'm222222222',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/m222222222',
         product_title: 'sample',
         order_status: ORDER_STATUS_PENDING_RECEIPT,
@@ -1749,7 +1755,9 @@ function testBuildDaipaiSheetRowUsesBundleShippingForTotalAndPayable() {
   const row = buildDaipaiSheetRow({
     won_at: '2026-06-06 12:34:56',
     username: 'user-a',
+    product_type: 'normal',
     product_id: 's1113817953',
+    product_type: 'normal',
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/s1113817953',
     product_title: 'bundle item',
     final_price: 1000,
@@ -1784,6 +1792,7 @@ function testBuildDaipaiSheetRowAppendsOrderRemarkAfterTrackingNumber() {
   const row = buildDaipaiSheetRow({
     won_at: '2026-06-06 12:34:56',
     username: 'user-a',
+    product_type: 'normal',
     product_id: 's1113817953',
     product_title: 'remark item',
     final_price: 1000,
@@ -1809,6 +1818,7 @@ function testBuildDaipaiSheetRowFallsBackToProductIdForGoogleMatching() {
     won_at: '2026-06-22 11:12:13',
     username: 'user-b',
     product_id: 'E1233463523',
+    product_type: 'normal',
     product_url: '',
     product_title: '',
     final_price: 21000,
@@ -1848,8 +1858,9 @@ async function testGetOrdersForSheetAppendReturnsWholeBundleGroup() {
       assert.doesNotMatch(sql, /t\.(product_url|product_title|shipping_fee_text|tax_type)/);
       assert.deepEqual(params, ['bundle-a', ORDER_STATUS_PENDING_RECEIPT, ORDER_STATUS_BUNDLE_COMPLETED]);
       return [
-        { id: 13, product_id: 'c1135451955', bundle_shipping_fee_text: '0円' },
-        { id: 14, product_id: 's1113817953', bundle_shipping_fee_text: '110円' }
+        { id: 13, product_type:'normal', product_id: 'c1135451955', bundle_shipping_fee_text: '0円' },
+        { id: 14, product_type: 'normal',
+    product_id: 's1113817953', bundle_shipping_fee_text: '110円' }
       ];
     }
   };
@@ -1868,8 +1879,9 @@ async function testSheetAppendCompletionAndFailures() {
     let alerts = [{ orderId: 14, id: 'google-sheet-14' }, { orderId: 99, id: 'google-sheet-99' }];
     let appendCalls = 0;
     const orders = [
-      { id: 13, product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
-      { id: 14, product_id: 's1113817953', order_status: ORDER_STATUS_PENDING_RECEIPT }
+      { id: 13, product_type:'normal', product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
+      { id: 14, product_type: 'normal',
+    product_id: 's1113817953', order_status: ORDER_STATUS_PENDING_RECEIPT }
     ];
     const database = {
       async getOne(sql) {
@@ -1922,8 +1934,9 @@ async function testSheetAppendCompletionAndFailures() {
 
 function testGoogleSheetAlertUsesRequestedBundleMainOrder() {
   const mainOrder = getGoogleSheetAlertOrder(14, [
-    { id: 13, product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
-    { id: 14, product_id: 's1113817953', order_status: ORDER_STATUS_PENDING_RECEIPT }
+    { id: 13, product_type:'normal', product_id: 'c1135451955', order_status: ORDER_STATUS_BUNDLE_COMPLETED },
+    { id: 14, product_type: 'normal',
+    product_id: 's1113817953', order_status: ORDER_STATUS_PENDING_RECEIPT }
   ]);
 
   assert.equal(mainOrder.id, 14);
@@ -1975,6 +1988,7 @@ async function testGetOrderForSheetUpdateUsesProductSnapshotFields() {
       return {
         id: 15,
         product_id: 'm1233193360',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/m1233193360',
         product_title: 'sheet update item',
         shipping_fee_text: '1940\u5186',
@@ -2034,6 +2048,7 @@ async function testUpdateScanStatusWritesShippingAndPendingPayment() {
       queries.push({ sql, params });
       return {
         product_id: 'm1233193360',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/m1233193360',
         product_title: 'test product',
         product_image_url: '',
@@ -2185,6 +2200,7 @@ async function testGetPaymentJobsReturnsPendingSettlementWithPayable() {
       return [{
         order_id: 9,
         product_id: 'x1',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/x1',
         product_title: 'Item',
         product_type: 'normal',
@@ -2225,6 +2241,7 @@ async function testGetPaymentJobsIncludesBundleFinalPriceTotal() {
       return [{
         order_id: 21,
         product_id: 'a1',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/a1',
         product_title: 'Bundle main',
         product_type: 'normal',
@@ -2259,6 +2276,7 @@ async function testGetPaymentJobsUsesCashOnDeliveryShippingOverride() {
       return [{
         order_id: 23,
         product_id: 'special1',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/special1',
         product_title: 'Cash on delivery item',
         product_type: 'normal',
@@ -2591,6 +2609,7 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
           transaction_url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=r111111111',
           bundle_group_id: '',
           product_id: 'r111111111',
+          product_type: 'normal',
           product_url: 'https://auctions.yahoo.co.jp/jp/auction/r111111111',
           product_title: 'receipt item',
           product_type: 'normal'
@@ -2601,6 +2620,7 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
           transaction_url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=p222222222',
           bundle_group_id: '',
           product_id: 'p222222222',
+          product_type: 'normal',
           product_url: 'https://auctions.yahoo.co.jp/jp/auction/p222222222',
           product_title: 'payment item',
           product_type: 'store'
@@ -2611,6 +2631,7 @@ async function testGetConfirmReceiptJobsIncludesPendingPaymentAndSettlementCance
           transaction_url: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=s333333333',
           bundle_group_id: '',
           product_id: 's333333333',
+          product_type: 'normal',
           product_url: 'https://auctions.yahoo.co.jp/jp/auction/s333333333',
           product_title: 'settlement item',
           product_type: 'store'
@@ -2680,6 +2701,7 @@ async function testGetConfirmReceiptJobsFailsFastOnGoogleSheetsTimeout() {
         transaction_url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=e1232797857',
         bundle_group_id: '',
         product_id: 'e1232797857',
+        product_type: 'normal',
         product_url: 'https://auctions.yahoo.co.jp/jp/auction/e1232797857',
         product_title: 'receipt item',
         product_type: 'normal'

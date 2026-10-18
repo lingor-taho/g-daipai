@@ -40,7 +40,7 @@ assert.equal(
 
 assert.equal(
   source.includes('const product = await onLoadDetail(item)') &&
-    submitSource.includes('const res = await getProductInfo(item.standardUrl || item.auctionId)') &&
+    submitSource.includes('const res = await getProductInfo(productUrls.getProductItemUrl(item) || item.auctionId, getStoredProductType(item), {resolveStoredType:true})') &&
     submitSource.includes('onLoadDetail={loadSearchProductDetail}'),
   true,
   'Opening the detail view should fetch the complete Yahoo product details again'
@@ -108,7 +108,7 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('onClick={() => onBid(item)}') && source.includes("fleamarket.isFleamarketProduct(item) ? '購入' : '入札'"),
+  source.includes('onClick={() => onBid(item)}') && source.includes("fleamarket.isStoredFleamarketProduct(item) ? '購入' : '入札'"),
   true,
   'Search actions should distinguish auction and fleamarket items'
 );
@@ -121,9 +121,10 @@ assert.equal(
 );
 
 assert.equal(
-  submitSource.includes('const productUrl = isFleamarketProduct(item)') &&
-    submitSource.includes('https://paypayfleamarket.yahoo.co.jp/item/${String(item.auctionId).toLowerCase()}') &&
-    /function handleSearchBid\(item\) \{\s*setFavoritesVisible\(false\);\s*closeProductSearch\(\);[\s\S]*?handleRebid\(productUrl\);/.test(submitSource),
+  submitSource.includes('const productUrl = productUrls.getProductItemUrl(resolved)') &&
+    submitSource.includes('await loadSearchProductDetail(item)') &&
+    submitSource.includes('handleRebid(productUrl, getStoredProductType(resolved))') &&
+    submitSource.includes('setFavoritesVisible(false);'),
   true,
   'Search and existing favorites should close the popup and select the correct auction or fleamarket URL'
 );

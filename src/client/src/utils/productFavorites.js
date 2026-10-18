@@ -1,3 +1,5 @@
+import fleamarket from '../../../shared/fleamarket.cjs';
+import productUrl from '../../../shared/productUrl.cjs';
 const PREFIX = 'productFavorites:v1:';
 
 export function favoritesKey(storage) {
@@ -12,12 +14,24 @@ export function favoriteSnapshot(item) {
   const epoch = Number(item.endTimeEpoch);
   const parsed = item.endTime ? Date.parse(item.endTime) : NaN;
   const endMs = Number.isFinite(parsed) ? parsed : (epoch > 0 ? epoch * 1000 : NaN);
+  const productType = fleamarket.getStoredProductType(item);
   return {
     auctionId,
+    productType,
+    standardUrl: productUrl.getProductItemUrl({auctionId, productType}),
     title: String(item.title || auctionId),
     imageUrl: String(item.imageUrl || ''),
     endTime: Number.isFinite(endMs) ? new Date(endMs).toISOString() : ''
   };
+}
+
+export function refreshFavorite(storage, key, item) {
+  const snapshot = favoriteSnapshot(item);
+  const current = readFavorites(storage, key);
+  if (!snapshot?.productType || !current.some(value => value.auctionId === snapshot.auctionId)) return current;
+  const items = current.map(value => value.auctionId === snapshot.auctionId ? snapshot : value);
+  storage.setItem(key, JSON.stringify(items));
+  return items;
 }
 
 export function readFavorites(storage, key) {

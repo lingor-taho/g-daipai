@@ -36,7 +36,7 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
   const shippingFeeText = product.shippingFeeText || product.shipping_fee_text || '';
   const taxLabel = taxType === 'tax_included' ? '税込' : '税0円';
   const bidCount = Number(product.bidCount ?? product.bid_count ?? 0);
-  const isFleamarket = fleamarket.isFleamarketProduct(product);
+  const isFleamarket = fleamarket.isStoredFleamarketProduct(product);
 
   return (
     <div style={{ ...cardStyle, margin: '14px 0', overflow: 'hidden', display: 'flex' }}>

@@ -1,11 +1,11 @@
-const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
+const { isStoredFleamarketProduct: isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const { randomUUID } = require('crypto');
 
 function fail(message) { const error = new Error(message); error.statusCode = 409; throw error; }
 
 // Both endpoints run inside the plugin's account/instance/claim middleware.
 function purchaseTask(raw, id, context, claim) {
-  const task = raw.prepare('SELECT * FROM tasks WHERE id=? AND account_id=?').get(id, context.accountId);
+  const task = raw.prepare('SELECT t.*,p.product_type FROM tasks t LEFT JOIN products p ON p.product_id=t.product_id WHERE t.id=? AND t.account_id=?').get(id, context.accountId);
   if (!task || !task.claim_token || task.claim_token !== claim || task.claim_instance !== context.instanceId ||
       !isFleamarketProduct(task) || task.bid_mode !== 'buyout' || task.strategy !== 'direct') fail('フリマ购买任务或领取已失效');
   return task;
@@ -37,7 +37,7 @@ function claimRecovery(raw, context, limit = 1, now = Date.now()) {
       LEFT JOIN products p ON p.product_id=t.product_id
       WHERE t.account_id=? AND t.execution_unknown=1 AND t.status IN ('processing','failed')
       AND t.bid_mode='buyout' AND t.strategy='direct' AND datetime(t.updated_at)<=datetime(?)
-      AND (LOWER(t.product_id) GLOB 'z[0-9]*' OR p.product_type='fleamarket')
+      AND p.product_type='fleamarket'
       AND NOT EXISTS(SELECT 1 FROM orders o WHERE o.product_id=t.product_id OR o.task_id=t.id)
       ORDER BY t.updated_at,t.id`).all(context.accountId,new Date(now-120000).toISOString())
       .filter(isFleamarketProduct).slice(0,count);

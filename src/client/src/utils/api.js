@@ -96,10 +96,11 @@ export const getClientSiteConfig = () => api.get('/task/site-config');
 export const getClientBidConfig = () => api.get('/task/bid-config');
 
 export function createGetProductInfo({ apiClient = api } = {}) {
-  return async function getProductInfo(input) {
+  return async function getProductInfo(input, productType, {resolveStoredType = false} = {}) {
     const value = String(input || '').trim();
     const match = value.match(/[a-zA-Z]?\d{8,10}/);
-    if (match) return apiClient.get('/proxy/fetch', { params: { url: value } });
+    if (match) return apiClient.get('/proxy/fetch', { params: { url: value, ...(productType ? {productType} : {}),
+      ...(productType || resolveStoredType ? {resolveStoredType:'1'} : {}) } });
     return apiClient.get('/proxy/fetch', { params: { keyword: value } });
   };
 }

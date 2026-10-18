@@ -22,6 +22,7 @@ const {withEndedTaskReason,ENDED_REASON}=require('../services/endedTaskReason');
   let nextId=50000;
   function task(error=null) {
     const id=nextId++;
+    db.raw.prepare("INSERT INTO products(product_id,product_type) VALUES(?,'normal')").run(`s${123400000+id}`);
     db.raw.prepare(`INSERT INTO tasks(id,user_id,account_id,product_id,max_price,strategy,status,error_msg,claim_token,claim_instance)
       VALUES(?,700,?, ?,24000,'direct','processing',?,'claim','ended-snapshot-test-instance')`).run(id,account.id,`s${123400000+id}`,error);
     return id;

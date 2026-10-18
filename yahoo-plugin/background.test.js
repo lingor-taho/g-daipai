@@ -2873,7 +2873,7 @@ async function testPendingShipmentScanWaitsForRenderedShipmentState() {
     }
   });
 
-  const result = await api.executePendingShipmentScanJob({
+  const result = await api.executePendingShipmentScanJob({productType:'normal',
     orderId: 285,
     orderStatus: 'pending_shipment',
     productId: 'o1234724869',
@@ -2940,7 +2940,7 @@ async function testTrackingRescanUsesPendingShipmentExtractorAndKeepsRescanFlag(
     }
   });
 
-  const result = await api.executePendingShipmentScanJob({
+  const result = await api.executePendingShipmentScanJob({productType:'normal',
     orderId: 392,
     orderStatus: 'pending_shipment',
     originalOrderStatus: 'pending_receipt',
@@ -3031,7 +3031,7 @@ async function testNormalV2PendingShipmentScanUsesSellerInfoNameFallback() {
     }
   });
 
-  const result = await api.executePendingShipmentScanJob({
+  const result = await api.executePendingShipmentScanJob({productType:'normal',
     orderId: 391,
     orderStatus: 'pending_shipment',
     productId: 'o1237183162',
@@ -3096,7 +3096,7 @@ async function testStorePendingShipmentScanKeepsPollingPastInitialPendingState()
     }
   });
 
-  const result = await api.executePendingShipmentScanJob({
+  const result = await api.executePendingShipmentScanJob({productType:'normal',
     orderId: 286,
     orderStatus: 'pending_shipment',
     productId: 'b1234714536',
@@ -3163,7 +3163,7 @@ async function testPendingShipmentScanKeepsPollingPastTrackingFallback() {
     }
   });
 
-  const result = await api.executePendingShipmentScanJob({
+  const result = await api.executePendingShipmentScanJob({productType:'normal',
     orderId: 389,
     orderStatus: 'pending_shipment',
     productId: 'h1035084506',
@@ -3216,7 +3216,7 @@ async function testPendingShipmentScanAcceptsTrackingFallbackAfterShipmentDetail
     }
   });
 
-  const result = await api.executePendingShipmentScanJob({
+  const result = await api.executePendingShipmentScanJob({productType:'normal',
     orderId: 390,
     orderStatus: 'pending_shipment',
     productId: 'h1035084506',
@@ -4155,7 +4155,7 @@ async function testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders() 
             return {
               success: true,
               storeUpdated: 3,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 9,
                 productId: 'n9',
                 transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=n9',
@@ -4221,7 +4221,7 @@ async function testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisable
             return {
               success: true,
               storeUpdated: 3,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 9,
                 productId: 'n9',
                 transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=n9',
@@ -4255,7 +4255,7 @@ async function testRunTransactionStartSkipsOrderPausedAfterBatchFetch() {
     },
     fetch: async url => {
       if (String(url).includes('/api/plugin/transaction-start/jobs')) {
-        return { async json() { return { jobs: [{ orderId: 1, productId: 'n100000001', productType: 'normal' }] }; } };
+        return { async json() { return { jobs: [{productType:'normal', orderId: 1, productId: 'n100000001', productType: 'normal' }] }; } };
       }
       return { async json() { return { success: true }; } };
     }
@@ -4311,7 +4311,7 @@ async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShip
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 77,
                 productId: 'j1232375474',
                 productType: 'normal',
@@ -4411,7 +4411,7 @@ async function testRunTransactionStartContinuesSingleItemAfterBundleRejected(pur
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 1160,
                 productId: 'w1239811853',
                 productType: 'normal',
@@ -4543,7 +4543,7 @@ async function testRunTransactionStartCompletesFixedShippingInfoBeforePendingPay
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 78,
                 productId: 's1232869893',
                 productType: 'normal',
@@ -4631,7 +4631,7 @@ async function testRunTransactionStartTreatsNormalCashOnDeliveryEntryAsPendingPa
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 863,
                 productId: '1238377048',
                 productType: 'normal',
@@ -4704,7 +4704,7 @@ async function testRunTransactionStartMarksBuyerDeletedPageCancelled() {
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 79,
                 productId: 'u1231877298',
                 productType: 'normal',
@@ -4793,7 +4793,7 @@ async function testRunTransactionStartPostsDiagnosticWhenNormalBundleStartFails(
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 81,
                 productId: 'u1213934430',
                 productType: 'normal',
@@ -5058,7 +5058,7 @@ async function testRunPaymentJobsCompletesNormalItemPayment() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 8, productId: 'p8', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 8, productId: 'p8', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5121,7 +5121,7 @@ async function testRunPaymentJobsMarksBuyerDeletedPageCancelled() {
             return {
               success: true,
               paymentPageStaySeconds: 1,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 89,
                 productId: 'u1231877298',
                 transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=u1231877298',
@@ -5180,7 +5180,7 @@ async function testRunPaymentJobsCompletesNormalItemPaymentAfterTransactionInfoI
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 12, productId: 'p12', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 75, effectiveShippingFeeText: '110\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 12, productId: 'p12', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 75, effectiveShippingFeeText: '110\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5230,7 +5230,7 @@ async function testRunPaymentJobsClicksPlacementOkAfterTransactionInfoInput() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 13, productId: 'p13', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 75, effectiveShippingFeeText: '110\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 13, productId: 'p13', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 75, effectiveShippingFeeText: '110\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5284,7 +5284,7 @@ async function testRunPaymentJobsMarksAlreadyPaidAsSuccess(shippedText = null) {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, jobs: [{ orderId: 9, productId: 'p9', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+        return { async json() { return { success: true, jobs: [{productType:'normal', orderId: 9, productId: 'p9', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5331,7 +5331,7 @@ async function testRunPaymentJobsCompletesStoreItemAfterPurchaseProcedure() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 14, productId: 's1', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=s1', finalPrice: 1760, effectiveShippingFeeText: '0\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 14, productId: 's1', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=s1', finalPrice: 1760, effectiveShippingFeeText: '0\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5379,7 +5379,7 @@ async function testRunPaymentJobsWaitsForRenderedStoreStatusEntryButton() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 254, productId: 'e1234121852', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=e1234121852', finalPrice: 14301, effectiveShippingFeeText: '1610\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 254, productId: 'e1234121852', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=e1234121852', finalPrice: 14301, effectiveShippingFeeText: '1610\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5434,7 +5434,7 @@ async function testRunPaymentJobsUsesSinglePurchaseForStoreBundlePage() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 16, productId: 'x1231583550', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', finalPrice: 28172, effectiveShippingFeeText: '0\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 16, productId: 'x1231583550', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=x1231583550', finalPrice: 28172, effectiveShippingFeeText: '0\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5481,7 +5481,7 @@ async function testRunPaymentJobsContinuesNormalEntryAfterStorePurchaseProcedure
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 15, productId: 's2', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=s2', finalPrice: 1760, effectiveShippingFeeText: '1000\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 15, productId: 's2', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=s2', finalPrice: 1760, effectiveShippingFeeText: '1000\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5535,7 +5535,7 @@ async function testRunPaymentJobsWaitsRandomSecondsBeforeFinalizeAndIgnoresProce
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 3, jobs: [{ orderId: 16, productId: 'p16', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 3, jobs: [{productType:'normal', orderId: 16, productId: 'p16', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5608,7 +5608,7 @@ async function testRunPaymentJobsRetriesReviewClickWhenTrustedPointTemporarilyMi
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 216, productId: 's1233522728', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 1500, effectiveShippingFeeText: '230\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 216, productId: 's1233522728', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 1500, effectiveShippingFeeText: '230\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5673,7 +5673,7 @@ async function testRunPaymentJobsWaitsUpToSixtySecondsForProcessingFinalizePage(
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 116, productId: 'p116', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 116, productId: 'p116', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5704,7 +5704,7 @@ async function testRunConfirmReceiptJobsCompletesStoreItemWithoutOpeningTab() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/confirm-receipt/jobs')) {
-        return { async json() { return { success: true, jobs: [{ orderId: 31, productId: 's31', productType: 'store', bundleGroupId: '' }] }; } };
+        return { async json() { return { success: true, jobs: [{productType:'normal', orderId: 31, productId: 's31', productType: 'store', bundleGroupId: '' }] }; } };
       }
       if (String(url).includes('/api/plugin/confirm-receipt/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -5828,7 +5828,7 @@ async function testRunConfirmReceiptJobsWaitsForEnabledReceiveButton() {
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 32,
                 productId: 'x1226734300',
                 productType: 'normal',
@@ -5915,7 +5915,7 @@ async function testRunConfirmReceiptJobsWaitsForReceiptPageRenderBeforeClicking(
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 132,
                 productId: 't1235313146',
                 productType: 'normal',
@@ -6165,7 +6165,7 @@ async function testRunConfirmReceiptJobsMarksCancelCheckOrderCancelled() {
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 42,
                 productId: 'p222222222',
                 productType: 'store',
@@ -6226,7 +6226,7 @@ async function testRunConfirmReceiptJobsSkipsCancelCheckWhenCancellationTextMiss
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 42,
                 productId: 'p222222222',
                 productType: 'store',
@@ -6281,7 +6281,7 @@ async function testRunConfirmReceiptJobsMarksPaidCancelCheckOrderPendingShipment
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 43,
                 productId: 'p222222222',
                 productType: 'normal',
@@ -6339,7 +6339,7 @@ async function testRunConfirmReceiptJobsMarksNormalV2StructuredShipmentPendingSh
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 46,
                 productId: 'h1238410254',
                 productType: 'normal',
@@ -6401,7 +6401,7 @@ async function testRunConfirmReceiptJobsWaitsForPaidCancelCheckTextAfterTabCompl
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 44,
                 productId: 'm1235562222',
                 productType: 'store',
@@ -6464,7 +6464,7 @@ async function testRunConfirmReceiptJobsStopsWaitingAfterOtherCancelCheckStatusR
           async json() {
             return {
               success: true,
-              jobs: [{
+              jobs: [{productType:'normal',
                 orderId: 45,
                 productId: 'm1235562223',
                 productType: 'store',
@@ -6564,7 +6564,7 @@ async function testRunPaymentJobsSelectsExpectedShippingBeforeReview() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 18, productId: 'u1231877298', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 350, effectiveShippingFeeText: '185\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 18, productId: 'u1231877298', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 350, effectiveShippingFeeText: '185\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -6703,7 +6703,7 @@ async function testRunPaymentJobsUsesJsClickForPaymentShippingChangeBeforeDebugg
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 28, productId: 'u1231877298', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298', finalPrice: 350, effectiveShippingFeeText: '185\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 28, productId: 'u1231877298', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=u1231877298', finalPrice: 350, effectiveShippingFeeText: '185\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -6850,7 +6850,7 @@ async function testRunPaymentJobsWaitsForNormalShippingOptionsAfterChangeClick()
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 128, productId: 'w1234480217', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', finalPrice: 5261, effectiveShippingFeeText: '180\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 128, productId: 'w1234480217', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', finalPrice: 5261, effectiveShippingFeeText: '180\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7015,7 +7015,7 @@ async function testRunPaymentJobsUsesDebuggerShippingChangeFallbackWhenNormalJsE
     },
     fetch: async (url, request = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 129, productId: 'w1234480217', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', finalPrice: 2800, effectiveShippingFeeText: '430\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 129, productId: 'w1234480217', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=w1234480217', finalPrice: 2800, effectiveShippingFeeText: '430\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(request.body || '{}'));
@@ -7184,7 +7184,7 @@ async function testRunPaymentJobsCompletesStoreShippingChangePage() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 58, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '185\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 58, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/status?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '185\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7264,7 +7264,7 @@ async function testRunPaymentJobsSelectsNoAppraisalBeforeReview() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 21, productId: 'a21', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 22888, effectiveShippingFeeText: '0\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 21, productId: 'a21', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 22888, effectiveShippingFeeText: '0\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7331,7 +7331,7 @@ async function testRunPaymentJobsDoesNotRequireShippingOptionWhenAmountAlreadyMa
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 23, productId: '1218905181', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 23, productId: '1218905181', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/checkout?auctionId=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7466,7 +7466,7 @@ async function testRunStorePaymentJobsRetriesDlvryChangeUntilRenderedWhenAmountM
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 29, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '950\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 29, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '950\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7547,7 +7547,7 @@ async function testRunStorePaymentShippingMismatchDoesNotUseDebuggerFallback() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 31, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '950\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 31, productId: 'h1217537840', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=h1217537840', finalPrice: 5999, effectiveShippingFeeText: '950\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7633,7 +7633,7 @@ async function testRunPaymentJobsWaitsForMatchingAmountBeforeSelectingShipping()
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 24, productId: '1218905181', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 24, productId: '1218905181', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/payment/input?aid=1218905181', finalPrice: 240, effectiveShippingFeeText: '430\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7681,7 +7681,7 @@ async function testRunPaymentJobsWaitsForSlowReviewButtonOnPurchasePage() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 17, productId: 'p17', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 17, productId: 'p17', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/purchase', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7801,7 +7801,7 @@ async function testRunPaymentJobsCompletesStoreConfirmationBeforeReview() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 19, productId: 'j1232680017', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 19, productId: 'j1232680017', productType: 'store', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -7911,7 +7911,7 @@ async function testRunPaymentJobsHandlesStoreConfirmationBeforeReviewButton() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{ orderId: 20, productId: 'j1232680017', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
+        return { async json() { return { success: true, paymentPageStaySeconds: 1, jobs: [{productType:'normal', orderId: 20, productId: 'j1232680017', transactionUrl: 'https://buy.auctions.yahoo.co.jp/order/review?auctionId=j1232680017', finalPrice: 41800, effectiveShippingFeeText: '1520\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -9084,7 +9084,7 @@ async function testRunPaymentJobsReportsUnknownPaymentPageFailure() {
     },
     fetch: async (url, options = {}) => {
       if (String(url).includes('/api/plugin/payment/jobs')) {
-        return { async json() { return { success: true, jobs: [{ orderId: 10, productId: 'p10', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
+        return { async json() { return { success: true, jobs: [{productType:'normal', orderId: 10, productId: 'p10', transactionUrl: 'https://contact.auctions.yahoo.co.jp/buyer/top', finalPrice: 3450, effectiveShippingFeeText: '880\u5186' }] }; } };
       }
       if (String(url).includes('/api/plugin/payment/status')) {
         calls.push(JSON.parse(options.body || '{}'));
@@ -10543,7 +10543,7 @@ async function testBuyoutPendingFinalStaysBiddingForWonSync() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 88,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/u1234567890',
     current_price: 3142,
@@ -10666,7 +10666,7 @@ async function testBuyoutStoreConfirmationCompletesBeforeFinalPurchase() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 89,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/p1226403738',
     current_price: 500,
@@ -10752,7 +10752,7 @@ async function testExecuteBidTaskRetriesTransientServerTabErrorOnce() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 901,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/c1234343054',
     current_price: 1000,
@@ -10821,7 +10821,7 @@ async function testExecuteBidTaskDoesNotWaitForUpdateWhenCreatedTabAlreadyComple
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 904,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
     current_price: 19313,
@@ -10919,7 +10919,7 @@ async function testBuyoutMessageChannelClosedOnThankYouStaysBidding() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 907,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/x1235487667',
     current_price: 8600,
@@ -11020,7 +11020,7 @@ async function testNormalBidMessageChannelClosedOnDoneRecoversWithoutSecondBid()
     bid_mode: 'bid'
   }), false);
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 908,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/n1243150792',
     current_price: 1,
@@ -11090,7 +11090,7 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingTimedOutLoading
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 905,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
     current_price: 19313,
@@ -11195,7 +11195,7 @@ async function testExecuteBidTaskRetriesTimeoutFailureBeforeStatusFailed() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 908,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
     current_price: 19313,
@@ -11288,7 +11288,7 @@ async function testExecuteBidTaskMarksFailedWhenTimeoutRetryAlsoFails() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 909,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
     current_price: 19313,
@@ -11377,7 +11377,7 @@ async function testExecuteBidTaskPostsPageDiagnosticBeforeClosingContentCloseTab
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 906,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/w1233744381',
     current_price: 19313,
@@ -11435,7 +11435,7 @@ async function testExecuteBidTaskMarksServerTabErrorAfterRetryFails() {
     }
   });
 
-  await api.executeBidTask({
+  await api.executeBidTask({product_type:'normal',
     id: 902,
     product_url: 'https://auctions.yahoo.co.jp/jp/auction/r1234339848',
     current_price: 20500,
@@ -11698,7 +11698,7 @@ async function testManualOrderImportSkipsFleamarketBeforeSnapshots() {
       async sendMessage(tabId, message) {
         if (message?.type === 'EXTRACT_ORDER_IMPORT_PAGE') return {
           success: true, nextPageUrl: '', orders: [
-            { productId: 'z650804548', wonTimeText: '6/24 23:48', productType: 'normal' },
+            { productId: 'z650804548', wonTimeText: '6/25 23:48', productType: 'normal' },
             { productId: 'x1234567890', wonTimeText: '6/25 23:48', productType: 'fleamarket' },
             { productId: 'a1234567890', wonTimeText: '6/25 23:48', url: 'https://paypayfleamarket.yahoo.co.jp/item/z650805568' },
             { productId: 'p1234567890', wonTimeText: '6/25 23:48', productType: 'normal' },
@@ -11711,12 +11711,13 @@ async function testManualOrderImportSkipsFleamarketBeforeSnapshots() {
     }
   });
   const result = await api.executeManualOrderImportJob({ batchId: 9, startDate: '2026-06-25', endDate: '2026-06-25', maxPages: 1 });
-  assert.equal(result.count, 2);
-  assert.equal(snapshots, 2);
-  assert.equal(createdUrls.some(url => /fleamarket|z650/.test(url)), false);
+  assert.equal(result.count, 3);
+  assert.equal(snapshots, 3);
+  assert.equal(createdUrls.some(url => /fleamarket/.test(url)), false);
+  assert.ok(createdUrls.includes('https://auctions.yahoo.co.jp/jp/auction/z650804548'),'normal Z item uses its recorded type');
   const payload = JSON.parse(requests.find(item => /manual-order-import\/status$/.test(item.url)).options.body);
-  assert.deepEqual(Array.from(payload.items, item => item.productId), ['p1234567890', 'g1234567890']);
-  assert.deepEqual(Array.from(payload.items, item => item.productType), ['normal', 'store']);
+  assert.deepEqual(Array.from(payload.items, item => item.productId), ['z650804548', 'p1234567890', 'g1234567890']);
+  assert.deepEqual(Array.from(payload.items, item => item.productType), ['normal', 'normal', 'store']);
 }
 
 async function testManualOrderImportPreservesStoreTypeFromWonRowWhenSnapshotOmitsType() {

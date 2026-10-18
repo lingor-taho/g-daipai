@@ -11,18 +11,20 @@ async function main() {
     assert.equal(getProductItemUrl(row), expected);
     assert.equal(buildProductUrl(row), expected);
     assert.equal(getAuctionProductUrl(row), expected);
-    assert.equal(getRebidSubmitPath(row), `/submit?url=${encodeURIComponent(expected)}`);
+    assert.equal(getRebidSubmitPath(row), `/submit?url=${encodeURIComponent(expected)}&productType=fleamarket`);
     assert.ok(buildOrdersCsv([row]).includes(expected));
     assert.ok(!buildOrdersCsv([row]).includes('jp/auction/z'));
   }
-  assert.equal(getProductItemUrl('Z705858626'), expected);
-  assert.equal(getProductItemUrl({ product_url: expected }), expected);
+  assert.equal(getProductItemUrl('Z705858626'), '');
+  assert.equal(getProductItemUrl({ product_url: expected }), '');
   for (const id of ['p123456789', 's123456789', 'a123456789']) {
     const expectedAuction = `https://auctions.yahoo.co.jp/jp/auction/${id}`;
-    assert.equal(getProductItemUrl(id), expectedAuction);
+    assert.equal(getProductItemUrl({product_id:id,product_type:'normal'}), expectedAuction);
     assert.equal(buildProductUrl({ product_id: id, product_type: 'normal' }), expectedAuction);
-    assert.equal(getProductItemUrl({ product_id: id, product_url: 'https://example.com/keep' }), 'https://example.com/keep');
+    assert.equal(getProductItemUrl({ product_id: id, product_type:'normal',product_url: 'https://example.com/keep' }), expectedAuction);
   }
+  assert.equal(getProductItemUrl({product_id:'z705858626',product_type:'normal'}), 'https://auctions.yahoo.co.jp/jp/auction/z705858626');
+  assert.equal(getProductItemUrl({product_id:'a123456789',product_type:'fleamarket'}), 'https://paypayfleamarket.yahoo.co.jp/item/a123456789');
   assert.equal(getProductItemUrl(''), '');
   assert.equal(getProductItemUrl(null), '');
   console.log('P URLs, legacy/missing URLs, both CSV exports and rebid links passed; ordinary p IDs preserved');

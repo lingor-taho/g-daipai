@@ -11,4 +11,15 @@ function isFleamarketProduct(input) {
     /^(?:https?:\/\/)?paypayfleamarket\.yahoo\.co\.jp\/item\//i.test(value);
 }
 
-module.exports = { isFleamarketProduct, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE };
+// Saved products/jobs must use their recorded type. ID/URL detection above is
+// reserved for the first user input, before product information is available.
+function getStoredProductType(input) {
+  const type = input?.product_type ?? input?.productType;
+  return ['normal', 'store', 'fleamarket'].includes(type) ? type : '';
+}
+
+function isStoredFleamarketProduct(input) {
+  return getStoredProductType(input) === 'fleamarket';
+}
+
+module.exports = { isFleamarketProduct, isStoredFleamarketProduct, getStoredProductType, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE };

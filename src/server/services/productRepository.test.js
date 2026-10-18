@@ -180,6 +180,6 @@ Promise.all([
   process.exitCode = 1;
 });
 
-assert.equal(normalizeProductSnapshot({ product_id: 'z650804548', product_type: 'normal' }).product_type, 'fleamarket');
-assert.equal(normalizeProductSnapshot({ productId: 'z650804548' }).product_type, 'fleamarket');
+assert.equal(normalizeProductSnapshot({ product_id: 'z650804548', product_type: 'normal' }).product_type, 'normal');
+assert.equal(normalizeProductSnapshot({ productId: 'z650804548' }).product_type, null);
 assert.equal(normalizeProductSnapshot({ product_id: 'x1234567890', product_type: 'fleamarket' }).product_type, 'fleamarket');

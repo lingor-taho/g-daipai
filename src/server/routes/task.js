@@ -1,7 +1,7 @@
 ﻿const { getProductItemUrl } = require('../../shared/productUrl.cjs');
 const express = require('express');
 const router = express.Router();
-const { isFleamarketProduct, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = require('../../shared/fleamarket.cjs');
+const { isFleamarketProduct, isStoredFleamarketProduct, getStoredProductType, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = require('../../shared/fleamarket.cjs');
 const { isAuctionEnded } = require('../../shared/auctionDeadline.cjs');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
 const db = require('../models');
@@ -466,6 +466,7 @@ function buildWonStatsPerformanceQuery(input) {
                   top_won.product_id AS top_product_id,
                   p.product_title AS top_product_title,
                   p.product_url AS top_product_url,
+                  p.product_type AS top_product_type,
                   top_won.final_price AS top_final_price,
                   top_won.won_at AS top_won_at,
                   (
@@ -518,7 +519,7 @@ function buildActiveBiddingTaskListQuery(input) {
          p.current_price AS current_price,
          p.buyout_price AS buyout_price,
          COALESCE(p.tax_type, 'tax_zero') AS tax_type,
-         COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+         p.product_type AS product_type,
          p.shipping_fee_text AS shipping_fee_text,
          t.max_price,
          t.user_max_price,
@@ -578,7 +579,7 @@ function validateBatchProduct(result, productId, nowMs = Date.now()) {
   if (!result?.success || result.source === 'cache-fallback' || product?.auctionId !== productId) {
     throw submitError('无法确认最新商品信息，请稍后重试', 502);
   }
-  if (isFleamarketProduct(product)) throw submitError(FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE);
+  if (isStoredFleamarketProduct(product)) throw submitError(FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE);
   if (/closed|ended|sold|cancel|suspend/.test(product.auctionStatus || '') || Date.parse(product.endTime) <= nowMs) {
     throw submitError('商品已结束或已取消，不能提交');
   }
@@ -619,9 +620,15 @@ async function submitAuctionTask(context, body, {
         throw submitError('商品批量记录已删除或已结束，停止旧提交',409);
       }
     }
+    const savedType = database.raw ? getStoredProductType(database.raw.prepare('SELECT product_type FROM products WHERE product_id=?').get(productId)) : '';
+    if (savedType) body = {...body, product_type:savedType};
     const { strategy, start_minutes_before, start_seconds_before, end_time, product_title, product_image_url, current_price, buyout_price, bid_count, tax_type, product_type, shipping_fee_text, multi_bid_increment, client_request_id, pending_followup_max_price } = body;
     const input = buildSubmitTaskInput(context.user, body);
-    const fleamarketProduct = isFleamarketProduct(input);
+    const fleamarketProduct = savedType ? isStoredFleamarketProduct(body) : isFleamarketProduct(input);
+    if (savedType) {
+      input.standardUrl = getProductItemUrl({product_id:input.productId,product_type:savedType});
+      input.bidMode = fleamarketProduct || body.bid_mode === 'buyout' || body.buyout_only === true || body.buyout_only === 'true' ? 'buyout' : 'bid';
+    }
     input.userId = context.actingUser.id;
     const batchTaxExcludedMaxPrice = strictBatch ? input.maxPrice : null;
     const clientRequestId = String(client_request_id || '').trim() || null;
@@ -672,17 +679,17 @@ async function submitAuctionTask(context, body, {
           throw submitError('该フリマ商品已有待执行任务或购买结果待核对，请勿重复提交',409);
         }
       }
-      const result = await fetchProduct(input.standardUrl);
+      const result = await fetchProduct(input.standardUrl, {recordedProductType:savedType || undefined});
       productInfo = result?.data;
       if (!result?.success || result.source === 'cache-fallback' || productInfo?.auctionId !== input.productId ||
-          !isFleamarketProduct(productInfo) || !(Number(productInfo?.buyoutPrice) > 0)) {
+          !isStoredFleamarketProduct(productInfo) || !(Number(productInfo?.buyoutPrice) > 0)) {
         throw submitError('无法获取最新的フリマ商品信息，请重新获取后提交');
       }
       if (productInfo.auctionStatus === 'ended') throw submitError('商品已结束，不能提交任务');
       if (Number(productInfo.buyoutPrice) !== input.maxPrice) throw submitError('商品即决价格已变化，请重新获取商品信息后提交');
     } else if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
       try {
-        const result = await fetchProduct(input.standardUrl);
+        const result = await fetchProduct(input.standardUrl, {recordedProductType:savedType || undefined});
         productInfo = result.data || null;
       } catch (_) {}
     }
@@ -853,7 +860,7 @@ router.get('/list', async (req, res) => {
               p.buyout_price AS buyout_price,
               p.bid_count AS bid_count,
               COALESCE(p.tax_type, 'tax_zero') AS tax_type,
-              COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+              p.product_type AS product_type,
               p.shipping_fee_text AS shipping_fee_text,
               t.max_price,
               t.user_max_price,
@@ -994,8 +1001,9 @@ router.get('/won-stats', async (req, res) => {
           effectiveBidRate: taskCount > 0 ? wonProductCount / taskCount : 0,
           topProduct: performanceRow?.top_product_id ? {
             productId: performanceRow.top_product_id,
+            productType: performanceRow.top_product_type,
             title: performanceRow.top_product_title || performanceRow.top_product_id,
-            url: getProductItemUrl({ product_id: performanceRow.top_product_id, product_url: performanceRow.top_product_url }),
+            url: getProductItemUrl({ product_id: performanceRow.top_product_id, product_type: performanceRow.top_product_type }),
             finalPrice: Number(performanceRow.top_final_price || 0),
             wonAt: performanceRow.top_won_at || null,
             taskCount: Number(performanceRow.top_product_task_count || 0)
@@ -1035,7 +1043,7 @@ router.get('/won', async (req, res) => {
          p.current_price AS current_price,
          p.buyout_price AS buyout_price,
          COALESCE(p.tax_type, 'tax_zero') AS tax_type,
-         COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+         p.product_type AS product_type,
          p.shipping_fee_text AS shipping_fee_text,
          t.max_price,
          t.user_max_price,
@@ -1175,7 +1183,7 @@ router.get('/:id', async (req, res) => {
               p.buyout_price AS buyout_price,
               p.bid_count AS bid_count,
               COALESCE(p.tax_type, 'tax_zero') AS tax_type,
-              COALESCE(p.product_type, CASE WHEN COALESCE(p.tax_type, 'tax_zero') = 'tax_included' THEN 'store' ELSE 'normal' END) AS product_type,
+              p.product_type AS product_type,
               p.shipping_fee_text AS shipping_fee_text,
               p.end_time AS end_time,
               t.max_price,

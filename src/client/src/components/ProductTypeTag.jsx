@@ -2,7 +2,7 @@ import priceRules from '../../../shared/priceRules.cjs';
 import fleamarket from '../../../shared/fleamarket.cjs';
 
 export default function ProductTypeTag({ product, fullName = false }) {
-  const type = fleamarket.isFleamarketProduct(product) ? 'fleamarket' : priceRules.normalizeProductType(
+  const type = fleamarket.isStoredFleamarketProduct(product) ? 'fleamarket' : priceRules.normalizeProductType(
     product?.productType || product?.product_type,
     product?.taxType || product?.tax_type
   );

@@ -196,6 +196,30 @@ const {submitAuctionTask} = require('./task');
     raw.prepare("UPDATE tasks SET updated_at=datetime('now','-3 minutes') WHERE id=11").run();
     const staleProcessing = await recover();
     assert.deepEqual(staleProcessing.map(task=>task.id),[11]);
+    seed(90,'z705860990');
+    raw.prepare("UPDATE products SET product_type='normal' WHERE product_id='z705860990'").run();
+    await call(90,'fleamarket/begin',{},409);
+    assert.equal(raw.prepare('SELECT execution_unknown FROM tasks WHERE id=90').get().execution_unknown,0,'Z prefix cannot authorize a P purchase');
+    raw.prepare("UPDATE tasks SET status='failed',execution_unknown=1,updated_at=datetime('now','-10 minutes') WHERE id=90").run();
+    seed(91,'a123456789','failed',1);
+    raw.prepare("UPDATE tasks SET updated_at=datetime('now','-10 minutes') WHERE id=91").run();
+    const typedRecovery=await recover();
+    assert.equal(typedRecovery.some(task=>task.id===90),false,'normal Z task must not enter P recovery');
+    assert.equal(typedRecovery.some(task=>task.id===91),true,'P recovery follows saved type, not ID prefix');
+    const normalRow=plugin.buildDaipaiSheetRow({product_id:'z705860990',product_type:'normal',product_url:'https://paypayfleamarket.yahoo.co.jp/item/z705860990',final_price:300});
+    assert.equal(normalRow[2],'https://auctions.yahoo.co.jp/jp/auction/z705860990');
+    assert.throws(()=>plugin.buildDaipaiSheetRow({product_id:'z705860990'}),/商品类型缺失/);
+    raw.prepare("INSERT INTO products(product_id,product_type) VALUES('z777777777','normal')").run();
+    const normalSubmission=await submitAuctionTask({user:{id:1,user_level:1},actingUser:{id:1,user_level:1}},
+      {product_url:'https://paypayfleamarket.yahoo.co.jp/item/z777777777',product_type:'fleamarket',max_price:1000,bid_mode:'bid'},
+      {database:db,fetchProduct:async(url,options)=>{
+        assert.equal(url,'https://auctions.yahoo.co.jp/jp/auction/z777777777');
+        assert.equal(options.recordedProductType,'normal');
+        return {success:true,data:{auctionId:'z777777777',productType:'normal',title:'Recorded normal Z product',
+          imageUrl:'https://example.com/test.png',currentPrice:300,taxType:'tax_zero',shippingFeeText:'送料無料',endTime:'2099-01-01T00:00:00+09:00'}};
+      }});
+    assert.equal(raw.prepare('SELECT bid_mode FROM tasks WHERE id=?').get(normalSubmission.task_id).bid_mode,'bid');
+    assert.equal(raw.prepare("SELECT product_type FROM products WHERE product_id='z777777777'").get().product_type,'normal','submission and snapshot must preserve the saved type');
     console.log('Fleamarket purchase HTTP, atomic order, claims and recovery tests passed');
   } finally { await new Promise(resolve=>server.close(resolve)); raw.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

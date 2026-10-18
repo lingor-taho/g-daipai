@@ -1,3 +1,4 @@
+import fleamarket from '../../../shared/fleamarket.cjs';
 import ProductSearchPopup from './ProductSearchPopup';
 import { getApiErrorMessage, getProductInfo } from '../utils/api';
 import { getAuctionProductUrl } from '../utils/rebid';
@@ -5,7 +6,7 @@ import useProductFavorites from '../utils/useProductFavorites';
 
 async function loadDetail(item) {
   try {
-    const res = await getProductInfo(item.auctionId);
+    const res = await getProductInfo(getAuctionProductUrl(item) || item.auctionId, fleamarket.getStoredProductType(item), {resolveStoredType:true});
     const product = res.data?.data;
     if (!product?.auctionId) throw new Error('商品详情数据不完整');
     return product;

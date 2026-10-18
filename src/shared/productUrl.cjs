@@ -1,11 +1,10 @@
-const { isFleamarketProduct } = require('./fleamarket.cjs');
+const { getStoredProductType } = require('./fleamarket.cjs');
 
 function getProductItemUrl(input) {
-  const item = input && typeof input === 'object' ? input : { product_id: input };
-  const existing = String(item.product_url || item.productUrl || item.standardUrl || '').trim();
-  const id = String(item.product_id || item.productId || item.auctionId || existing.match(/[a-zA-Z]?\d{8,10}/)?.[0] || '').trim().toLowerCase();
-  if (id && isFleamarketProduct(item)) return `https://paypayfleamarket.yahoo.co.jp/item/${id}`;
-  return existing || (id ? `https://auctions.yahoo.co.jp/jp/auction/${id}` : '');
+  const type = getStoredProductType(input);
+  const id = String(input?.product_id || input?.productId || input?.auctionId || '').trim().toLowerCase();
+  if (!id || !type) return '';
+  return type === 'fleamarket' ? `https://paypayfleamarket.yahoo.co.jp/item/${id}` : `https://auctions.yahoo.co.jp/jp/auction/${id}`;
 }
 
 module.exports = { getProductItemUrl };

@@ -155,11 +155,11 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
   function handleRebid(task) {
     const productUrl = getAuctionProductUrl(task);
     if (!productUrl) {
-      Toast.show({ content: '该任务缺少商品ID' });
+      Toast.show({ content: '该任务缺少商品ID或商品类型，请重新获取商品信息' });
       return;
     }
     if (onRebid) {
-      onRebid(productUrl);
+      onRebid(productUrl, task.product_type);
       return;
     }
     navigate(getRebidSubmitPath(task));

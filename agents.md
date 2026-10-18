@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-17
+**最后更新**: 2026-10-18
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-18 按用户新范围补齐此前暂缓的P类型判断：已入库任务／订单／恢复／交易与付款排除／拍卖记录／Google商品链接改以products.product_type为准，移除后续流程的Z ID及旧URL兜底，快照归一化不再把Z自动改P。插件按任务／订单下发类型分流；缺类型停止执行，P合法ID及同商品URL核验保留。收藏补存productType及按类型生成的URL，旧收藏先读取商品详情，优先核对商品表类型再回填本地；再入札／详情跳转携带类型，初次无类型的用户输入仍走原识别。无schema变更，需同步更新API／shared、用户端dist及各账号插件background.js并reload，详见0af。
 
 2026-10-17 首页抓取卡类型全称标签已沿用成交商品页的类型配色：普通绿色、商城红色、P紫色，移除全称模式的统一蓝色覆盖；共用全称标签的搜索列表同步一致，文字和布局保持。仅用户端静态展示，更新用户端dist，验证见0ae。
 
@@ -235,6 +237,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0af. 后续P流程及收藏统一使用保存类型
+
+共享getStoredProductType／isStoredFleamarketProduct仅识别normal／store／fleamarket字段，不读ID、URL或旧isFleamarket标志；原isFleamarketProduct保留给首次用户输入和批量原始文本识别。共享productUrl.cjs按保存类型生成链接，无类型不生成。购买接口与任务状态校验从products重新读取类型，P未知结果恢复和原普通付款队列移除Z SQL条件；普通Z与P非Z的类型冲突样本按记录类型分流，实际P页面ID格式和URL／成功标题验证不放宽。快照仅保留显式有效类型，缺字段时不覆盖既有类型，不自动重写历史数据。扫描／收货／拍卖记录任务携带类型，拍卖记录仅normal／store且两字段为空时入队；手动导入也按已取得的类型过滤。Google追加／更新读取商品表类型生成C列链接，缺类型沿原失败提醒处理，查重、补写、金额、状态及真实交易动作保持。
+
+收藏快照新增productType和规范URL；旧记录缺类型时不在前端猜URL，先以原ID请求详情，resolveStoredType先读取商品表，存在有效类型时覆盖旧收藏类型，否则沿原初次抓取取得信息；成功后仅更新当前用户已有收藏，不新增收藏，切换用户后的迟到更新不写入新用户。已知收藏／列表详情／再入札携带类型，后端抓取按类型固定域名、解析及独立缓存，首次无类型输入不变；返回的类型也同步修正输入框。用户端已知商品展示和链接不再受Z前缀／旧URL覆盖。
+
+验证：完整`npm run regression`，新增`node yahoo-plugin/productTypeRouting.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/proxy.storedType.test.js`；P购买HTTP测试补入商品表反向类型、恢复排除、Google行URL及提交／快照保留类型；原插件完整、P购买／扫描／收货、多账号、拍卖记录、Google查重、收藏单测及390／1200浏览器验证。部署更新API、shared、用户端dist与插件background.js并逐账号reload；无数据库迁移，不需改写历史任务、订单或Google已有行。未部署或操作真实Yahoo／Google。
 
 ### 0ae. 用户端类型全称标签配色统一
 

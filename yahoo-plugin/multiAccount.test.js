@@ -138,7 +138,7 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
   await new Promise(resolve=>setTimeout(resolve,20));assert.equal(countStatus(),before+1);
   await a.api.apiFetch('/api/plugin/task/91/heartbeat',{method:'PATCH',headers:{'X-Yahoo-Claim':'old-execution'}});
   assert.equal(a.calls.at(-1).options.headers['X-Yahoo-Claim'],'old-execution','in-flight run keeps its original credential');
-  const jobs=[{orderId:11,productId:'p1',claimToken:'work-11'},{orderId:12,productId:'p2',claimToken:'work-12'}];
+  const jobs=[{productType:'normal',orderId:11,productId:'p1',claimToken:'work-11'},{productType:'normal',orderId:12,productId:'p2',claimToken:'work-12'}];
   const executedPayments=[];
   const work=load({accountId:2,token:'B-token'},async url=>json(url.includes('/jobs')?{jobs}: {success:true}));
   work.api.stubPayment(async job=>{executedPayments.push(job.orderId);throw new Error('first failed');});
@@ -204,7 +204,7 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
     for(const persistent of [false,true]) {
       const retried=load({accountId:2,token:'B-token'},async()=>json({success:true,claim_token:'retry-token'}));
       retried.api.stubRetry(persistent?[error,error,error]:[error]);
-      const original={id:91,claim_token:'first-token',max_price:2000,user_max_price:2000,strategy:'direct',bid_mode:'bid',account_id:2};
+      const original={product_type:'normal',id:91,claim_token:'first-token',max_price:2000,user_max_price:2000,strategy:'direct',bid_mode:'bid',account_id:2};
       await retried.api.executeBidTask(original,{alreadyClaimed:true});
       assert.equal(retried.api.attempts.length,2,'eligible failures retry once, including with account binding');
       assert.equal(retried.api.attempts[0].claim_token,'first-token');
@@ -218,24 +218,24 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
   }
   const ordinary=load({accountId:2,token:'B-token'},async()=>json({success:true}));
   ordinary.api.stubRetry(['current price exceeds max price']);
-  await ordinary.api.executeBidTask({id:92,claim_token:'ordinary',max_price:1000,strategy:'direct'},{alreadyClaimed:true});
+  await ordinary.api.executeBidTask({product_type:'normal',id:92,claim_token:'ordinary',max_price:1000,strategy:'direct'},{alreadyClaimed:true});
   assert.equal(ordinary.api.attempts.length,1,'ordinary price-rule failure adds no retry or price increase');
   assert.equal(ordinary.api.statuses.at(-1).status,'failed');
   for(const error of ['outbid after bid','Rebid required: current bid is not high enough','失败：卖家黑名单','Yahoo login required']) {
     const rejected=load({accountId:2,token:'B-token'},async()=>json({success:true}));
     rejected.api.stubRetry([error]);
-    await rejected.api.executeBidTask({id:92,claim_token:'ordinary',max_price:1000,strategy:'direct'},{alreadyClaimed:true});
+    await rejected.api.executeBidTask({product_type:'normal',id:92,claim_token:'ordinary',max_price:1000,strategy:'direct'},{alreadyClaimed:true});
     assert.equal(rejected.api.attempts.length,1,`${error}: no added page-error retry`);
   }
   const retryThenOutbid=load({accountId:1,token:'A-token'},async()=>json({success:true,claim_token:'retry-A'}));
   retryThenOutbid.api.stubRetry(['Yahoo bid failed: Yahoo system error page','outbid after bid']);
-  await retryThenOutbid.api.executeBidTask({id:93,claim_token:'first-A',max_price:400,strategy:'direct',account_id:1},{alreadyClaimed:true});
+  await retryThenOutbid.api.executeBidTask({product_type:'normal',id:93,claim_token:'first-A',max_price:400,strategy:'direct',account_id:1},{alreadyClaimed:true});
   assert.equal(retryThenOutbid.api.attempts.length,2);
   assert.equal(retryThenOutbid.api.statuses.at(-1).error,'outbid after bid','retry reports its actual failure');
   assert(retryThenOutbid.api.attempts.every(t=>t.max_price===400 && t.account_id===1));
   const expiredRetry=load({accountId:2,token:'B-token'},async()=>json({error:'任务领取已失效，停止当前操作'},409));
   expiredRetry.api.stubRetry(['Yahoo bid failed: Yahoo system error page']);
-  await assert.rejects(expiredRetry.api.executeBidTask({id:94,claim_token:'old-B',max_price:400},{alreadyClaimed:true}),/领取已失效/);
+  await assert.rejects(expiredRetry.api.executeBidTask({product_type:'normal',id:94,claim_token:'old-B',max_price:400},{alreadyClaimed:true}),/领取已失效/);
   assert.equal(expiredRetry.api.attempts.length,1,'invalidated claims never open another bid attempt');
   for(const debuggerFails of [false,true]) {
     const pin=load({accountId:2,token:'B-token'},async url=>{

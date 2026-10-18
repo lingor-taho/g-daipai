@@ -5201,11 +5201,13 @@ async function getProductSnapshotForImport(productId, productUrl) {
   }
 }
 
+function savedProductType(item) {
+  const type = item?.product_type ?? item?.productType;
+  return ['normal','store','fleamarket'].includes(type) ? type : '';
+}
+
 function isFleamarketManualImportItem(item) {
-  if (item?.productType === 'fleamarket' || item?.product_type === 'fleamarket' || item?.isFleamarket || item?.isFleamarketItem) return true;
-  return [item?.productId, item?.product_id, item?.auctionId, item?.url, item?.productUrl, item?.product_url, item?.standardUrl]
-    .some(value => /^z\d{8,10}$/i.test(String(value || '').match(/[a-zA-Z]?\d{8,10}/)?.[0] || '') ||
-      /^(?:https?:\/\/)?paypayfleamarket\.yahoo\.co\.jp\/item\//i.test(String(value || '').trim()));
+  return savedProductType(item) === 'fleamarket';
 }
 
 async function executeManualOrderImportJob(job) {
@@ -5233,7 +5235,7 @@ async function executeManualOrderImportJob(job) {
       }
       scannedPages += 1;
       for (const order of pageResult.orders || []) {
-        if (isFleamarketManualImportItem(order)) continue;
+        if (!savedProductType(order) || isFleamarketManualImportItem(order)) continue;
         const productId = normalizeAuctionId(order.productId || order.url);
         if (!productId) continue;
         const wonMs = parseYahooWonTimeMs(order.wonTimeText);
@@ -7741,6 +7743,7 @@ async function executeFleamarketTradeJob(job, kind = 'scan') {
 }
 
 async function executePendingShipmentScanJob(job) {
+  if (!savedProductType(job)) throw new Error('商品类型缺失，停止订单任务');
   if (isFleamarketManualImportItem(job)) return executeFleamarketTradeJob(job,'scan');
   let tab = null;
   const beforeTabIds = await getTabIds();
@@ -8014,6 +8017,7 @@ async function runScanJobs() {
   for (const job of jobs) {
     if (job.bundleGroupId && processedBundleGroups.has(job.bundleGroupId)) continue;
     started(job);
+    if (!savedProductType(job)) throw new Error('商品类型缺失，停止扫描');
     const result = isFleamarketManualImportItem(job)
       ? await executeFleamarketTradeJob(job,'scan')
       : job.orderStatus === 'pending_bundle'
@@ -8252,6 +8256,7 @@ async function runPaymentJobs() {
 }
 
 async function executeConfirmReceiptJob(job) {
+  if (!savedProductType(job)) throw new Error('商品类型缺失，停止订单任务');
   if (isFleamarketManualImportItem(job)) return executeFleamarketTradeJob(job,'confirm-receipt');
   if (job.jobType === 'cancel_check') {
     let tab = null;
@@ -8566,6 +8571,7 @@ async function runWorkflowAction() {
 }
 
 async function executeAuctionHistoryJob(job) {
+  if (!savedProductType(job)) throw new Error('商品类型缺失，停止订单任务');
   if (isFleamarketManualImportItem(job)) {
     const response = await apiFetch('/api/plugin/auction-history/status',{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...job,skippedUnsupported:true})
@@ -8838,6 +8844,10 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
 
 async function executeBidTask(task, options = {}) {
   if (!task?.id) return;
+  if (!savedProductType(task)) {
+    await markTaskStatus(task.id,'failed','商品类型缺失，停止任务执行',{executionClaim:task.claim_token});
+    return;
+  }
   if (isFleamarketManualImportItem(task)) return executeFleamarketPurchaseTask(task,options);
   const reportStatus=(id,status,error,extra={})=>markTaskStatus(id,status,error,{...extra,executionClaim:task.claim_token});
   if(task.claim_token) yahooActiveBidClaims.set(Number(task.id),task.claim_token);

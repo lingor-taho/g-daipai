@@ -31,7 +31,7 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('onRebid(productUrl)'),
+  source.includes('onRebid(productUrl, task.product_type)'),
   true,
   'Embedded TaskList must reuse the submit page product-loading callback'
 );

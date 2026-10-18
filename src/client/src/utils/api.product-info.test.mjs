@@ -153,3 +153,11 @@ testApiHasTimeoutForIdleConnections();
 testTimeoutErrorHasReadableMessage();
 testIdleNetworkErrorsAreRetryable();
 testRetriesSafeRequestsAndExplicitSubmitRetryOnlyOnce();
+{
+  const calls=[];
+  const getInfo=createGetProductInfo({apiClient:{get:async(path,config)=>{calls.push({path,config});return {};}}});
+  await getInfo('z705858626','normal');
+  assert.deepEqual(calls[0].config.params,{url:'z705858626',productType:'normal',resolveStoredType:'1'});
+  await getInfo('z705858626',undefined,{resolveStoredType:true});
+  assert.deepEqual(calls[1].config.params,{url:'z705858626',resolveStoredType:'1'});
+}

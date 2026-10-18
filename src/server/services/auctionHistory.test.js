@@ -3,14 +3,14 @@ const Database = require('better-sqlite3');
 const history = require('./auctionHistory');
 const db = new Database(':memory:');
 db.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
-CREATE TABLE products(product_id TEXT PRIMARY KEY,end_time TEXT,current_price INTEGER,auction_history_html TEXT,auction_history_data TEXT);
+CREATE TABLE products(product_id TEXT PRIMARY KEY,product_type TEXT DEFAULT 'normal',end_time TEXT,current_price INTEGER,auction_history_html TEXT,auction_history_data TEXT);
 CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT,status TEXT); CREATE TABLE orders(id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT);`);
 const now = Date.parse('2026-10-08T01:20:00+08:00');
 // Queue eligibility uses actual winning time, independently of settlement or strategy.
 const eligibilityNow = Date.parse('2026-10-11T19:00:00+08:00');
 const eligibilityDb = new Database(':memory:');
 eligibilityDb.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
-CREATE TABLE products(product_id TEXT PRIMARY KEY,end_time TEXT,auction_history_html TEXT,auction_history_data TEXT);
+CREATE TABLE products(product_id TEXT PRIMARY KEY,product_type TEXT DEFAULT 'normal',end_time TEXT,auction_history_html TEXT,auction_history_data TEXT);
 CREATE TABLE tasks(id INTEGER PRIMARY KEY,product_id TEXT,status TEXT,strategy TEXT,account_id INTEGER);
 CREATE TABLE orders(id INTEGER PRIMARY KEY,product_id TEXT,task_id INTEGER,won_at TEXT,order_status TEXT,account_id INTEGER);`);
 function eligibilityCase(id, {end='2026-10-01T00:00:00+09:00',won,legacy=false,imported=false,linked=true,html=null,data=null} = {}) {
@@ -37,10 +37,10 @@ eligibilityCase('won-one-ms-later',{won:new Date(eligibilityNow+1).toISOString()
 eligibilityCase('won-has-html',{won:'2026-10-07T00:00:00Z',html:'saved'});
 eligibilityCase('won-has-data',{won:'2026-10-07T00:00:00Z',data:'[]'});
 eligibilityCase('won-expired',{won:'2026-10-07T00:00:00Z',html:history.EXPIRED,data:history.EXPIRED});
-eligibilityDb.exec('ALTER TABLE products ADD COLUMN product_type TEXT');
+
 eligibilityCase('z705860836',{end:null,won:'2026-10-07T00:00:00Z'});
 eligibilityCase('typed-fleamarket',{won:'2026-10-07T00:00:00Z'});
-eligibilityDb.prepare("UPDATE products SET product_type='fleamarket' WHERE product_id='typed-fleamarket'").run();
+eligibilityDb.prepare("UPDATE products SET product_type='fleamarket' WHERE product_id IN ('typed-fleamarket','z705860836')").run();
 eligibilityCase('p123456789');
 const beforeEligibility = eligibilityDb.serialize();
 const expectedEligible = ['non-won-ended','v1247947416','r1232702461','won-invalid-deadline','won-offset','legacy-order','order-only','won-boundary','p123456789'].sort();
@@ -190,7 +190,7 @@ assert.deepEqual(JSON.parse(history.get(db,'auction_history_queue')),{token:'bus
 // Failed products rotate behind untouched products; alerts wait for the whole fixed queue.
 const retryDb = new Database(':memory:');
 retryDb.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
-CREATE TABLE products(product_id TEXT PRIMARY KEY,auction_history_html TEXT,auction_history_data TEXT);`);
+CREATE TABLE products(product_id TEXT PRIMARY KEY,product_type TEXT DEFAULT 'normal',auction_history_html TEXT,auction_history_data TEXT);`);
 retryDb.prepare('INSERT INTO products(product_id) VALUES (?)').run('a');
 retryDb.prepare('INSERT INTO products(product_id) VALUES (?)').run('b');
 history.set(retryDb,'auction_history_requested','1');

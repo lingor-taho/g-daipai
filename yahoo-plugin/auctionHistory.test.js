@@ -62,7 +62,8 @@ async function testAuthenticatedPagination() {
   const visited = []; const closed = []; const writes = [];
   let pageNumber = 1;
   const context = {
-    isFleamarketManualImportItem:require('../src/shared/fleamarket.cjs').isFleamarketProduct,
+    savedProductType:require('../src/shared/fleamarket.cjs').getStoredProductType,
+    isFleamarketManualImportItem:require('../src/shared/fleamarket.cjs').isStoredFleamarketProduct,
     console,Date,setTimeout,encodeURIComponent,
     chrome:{tabs:{
       create:async ({url})=>{ visited.push(url); return {id:7}; },
@@ -78,21 +79,21 @@ async function testAuthenticatedPagination() {
     apiFetch:async (url,options)=>{writes.push(JSON.parse(options.body));return {ok:true,json:async()=>({success:true})};}
   };
   vm.createContext(context);vm.runInContext(jobSource,context);
-  await context.executeAuctionHistoryJob({productId:'z705860836',token:'p-batch',claim:'p-claim'});
+  await context.executeAuctionHistoryJob({productType:'fleamarket',productId:'z705860836',token:'p-batch',claim:'p-claim'});
   assert.equal(visited.length,0,'P history must not open an auction page');
   assert.equal(writes.pop().skippedUnsupported,true);
-  assert.equal(await context.executeAuctionHistoryJob({productId:'u1246662246',token:'batch',claim:'claim'}),true);
+  assert.equal(await context.executeAuctionHistoryJob({productType:'normal',productId:'u1246662246',token:'batch',claim:'claim'}),true);
   assert.equal(visited.length,2);
   assert.equal(writes[0].rows.length,3);
   assert.equal(writes[0].firstPageRows.length,2);
   assert.equal(writes[0].rows.at(-1).start,true);
   assert.deepEqual(closed,[7]);
   context.chrome.scripting.executeScript = async opts=>opts.files?[]:[{result:{error:'login required'}}];
-  await context.executeAuctionHistoryJob({productId:'u1246662246',token:'batch',claim:'claim2'});
+  await context.executeAuctionHistoryJob({productType:'normal',productId:'u1246662246',token:'batch',claim:'claim2'});
   assert.equal(writes.at(-1).expired,false);
   assert.equal(writes.at(-1).error,'login required');
   context.chrome.scripting.executeScript = async opts=>opts.files?[]:[{result:{expired:true}}];
-  await context.executeAuctionHistoryJob({productId:'u1246662246',token:'batch',claim:'claim3'});
+  await context.executeAuctionHistoryJob({productType:'normal',productId:'u1246662246',token:'batch',claim:'claim3'});
   assert.equal(writes.at(-1).expired,true);
   assert.equal(writes.at(-1).error,'');
   // Run the actual deleted-document parser through the worker and database writer.
@@ -100,7 +101,7 @@ async function testAuthenticatedPagination() {
   const history = require('../src/server/services/auctionHistory');
   const database = new Database(':memory:');
   database.exec(`CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
-    CREATE TABLE products(product_id TEXT PRIMARY KEY,auction_history_html TEXT,auction_history_data TEXT);
+    CREATE TABLE products(product_id TEXT PRIMARY KEY,product_type TEXT DEFAULT 'normal',auction_history_html TEXT,auction_history_data TEXT);
     INSERT INTO products(product_id) VALUES ('q1230679212');`);
   history.set(database,'auction_history_requested','1');
   history.set(database,'auction_history_queue',JSON.stringify({token:'deleted',ids:['q1230679212']}));

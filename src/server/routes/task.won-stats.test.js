@@ -5,7 +5,7 @@ async function run() {
   const raw = new Database(':memory:');
   raw.exec(`CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER, product_id TEXT, status TEXT, created_at TEXT, updated_at TEXT);
     CREATE TABLE orders (id INTEGER PRIMARY KEY, task_id INTEGER, final_price INTEGER, won_at TEXT, won_time_text TEXT);
-    CREATE TABLE products (product_id TEXT PRIMARY KEY, product_title TEXT, product_url TEXT, shipping_fee_text TEXT, end_time TEXT);`);
+    CREATE TABLE products (product_type TEXT DEFAULT 'normal',product_id TEXT PRIMARY KEY, product_title TEXT, product_url TEXT, shipping_fee_text TEXT, end_time TEXT);`);
   const database = {
     getAll: async (sql, params = []) => raw.prepare(sql).all(...params),
     getOne: async (sql, params = []) => raw.prepare(sql).get(...params)

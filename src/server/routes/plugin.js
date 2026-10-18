@@ -1,6 +1,7 @@
-﻿const express = require('express');
+﻿const { getProductItemUrl } = require('../../shared/productUrl.cjs');
+const express = require('express');
 const router = express.Router();
-const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
+const { isStoredFleamarketProduct: isFleamarketProduct, getStoredProductType } = require('../../shared/fleamarket.cjs');
 const fleamarketPurchase = require('../services/fleamarketPurchase');
 const { ENDED_REASON } = require('../services/endedTaskReason');
 const { execFile } = require('child_process');
@@ -23,12 +24,13 @@ router.use((req, res, next) => {
     accountScope.run(value, () => {
       const match = req.path.match(/^\/task\/(\d+)\//);
       if (match) {
-        const task = db.raw.prepare('SELECT id,account_id,status,claim_token,claim_instance,strategy,max_price,product_id,execution_unknown FROM tasks WHERE id=? AND account_id=?').get(Number(match[1]), value.accountId);
+        const task = db.raw.prepare('SELECT t.id,t.account_id,t.status,t.claim_token,t.claim_instance,t.strategy,t.max_price,t.product_id,t.execution_unknown,p.product_type FROM tasks t LEFT JOIN products p ON p.product_id=t.product_id WHERE t.id=? AND t.account_id=?').get(Number(match[1]), value.accountId);
         if (!task || task.status === 'cancelled') return res.status(409).json({ error: '任务不属于当前账号或已终止' });
         if (!(req.path.endsWith('/status') && req.body?.status === 'processing') &&
           (!task.claim_token || task.claim_token !== req.get('X-Yahoo-Claim') || task.claim_instance !== value.instanceId)) {
           return res.status(409).json({ error: '任务领取已失效，停止当前操作' });
         }
+        if (!getStoredProductType(task)) return res.status(409).json({error:'商品类型缺失，停止任务执行'});
         req.yahooTask = task;
       }
       const orderId=Number(req.body?.orderId || req.body?.order_id || 0);
@@ -403,7 +405,7 @@ async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
     error_msg='フリマ购买结果待核对，请勿重复购买',updated_at=CURRENT_TIMESTAMP
     WHERE status='processing' AND execution_unknown=1 AND datetime(updated_at)<=datetime(?)
     AND (? IS NULL OR account_id=?)
-    AND (LOWER(product_id) GLOB 'z[0-9]*' OR product_id IN (SELECT product_id FROM products WHERE product_type='fleamarket'))`)
+    AND product_id IN (SELECT product_id FROM products WHERE product_type='fleamarket')`)
     .run(cutoffIso,accountScope.accountId() || null,accountScope.accountId() || null);
   const result = await database.query(
     `UPDATE tasks
@@ -411,7 +413,7 @@ async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
          error_msg = NULL,${database.raw ? ' claim_token=NULL, claim_instance=NULL, execution_unknown=0,' : ''}
          updated_at = CURRENT_TIMESTAMP
      WHERE status = 'processing'
-       AND datetime(updated_at) <= datetime(?)`,
+       AND datetime(updated_at) <= datetime(?)${database.raw ? " AND product_id IN (SELECT product_id FROM products WHERE product_type IN ('normal','store'))" : ''}`,
     [cutoffIso]
   );
   return result.rowCount || 0;
@@ -424,6 +426,7 @@ async function claimTaskForProcessing(taskId, database = db, {allowExisting=fals
       const current = database.raw.prepare('SELECT id,user_id,account_id,status,claim_token,claim_instance,strategy,max_price,product_id,execution_unknown FROM tasks WHERE id=? AND account_id=?').get(taskId,ctx.accountId);
       if (!current || !database.raw.prepare('SELECT 1 FROM yahoo_product_assignments WHERE product_id=? AND account_id=? AND user_id=?').get(current.product_id,ctx.accountId,current.user_id)) return {success:false};
       if (allowExisting && current?.status === 'processing' && current.claim_instance === ctx.instanceId && current.claim_token) return { success: true, claim_token: current.claim_token };
+      if (!getStoredProductType(database.raw.prepare('SELECT product_type FROM products WHERE product_id=?').get(current.product_id))) return {success:false};
       if (!['pending','bidding'].includes(current.status) || (current.status==='bidding' && current.strategy!=='multi_bid')) return {success:false};
       if(database.raw.prepare("SELECT 1 FROM tasks WHERE account_id=? AND product_id=? AND status='processing' AND id<>? LIMIT 1").get(ctx.accountId,current.product_id,current.id)) return {success:false};
       if (current.strategy==='multi_bid' && database.raw.prepare("SELECT 1 FROM bid_logs WHERE task_id=? AND result='bidding' AND bid_price>=? LIMIT 1").get(taskId,current.max_price)) return {success:false};
@@ -1487,7 +1490,7 @@ async function getTransactionStartJobs(database = db, options = {}) {
   let storeUpdated = 0;
   let missingTransactionUrl = 0;
   for (const row of rows) {
-    if (isFleamarketProduct(row)) continue;
+    if (!['normal','store'].includes(getStoredProductType(row))) continue;
     if (row.product_type === 'store') {
       const beforeRows = await getOrderStatusAuditRows(database, [row.order_id]);
       const result = await database.query(
@@ -1527,14 +1530,14 @@ async function getTransactionStartJobs(database = db, options = {}) {
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
-      productType: row.product_type || 'normal',
+      productType: row.product_type || '',
       shippingFeeText: row.shipping_fee_text || '',
       transactionUrl: row.transaction_url || ''
     };
     jobs.push(job);
     logJobs.push(job);
   }
-  return { jobs, logJobs, storeUpdated, missingTransactionUrl, total: rows.filter(row => !isFleamarketProduct(row)).length };
+  return { jobs, logJobs, storeUpdated, missingTransactionUrl, total: rows.filter(row => ['normal','store'].includes(getStoredProductType(row))).length };
 }
 
 function normalizeOrderStatus(value) {
@@ -1775,16 +1778,11 @@ function formatSheetDate(value) {
   return text ? text.slice(0, 10) : '';
 }
 
-function buildYahooAuctionUrl(productId) {
-  const id = String(productId || '').trim().toLowerCase();
-  if (isFleamarketProduct(id)) return `https://paypayfleamarket.yahoo.co.jp/item/${id}`;
-  return id ? `https://auctions.yahoo.co.jp/jp/auction/${id}` : '';
-}
-
 function buildDaipaiSheetRow(order = {}, baseConfig = {}) {
   const payable = calculateSheetPayable(order, baseConfig);
   const productId = String(order.product_id || '').trim().toLowerCase();
-  const productUrl = String(order.product_url || '').trim() || buildYahooAuctionUrl(productId);
+  const productUrl = getProductItemUrl(order);
+  if (!productUrl) throw new Error('商品类型缺失，无法生成Google表格商品链接');
   const productTitle = String(order.product_title || '').trim() || productId;
   return [
     formatSheetDate(order.won_at || order.created_at),
@@ -1832,6 +1830,7 @@ async function getOrdersForSheetAppend(orderId, database = db) {
             o.google_sheet_appended_at,
             t.product_id,
             p.product_url AS product_url,
+            p.product_type AS product_type,
             p.product_title AS product_title,
             p.shipping_fee_text AS shipping_fee_text,
             p.tax_type AS tax_type,
@@ -1874,9 +1873,9 @@ async function appendPendingReceiptOrderToGoogleSheet(orderId, database = db, sh
   const { orders, isBundle, bundleGroupId } = await getOrdersForSheetAppend(orderId, database);
   if (!orders.length) return { skipped: true, reason: 'no appendable orders' };
   const baseConfig = await getSheetFinanceBaseConfig(database);
-  const rows = orders.map(order => buildDaipaiSheetRow(order, baseConfig));
   let appendResult;
   try {
+    const rows = orders.map(order => buildDaipaiSheetRow(order, baseConfig));
     appendResult = await sheets.appendRows({
       rows,
       productIds: orders.map(order => order.product_id),
@@ -1927,6 +1926,7 @@ async function getOrderForSheetUpdate(orderId, database = db) {
             o.bundle_shipping_fee_text,
             t.product_id,
             p.product_url AS product_url,
+            p.product_type AS product_type,
             p.product_title AS product_title,
             p.shipping_fee_text AS shipping_fee_text,
             p.tax_type AS tax_type,
@@ -2061,10 +2061,12 @@ async function syncYahooWonOrders(orders = [], database = db) {
   let forcedResync = 0;
   let missingPrice = 0;
   for (const order of orders) {
-    if (isFleamarketProduct(order) || isFleamarketProduct(order.url)) continue;
-    const match = String(order.url || order.productId || '').match(/[a-zA-Z]?\d{8,10}/);
+    const match = String(order.productId || order.url || '').match(/[a-zA-Z]?\d{8,10}/);
     if (!match) continue;
     const productId = match[0].toLowerCase();
+    const savedProduct = await database.getOne('SELECT product_type FROM products WHERE product_id = ?', [productId]);
+    if (savedProduct && !getStoredProductType(savedProduct)) continue;
+    if (isFleamarketProduct(getStoredProductType(savedProduct) ? savedProduct : order)) continue;
     if(database.raw && accountScope.accountId()) {
       const conflicting=database.raw.prepare('SELECT account_id FROM orders WHERE product_id=? AND account_id<>?').get(productId,accountScope.accountId());
       if(conflicting) throw yahooAccounts.fail('商品已有其他 Yahoo 账号成交记录，需人工核对');
@@ -2369,9 +2371,11 @@ async function updateManualOrderImportStatus(payload = {}, database = db) {
   let skippedExisting = 0;
   let scannedCount = 0;
   for (const item of items) {
-    if (isFleamarketProduct(item) || isFleamarketProduct(item.url)) continue;
     const productId = normalizeManualImportProductId(item.productId || item.product_id || item.url);
     if (!productId) continue;
+    const savedProduct = database.raw?.prepare('SELECT product_type FROM products WHERE product_id=?').get(productId);
+    const productType = getStoredProductType(savedProduct || item);
+    if (!productType || productType === 'fleamarket') continue;
     scannedCount += 1;
     const existing = await database.getOne(
       `SELECT o.id
@@ -2406,7 +2410,7 @@ async function updateManualOrderImportStatus(payload = {}, database = db) {
       [
         batchId,
         productId,
-        item.productUrl || item.product_url || `https://auctions.yahoo.co.jp/jp/auction/${productId}`,
+        getProductItemUrl({product_id:productId,product_type:productType}),
         item.productTitle || item.title || item.product_title || null,
         item.productImageUrl || item.imageUrl || item.product_image_url || '',
         normalizeManualImportYenAmount(item.finalPrice || item.price || item.final_price),
@@ -2415,7 +2419,7 @@ async function updateManualOrderImportStatus(payload = {}, database = db) {
         item.transactionUrl || item.transaction_url || '',
         item.shippingFeeText || item.shipping_fee_text || '',
         item.taxType || item.tax_type || 'tax_zero',
-        item.productType || item.product_type || 'normal'
+        productType
       ]
     );
     candidateCount += 1;
@@ -2541,7 +2545,7 @@ async function getScanJobs(database = db) {
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
-      productType: row.product_type || 'normal',
+      productType: row.product_type || '',
       shippingFeeText: row.shipping_fee_text || '',
       bundleGroupId: row.bundle_group_id || '',
       transactionUrl: row.transaction_url || '',
@@ -2880,7 +2884,7 @@ async function getConfirmReceiptJobs(database = db, options = {}) {
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
-      productType: row.product_type || 'normal',
+      productType: row.product_type || '',
       transactionUrl: row.transaction_url || '',
       bundleGroupId: row.bundle_group_id || '',
       receiptColor: colorHex,
@@ -3054,8 +3058,7 @@ async function getPaymentJobs(database = db, options = {}) {
      WHERE o.order_status = ?
        AND o.total_amount_cny IS NOT NULL
        AND t.status = 'success'
-       AND COALESCE(p.product_type,'') <> 'fleamarket'
-       AND LOWER(t.product_id) NOT GLOB 'z[0-9]*'
+       AND p.product_type IN ('normal','store')
      ORDER BY datetime(COALESCE(o.won_at, o.created_at)) ASC, o.id ASC
      LIMIT ?`,
     [ORDER_STATUS_PENDING_SETTLEMENT, ORDER_STATUS_BUNDLE_COMPLETED, ORDER_STATUS_PENDING_SETTLEMENT, limit]
@@ -3066,7 +3069,7 @@ async function getPaymentJobs(database = db, options = {}) {
       productId: row.product_id,
       productUrl: row.product_url,
       productTitle: row.product_title,
-      productType: row.product_type || 'normal',
+      productType: row.product_type || '',
       transactionUrl: row.transaction_url || '',
       payableCny: row.total_amount_cny,
       finalPrice: row.final_price,
@@ -3076,7 +3079,7 @@ async function getPaymentJobs(database = db, options = {}) {
       effectiveShippingFeeText: getEffectiveShippingFeeText(row),
       bundleGroupId: row.bundle_group_id || ''
     })),
-    total: rows.filter(row => !isFleamarketProduct(row)).length,
+    total: rows.filter(row => ['normal','store'].includes(getStoredProductType(row))).length,
     limit,
     limitMin: range.min,
     limitMax: range.max

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Toast } from 'antd-mobile';
-import { favoritesKey, readFavorites, toggleFavorite } from './productFavorites';
+import { favoritesKey, readFavorites, toggleFavorite, refreshFavorite } from './productFavorites';
 
 export default function useProductFavorites() {
+  let ownerKey;
+  try { ownerKey = favoritesKey(localStorage); } catch (_) {}
   const read = () => {
     try { return readFavorites(localStorage, favoritesKey(localStorage)); } catch (_) { return []; }
   };
@@ -32,5 +34,11 @@ export default function useProductFavorites() {
       Toast.show({ content: '收藏保存失败，请检查浏览器本地存储是否可用' });
     }
   };
-  return { favorites: sortedFavorites, onToggleFavorite };
+  const onRefreshFavorite = item => {
+    try {
+      if (!ownerKey || favoritesKey(localStorage) !== ownerKey) return;
+      setFavorites(refreshFavorite(localStorage, ownerKey, item));
+    } catch (_) {}
+  };
+  return { favorites: sortedFavorites, onToggleFavorite, onRefreshFavorite };
 }

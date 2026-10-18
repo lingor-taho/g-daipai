@@ -228,7 +228,7 @@ export default function Statistics() {
             {topProduct ? (
               <>
                 拍到的最高价商品为{' '}
-                <a href={productUrl.getProductItemUrl({ ...topProduct, product_url: topProduct.url })} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
+                <a href={productUrl.getProductItemUrl(topProduct) || undefined} target="_blank" rel="noreferrer" style={{ color: colors.accent, fontWeight: 700 }}>
                   {topProduct.title || topProduct.productId}
                 </a>
                 （{formatJPY(topProduct.finalPrice)}），总共提交任务 <strong>{topProduct.taskCount || 0}</strong> 次，恭喜您。

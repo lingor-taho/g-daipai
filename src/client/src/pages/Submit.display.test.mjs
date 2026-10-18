@@ -31,7 +31,7 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes('setUrl(productUrl);') && source.includes('handleFetch(productUrl);'),
+  source.includes('setUrl(productUrl);') && source.includes('handleFetch(productUrl, {productType});'),
   true,
   'Double-click rebidding must fill the product input and fetch product details'
 );

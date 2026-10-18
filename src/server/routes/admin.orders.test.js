@@ -284,6 +284,7 @@ async function testConfirmManualOrderImportSkipsUnassignedItems() {
           {
             id: 1,
             product_id: 'a100000001',
+            product_type: 'normal',
             assigned_user_id: 8,
             final_price: 1200,
             product_title: 'assigned item'

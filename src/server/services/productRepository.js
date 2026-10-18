@@ -1,4 +1,4 @@
-const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
+const { getStoredProductType } = require('../../shared/fleamarket.cjs');
 
 function normalizeInteger(value) {
   const number = Number(value || 0);
@@ -33,7 +33,7 @@ function normalizeProductSnapshot(input = {}) {
     buyout_price: normalizeInteger(input.buyout_price ?? input.buyoutPrice),
     bid_count: hasBidCount ? (normalizeInteger(input.bid_count ?? input.bidCount) || 0) : null,
     tax_type: hasTaxType ? normalizeText(input.tax_type ?? input.taxType) : null,
-    product_type: isFleamarketProduct(input) ? 'fleamarket' : hasProductType ? normalizeText(input.product_type ?? input.productType) : null,
+    product_type: hasProductType ? getStoredProductType(input) || null : null,
     shipping_fee_text: normalizeText(input.shipping_fee_text ?? input.shippingFeeText),
     end_time: normalizeText(input.end_time ?? input.endTime)
   };

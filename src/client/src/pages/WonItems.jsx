@@ -479,7 +479,7 @@ export default function WonItems() {
           </div>
         )}
         {!loading && items.map(item => {
-          const fleamarketProduct = fleamarket.isFleamarketProduct(item);
+          const fleamarketProduct = fleamarket.isStoredFleamarketProduct(item);
           const dealLabel = fleamarketProduct ? '购入' : '落札';
           const title = item.product_title || `商品 ${item.product_id}`;
           const strategy = STRATEGY_LABELS[item.strategy] || item.strategy || '即时拍';
@@ -547,7 +547,7 @@ export default function WonItems() {
                     ) : null}
                   </div>
                   <a
-                    href={getProductUrl(item)}
+                    href={getProductUrl(item) || undefined}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ ...titleLinkStyle, display: 'block', fontSize: 13, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}

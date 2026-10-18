@@ -97,14 +97,22 @@ const { chromium } = require('playwright');
         assert.equal(await input.inputValue(), expectedUrl, 'single-result search fills the complete product URL');
         assert.equal(detailRequests.at(-1), expectedUrl, 'detail fetch uses the same complete URL');
       }
+      await page.evaluate(()=>{
+        localStorage.setItem('productFavorites:v1:test',JSON.stringify([
+          {auctionId:'Z650804548',title:'旧收藏フリマ商品'},
+          {auctionId:'x1234567890',title:'旧收藏普通商品'}
+        ]));
+        window.dispatchEvent(new Event('storage'));
+      });
       for (const [title, expectedUrl] of [['旧收藏フリマ商品', url], ['旧收藏普通商品', normalProduct.standardUrl]]) {
         await page.getByRole('button', { name: '打开商品收藏', exact: true }).click();
         await Promise.all([
-          page.waitForResponse(response => response.url().includes('/api/proxy/fetch')),
+          page.waitForResponse(response => response.url().includes('/api/proxy/fetch') && new URL(response.url()).searchParams.get('url')===expectedUrl),
           page.locator('.product-search-result-title').filter({ hasText: title }).click()
         ]);
         assert.equal(await input.inputValue(), expectedUrl);
         assert.equal(detailRequests.at(-1), expectedUrl);
+        await page.locator('.adm-popup').filter({has:page.getByText('商品收藏',{exact:true})}).waitFor({state:'hidden'});
         if (expectedUrl === url) {
           await page.getByRole('button', { name: '提交任务', exact: true }).waitFor();
           assert.equal(await page.locator('input[type=checkbox]').isChecked(), true);
@@ -114,13 +122,17 @@ const { chromium } = require('playwright');
         }
       }
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('productFavorites:v1:test')).length), 2);
+      const savedFavorites=await page.evaluate(()=>JSON.parse(localStorage.getItem('productFavorites:v1:test')));
+      assert.equal(savedFavorites.find(row=>row.auctionId==='z650804548').productType,'fleamarket');
+      assert.equal(savedFavorites.find(row=>row.auctionId==='x1234567890').productType,'normal');
       assert.equal(submitted.length, 0);
       await input.fill('ワンフェス WF2026S Plastic Stick'); await fetch.click();
       const badges = page.locator('.product-search-result:visible img[src="/yahoo-assets/fleamarket-icon.svg"]');
       await badges.waitFor(); assert.equal(await badges.count(), 1);
       assert.equal(await badges.evaluate(img => img.complete && img.naturalWidth > 0), true);
+      const searchPopup=page.locator('.adm-popup').filter({has:page.getByText('商品搜索结果',{exact:true})});
       for (const [item, tag] of [[normalProduct, '普'], [storeProduct, '商']]) {
-        const card = page.locator('.product-search-result').filter({ hasText: item.title });
+        const card = searchPopup.locator('.product-search-result').filter({ hasText: item.title });
         assert.equal(await card.locator('[data-product-type]').textContent(), item.productType === 'store' ? '商城商品' : '普通商品');
         await card.locator('.product-search-result-title').click();
         await page.locator('.product-search-detail-title [data-product-type=' + item.productType + ']').waitFor();
@@ -130,7 +142,7 @@ const { chromium } = require('playwright');
         assert.equal(await page.getByRole('button', { name: '去竞拍', exact: true }).count(), 1);
         await page.getByRole('button', { name: '← 返回', exact: true }).click();
       }
-      const flea = page.locator('.product-search-result').filter({ hasText: product.title });
+      const flea = searchPopup.locator('.product-search-result').filter({ hasText: product.title });
       await flea.locator('.product-search-result-title').click();
       await page.getByText(product.descriptionText.split('\n')[1], { exact: false }).waitFor();
       assert.equal(detailRequests.at(-1), url);

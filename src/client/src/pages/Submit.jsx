@@ -1,3 +1,4 @@
+import productUrls from '../../../shared/productUrl.cjs';
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useCallback, useRef } from 'react';
@@ -15,7 +16,7 @@ import { appendUniqueItems } from '../utils/pagedList';
 import { runDeduped } from '../utils/requestDedupe';
 import { cardStyle, colors, inputBoxStyle, listStyle, outlineButtonStyle, primaryButtonStyle, sectionTitleStyle } from '../styles';
 const { isAuctionEnded } = auctionDeadline;
-const { isFleamarketProduct } = fleamarket;
+const { isStoredFleamarketProduct: isFleamarketProduct, getStoredProductType } = fleamarket;
 
 function extractAuctionId(input) {
   const match = input.match(/[a-zA-Z]?\d{8,10}/);
@@ -218,7 +219,7 @@ export default function Submit() {
     const prefillUrl = String(searchParams.get('url') || '').trim();
     if (!prefillUrl) return;
     setUrl(prefillUrl);
-    handleFetch(prefillUrl, { skipIfFetched: true });
+    handleFetch(prefillUrl, { skipIfFetched: true, productType:searchParams.get('productType') || undefined });
   }, []);
 
   useEffect(() => {
@@ -286,11 +287,10 @@ export default function Submit() {
         }
         if (searchItems.length === 1 && !searchData.hasMore) {
           const onlyItem = searchItems[0];
-          const productUrl = isFleamarketProduct(onlyItem)
-            ? `https://paypayfleamarket.yahoo.co.jp/item/${String(onlyItem.auctionId).toLowerCase()}`
-            : onlyItem.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${onlyItem.auctionId}`;
+          const productUrl = productUrls.getProductItemUrl(onlyItem);
+          if (!productUrl) throw new Error('商品类型缺失，请重新搜索');
           setUrl(productUrl);
-          await fetchAndSetProduct(productUrl, onlyItem.auctionId);
+          await fetchAndSetProduct(productUrl, onlyItem.auctionId, getStoredProductType(onlyItem));
           return;
         }
         setProduct(null);
@@ -302,7 +302,7 @@ export default function Submit() {
         return;
       }
 
-      await fetchAndSetProduct(normalizedInput, inputAuctionId);
+      await fetchAndSetProduct(normalizedInput, inputAuctionId, options.productType);
     } catch (e) {
       setProduct(null);
       if (!inputAuctionId) setProductSearchVisible(false);
@@ -313,8 +313,8 @@ export default function Submit() {
     }
   }
 
-  async function fetchAndSetProduct(normalizedInput, inputAuctionId) {
-    const res = await getProductInfo(normalizedInput);
+  async function fetchAndSetProduct(normalizedInput, inputAuctionId, productType) {
+    const res = await getProductInfo(normalizedInput, productType);
     const data = res.data?.data;
     const auctionId = data?.auctionId || inputAuctionId;
     if (!auctionId) {
@@ -340,6 +340,9 @@ export default function Submit() {
         endedAtRead: isAuctionEnded(data.endTime) || (isFleamarketProduct(data) && data.auctionStatus === 'ended')
       };
       setProduct(nextProduct);
+      favoriteProps.onRefreshFavorite(nextProduct);
+      const resolvedUrl = productType ? productUrls.getProductItemUrl(nextProduct) : '';
+      if (resolvedUrl) setUrl(resolvedUrl);
       setStoreBidPriceMode('tax_before');
       if (isBuyoutOnlyProduct(nextProduct)) {
         setBuyoutSelected(true);
@@ -351,7 +354,7 @@ export default function Submit() {
       } else {
         setBuyoutSelected(false);
       }
-      setLastFetchedUrl(normalizedInput);
+      setLastFetchedUrl(resolvedUrl || normalizedInput);
       Toast.show({ content: '已获取商品信息' });
     } else {
       setProduct(null);
@@ -393,29 +396,34 @@ export default function Submit() {
     }
   }
 
-  function handleRebid(productUrl) {
+  function handleRebid(productUrl, productType) {
     setUrl(productUrl);
-    handleFetch(productUrl);
+    handleFetch(productUrl, {productType});
   }
 
   async function loadSearchProductDetail(item) {
     try {
-      const res = await getProductInfo(item.standardUrl || item.auctionId);
+      const res = await getProductInfo(productUrls.getProductItemUrl(item) || item.auctionId, getStoredProductType(item), {resolveStoredType:true});
       const data = res.data?.data;
       if (!data?.auctionId) throw new Error('商品详情数据不完整');
+      if (data.auctionId !== String(item.auctionId || '').toLowerCase()) throw new Error('商品详情与所选商品不匹配');
       return data;
     } catch (error) {
       throw new Error(getApiErrorMessage(error, '商品详情加载失败，请稍后重试'));
     }
   }
 
-  function handleSearchBid(item) {
-    setFavoritesVisible(false);
-    closeProductSearch();
-    const productUrl = isFleamarketProduct(item)
-      ? `https://paypayfleamarket.yahoo.co.jp/item/${String(item.auctionId).toLowerCase()}`
-      : item.standardUrl || `https://auctions.yahoo.co.jp/jp/auction/${item.auctionId}`;
-    handleRebid(productUrl);
+  async function handleSearchBid(item) {
+    try {
+      // Old favorites have no type. Resolve details first, without guessing a URL.
+      const resolved = getStoredProductType(item) ? item : await loadSearchProductDetail(item);
+      const productUrl = productUrls.getProductItemUrl(resolved);
+      if (!productUrl) throw new Error('商品类型缺失，请重新获取商品信息后收藏');
+      favoriteProps.onRefreshFavorite(resolved);
+      setFavoritesVisible(false);
+      closeProductSearch();
+      handleRebid(productUrl, getStoredProductType(resolved));
+    } catch (error) { Toast.show({content:error.message || '商品信息加载失败'}); }
   }
 
   function handleUrlChange(value) {
@@ -548,11 +556,8 @@ export default function Submit() {
     }
     setSubmitting(true);
     try {
-      const standardUrl = product?.standardUrl || (product?.auctionId
-        ? product.auctionId.startsWith('z')
-          ? `https://paypayfleamarket.yahoo.co.jp/item/${product.auctionId}`
-          : `https://auctions.yahoo.co.jp/jp/auction/${product.auctionId}`
-        : url);
+      const standardUrl = productUrls.getProductItemUrl(product);
+      if (!standardUrl) throw new Error('商品类型缺失，请重新获取商品信息');
       const auctionId = product?.auctionId || extractAuctionId(standardUrl);
       if (selectedStrategy !== 'direct' && auctionId) {
         const taskRes = await getTaskList({ limit: 100 });

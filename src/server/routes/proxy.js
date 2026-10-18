@@ -1033,9 +1033,9 @@ function createProductService({
       buyoutPrice: Number(rawProduct.buyoutPrice || 0),
       bidCount: Number(rawProduct.bidCount ?? rawProduct.bid_count ?? 0),
       buyoutOnly: Boolean(rawProduct.buyoutOnly || rawProduct.buyout_only),
-      ...(parsed.auctionId.startsWith('z') ? { isFleamarket: true } : {}),
+      ...(rawProduct.productType === 'fleamarket' || rawProduct.product_type === 'fleamarket' ? { isFleamarket: true } : {}),
       taxType: rawProduct.taxType || rawProduct.tax_type || 'tax_zero',
-      productType: parsed.auctionId.startsWith('z') ? 'fleamarket' : rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
+      productType: rawProduct.productType || rawProduct.product_type || getProductTypeFromTaxType(rawProduct.taxType || rawProduct.tax_type),
       shippingFeeText: rawProduct.shippingFeeText || rawProduct.shipping_fee_text || '',
       endTime: rawProduct.endTime || '',
       imageUrl: rawProduct.imageUrl || '',
@@ -1052,7 +1052,7 @@ function createProductService({
     return product;
   }
 
-  async function fetchProduct(url, { adminProductType } = {}) {
+  async function fetchProduct(url, { adminProductType, recordedProductType } = {}) {
     const parsed = normalizeAuctionUrl(url);
     if (!parsed) {
       const error = new Error('invalid product url');
@@ -1060,8 +1060,10 @@ function createProductService({
       throw error;
     }
 
-    // Only admin refresh supplies a saved type. User fetching keeps its original rules.
-    const savedType = ['fleamarket', 'normal', 'store'].includes(adminProductType) ? adminProductType : null;
+    // Saved products (admin refresh, favorites and list details) supply their
+    // recorded type. The first untyped user input keeps its original rules.
+    const requestedType = adminProductType || recordedProductType;
+    const savedType = ['fleamarket', 'normal', 'store'].includes(requestedType) ? requestedType : null;
     if (savedType) parsed.standardUrl = savedType === 'fleamarket'
       ? `https://paypayfleamarket.yahoo.co.jp/item/${parsed.auctionId}`
       : `https://auctions.yahoo.co.jp/jp/auction/${parsed.auctionId}`;
@@ -1183,9 +1185,15 @@ router.get('/fetch', async (req, res) => {
   if (!url && !keyword) return res.status(400).json({ error: 'url or keyword is required' });
 
   try {
+    let recordedProductType = req.query.productType;
+    if (url && req.query.resolveStoredType === '1') {
+      const parsed = normalizeAuctionUrl(url);
+      const saved = parsed ? await db.getOne('SELECT product_type FROM products WHERE product_id = ?', [parsed.auctionId]) : null;
+      if (['normal','store','fleamarket'].includes(saved?.product_type)) recordedProductType = saved.product_type;
+    }
     const result = keyword
       ? await productService.fetchProductByKeyword(keyword)
-      : await productService.fetchProduct(url);
+      : await productService.fetchProduct(url, {recordedProductType});
     res.json(result);
   } catch (e) {
     res.status(e.statusCode || 500).json({ error: e.message || '商品信息获取失败' });

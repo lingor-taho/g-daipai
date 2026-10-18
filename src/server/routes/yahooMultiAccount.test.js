@@ -126,7 +126,7 @@ const task=require('./task');
     assert.equal((await request('/api/plugin/manual-order-import/jobs',{headers:headers(a)})).job,null);
     const importJob=(await request('/api/plugin/manual-order-import/jobs',{headers:headers(b)})).job;assert.equal(importJob.batchId,batch.id);
     await request('/api/plugin/manual-order-import/status',{method:'POST',headers:headers(a),body:JSON.stringify({batchId:batch.id,claim_token:importJob.claimToken,orders:[]})},409);
-    await request('/api/plugin/manual-order-import/status',{method:'POST',headers:headers(b),body:JSON.stringify({batchId:batch.id,claim_token:importJob.claimToken,status:'ready',items:[{productId:'e123456789',title:'Imported B',price:2100,finalPrice:2100,wonAt:'2026-10-09T03:00:00.000Z',wonTimeText:'10/09 12:00',transactionUrl:'https://contact.auctions.yahoo.co.jp/buyer/top?aid=e123456789',shippingFeeText:'0円'}]})});
+    await request('/api/plugin/manual-order-import/status',{method:'POST',headers:headers(b),body:JSON.stringify({batchId:batch.id,claim_token:importJob.claimToken,status:'ready',items:[{productType:'normal',productId:'e123456789',title:'Imported B',price:2100,finalPrice:2100,wonAt:'2026-10-09T03:00:00.000Z',wonTimeText:'10/09 12:00',transactionUrl:'https://contact.auctions.yahoo.co.jp/buyer/top?aid=e123456789',shippingFeeText:'0円'}]})});
     const importedItems=await adminRequest(`manual-order-import/batches/${batch.id}`,null,'GET');
     assert.equal(importedItems.items.length,1);
     await adminRequest(`manual-order-import/batches/${batch.id}/confirm`,{assignments:[{itemId:importedItems.items[0].id,userId:1,shippingFeeText:'0円'}]});

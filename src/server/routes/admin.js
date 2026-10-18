@@ -1,7 +1,7 @@
 ﻿const { addAdminAlertProductTypes, fetchAdminProduct } = require('../services/adminProductLinks');
 const express = require('express');
 const router = express.Router();
-const { isFleamarketProduct } = require('../../shared/fleamarket.cjs');
+const { isStoredFleamarketProduct: isFleamarketProduct, getStoredProductType } = require('../../shared/fleamarket.cjs');
 const db = require('../models');
 const { deleteUser } = require('../services/deleteUser');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
@@ -3051,12 +3051,14 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
 
   const unsupportedItemIds = new Set();
   const pendingItems = await database.getAll(
-    `SELECT id, product_id, product_url, product_type
-     FROM manual_order_import_items WHERE batch_id = ? AND status = 'pending_user'`,
+    `SELECT i.id, i.product_id, i.product_url,
+       CASE WHEN p.product_id IS NOT NULL THEN p.product_type ELSE i.product_type END AS product_type
+     FROM manual_order_import_items i LEFT JOIN products p ON p.product_id=i.product_id
+     WHERE i.batch_id = ? AND i.status = 'pending_user'`,
     [batch.id]
   );
   for (const item of pendingItems) {
-    if (!isFleamarketProduct(item)) continue;
+    if (getStoredProductType(item) && !isFleamarketProduct(item)) continue;
     unsupportedItemIds.add(Number(item.id));
     await database.query(
       `UPDATE manual_order_import_items
@@ -3118,10 +3120,10 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
   }
 
   const items = await database.getAll(
-    `SELECT *
-     FROM manual_order_import_items
-     WHERE batch_id = ? AND status = 'pending_user' AND assigned_user_id IS NOT NULL
-     ORDER BY id ASC`,
+    `SELECT i.*, CASE WHEN p.product_id IS NOT NULL THEN p.product_type ELSE i.product_type END AS product_type
+     FROM manual_order_import_items i LEFT JOIN products p ON p.product_id=i.product_id
+     WHERE i.batch_id = ? AND i.status = 'pending_user' AND i.assigned_user_id IS NOT NULL
+     ORDER BY i.id ASC`,
     [batch.id]
   );
   let imported = 0;
@@ -3129,7 +3131,7 @@ async function confirmManualOrderImport(batchId, assignments = [], database = db
 
   for (const item of items) {
     if (unsupportedItemIds.has(Number(item.id))) continue;
-    if (isFleamarketProduct(item)) {
+    if (!getStoredProductType(item) || isFleamarketProduct(item)) {
       await database.query(
         `UPDATE manual_order_import_items
          SET status = 'skipped_unsupported', updated_at = CURRENT_TIMESTAMP
