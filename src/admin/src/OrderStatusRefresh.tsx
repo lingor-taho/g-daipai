@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, Card, Form, Input, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { authHeaders } from './utils/auth';
 
-type OrderStatusRefreshTarget = 'blank' | 'completed' | 'pending_shipment';
+type OrderStatusRefreshTarget = 'blank' | 'completed' | 'pending_shipment' | 'cancelled';
 
 type RefreshResult = {
   productId: string;
@@ -62,7 +62,8 @@ export default function OrderStatusRefreshPage() {
               options={[
                 { value: 'blank', label: '为空' },
                 { value: 'completed', label: '完了' },
-                { value: 'pending_shipment', label: '待发货' }
+                { value: 'pending_shipment', label: '待发货' },
+                { value: 'cancelled', label: '取消' }
               ]}
             />
           </Form.Item>

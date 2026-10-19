@@ -143,10 +143,12 @@ function normalizeOrderStatusRefreshTarget(value) {
   if (normalized === 'blank') return null;
   if (normalized === ORDER_STATUS_COMPLETED) return ORDER_STATUS_COMPLETED;
   if (normalized === ORDER_STATUS_PENDING_SHIPMENT) return ORDER_STATUS_PENDING_SHIPMENT;
+  if (normalized === ORDER_STATUS_CANCELLED) return ORDER_STATUS_CANCELLED;
   throw new Error('invalid orderStatus');
 }
 
 function getOrderStatusRefreshText(orderStatus) {
+  if (orderStatus === ORDER_STATUS_CANCELLED) return '取消';
   if (orderStatus === ORDER_STATUS_PENDING_SHIPMENT) return '待发货';
   return orderStatus === null ? '为空' : '完了';
 }

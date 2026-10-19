@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-18
+**最后更新**: 2026-10-19
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-19 后台批处理“订单状态更新”新增“取消”（cancelled），复用原按商品ID更新对应订单及状态审计流程，结果显示“取消”；普通／商城／P均支持。保留为空／完了／待发货原选项，不改任务、金额或Yahoo交易动作。需更新API routes/admin.js并重启、后台dist；无schema／插件／用户端变化，未部署或修改生产订单。
 
 2026-10-18 P单条任务提交改用普通／商城类似的信息复用：前端商品快照齐全时直接创建任务，不再强制访问Yahoo；P无截止时间不触发补抓，信息缺失仍沿原抓取兜底。重复任务／已有订单／结果未知拦截保留，实时可购买性及最终商品价格由原插件领取后核验。仅需更新API task.js并重启，无插件／两端静态／schema变化；未部署或操作真实购买，详见0ag。
 
@@ -241,6 +243,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ah. 批量订单状态新增取消
+
+后台批处理“订单状态更新”新增“取消”（cancelled），复用原按商品ID更新对应订单及状态审计流程，结果显示“取消”；普通／商城／P均支持。保留为空／完了／待发货原选项，不改任务、金额或Yahoo交易动作。需更新API routes/admin.js并重启、后台dist；无schema／插件／用户端变化，未部署或修改生产订单。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/routes/admin.orderStatusRefresh.test.js`（真实HTTP、三类商品批量取消、其他商品保留、不存在商品失败、非法状态拒绝及审计）、原admin.orders专项、后台构建、编码及diff检查。专项已纳入regression。
 
 ### 0ag. P提交复用已读取商品信息
 
@@ -1171,6 +1179,8 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+- 2026-10-19：批量订单状态更新支持取消，API校验与结果文案同步，复用原审计；部署更新API和后台dist。
 
 ### 2026-10-18 P商品快速提交
 
@@ -2665,6 +2675,16 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+批量订单状态更新：
+
+```powershell
+node scripts/run-isolated-regression.cjs src/server/routes/admin.orderStatusRefresh.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/admin.orders.test.js
+npm run build --prefix src/admin
+node scripts/encoding-guard.js
+git diff --check
+```
 
 邮箱验证与原 PIN 流程交接：
 

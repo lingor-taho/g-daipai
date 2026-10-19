@@ -53,6 +53,7 @@ const steps = [
   ['Client submission display tests', process.execPath, ['src/client/src/pages/Submit.display.test.mjs'], rootDir],
   ['Client bid price tests', process.execPath, ['src/client/src/utils/bidPrice.test.mjs'], rootDir],
   ['Admin order route tests', process.execPath, ['src/server/routes/admin.orders.test.js'], rootDir],
+  ['Batch order status refresh HTTP', process.execPath, ['scripts/run-isolated-regression.cjs', 'src/server/routes/admin.orderStatusRefresh.test.js'], rootDir],
   ['Order audit schema recovery', process.execPath, ['src/server/services/orderAuditSchema.test.js'], rootDir],
   ['Admin queue detail tests', process.execPath, ['src/server/services/adminTaskQueue.test.js'], rootDir],
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],

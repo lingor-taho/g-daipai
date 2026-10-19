@@ -809,6 +809,7 @@ function testNormalizeOrderStatusRefreshTargetSupportsAllowedTargets() {
   assert.equal(normalizeOrderStatusRefreshTarget('blank'), null);
   assert.equal(normalizeOrderStatusRefreshTarget('completed'), ORDER_STATUS_COMPLETED);
   assert.equal(normalizeOrderStatusRefreshTarget('pending_shipment'), ORDER_STATUS_PENDING_SHIPMENT);
+  assert.equal(normalizeOrderStatusRefreshTarget('cancelled'), 'cancelled');
 }
 
 function testNormalizeOrderStatusRefreshTargetRejectsUnknownStatus() {
