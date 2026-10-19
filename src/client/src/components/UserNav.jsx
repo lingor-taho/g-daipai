@@ -160,16 +160,19 @@ export default function UserNav() {
           justifyContent: 'space-between',
           alignItems: 'center',
           marginBottom: 10,
-          padding: '0 2px'
+          padding: '0 2px',
+          gap: 10,
+          whiteSpace: 'nowrap'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ fontSize: 14, color: colors.muted }}>
-            登录用户：<span style={{ fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', minWidth: 0, fontSize: 14, color: colors.muted }}>
+            <span style={{ flexShrink: 0 }}>登录用户：</span>
+            <span title={localStorage.getItem('username') || '-'} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
           </div>
-          <Button size="mini" fill="outline" color="primary" onClick={logout}>退出</Button>
+          <Button size="mini" fill="outline" color="primary" style={{ flexShrink: 0, whiteSpace: 'nowrap' }} onClick={logout}>退出</Button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, color: colors.muted }}>
             <span>风格</span>
             <select

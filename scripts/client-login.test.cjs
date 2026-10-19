@@ -18,7 +18,7 @@ app.use(express.static(dist));
 app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
 
 (async () => {
-  const username = 'client-login-regression';
+  const username = '饿了就吃红烧排骨这是一个用于手机布局验证的超长用户名';
   const password = 'isolated-test-password';
   db.raw.prepare('INSERT INTO users(id,username,password_hash,role,user_level) VALUES(9101,?,?,?,1)')
     .run(username, bcrypt.hashSync(password, 10), 'user');
@@ -55,7 +55,7 @@ app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
     assert.equal((await request('/api/task/bid-config', userHeaders)).multiBidMinPrice, 7100, 'config changes are read without stale defaults');
 
     browser = await chromium.launch({ headless: true, channel: 'chrome' });
-    for (const width of [390, 1200]) {
+    for (const width of [360, 390, 1200]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       const errors = [], unauthorized = [], pluginRequests = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -64,6 +64,8 @@ app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
       // Exchange-rate network access is unrelated to this login test.
       await page.route('**/api/task/website-rate', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, rate: 0.05 }) }));
       await page.goto(base + '/login');
+      assert.equal(await page.getByPlaceholder('用户名', { exact: true }).getAttribute('autocomplete'), 'username');
+      assert.equal(await page.getByPlaceholder('密码', { exact: true }).getAttribute('autocomplete'), 'current-password');
       await page.getByPlaceholder('用户名', { exact: true }).fill(username);
       await page.getByPlaceholder('密码', { exact: true }).fill(password);
       const loadedConfig = page.waitForResponse(response => new URL(response.url()).pathname === '/api/task/bid-config');
@@ -73,6 +75,20 @@ app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
       assert.deepEqual(await configResponse.json(), { multiBidStartHours: 0.75, multiBidIntervalMinutes: 7, multiBidMinPrice: 7100 });
       await page.waitForURL(base + '/submit');
       await page.getByRole('button', { name: '退出', exact: true }).waitFor();
+      const header = await page.getByRole('button', { name: '退出', exact: true }).evaluate(button => {
+        const row = button.parentElement.parentElement;
+        const name = row.querySelector('[title]');
+        const select = row.querySelector('select');
+        const box = node => { const rect = node.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom }; };
+        return { name: box(name), button: box(button), select: box(select),
+          ellipsis: getComputedStyle(name).textOverflow, truncated: name.scrollWidth > name.clientWidth,
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      assert.equal(header.ellipsis, 'ellipsis');
+      if (width < 400) assert.equal(header.truncated, true);
+      assert(header.name.top < header.button.bottom && header.name.bottom > header.button.top);
+      assert(header.select.top < header.button.bottom && header.select.bottom > header.button.top);
+      assert.equal(header.overflow, false);
       // Include a subsequent poll and a page refresh, not only the first navigation.
       await page.waitForResponse(response => new URL(response.url()).pathname === '/api/task/batch-results' && response.status() === 200);
       assert.equal(new URL(page.url()).pathname, '/submit');
@@ -85,9 +101,31 @@ app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
       assert.deepEqual(pluginRequests, [], 'the user page never calls bound plugin APIs');
       assert.deepEqual(unauthorized, [], 'successful login and refresh do not clear the token');
       assert.deepEqual(errors, []);
+
+      // Preserve browser storage across closing/reopening, including a saved /login URL.
+      const savedState = await page.context().storageState();
       await page.close();
+      const reopenedContext = await browser.newContext({ storageState: savedState, viewport: { width, height: 900 } });
+      const reopened = await reopenedContext.newPage();
+      await reopened.route('**/api/task/website-rate', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, rate: 0.05 }) }));
+      await reopened.goto(base + '/login');
+      await reopened.waitForURL(base + '/submit');
+      await reopened.getByRole('button', { name: '退出', exact: true }).click();
+      await reopened.waitForURL(base + '/login');
+      assert.equal(await reopened.evaluate(() => localStorage.getItem('token')), null);
+      await reopened.reload();
+      await reopened.getByPlaceholder('密码', { exact: true }).waitFor();
+      // Expired/rejected sessions must return to login without a redirect loop.
+      await reopened.evaluate(() => localStorage.setItem('token', 'expired-test-token'));
+      await reopened.reload();
+      await reopened.getByPlaceholder('密码', { exact: true }).waitFor();
+      assert.equal(new URL(reopened.url()).pathname, '/login');
+      assert.equal(await reopened.evaluate(() => localStorage.getItem('token')), null);
+      assert.equal(await reopened.getByPlaceholder('密码', { exact: true }).inputValue(), '');
+      assert.equal(await reopened.evaluate(() => Object.keys(localStorage).some(key => /password/i.test(key))), false);
+      await reopenedContext.close();
     }
-    console.log('Client login tests passed: real authentication, shared bid config, plugin isolation, login/poll/refresh at 390/1200px.');
+    console.log('Client login tests passed: real auth, config/plugin isolation, long username layout, remembered login after reopen, logout and rejected sessions at 360/390/1200px.');
   } finally {
     if (browser) await browser.close();
     server.closeAllConnections();
