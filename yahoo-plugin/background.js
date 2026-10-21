@@ -1288,17 +1288,23 @@ async function waitForYahooMessageDocument(tabId, context) {
 }
 
 async function openYahooMessageTransactionPage(job, context) {
+  const fleamarket = job.productType === 'fleamarket';
+  const productId = String(job.productId || '').trim().toLowerCase();
+  if (fleamarket && !/^z\d{8,12}$/.test(productId)) throw new Error('invalid fleamarket message product id');
+  const transactionUrl = fleamarket
+    ? `https://paypayfleamarket-sec.yahoo.co.jp/item/${productId}/trade/buyer`
+    : job.transactionUrl;
   const tab = await chrome.tabs.create({ url: `about:blank#gdaipai-message-${job.orderId}`, active: false });
   context.tabIds.add(tab.id);
   yahooMessageTabOwners.set(tab.id, context);
   assertYahooMessageActive(context);
-  await chrome.tabs.update(tab.id, { url: job.transactionUrl || 'https://auctions.yahoo.co.jp/my/won', active: false });
-  if (job.transactionUrl) await waitForYahooMessageDocument(tab.id, context);
+  await chrome.tabs.update(tab.id, { url: transactionUrl || 'https://auctions.yahoo.co.jp/my/won', active: false });
+  if (transactionUrl) await waitForYahooMessageDocument(tab.id, context);
   else await waitForTabComplete(tab.id, MESSAGE_NAVIGATION_WAIT_MS);
   assertYahooMessageActive(context);
   let current = await chrome.tabs.get(tab.id);
   if (isManualVerificationTab(current)) throw new Error('Yahoo 需要登录或验证，完成验证后请重新读取消息');
-  if (!job.transactionUrl) {
+  if (!transactionUrl) {
     await sleep(3000);
     await injectContentScript(tab.id);
     const previousIds = await getTabIds();
@@ -1318,6 +1324,66 @@ async function openYahooMessageTransactionPage(job, context) {
     if (isManualVerificationTab(current)) throw new Error('Yahoo 需要登录或验证，完成验证后请重新读取消息');
   }
   return current;
+}
+
+// Injected independently in MAIN world; keep all page helpers inside this function.
+async function fleamarketMessageFromPage(productId, action = 'read', messageText = '') {
+  const id = String(productId || '').trim().toLowerCase();
+  if (!/^z\d{8,12}$/.test(id) || location.origin !== 'https://paypayfleamarket-sec.yahoo.co.jp' ||
+      location.pathname !== `/item/${id}/trade/buyer`) {
+    return { success: false, error: 'fleamarket message page does not match product' };
+  }
+  const visible = node => {
+    if (!node) return false;
+    const style = getComputedStyle(node);
+    return style.display !== 'none' && style.visibility !== 'hidden' && node.getClientRects().length > 0;
+  };
+  const normalize = text => String(text || '').replace(/\s+/g, ' ').trim();
+  const root = [...document.querySelectorAll('[class*="sc-15ad2869-0"]')]
+    .find(node => visible(node) && node.querySelector('[class*="sc-9985ddbc-0"] > ul'));
+  const textarea = root?.querySelector('textarea[placeholder="メッセージを入力"]');
+  const list = root?.querySelector('[class*="sc-9985ddbc-0"] > ul');
+  const findButton = () => [...(root?.querySelectorAll('button') || [])]
+    .find(node => visible(node) && normalize(node.textContent) === '取引メッセージを送る');
+  if (!root || !list || !visible(list.parentElement)) {
+    return { success: false, error: 'message list not found' };
+  }
+  const entries = [...list.children].filter(visible).map(node => {
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll('script, style, button, textarea, input').forEach(child => child.remove());
+    clone.querySelectorAll('br').forEach(child => child.replaceWith('\n'));
+    clone.querySelectorAll('p, div, time').forEach(child => child.append('\n'));
+    return clone.textContent.trim();
+  }).filter(Boolean);
+  const expected = normalize(messageText);
+  const matchingCount = expected ? entries.filter(text => normalize(text).includes(expected)).length : 0;
+  if (action === 'send') {
+    if (!expected || String(messageText).length > 1024) return { success: false, error: 'invalid fleamarket message length' };
+    if (!visible(textarea) || !findButton()) return { success: false, error: 'fleamarket message form not available' };
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(textarea, String(messageText));
+    textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(messageText) }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    const deadline = Date.now() + 8000;
+    let button = findButton();
+    while (button && (button.disabled || button.getAttribute('aria-disabled') === 'true') && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      button = findButton();
+    }
+    // Recheck the same page and live input after React has enabled the button.
+    if (location.origin !== 'https://paypayfleamarket-sec.yahoo.co.jp' || location.pathname !== `/item/${id}/trade/buyer` ||
+        !textarea.isConnected || textarea.value !== String(messageText) || !button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
+      return { success: false, error: 'fleamarket message submit button disabled or page changed' };
+    }
+    button.click();
+    return { success: true, pageType: 'fleamarket', matchingCount };
+  }
+  const escapeHtml = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  // Use the existing dl/dd display contract in both admin and client. Never return the form or order details.
+  const messageHtml = entries.length
+    ? `<div class="yahoo-message-fleamarket" data-gdaipai-message-v2="true">${entries.map(text => `<dl><dt>取引メッセージ</dt><dd>${escapeHtml(text)}</dd></dl>`).join('')}</div>`
+    : '<div class="yahoo-message-empty" data-gdaipai-message-empty="true"></div>';
+  return { success: true, pageType: 'fleamarket', messageHtml, matchingCount };
 }
 
 function extractYahooTradeMessageFromPage() {
@@ -1601,6 +1667,7 @@ async function clickYahooMessageNavigationAction(tab, action) {
 }
 
 async function prepareYahooMessagePage(tab, job = {}) {
+  if (job.productType === 'fleamarket') return tab;
   const startedAt = Date.now();
   let current = tab;
   let storeBundleNoticeSeen = false;
@@ -1940,7 +2007,8 @@ async function extractYahooTradeMessages(tabId, options = {}) {
     const injectionResult = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
-      func: extractYahooTradeMessageFromPage
+      func: options.fleamarketProductId ? fleamarketMessageFromPage : extractYahooTradeMessageFromPage,
+      args: options.fleamarketProductId ? [options.fleamarketProductId] : []
     });
     lastResult = injectionResult?.[0]?.result || { success: false, error: 'message extraction returned no result' };
     if (lastResult?.success) return lastResult;
@@ -1951,8 +2019,31 @@ async function extractYahooTradeMessages(tabId, options = {}) {
   return lastResult;
 }
 
-async function sendYahooTradeMessage(tabOrId, messageText) {
+async function sendYahooTradeMessage(tabOrId, messageText, options = {}) {
   const tabId = typeof tabOrId === 'number' ? tabOrId : tabOrId?.id;
+  if (options.fleamarketProductId) {
+    const ready = await extractYahooTradeMessages(tabId, options);
+    if (!ready?.success) return ready;
+    assertYahooMessageActive(yahooMessageTabOwners.get(tabId));
+    const sent = await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', func: fleamarketMessageFromPage,
+      args: [options.fleamarketProductId, 'send', String(messageText || '')]
+    });
+    const result = sent?.[0]?.result;
+    if (!result?.success) return result || { success: false, error: 'fleamarket message send returned no result' };
+    const deadline = Date.now() + MESSAGE_EXTRACT_RENDER_WAIT_MS;
+    while (Date.now() < deadline) {
+      assertYahooMessageActive(yahooMessageTabOwners.get(tabId));
+      const read = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN', func: fleamarketMessageFromPage,
+        args: [options.fleamarketProductId, 'read', String(messageText || '')]
+      });
+      const state = read?.[0]?.result;
+      if (state?.success && state.matchingCount > result.matchingCount) return { success: true, pageType: 'fleamarket', verified: true };
+      await sleep(MESSAGE_EXTRACT_POLL_MS);
+    }
+    return { success: false, error: 'sent message not found after send; verify on Yahoo before resending' };
+  }
   const startedAt = Date.now();
   let lastResult = { success: false, error: 'message send returned no result' };
   let storePageSeen = false;
@@ -8399,6 +8490,7 @@ async function executeConfirmReceiptJob(job) {
 }
 
 async function executeYahooMessageJob(job) {
+  const messageOptions = job.productType === 'fleamarket' ? { fleamarketProductId: job.productId } : {};
   const context = { tabIds: new Set(), closed: false, finished: false };
   const cleanup = async () => {
     await closeYahooMessageTabs(context).catch(() => {});
@@ -8414,9 +8506,9 @@ async function executeYahooMessageJob(job) {
       if (job.jobType === 'send') {
         tab = await prepareYahooMessagePage(tab, job);
         assertYahooMessageActive(context);
-        const sendResult = await sendYahooTradeMessage(tab, job.sendText || '');
+        const sendResult = await sendYahooTradeMessage(tab, job.sendText || '', messageOptions);
         if (!sendResult?.success) throw new Error(sendResult?.error || 'message send failed');
-        const extractResult = await extractYahooTradeMessages(tab.id);
+        const extractResult = await extractYahooTradeMessages(tab.id, messageOptions);
         assertYahooMessageActive(context);
         await updateYahooMessageStatus({
           orderId: job.orderId,
@@ -8427,10 +8519,10 @@ async function executeYahooMessageJob(job) {
         });
         return { success: true };
       }
-      let extractResult = await extractYahooTradeMessages(tab.id, { singleAttempt: true });
+      let extractResult = await extractYahooTradeMessages(tab.id, { ...messageOptions, singleAttempt: true });
       if (!extractResult?.success || extractResult.pageType === 'fallback') {
         tab = await prepareYahooMessagePage(tab, job);
-        extractResult = await extractYahooTradeMessages(tab.id);
+        extractResult = await extractYahooTradeMessages(tab.id, messageOptions);
       }
       if (!extractResult?.success) throw new Error(extractResult?.error || 'message extraction failed');
       assertYahooMessageActive(context);

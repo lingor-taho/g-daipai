@@ -1216,7 +1216,7 @@ function testSendYahooMessageJobFetchesLatestMessagesAfterSend() {
   const sendBranch = source.match(/if \(job\.jobType === 'send'\) \{([\s\S]*?)return \{ success: true \};\s*\}/);
   assert.ok(sendBranch, 'send branch should be present');
   assert.match(sendBranch[1], /sendYahooTradeMessage\(tab, job\.sendText/);
-  assert.match(sendBranch[1], /extractYahooTradeMessages\(tab\.id\)/);
+  assert.match(sendBranch[1], /extractYahooTradeMessages\(tab\.id, messageOptions\)/);
   assert.match(sendBranch[1], /messageHtml: extractResult\?\.success \? extractResult\.messageHtml : ''/);
 }
 
@@ -1225,7 +1225,7 @@ function testFetchYahooMessageJobTriesInitialPageDataBeforeOpeningMessageTab() {
   const executeStart = source.indexOf('async function executeYahooMessageJob(job)');
   const executeEnd = source.indexOf('async function runYahooMessageJobs()', executeStart);
   const executeSource = source.slice(executeStart, executeEnd);
-  const initialExtractIndex = executeSource.indexOf("extractYahooTradeMessages(tab.id, { singleAttempt: true })");
+  const initialExtractIndex = executeSource.indexOf("extractYahooTradeMessages(tab.id, { ...messageOptions, singleAttempt: true })");
   const fallbackPrepareIndex = executeSource.indexOf('tab = await prepareYahooMessagePage(tab, job);', initialExtractIndex);
 
   assert.ok(initialExtractIndex >= 0, 'fetch should try initial-page message data');

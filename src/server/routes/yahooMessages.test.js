@@ -74,6 +74,23 @@ async function run() {
   assert.equal((await complete(activeRead, 'expired read')).updated, 0);
   await complete(recoveredSend, 'latest');
   assert.equal(row().message_html, html('latest'));
+  // P keeps the existing request/claim/status pipeline and supported HTML marker.
+  raw.exec(`INSERT INTO tasks VALUES (2, 'z707487598');
+    INSERT INTO products VALUES ('z707487598', 'fleamarket', 'tax_zero');
+    INSERT INTO orders VALUES (2, 2, 'z707487598', 'pending_shipment', NULL);`);
+  await requestYahooMessageFetch(database, 2);
+  const pJob = (await getYahooMessageJobs(database, 1)).jobs[0];
+  assert.equal(pJob.productType, 'fleamarket');
+  assert.equal(pJob.productId, 'z707487598');
+  const pHtml = '<div class="yahoo-message-fleamarket" data-gdaipai-message-v2="true"><dl><dt>取引メッセージ</dt><dd>取引情報と配送情報を確認しました</dd></dl></div>';
+  await updateYahooMessageStatus({ orderId: 2, jobType: 'fetch', startedAt: pJob.startedAt, messageHtml: pHtml }, database);
+  assert.equal(raw.prepare('SELECT message_html FROM yahoo_trade_messages WHERE order_id=2').get().message_html, pHtml);
+  await requestYahooMessageSend(database, 2, 'ありがとうございます');
+  const pSend = (await getYahooMessageJobs(database, 1)).jobs[0];
+  assert.equal(pSend.jobType, 'send');
+  assert.equal(pSend.productType, 'fleamarket');
+  await updateYahooMessageStatus({ orderId: 2, jobType: 'send', startedAt: pSend.startedAt, messageHtml: pHtml }, database);
+  assert.equal(raw.prepare('SELECT order_status FROM orders WHERE id=2').get().order_status, 'pending_shipment');
   console.log('Yahoo message queue integration tests passed');
 }
 

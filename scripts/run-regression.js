@@ -22,6 +22,7 @@ const steps = [
   ['Stored product type task routing',process.execPath,['yahoo-plugin/productTypeRouting.test.js'],rootDir],
   ['Favorite detail product-table type resolution',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/proxy.storedType.test.js'],rootDir],
   ['Fleamarket trade scan and deferred receipt', process.execPath, ['yahoo-plugin/fleamarketTrade.test.js'], rootDir],
+  ['Fleamarket message read and send', process.execPath, ['yahoo-plugin/fleamarketMessages.test.js'], rootDir],
   ['Manual order import excludes fleamarket', process.execPath, ['src/server/routes/manualOrderImport.fleamarket.test.js'], rootDir],
   ['Fleamarket product search and single buyout submission', process.execPath, ['src/server/routes/fleamarket.test.js'], rootDir],
   ['Multi-account migration and routing',process.execPath,['src/server/services/yahooAccounts.test.js'],rootDir],

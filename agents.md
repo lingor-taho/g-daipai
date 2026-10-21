@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-21 后台消息订单的P读取／发送已按用户提供trade/buyer页面本地适配：按已存fleamarket类型直达同商品secure交易页，不再回退普通落札列表；仅读消息列表，空列表沿原暂无消息标记。发送仅填该消息框、等待“取引メッセージを送る”可用后单次点击，新增匹配消息出现才确认成功，不点评价。消息转成原dl/dd及已支持v2标记，沿原API存储与两端展示，用户端无需修改。仅发布插件background.js并在各账号reload，无API／两端dist／schema更新；未部署或发送真实消息，附件无历史消息，非空结构用模拟数据验证，真实有消息页待验收，详见0al。
+
 2026-10-21 旧P成交时间补充独立维护脚本scripts/repair-fleamarket-order-time.js及根目录双击入口repair-fleamarket-order-time.bat。默认只读预览，--apply先用SQLite在线备份并检查备份，再在单个立即事务内仅更新products.product_type=fleamarket且满足旧UTC时刻与日本文字对应的orders.won_at；已一致、缺失或矛盾记录跳过，不按Z前缀判断。普通／商城、显示文字、金额、状态、账号、物流及任务保持。生产只读核验z708102256订单2444原14:45:23.838Z／文字10/20 23:45，应按现有口径转为15:45:00.000Z；普通d1248717488订单2440原14:52Z／文字22:52。用户已反馈更新重启API，历史修复尚未执行；现有debug API只读，不增设写接口。运行方式与验证见0ak。
 
 2026-10-21 按用户要求，P成交时间的保存／读取统一沿普通／商城现有口径：共用原normalizeYahooWonTimeText，将日本时间文字按服务器本地时区解析为won_at；won_time_text仍保存日本时间文字，成交列表共用原按won_at倒序及文字优先展示。普通／商城逻辑原样保留，不统一改成实际UTC时刻，不自动重写已有P订单。需更新API routes/plugin.js、services/fleamarketPurchase.js和新增services/yahooWonTime.js并重启，无两端静态／插件／schema变化，未部署生产，验证见0aj。
@@ -249,6 +251,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0al. P商品交易消息读取与发送
+
+仅productType=fleamarket走新解析，商品ID仅作P合法性与同商品URL核验，不据ID决定类型。P固定打开`https://paypayfleamarket-sec.yahoo.co.jp/item/{id}/trade/buyer`，忽略缺失／旧transaction_url；普通／商城保留原入口与解析。按附件消息容器sc-15ad2869-0、列表sc-9985ddbc-0下ul和消息输入框／精确按钮文字定位，仅序列化列表内容、转义文本，不存卖家资料、表单、评价、订单或隐私说明。消息HTML使用原dl/dd及data-gdaipai-message-v2标记，避免正文包含“取引情報”等字样被原保护误判；两端无需改动。
+
+P发送先等待列表渲染，用原生textarea setter及input/change通知React，最多8秒等待精确“取引メッセージを送る”按钮可用，重新核对URL／连接／输入内容后只点一次。随后比较列表中匹配文字条数增加，历史同文不算新成功；未确认沿原失败回写，不自动重发，先到Yahoo核对。消息工作45秒上限、账号领取、订单状态、扫描及确认收货主体保持。
+
+验证通过：`node yahoo-plugin/fleamarketMessages.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/yahooMessages.test.js`、`node yahoo-plugin/background.test.js`、`node yahoo-plugin/fleamarketTrade.test.js`、`node yahoo-plugin/multiAccount.test.js`、`node yahoo-plugin/encoding.test.js`、`node src/client/src/pages/WonItems.display.test.mjs`、`node src/admin/src/MessageRead.display.test.js`、`node --check yahoo-plugin/background.js`、`node scripts/encoding-guard.js`、`git diff --check`。专项覆盖附件空列表、模拟非空／文本转义、两端原渲染函数、错域／错商品／缺列表／隐藏／禁用不点击、React延迟启用、启用期间换页不点击、单次发送、原同文不作成功、P原API领取／保存／发送且订单状态保持；已加入总回归入口，未运行完整总回归。仅插件background.js更新并在各profile reload；未部署／操作真实Yahoo。附件原列表为空，真实有历史消息结构及真实发送需更新后验收。
 
 ### 0ak. 旧P订单成交时间一次性修复
 
@@ -1205,6 +1215,8 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+- 2026-10-21：P消息订单读取／发送复用原消息队列与两端展示，插件增加同商品trade/buyer定位、消息列表提取及等待按钮可用后单次发送核验；用户端无需改动，仅插件更新reload，真实有消息页待验收，见0al。
 
 - 2026-10-21：新增旧P订单时间只读预览／备份修复脚本和双击入口，仅读取产品类型为fleamarket且旧值证据一致的订单，仅修正won_at。生产截图两件订单已通过debug只读核验，用户已反馈API更新重启；旧数据尚未执行修复，见0ak。
 
@@ -2707,6 +2719,18 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+P交易消息读取／发送：
+
+```powershell
+node yahoo-plugin/fleamarketMessages.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/yahooMessages.test.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/fleamarketTrade.test.js
+node yahoo-plugin/multiAccount.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 批量订单状态更新：
 
