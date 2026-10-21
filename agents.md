@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-21 旧P成交时间补充独立维护脚本scripts/repair-fleamarket-order-time.js及根目录双击入口repair-fleamarket-order-time.bat。默认只读预览，--apply先用SQLite在线备份并检查备份，再在单个立即事务内仅更新products.product_type=fleamarket且满足旧UTC时刻与日本文字对应的orders.won_at；已一致、缺失或矛盾记录跳过，不按Z前缀判断。普通／商城、显示文字、金额、状态、账号、物流及任务保持。生产只读核验z708102256订单2444原14:45:23.838Z／文字10/20 23:45，应按现有口径转为15:45:00.000Z；普通d1248717488订单2440原14:52Z／文字22:52。用户已反馈更新重启API，历史修复尚未执行；现有debug API只读，不增设写接口。运行方式与验证见0ak。
+
 2026-10-21 按用户要求，P成交时间的保存／读取统一沿普通／商城现有口径：共用原normalizeYahooWonTimeText，将日本时间文字按服务器本地时区解析为won_at；won_time_text仍保存日本时间文字，成交列表共用原按won_at倒序及文字优先展示。普通／商城逻辑原样保留，不统一改成实际UTC时刻，不自动重写已有P订单。需更新API routes/plugin.js、services/fleamarketPurchase.js和新增services/yahooWonTime.js并重启，无两端静态／插件／schema变化，未部署生产，验证见0aj。
 
 2026-10-19 用户端顶部登录用户名过长时单行省略，退出及风格控件禁止压缩换行；登录页复用原localStorage凭证自动进入提交页，并补齐标准账号／密码自动填充及表单提交语义。未登录时回填已保存用户名，不保存明文密码；原7天有效期及API失效校验保持。仅用户端dist更新，无API／插件／schema变化；手机微信实际存储保留仍需部署后验收，验证见0ai。
@@ -247,6 +249,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ak. 旧P订单成交时间一次性修复
+
+生产API更新重启后仍需单独修复旧P订单。服务器更新仓库后，可双击根目录repair-fleamarket-order-time.bat直接执行备份和修复；无需再次重启API。命令行预览：`node scripts/repair-fleamarket-order-time.js`，执行：`node scripts/repair-fleamarket-order-time.js --apply`。默认按项目.env／进程DATABASE_URL定位数据库，可用`--database <路径>`指定；须使用与API相同的服务器时区。修复复用普通／商城的normalizeYahooWonTimeText，以原won_at推断历史年份，不按当前年份重算，也不盲目全部加一小时。仅旧值转换成日本时间后与原won_time_text相符且转换差异不超过24小时才修复，已一致及异常记录跳过；不确定的跨年记录不猜测。won_time_text和orders.updated_at等其他字段保持。批次使用条件更新防并发覆盖，失败全回滚；可重复执行。
+
+备份使用SQLite在线backup，包含WAL已提交内容，quick_check通过才写入。备份在源数据库旁，以`.fleamarket-time-时间戳-UUID.db`结尾，旁有`.changes.json`记录原值和计划值。无需停止API，不导入models或运行schema迁移，也不调用Yahoo／Google。生产历史修复尚未执行，当前API只有只读诊断，需服务器本地执行入口后再核验实际结果。
+
+验证命令：`node scripts/repair-fleamarket-order-time.test.js`、`node scripts/repair-fleamarket-order-time.js`（只读）、`node scripts/encoding-guard.js`、`git diff --check`。测试在Asia/Shanghai、Asia/Tokyo及UTC全部通过，覆盖旧值修正、原年份、已正确跳过、类型权威／旧task关联、缺失与矛盾跳过、只改won_at、真实WAL备份及原值核验、重复执行、异常全回滚、命令行预览。已加入总回归入口，本轮未运行完整总回归。本地库无P订单，预览0件；未修改生产数据库。
 
 ### 0aj. P成交时间保存与读取沿普通／商城
 
@@ -1195,6 +1205,8 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+- 2026-10-21：新增旧P订单时间只读预览／备份修复脚本和双击入口，仅读取产品类型为fleamarket且旧值证据一致的订单，仅修正won_at。生产截图两件订单已通过debug只读核验，用户已反馈API更新重启；旧数据尚未执行修复，见0ak。
 
 - 2026-10-21：P成交时间保存复用普通／商城既有解析函数，成交列表共用原读取、倒序和显示；日本时间文字保留，历史订单不重写。仅API更新并重启，验证与边界见0aj。
 
