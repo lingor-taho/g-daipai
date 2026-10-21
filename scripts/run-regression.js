@@ -16,6 +16,7 @@ const steps = [
   ['Atomic won-date cleanup',process.execPath,['src/server/services/forceDateCleanup.test.js'],rootDir],
   ['Product deletion and different-user resubmission',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/admin.productDelete.test.js'],rootDir],
   ['Fleamarket purchase HTTP and atomic order completion', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/fleamarketPurchase.test.js'], rootDir],
+  ['P/normal/shop order time and shared won-list sorting', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/fleamarketPurchase.time.test.js'], rootDir],
   ['Fleamarket purchase browser and executor', process.execPath, ['yahoo-plugin/fleamarketPurchase.test.js'], rootDir],
   ['Stored product type task routing',process.execPath,['yahoo-plugin/productTypeRouting.test.js'],rootDir],
   ['Favorite detail product-table type resolution',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/proxy.storedType.test.js'],rootDir],

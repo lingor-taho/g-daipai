@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-19
+**最后更新**: 2026-10-21
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-21 按用户要求，P成交时间的保存／读取统一沿普通／商城现有口径：共用原normalizeYahooWonTimeText，将日本时间文字按服务器本地时区解析为won_at；won_time_text仍保存日本时间文字，成交列表共用原按won_at倒序及文字优先展示。普通／商城逻辑原样保留，不统一改成实际UTC时刻，不自动重写已有P订单。需更新API routes/plugin.js、services/fleamarketPurchase.js和新增services/yahooWonTime.js并重启，无两端静态／插件／schema变化，未部署生产，验证见0aj。
 
 2026-10-19 用户端顶部登录用户名过长时单行省略，退出及风格控件禁止压缩换行；登录页复用原localStorage凭证自动进入提交页，并补齐标准账号／密码自动填充及表单提交语义。未登录时回填已保存用户名，不保存明文密码；原7天有效期及API失效校验保持。仅用户端dist更新，无API／插件／schema变化；手机微信实际存储保留仍需部署后验收，验证见0ai。
 
@@ -245,6 +247,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0aj. P成交时间保存与读取沿普通／商城
+
+原P直接以购买成功确认时刻的ISO值写won_at，而普通／商城将Yahoo日本时间文字按服务器本地时区转换；北京时间服务器上混排会相差一小时。按用户明确要求保留普通／商城既有口径，将原解析函数无行为变化地提取至services/yahooWonTime.js，P先生成日本时间文字，再调用同一函数保存won_at，精度也沿原分钟。普通／商城仍用同一函数，跨年规则不改；P异常恢复仍用确认成功时刻生成文字，不猜测真实购买时间。成交列表已共用读取／排序／展示，因此无需新增P分支或改静态文件。旧P订单保持原值，部署本身不会修正截图中的历史记录。
+
+验证命令：`node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.time.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js`、`node src/client/src/pages/WonItems.display.test.mjs`、`node scripts/encoding-guard.js`、`git diff --check`。以上均通过，时间专项分别在Asia/Shanghai、Asia/Tokyo及UTC环境通过。新增隔离数据库专项通过实际P完单、普通／商城写单和用户鉴权GET /api/task/won验证保存同值、分钟精度、混合排序及原文字返回，重复确认不改时间；加入总回归入口，本轮未运行完整总回归。需同步更新上述三个API文件并重启，不改真实数据库或历史订单。
 
 ### 0ai. 手机顶部单行与记住登录
 
@@ -1187,6 +1195,8 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+- 2026-10-21：P成交时间保存复用普通／商城既有解析函数，成交列表共用原读取、倒序和显示；日本时间文字保留，历史订单不重写。仅API更新并重启，验证与边界见0aj。
 
 - 2026-10-19：用户端长用户名单行省略、退出与风格控件保持同排；重开登录页自动复用已有登录状态，补齐浏览器账号密码自动填充语义。仅更新用户端dist，原7天有效期保持，验证见0ai。
 

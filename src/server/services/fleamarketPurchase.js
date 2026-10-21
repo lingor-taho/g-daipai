@@ -1,5 +1,6 @@
 const { isStoredFleamarketProduct: isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const { randomUUID } = require('crypto');
+const { normalizeYahooWonTimeText } = require('./yahooWonTime');
 
 function fail(message) { const error = new Error(message); error.statusCode = 409; throw error; }
 
@@ -74,7 +75,7 @@ function completePurchase(raw, id, context, claim, evidence) {
     const timeText = `${pad(japan.getUTCMonth() + 1)}/${pad(japan.getUTCDate())} ${pad(japan.getUTCHours())}:${pad(japan.getUTCMinutes())}`;
     const result = raw.prepare(`INSERT INTO orders
       (task_id,product_id,account_id,final_price,won_at,won_time_text,transaction_url,order_status)
-      VALUES(?,?,?,?,?,?,?,'pending_shipment')`).run(id, task.product_id, context.accountId, amount, now.toISOString(), timeText, transactionUrl);
+      VALUES(?,?,?,?,?,?,?,'pending_shipment')`).run(id, task.product_id, context.accountId, amount, normalizeYahooWonTimeText(timeText, now.getTime()), timeText, transactionUrl);
     raw.prepare("UPDATE tasks SET status='success',error_msg=NULL,execution_unknown=0,buyout_auto_paid=1,is_highest_bidder=0,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
     raw.prepare(`INSERT INTO order_status_change_logs(order_id,product_id,new_status,source)
       VALUES(?,?,'pending_shipment','fleamarket_purchase')`).run(result.lastInsertRowid,task.product_id);
