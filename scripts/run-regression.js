@@ -60,6 +60,7 @@ const steps = [
   ['Order audit schema recovery', process.execPath, ['src/server/services/orderAuditSchema.test.js'], rootDir],
   ['Admin queue detail tests', process.execPath, ['src/server/services/adminTaskQueue.test.js'], rootDir],
   ['Plugin route tests', process.execPath, ['src/server/routes/plugin.test.js'], rootDir],
+  ['Shipment alerts without Yahoo scan', process.execPath, ['scripts/run-isolated-regression.cjs', 'src/server/routes/shipmentAlerts.test.js'], rootDir],
   ['Ended product snapshot failure reason',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/plugin.endedSnapshot.test.js'],rootDir],
   ['Yahoo plugin content tests', process.execPath, ['yahoo-plugin/content.test.js'], rootDir],
   ['Yahoo plugin background tests', process.execPath, ['yahoo-plugin/background.test.js'], rootDir],

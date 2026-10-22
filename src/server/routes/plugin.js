@@ -2458,6 +2458,36 @@ function calculateOverdueShipmentDays(sinceValue, nowMs = Date.now()) {
   return Number.isFinite(days) && days > 7 ? days : 0;
 }
 
+async function refreshPendingShipmentAlerts(database = db, nowMs = Date.now()) {
+  // Use the same start time as scan jobs, without depending on Yahoo page parsing.
+  const rows = await database.getAll(
+    `SELECT o.id AS order_id,
+            COALESCE(o.product_id, t.product_id) AS product_id,
+            p.product_title,
+            COALESCE((
+              SELECT MAX(l.created_at)
+              FROM order_status_change_logs l
+              WHERE l.order_id = o.id AND l.new_status = ?
+            ), o.updated_at, o.created_at) AS pending_shipment_since
+     FROM orders o
+     LEFT JOIN tasks t ON o.task_id = t.id
+     LEFT JOIN products p ON p.product_id = COALESCE(o.product_id, t.product_id)
+     WHERE o.order_status = ?`,
+    [ORDER_STATUS_PENDING_SHIPMENT, ORDER_STATUS_PENDING_SHIPMENT]
+  );
+  for (const row of rows) {
+    const daysOverdue = calculateOverdueShipmentDays(row.pending_shipment_since, nowMs);
+    if (!daysOverdue) continue;
+    await addPendingShipmentAlert({
+      orderId: row.order_id,
+      productId: row.product_id,
+      productTitle: row.product_title,
+      daysOverdue
+    }, database, nowMs);
+  }
+  return getShipmentAlerts(database);
+}
+
 async function addPendingShipmentAlert(payload = {}, database = db, nowMs = Date.now()) {
   const orderId = Number(payload.orderId || 0);
   const productId = normalizePlainText(payload.productId, 32);
@@ -3604,6 +3634,7 @@ module.exports.calculateOverdueShipmentDays = calculateOverdueShipmentDays;
 module.exports.addPendingShipmentAlert = addPendingShipmentAlert;
 module.exports.autoCloseShipmentAlerts = autoCloseShipmentAlerts;
 module.exports.getShipmentAlerts = getShipmentAlerts;
+module.exports.refreshPendingShipmentAlerts = refreshPendingShipmentAlerts;
 module.exports.getGoogleSheetAlerts = getGoogleSheetAlerts;
 module.exports.addGoogleSheetFailureAlert = addGoogleSheetFailureAlert;
 module.exports.getPaymentJobs = getPaymentJobs;

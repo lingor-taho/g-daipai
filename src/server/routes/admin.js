@@ -23,6 +23,7 @@ const {
   ensureScheduledConfirmReceiptRequest,
   shouldAutoRequestConfirmReceipt,
   getShipmentAlerts,
+  refreshPendingShipmentAlerts,
   getGoogleSheetAlerts,
   appendPendingReceiptOrderToGoogleSheet,
   DEFAULT_MULTI_BID_MIN_PRICE,
@@ -3398,7 +3399,7 @@ async function getAccountIdleFlags() {
     paymentFlag: Number(values.payment_requested || 0) === 1 ? 1 : 0,
     paymentAlertMessage: values.payment_alert_message || '',
     captchaChallenge: await getCaptchaChallenge(db),
-    shipmentAlerts: (await getShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt),
+    shipmentAlerts: (await refreshPendingShipmentAlerts(db)).filter(alert => !alert.closedAt && !alert.autoClosedAt),
     googleSheetAlerts: await getGoogleSheetAlerts(db),
     auctionHistoryAlerts: auctionHistory.getAlerts(db)
   };

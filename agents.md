@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-21
+**最后更新**: 2026-10-22
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-22 顶部未发货超期提醒改由后台原idle-flags轮询按各账号系统订单生成，不再依赖插件识别Yahoo未发货页面。仅读pending_shipment，起算时间沿原最近进入待发货的审计时间、缺失回退订单updated_at／created_at；超过7个完整日才提醒。复用原shipment-{订单ID}-{完整天数}去重、关闭后同一天不重弹、下一天继续提醒及扫描确认发货／取消后的自动关闭，原提醒文案保持。物流扫描、订单状态、金额及账号归属不变。仅更新API routes/admin.js、routes/plugin.js并重启，无插件／两端dist／schema变化；未部署或修改生产订单，验证与注意见0am。
 
 2026-10-21 后台消息订单的P读取／发送已按用户提供trade/buyer页面本地适配：按已存fleamarket类型直达同商品secure交易页，不再回退普通落札列表；仅读消息列表，空列表沿原暂无消息标记。发送仅填该消息框、等待“取引メッセージを送る”可用后单次点击，新增匹配消息出现才确认成功，不点评价。消息转成原dl/dd及已支持v2标记，沿原API存储与两端展示，用户端无需修改。仅发布插件background.js并在各账号reload，无API／两端dist／schema更新；未部署或发送真实消息，附件无历史消息，非空结构用模拟数据验证，真实有消息页待验收，详见0al。
 
@@ -251,6 +253,16 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0am. 未发货超期提醒脱离Yahoo扫描识别
+
+生产只读核验h1246666276订单2219：2026-10-12 06:35:42 UTC进入pending_shipment，至10月22日上午约9天20小时；插件近期持续扫描但返回unknown，旧流程因此未生成提醒。未知结果的具体Yahoo页面识别原因尚需实际页面核验，本次不修改解析。
+
+新增refreshPendingShipmentAlerts，由后台原idle-flags逐账号轮询调用；用系统待发货订单与原起算时间计算，复用原addPendingShipmentAlert，不需插件在线或页面匹配成功。支持普通／商城／P，商品关联优先orders.product_id并兼容旧task关联。原完整天数、提醒ID、每日重复／关闭、提示文字和扫描自动关闭机制保持，不改变扫描领取、付款、物流或订单状态。只生成当前超期天数的提醒，不补造过去每天的提醒。
+
+部署：更新src/server/routes/admin.js与src/server/routes/plugin.js并重启API，后台原轮询即可生效；无需静态构建、插件reload或schema迁移。本轮仅本地修改与隔离库测试，未部署生产。
+
+验证命令：`node scripts/run-isolated-regression.cjs src/server/routes/shipmentAlerts.test.js`（真实后台HTTP轮询／关闭、无插件生成、7／8天边界、每日去重及翌日提醒、普通／商城／P、多账号隔离、审计时间优先及回退、无效时间跳过、订单不变、原扫描发货自动关闭）；`node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/admin.orders.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`；`npm run encoding:guard`；`git diff --check`。专项已加入npm run regression。
 
 ### 0al. P商品交易消息读取与发送
 
