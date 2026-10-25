@@ -30,6 +30,10 @@ function getManualVerificationDisplayState(challenge, options = {}) {
   }
 
   const isPin = challenge.type === 'pin';
+  if (challenge.type === 'login') {
+    return { visible: true, status: challenge.phase === 'error' ? 'error' : 'confirming',
+      showInput: false, showContinue: false, title: challenge.message || '正在选择 Yahoo 登录方式' };
+  }
   if (challenge.type === 'email') {
     return {
       visible: true,

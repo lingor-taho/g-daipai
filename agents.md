@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-25 主／备用账号后台验证界面统一复用ManualVerificationAlert：沿原普通Input、日文输入／回车提交、确认中及关闭反馈，账号参数保持隔离。插件新增PIN前无邮箱输入框的手机确认码发送页分支：只点“他の方法でログイン”，弹层只点“パスキー”，不点发送确认码／SMS；中途日文验证码与PIN沿原流程，锁定单个验证标签、不刷新前置页；接管本轮新子页后关闭原页及本轮重复页，验证码／PIN互跳只接管本轮所属新页。允许两轮，第三次进入停止并显示“登录方式跳第三次验证，请人工处理！”，session持久化次数及失败，不自动重放失败。需更新插件background.js并reload、API services/manualCaptcha.js并重启、后台dist；无用户端／schema变化，未部署或操作真实登录。详见0ap。
+
 2026-10-25 普通商品即时拍补齐已有最高出价成功识别：仅normal＋direct＋bid，复用原可见最高入札者状态及自动入札上限，已有上限达到或超过任务max_price时沿原success／noBid回写，不使用noStatus，不再次出价。定时／多次／商城／即决、其他出价及税额校验保持。仅更新插件content.js并reload，无API／两端dist／schema变化，未部署或修正生产任务v1245429643，详见0ao。
 
 2026-10-25 邮箱前置验证已本地改为连续交接原文字验证码／PIN：邮箱及PIN复用单个登录标签，锁定后也清理重复登录页，本次子标签接管后关闭原验证页。首次沿原刷新一次，返回邮箱第二次直接收取新邮件并单次提交，不刷新Yahoo、不复用已用邮件；第三次进入邮箱停止并提示“邮箱跳第三次验证，请人工处理！”。次数及已读邮件标识保存Chrome session，工作进程重启不重置上限，完整验证完成或验证页消失后清理；不保存验证码。主／备用后台第三次报错均隐藏继续，API拒绝继续。仅邮箱成功不能结束整个流程，仍交原PIN；PIN刷新跳回邮箱先交接、不填PIN。需更新插件background.js并reload、API services/manualCaptcha.js并重启及后台dist；无用户端／schema变更，未部署或操作真实登录。详见0an。
@@ -257,6 +259,16 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ap. 主备用验证界面复用与其他登录方式前置
+
+主号原验证码展示／普通Input／Enter／提交后确认中／关闭／文字验证码结束提示抽为ManualVerificationAlert，主／备用都传入各自challenge和account_id。IME组合输入的Enter不提交，异步操作期间防重复，文字验证码不再使用密码框。原账号轮询和其他提醒保持。
+
+新前置仅识别Yahoo登录页的发送确认码按钮与“他の方法でログイン”，或含SMS选项的“他の方法でログイン”弹层。只单次点击链接及唯一可用“パスキー”；原文字验证码截图／填写、后续PIN输入与前台锁继续复用。无关页面、已有邮箱／验证码输入框不进入新分支；按钮缺失／禁用及30秒无预期跳转报错。初始加再次回跳最多两轮，第三次不点击、不发短信，后台报“登录方式跳第三次验证，请人工处理！”。Chrome session保留次数及失败，重启不重置；失败后保留原页等待人工处理，验证完成／验证页消失后清理。分支开始与等待跳转时持续清理重复登录页，复用同一流程锁；仅本轮所属新子标签可接管并关闭原页及本轮重复子页，验证码／PIN相互跳转也沿用此锁，不接管或清理旧无关验证码页。
+
+API复用现有manual_captcha_challenge存储，新增login提醒类型，无答案／继续入口，只用于进度／错误与关闭；不新增schema或登录凭据。需同步发布插件background.js（各账号reload）、服务端services/manualCaptcha.js（重启API）和后台dist。未部署，未执行真实Yahoo／Gmail登录、发送确认码或操作生产数据。
+
+验证：alternativeLogin专项以本地页面执行真实识别／点击脚本，覆盖精确链接／弹层パスキー、禁用按钮不点背后链接、验证码输入框排除、无关URL／纯文字不点、初次及二次回跳完整日文→PIN、第三次停止、worker重启上限、缺按钮／超时；补测并发请求共用流程、初始重复登录页清理、同次打开多个子验证页仅留接管页、接管后次数不重置、验证码／PIN互跳不接管旧无关页面。原emailVerification、background、多账号、manualCaptcha服务、后台显示与构建、360／390／1200多账号浏览器、语法／编码／diff检查通过。浏览器验证备用日文普通Input、IME不误提交、Enter提交及确认中、主备请求account_id隔离；真实手机IME与Yahoo新页仍需部署后验收。
 
 ### 0ao. 普通即时拍已最高且上限达标时返回成功
 
@@ -1247,6 +1259,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-25 主备用验证组件统一及パスキー前置
+
+共用主号原普通输入与反馈，新前置只点其他登录方式／パスキー，中途日文与PIN沿原流程并持续锁定单个验证标签，接管后清理原页及本轮重复子页；允许两轮回跳，第三次报错停住。部署及验证见0ap。
 
 ### 2026-10-25 普通即时拍已有最高上限达标返回成功
 
@@ -2759,6 +2775,25 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+共用验证界面与其他登录方式前置（0ap）：
+
+```bash
+node yahoo-plugin/alternativeLogin.test.js
+node yahoo-plugin/emailVerification.test.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/multiAccount.test.js
+node src/server/services/manualCaptcha.test.js
+node src/admin/src/manualVerificationState.test.js
+node src/admin/src/AdminLayout.display.test.js
+node src/admin/src/MessageRead.display.test.js
+npm run build --prefix src/admin
+node scripts/yahoo-multi-account-browser.test.cjs
+node --check yahoo-plugin/background.js
+node yahoo-plugin/encoding.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 普通即时拍已有最高上限识别（0ao）：
 

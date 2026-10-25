@@ -140,6 +140,13 @@ async function run() {
   await testSameAnsweredPinChallengeIsKeptConfirmingWhenReposted();
   await testPinRetryChallengeCanResetAnsweredState();
   await testEmailContinueAndClaimAreOneShot();
+  const db = createFakeDb();
+  const login = await saveCaptchaChallenge(db, { id: 'login-1', type: 'login', tabId: 7, phase: 'error', message: '登录方式跳第三次验证，请人工处理！' });
+  assert.equal(login.type, 'login');
+  assert.equal(login.phase, 'error');
+  assert.equal(login.tabId, 7);
+  await assert.rejects(answerCaptchaChallenge(db, { id: login.id, answer: '1234' }), /does not accept an answer/);
+  await assert.rejects(requestEmailVerification(db, { id: login.id }), /not found/);
 }
 
 async function testEmailContinueAndClaimAreOneShot() {

@@ -11,7 +11,7 @@ function normalizeCaptchaAnswer(value) {
 
 function normalizeCaptchaChallenge(payload = {}) {
   const id = normalizeCaptchaId(payload.id);
-  const type = ['pin', 'email'].includes(payload.type) ? payload.type : 'captcha';
+  const type = ['pin', 'email', 'login'].includes(payload.type) ? payload.type : 'captcha';
   const imageDataUrl = String(payload.imageDataUrl || '').trim();
   if (!id) {
     const error = new Error('captcha id is required');
@@ -31,7 +31,7 @@ function normalizeCaptchaChallenge(payload = {}) {
     pageUrl: String(payload.pageUrl || '').slice(0, 1000),
     productId: String(payload.productId || '').trim().slice(0, 32),
     source: String(payload.source || '').trim().slice(0, 64),
-    ...(type === 'email' ? {
+    ...(['email', 'login'].includes(type) ? {
       phase: payload.phase === 'error' ? 'error' : 'waiting',
       tabId: Number.isSafeInteger(payload.tabId) ? payload.tabId : null
     } : {}),
@@ -109,6 +109,11 @@ async function answerCaptchaChallenge(database, payload = {}) {
   }
   if (challenge.type === 'email') {
     const error = new Error('use continue for email verification');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (challenge.type === 'login') {
+    const error = new Error('login navigation does not accept an answer');
     error.statusCode = 400;
     throw error;
   }

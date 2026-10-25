@@ -5443,6 +5443,163 @@ const EMAIL_RECEIVE_ERROR = '60秒未收到验证码，请重试';
 const EMAIL_FILL_ERROR = 'gmail验证码填入错误，请重试';
 const EMAIL_LOOP_ERROR = '邮箱跳第三次验证，请人工处理！';
 const manualEmailFlows = new Map();
+const manualAlternativeLoginFlows = new Map();
+const ALTERNATIVE_LOGIN_LOOP_ERROR = '登录方式跳第三次验证，请人工处理！';
+
+async function getManualAlternativeLoginState(tab, action = '') {
+  if (!tab?.id || !isLikelyManualPinTab(tab)) return null;
+  const result = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN',
+    func: (loginAction) => {
+      const text = el => String(el?.innerText || el?.textContent || el?.value || '').replace(/\s+/g, ' ').trim();
+      const visible = el => {
+        if (!el || el.hidden || el.getAttribute?.('aria-hidden') === 'true' || el.offsetWidth <= 0 || el.offsetHeight <= 0) return false;
+        const style = typeof window !== 'undefined' && window.getComputedStyle ? window.getComputedStyle(el) : null;
+        return !style || (style.display !== 'none' && style.visibility !== 'hidden');
+      };
+      const controls = root => [...root.querySelectorAll('a,button,input[type="submit"],[role="button"]')].filter(el => visible(el) && !el.disabled);
+      // Email/one-time-code inputs belong to the existing verification handler.
+      if ([...document.querySelectorAll('input')].some(el => visible(el) &&
+          /確認コード|認証コード|one-time-code|(?:^|[_-])code(?:$|[_-])/i.test([el.placeholder, el.name, el.id, el.autocomplete, el.getAttribute('aria-label')].join(' ')))) return null;
+      const all = controls(document);
+      let target = null;
+      let stage = '';
+      let methodsVisible = false;
+      const headings = [...document.querySelectorAll('h1,h2,h3,p,div,span')]
+        .filter(el => visible(el) && text(el) === '他の方法でログイン');
+      for (const heading of headings) {
+        let root = heading.closest?.('[role="dialog"],[aria-modal="true"]') || heading.parentElement;
+        for (let depth = 0; root && root !== document.body && depth < 6; depth += 1, root = root.parentElement) {
+          const candidates = controls(root);
+          const passkey = candidates.filter(el => text(el) === 'パスキー');
+          const hasSms = candidates.some(el => /^確認コード\s*[（(]SMS[）)]$/.test(text(el)));
+          if (hasSms) methodsVisible = true;
+          if (passkey.length === 1 && hasSms) {
+            stage = 'methods'; target = passkey[0]; break;
+          }
+        }
+        if (target) break;
+      }
+      if (!target && methodsVisible) return { stage: 'methods', clicked: false };
+      if (!target) {
+        const links = all.filter(el => text(el) === '他の方法でログイン');
+        if (all.some(el => text(el) === '確認コードを送信')) {
+          if (links.length !== 1) return { stage: 'entry', clicked: false };
+          stage = 'entry'; target = links[0];
+        }
+      }
+      if (!target) return null;
+      if (!loginAction) return { stage, alreadyClicked: target.__gdaipaiAlternativeClicked === true };
+      if (loginAction !== stage || target.__gdaipaiAlternativeClicked) return { stage, clicked: false };
+      target.__gdaipaiAlternativeClicked = true;
+      if (stage === 'methods') {
+        for (const link of all.filter(el => text(el) === '他の方法でログイン')) link.__gdaipaiAlternativeClicked = true;
+      }
+      target.click();
+      return { stage, clicked: true };
+    }, args: [action]
+  });
+  return ['entry', 'methods'].includes(result?.[0]?.result?.stage) ? result[0].result : null;
+}
+
+async function lockAlternativeLoginTab(tab, options = {}) {
+  const tabs = await chrome.tabs.query({});
+  rememberYahooMessageTabTree(tabs);
+  const previousId = options.previousTabId || tab.id;
+  const owned = new Set([previousId]);
+  if (options.previousTabIds) {
+    for (let round = 0; round < tabs.length; round += 1) {
+      for (const candidate of tabs) {
+        if (!options.previousTabIds.has(candidate.id) && owned.has(candidate.openerTabId)) owned.add(candidate.id);
+      }
+    }
+  }
+  rememberManualVerificationTab(tab);
+  for (const candidate of tabs) {
+    if (candidate.id === tab.id || isYahooMessageTab(candidate)) continue;
+    if (isLikelyManualPinTab(candidate) || (owned.has(candidate.id) && isManualVerificationTab(candidate))) {
+      await closeTabIfExists(candidate.id);
+    }
+  }
+  await chrome.tabs.update(tab.id, { active: true });
+}
+
+async function handleManualAlternativeLogin(tab, context = {}) {
+  if (manualAlternativeLoginFlows.size) return manualAlternativeLoginFlows.values().next().value;
+  const operation = (async () => {
+    let current = tab;
+    const saved = chrome.storage.session.get ? await chrome.storage.session.get('manualAlternativeLoginSession') : {};
+    const session = context.alternativeSession || {};
+    if (!session.attempts && saved.manualAlternativeLoginSession?.tabId === tab.id) Object.assign(session, saved.manualAlternativeLoginSession);
+    context.alternativeSession = session;
+    const persist = () => { session.tabId = current.id; return chrome.storage.session.set({ manualAlternativeLoginSession: session }); };
+    const report = async (message, phase = 'waiting') => {
+      const id = buildManualVerificationId('login', current, context);
+      await postManualCaptchaChallenge({ id, type: 'login', tabId: current.id, phase, message,
+        pageUrl: current.url || '', productId: context.productId || '', source: context.source || '' });
+      return id;
+    };
+    let challengeId = '';
+    try {
+      await lockAlternativeLoginTab(current);
+      if (session.error) throw new Error(session.error);
+      let state = await getManualAlternativeLoginState(current);
+      if (!state) throw new Error('未识别到其他登录方式入口，请人工处理');
+      if (session.attempts >= 2) throw new Error(ALTERNATIVE_LOGIN_LOOP_ERROR);
+      session.attempts = (session.attempts || 0) + 1;
+      await persist();
+      challengeId = await report(`正在使用パスキー继续验证（第${session.attempts}次）`);
+      const transition = async (expected, beforeIds) => {
+        const deadline = Date.now() + 30000;
+        for (let poll = 0; poll < 60 && Date.now() < deadline; poll += 1) {
+          await sleep(500);
+          current = await chrome.tabs.get(current.id).catch(() => current);
+          const tabs = await chrome.tabs.query({});
+          const owned = new Set([current.id]);
+          for (let round = 0; round < tabs.length; round += 1) {
+            for (const candidate of tabs) if (!beforeIds.has(candidate.id) && owned.has(candidate.openerTabId)) owned.add(candidate.id);
+          }
+          const child = tabs.find(candidate => !beforeIds.has(candidate.id) && owned.has(candidate.id) && isManualVerificationTab(candidate));
+          if (child) {
+            const oldId = current.id;
+            current = child;
+            rememberManualVerificationTab(current);
+            await persist();
+            await lockAlternativeLoginTab(current, { previousTabId: oldId, previousTabIds: beforeIds });
+          } else {
+            await lockAlternativeLoginTab(current, { previousTabIds: beforeIds });
+          }
+          if (current.status !== 'complete') continue;
+          const next = await getManualAlternativeLoginState(current);
+          if (expected === 'methods' && next?.stage === 'methods') return next;
+          if (expected === 'verification' && next?.stage === 'entry' && !next.alreadyClicked) return next;
+          if (!next && (isManualCaptchaTab(current) || await detectManualEmailPage(current) || await detectManualPinPage(current))) return null;
+        }
+        throw new Error('选择登录方式后30秒未进入预期验证页面，请人工处理');
+      };
+      if (state.stage === 'entry') {
+        const before = await getTabIds();
+        const clicked = await getManualAlternativeLoginState(current, 'entry');
+        if (!clicked?.clicked) throw new Error('其他登录方式链接不可用，请人工处理');
+        state = await transition('methods', before);
+      }
+      if (state?.stage === 'methods') {
+        const before = await getTabIds();
+        const clicked = await getManualAlternativeLoginState(current, 'methods');
+        if (!clicked?.clicked) throw new Error('パスキー按钮不可用，请人工处理');
+        await transition('verification', before);
+      }
+      await closeManualCaptchaChallenge(challengeId);
+      return current;
+    } catch (error) {
+      session.error = error?.message || '其他登录方式验证失败，请人工处理';
+      await persist();
+      await report(session.error, 'error');
+      throw new Error(session.error);
+    }
+  })();
+  manualAlternativeLoginFlows.set(tab.id, operation);
+  try { return await operation; } finally { manualAlternativeLoginFlows.delete(tab.id); }
+}
 
 async function detectManualEmailPage(tab) {
   if (!tab?.id || !isLikelyManualPinTab(tab)) return null;
@@ -5894,7 +6051,7 @@ function isYahooAuthLevelPinUrl(url) {
 
 function buildManualVerificationId(type, tab, context = {}) {
   const productId = String(context.productId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'unknown';
-  const prefix = ['pin', 'email'].includes(type) ? type : 'captcha';
+  const prefix = ['pin', 'email', 'login'].includes(type) ? type : 'captcha';
   return `${prefix}-${productId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -5914,7 +6071,7 @@ async function getManualVerificationLockedTab() {
   if (!manualVerificationTabId) return null;
   const tab = await chrome.tabs.get(manualVerificationTabId).catch(() => null);
   if (tab && isManualVerificationTab(tab)) {
-    const duplicates = manualEmailFlows.size ? [] : await getOpenManualPinTabs();
+    const duplicates = manualEmailFlows.size || manualAlternativeLoginFlows.size ? [] : await getOpenManualPinTabs();
     for (const duplicate of duplicates) {
       if (duplicate.id !== tab.id) await closeTabIfExists(duplicate.id);
     }
@@ -5957,6 +6114,7 @@ async function keepSingleManualPinTab(tabs, preferredTab = null) {
 
 async function ensureManualPinChallenge(tab, context = {}) {
   if (!tab?.id || !isLikelyManualPinTab(tab)) return { posted: false };
+  if (await getManualAlternativeLoginState(tab)) return { posted: false };
   if (await detectManualEmailPage(tab)) return ensureManualEmailChallenge(tab, context);
   const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
   if (current?.found && current.type === 'pin' && !current.answered) {
@@ -5980,9 +6138,10 @@ async function ensureManualPinChallenge(tab, context = {}) {
 async function closeStaleManualChallengeIfVerificationGone(verificationTabs = []) {
   if (Array.isArray(verificationTabs) && verificationTabs.length) return false;
   await chrome.storage.session.remove('manualEmailVerificationSession');
+  await chrome.storage.session.remove('manualAlternativeLoginSession');
   const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
   if (!current?.found || !current.id) return false;
-  const shouldClose = current.type === 'pin' || current.type === 'email' || current.answered;
+  const shouldClose = ['pin', 'email', 'login'].includes(current.type) || current.answered;
   if (!shouldClose) return false;
   await closeManualCaptchaChallenge(current.id);
   console.warn('[Yahoo Bid] Closed stale manual verification challenge because no PIN/captcha page remains:', current.id);
@@ -6307,6 +6466,7 @@ async function detectManualPinPage(tab) {
   const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   if (!current?.id || !isLikelyManualPinTab(current)) return false;
   if (await detectManualEmailPage(current)) return false;
+  if (await getManualAlternativeLoginState(current)) return false;
   if (isYahooAuthLevelPinUrl(current.url)) return true;
   const result = await chrome.scripting.executeScript({
     target: { tabId: current.id },
@@ -6526,6 +6686,16 @@ async function findManualVerificationTransitionTab(current, previousTabIds = new
     if (!tab?.id || !isManualVerificationTab(tab)) continue;
     if (!candidates.some(candidate => candidate.id === tab.id)) candidates.push(tab);
   }
+  if (options.singleAlternativeTab) {
+    const owned = new Set([current?.id]);
+    for (let round = 0; round < tabs.length; round += 1) {
+      for (const tab of tabs) if (!previous.has(tab.id) && owned.has(tab.openerTabId)) owned.add(tab.id);
+    }
+    const children = candidates.filter(tab => !previous.has(tab.id) && owned.has(tab.id));
+    const preferred = children.filter(tab => options.preferPin ? isLikelyManualPinTab(tab) : isManualCaptchaTab(tab));
+    const choices = preferred.length ? preferred : children;
+    return choices.find(tab => tab.active) || choices.sort((a, b) => (b.id || 0) - (a.id || 0))[0] || currentTab || current;
+  }
   if (!candidates.length) return currentTab || current;
   if (options.preferPin) {
     const activePin = candidates.find(tab => tab.active && isLikelyManualPinTab(tab));
@@ -6570,6 +6740,9 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
     attempts += 1;
     await sleep(1000);
     current = await findManualVerificationTransitionTab(current, previous, options);
+    if (options.singleAlternativeTab) {
+      await lockAlternativeLoginTab(current, { previousTabId: tab.id, previousTabIds: previous });
+    }
     const url = String(current?.url || '');
     if (current?.id && current.id !== tab?.id) break;
     if (url && url !== startUrl) break;
@@ -6584,11 +6757,12 @@ async function isStillManualVerificationPage(tab) {
   if (!tab?.id) return false;
   if (isManualCaptchaTab(tab)) return true;
   if (await detectManualEmailPage(tab)) return true;
+  if (await getManualAlternativeLoginState(tab)) return true;
   return await detectManualPinPage(tab).catch(() => isLikelyManualPinTab(tab));
 }
 
 async function handleManualVerificationIfPresent(tab, context = {}) {
-  context = { ...context, emailSession: context.emailSession || {} };
+  context = { ...context, emailSession: context.emailSession || {}, alternativeSession: context.alternativeSession || {} };
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   if (isLikelyManualPinTab(current)) await keepSingleManualPinTab(await getOpenManualPinTabs(), current);
   rememberManualVerificationTab(current);
@@ -6597,11 +6771,21 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
   let pinAnswerFromContext = Boolean(pinAnswer);
   let canReusePinAfterCaptcha = false;
   let pinAttempted = Boolean(pinAnswer);
-  for (let step = 0; step < (context.emailSession.submissions ? 12 : 6) && current?.id; step += 1) {
+  let pinSubmitted = false;
+  for (let step = 0; step < (context.emailSession.submissions || context.alternativeSession.attempts ? 12 : 6) && current?.id; step += 1) {
     current = await chrome.tabs.get(current.id).catch(() => current);
-    if (context.emailSession.submissions && current.status === 'loading') {
+    if ((context.emailSession.submissions || context.alternativeSession.attempts) && current.status === 'loading') {
       await waitForTabComplete(current.id, 10000);
       current = await chrome.tabs.get(current.id);
+    }
+    if (await getManualAlternativeLoginState(current)) {
+      manualVerificationFlowActive = true;
+      rememberManualVerificationTab(current);
+      handled = true;
+      current = await handleManualAlternativeLogin(current, context);
+      pinAnswer = '';
+      pinAnswerFromContext = false;
+      continue;
     }
     if (await detectManualEmailPage(current)) {
       manualVerificationFlowActive = true;
@@ -6637,7 +6821,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       const fillResult = await fillManualCaptchaAnswer(current.id, answer);
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
       if (pinAnswer) canReusePinAfterCaptcha = true;
-      current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds, { preferPin: true });
+      current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds, { preferPin: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
       rememberManualVerificationTab(current);
       if (!isManualCaptchaTab(current)) await closeManualCaptchaChallenge(id);
       await sleep(500);
@@ -6665,15 +6849,16 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     current = await refreshManualPinPageBeforeAnswer(current);
     rememberManualVerificationTab(current);
     // A PIN refresh can itself return to email. Never type the PIN into that page.
-    if (await detectManualEmailPage(current)) continue;
+    if (await detectManualEmailPage(current) || await getManualAlternativeLoginState(current)) continue;
     const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
+    pinSubmitted = true;
     pinAttempted = true;
     pinAnswerFromContext = false;
     canReusePinAfterCaptcha = false;
     if (fillResult.method === 'debuggerRealKeyboard') {
-      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, { preferCaptcha: true });
+      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, { preferCaptcha: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
       rememberManualVerificationTab(current);
       const stillPinAfterKeyboard = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
       if (stillPinAfterKeyboard) {
@@ -6681,15 +6866,21 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
         const beforeInsertTextRetryTabIds = await getTabIds().catch(() => new Set());
         const insertTextResult = await dispatchTrustedManualPinInput(current.id, pinAnswer, { preferKeyboard: false });
         if (!insertTextResult?.success) throw new Error(insertTextResult?.error || 'manual pin insertText retry failed');
-        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds, { preferCaptcha: true });
+        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds, { preferCaptcha: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
         rememberManualVerificationTab(current);
       }
     } else {
-      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds, { preferCaptcha: true });
+      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds, { preferCaptcha: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
       rememberManualVerificationTab(current);
     }
     if (pinChallengeId && !await isStillManualVerificationPage(current)) await closeManualCaptchaChallenge(pinChallengeId);
     await sleep(500);
+  }
+  if (context.alternativeSession.attempts && (await isStillManualVerificationPage(current) || !pinSubmitted)) {
+    const error = '其他登录方式验证后未完成 PIN 码验证，请人工处理';
+    await postManualCaptchaChallenge({ id: buildManualVerificationId('login', current, context), type: 'login', tabId: current.id,
+      phase: 'error', message: error, pageUrl: current.url || '', productId: context.productId || '', source: context.source || '' });
+    throw new Error(error);
   }
   if (context.emailSession.submissions && await isStillManualVerificationPage(current)) {
     await ensureManualEmailChallenge(current, context, 'Yahoo 验证流程未完成，请人工处理');
@@ -6700,6 +6891,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     throw new Error('邮箱验证后未完成 PIN 码验证，请人工处理');
   }
   if (context.emailSession.submissions || pinAttempted) await chrome.storage.session.remove('manualEmailVerificationSession');
+  if (context.alternativeSession.attempts || pinAttempted) await chrome.storage.session.remove('manualAlternativeLoginSession');
   const allOpenVerificationTabs = await chrome.tabs.query({}).then(tabs => tabs.filter(isManualVerificationTab)).catch(() => []);
   const openVerificationTabs = allOpenVerificationTabs.filter(tab => !ignoredManualVerificationTabIds.has(tab.id));
   if (!openVerificationTabs.length) {
@@ -6714,6 +6906,10 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
 async function resumeAnsweredManualPinChallenge(tab, context = {}) {
   const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   if (!current?.id || !isLikelyManualPinTab(current)) return { handled: false, tab: current || tab };
+  if (await getManualAlternativeLoginState(current)) {
+    if (manualAlternativeLoginFlows.size) return { handled: true, tab: current };
+    return handleManualVerificationIfPresent(current, context);
+  }
   if (await detectManualEmailPage(current)) {
     if (manualEmailFlows.size) return { handled: true, tab: current };
     const challenge = await ensureManualEmailChallenge(current, context);
@@ -9373,6 +9569,8 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   pauseIdleWorkForOpenManualPin,
   handleManualVerificationIfPresent,
   detectManualEmailPage,
+  getManualAlternativeLoginState,
+  handleManualAlternativeLogin,
   detectManualPinPage,
   executeManualEmailAttempt,
   handleManualEmailVerification,

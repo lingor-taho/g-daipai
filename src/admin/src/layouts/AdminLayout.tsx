@@ -1,12 +1,12 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Input, Layout, Menu, Space, Typography, message } from 'antd';
+import { useEffect, useState } from 'react';
+import { Alert, Button, Layout, Menu, Space, Typography, message } from 'antd';
 import { CloseOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { fetchAdminJson, isAdminLoggedIn } from '../utils/auth';
 import { getProductItemUrl } from '../utils/productUrl';
 import YahooAccountAlerts from '../YahooAccountAlerts';
 import YahooAccountStatusLights from '../YahooAccountStatusLights';
-import { getManualVerificationDisplayState } from '../manualVerificationState';
+import ManualVerificationAlert from '../ManualVerificationAlert';
 
 const { Header, Content, Sider } = Layout;
 
@@ -73,43 +73,11 @@ export default function AdminLayout() {
   const [productTypes, setProductTypes] = useState<Record<string,string>>({});
   const [confirmReceiptAlert, setConfirmReceiptAlert] = useState('');
   const [captchaChallenge, setCaptchaChallenge] = useState<any>(null);
-  const [captchaAnswer, setCaptchaAnswer] = useState('');
-  const [emailContinuePending, setEmailContinuePending] = useState(false);
-  const emailContinuePendingRef = useRef(false);
-  const [submittedCaptchaId, setSubmittedCaptchaIdState] = useState('');
-  const [submittedCaptchaType, setSubmittedCaptchaTypeState] = useState('');
-  const [passedCaptchaType, setPassedCaptchaTypeState] = useState('');
-  const submittedCaptchaRef = useRef({ id: '', type: '' });
-  const passedCaptchaTimerRef = useRef<number | null>(null);
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [googleSheetAlerts, setGoogleSheetAlerts] = useState<any[]>([]);
   const [auctionHistoryAlerts, setAuctionHistoryAlerts] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
-
-  function setSubmittedCaptcha(id: string, type: string) {
-    submittedCaptchaRef.current = { id, type };
-    setSubmittedCaptchaIdState(id);
-    setSubmittedCaptchaTypeState(type);
-  }
-
-  function clearSubmittedCaptcha() {
-    submittedCaptchaRef.current = { id: '', type: '' };
-    setSubmittedCaptchaIdState('');
-    setSubmittedCaptchaTypeState('');
-  }
-
-  function showPassedCaptchaNotice(type: string) {
-    if (type !== 'captcha') return;
-    setPassedCaptchaTypeState('captcha');
-    if (passedCaptchaTimerRef.current) {
-      window.clearTimeout(passedCaptchaTimerRef.current);
-    }
-    passedCaptchaTimerRef.current = window.setTimeout(() => {
-      setPassedCaptchaTypeState('');
-      passedCaptchaTimerRef.current = null;
-    }, 1800);
-  }
 
   // 根据折叠状态生成菜单项
   const menuItems = orderedMenuItemsConfig.map(item => ({
@@ -131,18 +99,6 @@ export default function AdminLayout() {
           setProductTypes(flags.productTypes || {});
           setConfirmReceiptAlert(flags.confirmReceiptAlertMessage || '');
           setCaptchaChallenge(nextChallenge);
-          if (nextChallenge) {
-            setPassedCaptchaTypeState('');
-            if (nextChallenge.id !== submittedCaptchaRef.current.id && !nextChallenge.answeredAt) {
-              clearSubmittedCaptcha();
-            }
-          } else {
-            setCaptchaAnswer('');
-            if (submittedCaptchaRef.current.id) {
-              showPassedCaptchaNotice(submittedCaptchaRef.current.type);
-              clearSubmittedCaptcha();
-            }
-          }
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
           setGoogleSheetAlerts(Array.isArray(flags.googleSheetAlerts) ? flags.googleSheetAlerts : []);
           setAuctionHistoryAlerts(Array.isArray(flags.auctionHistoryAlerts) ? flags.auctionHistoryAlerts : []);
@@ -153,7 +109,6 @@ export default function AdminLayout() {
           setPaymentAlert('');
           setConfirmReceiptAlert('');
           setCaptchaChallenge(null);
-          setCaptchaAnswer('');
           setShipmentAlerts([]);
           setGoogleSheetAlerts([]);
           setAuctionHistoryAlerts([]);
@@ -166,9 +121,6 @@ export default function AdminLayout() {
     return () => {
       active = false;
       window.clearInterval(timer);
-      if (passedCaptchaTimerRef.current) {
-        window.clearTimeout(passedCaptchaTimerRef.current);
-      }
     };
   }, []);
 
@@ -234,76 +186,6 @@ export default function AdminLayout() {
       message.error(e.message || '删除Google表格写入提醒失败');
     }
   }
-
-  async function submitCaptchaAnswer() {
-    const answer = captchaAnswer.trim();
-    if (!captchaChallenge?.id || !answer) {
-      message.warning(captchaChallenge?.type === 'pin' ? '请输入 PIN 码' : '请输入验证码文字');
-      return;
-    }
-    try {
-      const result = await fetchAdminJson(primaryActionPath('/api/admin/manual-captcha/answer'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: captchaChallenge.id, answer })
-      });
-      setSubmittedCaptcha(captchaChallenge.id, captchaChallenge.type || 'captcha');
-      setCaptchaChallenge((current: any) => current?.id === captchaChallenge.id
-        ? { ...current, answeredAt: result.answeredAt || new Date().toISOString() }
-        : current);
-      setCaptchaAnswer('');
-      message.success('已提交，插件会继续当前任务');
-    } catch (e: any) {
-      message.error(e.message || '提交验证信息失败');
-    }
-  }
-
-  async function continueEmailVerification() {
-    if (!captchaChallenge?.id || emailContinuePendingRef.current) return;
-    emailContinuePendingRef.current = true;
-    setEmailContinuePending(true);
-    const id = captchaChallenge.id;
-    try {
-      const result = await fetchAdminJson(primaryActionPath('/api/admin/manual-captcha/continue'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
-      setSubmittedCaptcha(id, 'email');
-      setCaptchaChallenge((current: any) => current?.id === id
-        ? { ...current, answeredAt: result.answeredAt, phase: 'requested' }
-        : current);
-    } catch (e: any) {
-      message.error(e.message || '继续邮箱验证失败');
-    } finally {
-      emailContinuePendingRef.current = false;
-      setEmailContinuePending(false);
-    }
-  }
-
-  async function closeCaptchaChallenge() {
-    if (!captchaChallenge?.id) return;
-    try {
-      await fetchAdminJson(primaryActionPath('/api/admin/manual-captcha/close'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: captchaChallenge.id })
-      });
-      setCaptchaChallenge(null);
-      setCaptchaAnswer('');
-      clearSubmittedCaptcha();
-      setPassedCaptchaTypeState('');
-    } catch (e: any) {
-      message.error(e.message || '关闭验证码失败');
-    }
-  }
-
-  const isPinChallenge = captchaChallenge?.type === 'pin';
-  const manualVerificationView = getManualVerificationDisplayState(captchaChallenge, {
-    submittedChallengeId: submittedCaptchaId,
-    submittedChallengeType: submittedCaptchaType,
-    passedChallengeType: passedCaptchaType
-  });
 
   return (
     <Layout className="admin-shell" style={{ minHeight: '100vh' }}>
@@ -431,59 +313,11 @@ export default function AdminLayout() {
                 style={{ marginBottom: 12 }}
               />
             ) : null}
-            {manualVerificationView.visible ? (
-              <Alert
-                type={manualVerificationView.status === 'passed' ? 'success' : manualVerificationView.status === 'error' ? 'error' : 'warning'}
-                showIcon
-                message={
-                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                    <Space wrap>
-                      <Typography.Text strong>{manualVerificationView.title}</Typography.Text>
-                      {manualVerificationView.showContinue ? (
-                        <Button type="primary" size="small" loading={emailContinuePending} onClick={continueEmailVerification}>继续</Button>
-                      ) : null}
-                    </Space>
-                    {captchaChallenge ? (
-                      <Space wrap align="start">
-                        {!isPinChallenge && manualVerificationView.showInput ? (
-                          <img
-                            src={captchaChallenge.imageDataUrl}
-                            alt="Yahoo 验证码"
-                            style={{ maxWidth: 360, width: '100%', border: '1px solid #d9d9d9', background: '#fff' }}
-                          />
-                        ) : null}
-                        <Space direction="vertical">
-                          <Typography.Text type="secondary">
-                            {captchaChallenge.productId ? `商品ID：${captchaChallenge.productId}` : 'Yahoo 验证页面'}
-                          </Typography.Text>
-                          {manualVerificationView.showInput && captchaChallenge.message ? (
-                            <Typography.Text type="danger">
-                              {captchaChallenge.message}
-                            </Typography.Text>
-                          ) : null}
-                          {manualVerificationView.showInput ? (
-                            <>
-                              <Input
-                                value={captchaAnswer}
-                                onChange={event => setCaptchaAnswer(event.target.value)}
-                                onPressEnter={submitCaptchaAnswer}
-                                placeholder={isPinChallenge ? '输入 PIN 码' : '输入图中日文'}
-                                style={{ width: 220 }}
-                              />
-                              <Space>
-                                <Button type="primary" onClick={submitCaptchaAnswer}>{isPinChallenge ? '提交 PIN' : '提交验证码'}</Button>
-                                <Button onClick={closeCaptchaChallenge}>关闭</Button>
-                              </Space>
-                            </>
-                          ) : null}
-                        </Space>
-                      </Space>
-                    ) : null}
-                  </Space>
-                }
-                style={{ marginBottom: 12 }}
-              />
-            ) : null}
+            <ManualVerificationAlert
+              key={yahooAccounts.find(a => a.is_primary)?.account_id || 'primary'}
+              accountId={yahooAccounts.find(a => a.is_primary)?.account_id}
+              challenge={captchaChallenge}
+            />
             {shipmentAlerts.map(alert => (
               <Alert
                 key={alert.id}
