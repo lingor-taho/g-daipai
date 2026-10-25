@@ -1240,9 +1240,8 @@ async function testTimedBidStillRaisesLimitWhenHighestAutoBidLimitIsBelowTaskMax
   assert.notEqual(result.stage, 'timed-max-already-set');
 }
 
-async function testDirectBidNoLongerSkipsWhenWithinAutoBidLimit() {
-  // 移除"已是最高 + 新出价≤自动上限就跳过"的拦截逻辑后，direct 任务会正常去找出价按钮，
-  // 即使新出价低于当前 Yahoo 自动上限。这样用户才能用更低金额覆盖（降低）旧上限。
+async function testDirectBidSucceedsWhenHighestAutoBidLimitCoversTaskMax() {
+  // 已有上限覆盖本次目标时，按最新规则沿原成功回写，不再重新提交。
   const statusRegion = createCurrentBidderStatusRegion(1000);
   const result = await loadAndExecuteBidForTest(
     '\u73fe\u5728 510\u5186 \u3042\u306a\u305f\u304c\u6700\u9ad8\u984d\u5165\u672d\u8005\u3067\u3059! \u81ea\u52d5\u5165\u672d\u4e0a\u9650 1,000\u5186',
@@ -1256,10 +1255,57 @@ async function testDirectBidNoLongerSkipsWhenWithinAutoBidLimit() {
     }
   );
 
-  // 不再返回 noStatus 跳过；测试页面没有出价按钮，所以会返回 bid button not found
-  assert.equal(result.success, false);
+  assert.equal(result.success, true);
+  assert.equal(result.noBid, true);
+  assert.equal(result.stage, 'direct-max-already-set');
+  assert.equal(result.autoBidLimit, 1000);
   assert.notEqual(result.noStatus, true);
-  assert.match(String(result.error || ''), /bid button not found/);
+}
+
+async function testDirectNormalBidAlreadyHighestBeforeReadingNextBidTotal() {
+  const statusRegion = createCurrentBidderStatusRegion(300);
+  const bidEntryButton = createTestElement('入札する');
+  const form = createTestElement('税込合計金額 310円 確認する');
+  const api = loadContentForTest('あなたが最高額入札者です！ 自動入札上限 300円 現在 300円（税0円）', '/jp/auction/v1245429643', {
+    querySelectorAll(selector) {
+      if (selector.includes('[role="status"]')) return [statusRegion];
+      if (selector.includes('form[action*="bid"')) return [form];
+      if (selector.includes('button')) return [bidEntryButton];
+      return [];
+    }
+  });
+  const result = await api.executeBidV3(300, { currentPrice: 300, userMaxPrice: 300, strategy: 'direct', bidMode: 'bid', productType: 'normal', taxType: 'tax_zero' });
+  assert.equal(result.success, true);
+  assert.equal(result.noBid, true);
+  assert.equal(result.closeTab, true);
+  assert.equal(result.bidPrice, 300);
+  assert.equal(result.stage, 'direct-max-already-set');
+  assert.notEqual(result.noStatus, true, 'use the normal success writeback');
+  assert.equal(bidEntryButton.clicked, false);
+}
+
+async function testDirectBidOutsideAlreadyHighestRuleKeepsOriginalValidation() {
+  for (const scenario of [
+    { limit: 290, highest: true, productType: 'normal', bidMode: 'bid' },
+    { limit: 300, highest: false, productType: 'normal', bidMode: 'bid' },
+    { limit: 0, highest: true, productType: 'normal', bidMode: 'bid' },
+    { limit: 300, highest: true, productType: 'store', bidMode: 'bid' },
+    { limit: 300, highest: true, productType: 'normal', bidMode: 'buyout' }
+  ]) {
+    const statusRegion = createCurrentBidderStatusRegion(scenario.limit);
+    const form = createTestElement('税込合計金額 310円 確認する');
+    const api = loadContentForTest('現在 300円（税0円）', '/jp/auction/v1245429643', {
+      querySelectorAll(selector) {
+        if (selector.includes('[role="status"]')) return scenario.highest ? [statusRegion] : [];
+        if (selector.includes('form[action*="bid"')) return [form];
+        return [];
+      }
+    });
+    const result = await api.executeBidV3(300, { currentPrice: 300, userMaxPrice: 300, strategy: 'direct', taxType: 'tax_zero', productType: scenario.productType, bidMode: scenario.bidMode });
+    assert.equal(result.success, false, JSON.stringify(scenario));
+    assert.notEqual(result.stage, 'direct-max-already-set');
+    assert.match(result.error, scenario.bidMode === 'buyout' ? /buyout button not found/ : /tax included total 310/);
+  }
 }
 
 async function testDirectBidWaitsForConfirmButtonEnabledAfterInput() {
@@ -5297,7 +5343,9 @@ async function run() {
   await testMultiBidStopsWhenHighestAutoBidLimitReachedMax();
   await testTimedBidStrategiesStopWhenHighestAutoBidLimitReachedMax();
   await testTimedBidStillRaisesLimitWhenHighestAutoBidLimitIsBelowTaskMax();
-  await testDirectBidNoLongerSkipsWhenWithinAutoBidLimit();
+  await testDirectBidSucceedsWhenHighestAutoBidLimitCoversTaskMax();
+  await testDirectNormalBidAlreadyHighestBeforeReadingNextBidTotal();
+  await testDirectBidOutsideAlreadyHighestRuleKeepsOriginalValidation();
   await testDirectBidWaitsForConfirmButtonEnabledAfterInput();
   await testDirectBidDoesNotClickAuctionLinkWhenLookingForConfirm();
   await testDirectBidClicksConfirmInsideBidModalOnly();

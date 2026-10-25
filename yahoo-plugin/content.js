@@ -1311,7 +1311,8 @@ async function executeBidV3(maxPrice, options = {}) {
     return executeMultiBidLoop();
   }
 
-  if (/^\d+min$/.test(strategy)) {
+  const isDirectNormalBid = strategy === 'direct' && bidMode === 'bid' && productType === 'normal';
+  if (isDirectNormalBid || /^\d+min$/.test(strategy)) {
     const autoBidLimit = extractAutoBidLimit();
     if (hasCurrentHighestBidderNotice() && autoBidLimit >= numericMaxPrice) {
       return {
@@ -1320,7 +1321,7 @@ async function executeBidV3(maxPrice, options = {}) {
         closeTab: true,
         autoBidLimit,
         bidPrice: autoBidLimit,
-        stage: 'timed-max-already-set'
+        stage: isDirectNormalBid ? 'direct-max-already-set' : 'timed-max-already-set'
       };
     }
   }

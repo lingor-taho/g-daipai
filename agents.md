@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-25 普通商品即时拍补齐已有最高出价成功识别：仅normal＋direct＋bid，复用原可见最高入札者状态及自动入札上限，已有上限达到或超过任务max_price时沿原success／noBid回写，不使用noStatus，不再次出价。定时／多次／商城／即决、其他出价及税额校验保持。仅更新插件content.js并reload，无API／两端dist／schema变化，未部署或修正生产任务v1245429643，详见0ao。
+
 2026-10-25 邮箱前置验证已本地改为连续交接原文字验证码／PIN：邮箱及PIN复用单个登录标签，锁定后也清理重复登录页，本次子标签接管后关闭原验证页。首次沿原刷新一次，返回邮箱第二次直接收取新邮件并单次提交，不刷新Yahoo、不复用已用邮件；第三次进入邮箱停止并提示“邮箱跳第三次验证，请人工处理！”。次数及已读邮件标识保存Chrome session，工作进程重启不重置上限，完整验证完成或验证页消失后清理；不保存验证码。主／备用后台第三次报错均隐藏继续，API拒绝继续。仅邮箱成功不能结束整个流程，仍交原PIN；PIN刷新跳回邮箱先交接、不填PIN。需更新插件background.js并reload、API services/manualCaptcha.js并重启及后台dist；无用户端／schema变更，未部署或操作真实登录。详见0an。
 
 2026-10-22 顶部未发货超期提醒改由后台原idle-flags轮询按各账号系统订单生成，不再依赖插件识别Yahoo未发货页面。仅读pending_shipment，起算时间沿原最近进入待发货的审计时间、缺失回退订单updated_at／created_at；超过7个完整日才提醒。复用原shipment-{订单ID}-{完整天数}去重、关闭后同一天不重弹、下一天继续提醒及扫描确认发货／取消后的自动关闭，原提醒文案保持。物流扫描、订单状态、金额及账号归属不变。仅更新API routes/admin.js、routes/plugin.js并重启，无插件／两端dist／schema变化；未部署或修改生产订单，验证与注意见0am。
@@ -255,6 +257,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ao. 普通即时拍已最高且上限达标时返回成功
+
+生产v1245429643任务13746失败日志已含最高入札者／300円，后续同步也为highest／300，但即时拍在商品详情页继续读取310円出价合计而误报超价；该310具体来源无完整面板记录，不作为已确认税额。用户批准仅补已有最高上限达标判断，不调整其他出价／税额规则。
+
+本地仅将原定时已达上限成功分支复用于normal＋direct＋bid；返回success、noBid、closeTab和原已有上限，沿现有后台成功回写。最高提示缺失、上限缺失／不足继续原流程；商城／即决／定时／多次规则保持。按本次用户要求，旧“即时拍可降低已有上限”测试改为已有上限覆盖任务目标即成功，不再重新提交。
+
+验证：`node yahoo-plugin/content.test.js`覆盖300上限／300任务／310再次出价合计、已有上限高于任务、上限不足、缺最高提示、缺有效上限、商城及即决边界，保留原税额／定时／多次和出价回归；另运行background、语法、编码及diff检查。仅本地模拟，未真实出价、未部署或修改失败任务。发布仅更新`yahoo-plugin/content.js`后在各账号reload，无API／数据库／两端静态更新。
 
 ### 0an. 邮箱验证回跳与单标签保护
 
@@ -1237,6 +1247,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-25 普通即时拍已有最高上限达标返回成功
+
+复用原定时成功分支，仅普通即时竞价在官方最高提示及已有上限达到任务目标时直接成功，不再次操作；其余出价及税额校验保持。仅插件content.js更新并reload，验证与范围见0ao。
 
 ### 2026-10-25 邮箱回跳限制与原PIN连续验证
 
@@ -2745,6 +2759,17 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+普通即时拍已有最高上限识别（0ao）：
+
+```bash
+node yahoo-plugin/content.test.js
+node yahoo-plugin/background.test.js
+node --check yahoo-plugin/content.js
+node yahoo-plugin/encoding.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 邮箱回跳与连续PIN验证（0an）：
 
