@@ -107,6 +107,7 @@ function loadBackgroundForTest(overrides = {}) {
     }
   };
   if (overrides.localStorage) sandbox.chrome.storage.local = overrides.localStorage;
+  if (overrides.sessionStorage) sandbox.chrome.storage.session = overrides.sessionStorage;
   if (overrides.webNavigation) sandbox.chrome.webNavigation = overrides.webNavigation;
   if (overrides.clearTimeout) sandbox.clearTimeout = overrides.clearTimeout;
   if ('document' in overrides) sandbox.document = overrides.document;

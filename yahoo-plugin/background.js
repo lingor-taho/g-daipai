@@ -5441,6 +5441,7 @@ const EMAIL_RECEIVE_TIMEOUT_MS = 60000;
 const EMAIL_TRANSITION_TIMEOUT_MS = 30000;
 const EMAIL_RECEIVE_ERROR = '60秒未收到验证码，请重试';
 const EMAIL_FILL_ERROR = 'gmail验证码填入错误，请重试';
+const EMAIL_LOOP_ERROR = '邮箱跳第三次验证，请人工处理！';
 const manualEmailFlows = new Map();
 
 async function detectManualEmailPage(tab) {
@@ -5450,12 +5451,12 @@ async function detectManualEmailPage(tab) {
     func: () => {
       const text = String(document.body?.innerText || '').replace(/\s+/g, ' ');
       const inputs = [...document.querySelectorAll('input')].filter(el => !el.disabled && el.offsetWidth > 0);
-      const codeInput = inputs.some(el => /確認コード/.test([el.placeholder, el.name, el.getAttribute('aria-label')].join(' ')));
+      const codeInput = inputs.find(el => /確認コード/.test([el.placeholder, el.name, el.getAttribute('aria-label')].join(' ')));
       const email = text.match(/[a-zA-Z0-9.*_+-]+@[a-zA-Z0-9.*-]+/);
       if (!codeInput || !/届いた確認コード|メール.{0,60}確認コード/.test(text) || !email) return null;
       const error = [...document.querySelectorAll('[role="alert"], [class*="error"], [class*="Error"], [id*="error"]')]
         .some(el => /正しく|違|誤|無効|期限切れ|失敗/.test(el.innerText || ''));
-      return { email: true, maskedAddress: email[0], error };
+      return { email: true, maskedAddress: email[0], error, submitted: codeInput.__gdaipaiEmailSubmitted === true };
     }
   }).catch(() => []);
   return result?.[0]?.result?.email === true ? result[0].result : null;
@@ -5476,7 +5477,7 @@ async function ensureManualEmailChallenge(tab, context = {}, message = '需要�
     message, pageUrl: tab.url || '', expectedId,
     productId: context.productId || current?.productId || '', source: context.source || ''
   });
-  return { id, type: 'email', tabId: tab.id, phase: message === '需要邮箱验证码。' ? 'waiting' : 'error' };
+  return { id, type: 'email', tabId: tab.id, message, phase: message === '需要邮箱验证码。' ? 'waiting' : 'error' };
 }
 
 function assertEmailAttemptActive(attempt) {
@@ -5619,6 +5620,7 @@ async function fillManualEmailCodeOnce(tabId, code, deadline) {
       input.dispatchEvent(new Event('change', { bubbles: true }));
       if (Date.now() >= expiresAt || button.disabled) return { success: false };
       const submittedAt = Date.now();
+      input.__gdaipaiEmailSubmitted = true;
       button.click(); // Exactly one submit. No PIN/debugger fallback or retry on this page.
       return { success: true, submittedAt };
     }, args: [code, deadline]
@@ -5626,7 +5628,7 @@ async function fillManualEmailCodeOnce(tabId, code, deadline) {
   return result?.[0]?.result;
 }
 
-async function executeManualEmailAttempt(tab, emailPage) {
+async function executeManualEmailAttempt(tab, emailPage, session = {}) {
   const attempt = { active: true, submitted: false, deadline: Date.now() + 15000 };
   let gmailTab = null;
   let yahooRefreshed = false;
@@ -5643,42 +5645,48 @@ async function executeManualEmailAttempt(tab, emailPage) {
       return created;
     });
     let baseline;
-    while (Date.now() < attempt.deadline) {
-      baseline = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, { baseline: true, deadline: attempt.deadline }));
-      if (baseline.ready) break;
-      await sleep(500);
-    }
-    if (!baseline?.ready) throw new Error(EMAIL_FILL_ERROR);
-    const previous = Object.fromEntries(baseline.rows.map(row => [row.threadId, row.messageId]));
-    const previousIds = new Set(baseline.rows.map(row => normalizeGmailMessageId(row.messageId)).filter(Boolean));
-    // If a list row omits its message id, read its old messages before refreshing Yahoo.
-    // This still rejects an old code received in the same minute as the new attempt.
-    const baselineMinute = Math.floor(Date.now() / 60000) * 60000;
-    for (const row of baseline.rows.filter(row => !row.messageId &&
-      !(parseGmailMessageTime(row.date) < baselineMinute))) {
-      let messageSnapshot;
+    if (!session.previous) {
       while (Date.now() < attempt.deadline) {
-        messageSnapshot = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, {
-          openThreadId: row.threadId, deadline: attempt.deadline
-        }));
-        if (messageSnapshot.messages?.length) break;
-        await sleep(250);
+        baseline = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, { baseline: true, deadline: attempt.deadline }));
+        if (baseline.ready) break;
+        await sleep(500);
       }
-      const ids = messageSnapshot?.observedMessageIds || messageSnapshot?.messages?.map(mail => mail.messageId);
-      if (!messageSnapshot?.messages?.[0]?.messageId || !ids?.length || ids.some(id => !id)) throw new Error(EMAIL_FILL_ERROR);
-      for (const id of ids) previousIds.add(normalizeGmailMessageId(id));
-      await emailAttemptStep(attempt, () => chrome.tabs.update(gmailTab.id, { url: gmailUrl }));
-      let searchReady = false;
-      while (Date.now() < attempt.deadline) {
-        const search = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, { baseline: true, deadline: attempt.deadline }));
-        if (search.ready) { searchReady = true; break; }
-        await sleep(250);
+      if (!baseline?.ready) throw new Error('Gmail 邮箱页面未就绪，请检查邮箱登录');
+      const previous = Object.fromEntries(baseline.rows.map(row => [row.threadId, row.messageId]));
+      const previousIds = new Set(baseline.rows.map(row => normalizeGmailMessageId(row.messageId)).filter(Boolean));
+      // If a list row omits its message id, read its old messages before refreshing Yahoo.
+      // This still rejects an old code received in the same minute as the new attempt.
+      const baselineMinute = Math.floor(Date.now() / 60000) * 60000;
+      for (const row of baseline.rows.filter(row => !row.messageId &&
+        !(parseGmailMessageTime(row.date) < baselineMinute))) {
+        let messageSnapshot;
+        while (Date.now() < attempt.deadline) {
+          messageSnapshot = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, {
+            openThreadId: row.threadId, deadline: attempt.deadline
+          }));
+          if (messageSnapshot.messages?.length) break;
+          await sleep(250);
+        }
+        const ids = messageSnapshot?.observedMessageIds || messageSnapshot?.messages?.map(mail => mail.messageId);
+        if (!messageSnapshot?.messages?.[0]?.messageId || !ids?.length || ids.some(id => !id)) throw new Error(EMAIL_FILL_ERROR);
+        for (const id of ids) previousIds.add(normalizeGmailMessageId(id));
+        await emailAttemptStep(attempt, () => chrome.tabs.update(gmailTab.id, { url: gmailUrl }));
+        let searchReady = false;
+        while (Date.now() < attempt.deadline) {
+          const search = await emailAttemptStep(attempt, () => getGmailVerificationSnapshot(gmailTab.id, { baseline: true, deadline: attempt.deadline }));
+          if (search.ready) { searchReady = true; break; }
+          await sleep(250);
+        }
+        if (!searchReady) throw new Error(EMAIL_FILL_ERROR);
       }
-      if (!searchReady) throw new Error(EMAIL_FILL_ERROR);
+      session.previous = previous;
+      session.previousIds = [...previousIds];
     }
-    const refreshedAt = Date.now();
-    attempt.deadline = refreshedAt + EMAIL_RECEIVE_TIMEOUT_MS;
-    await emailAttemptStep(attempt, () => chrome.tabs.reload(tab.id)); // The only Yahoo refresh in this attempt.
+    const previous = session.previous;
+    const previousIds = new Set(session.previousIds || []);
+    const refreshedAt = session.submittedAt || Date.now();
+    attempt.deadline = Date.now() + EMAIL_RECEIVE_TIMEOUT_MS;
+    if (!session.submittedAt) await emailAttemptStep(attempt, () => chrome.tabs.reload(tab.id));
     yahooRefreshed = true;
     await sleep(2000);
     await emailAttemptStep(attempt, () => chrome.tabs.update(gmailTab.id, { active: true }));
@@ -5700,7 +5708,11 @@ async function executeManualEmailAttempt(tab, emailPage) {
         if (!Number.isFinite(parseGmailMessageTime(mail.date))) gmailProgress.invalidTime += 1;
       }
       code = selectFreshGmailCode(snapshot.messages, previousIds, refreshedAt, emailPage.maskedAddress);
-      if (code) break;
+      if (code) {
+        session.previousIds = [...new Set([...previousIds, ...(snapshot.observedMessageIds || []).map(normalizeGmailMessageId),
+          ...(snapshot.messages || []).map(mail => normalizeGmailMessageId(mail.messageId)).filter(Boolean)])];
+        break;
+      }
       if (snapshot.messages?.length) {
         if (openedThread) checkedThreads.add(openedThread);
         openedThread = '';
@@ -5723,10 +5735,19 @@ async function executeManualEmailAttempt(tab, emailPage) {
     await emailAttemptStep(attempt, () => chrome.tabs.update(tab.id, { active: true }));
     const current = await emailAttemptStep(attempt, () => chrome.tabs.get(tab.id));
     const page = await emailAttemptStep(attempt, () => detectManualEmailPage(current));
-    if (!page || page.maskedAddress !== emailPage.maskedAddress) throw new Error(EMAIL_FILL_ERROR);
+    if (!page || page.maskedAddress !== emailPage.maskedAddress) throw new Error('Yahoo 邮箱验证页面已变化，请人工检查');
     const previousTabIds = await emailAttemptStep(attempt, () => getTabIds());
+    // Persist the bounded attempt before clicking; a worker restart must not reset the limit.
+    session.tabId = tab.id;
+    session.submittedAt = Date.now();
+    session.submissions = (session.submissions || 0) + 1;
+    session.submitFailed = true;
+    await chrome.storage.session.set({ manualEmailVerificationSession: session });
     const fill = await emailAttemptStep(attempt, () => fillManualEmailCodeOnce(tab.id, code, attempt.deadline));
-    if (!fill?.success) throw new Error(EMAIL_FILL_ERROR);
+    if (!fill?.success) throw new Error('邮箱验证码填写或提交失败，请重试');
+    session.submitFailed = false;
+    session.submittedAt = fill.submittedAt;
+    await chrome.storage.session.set({ manualEmailVerificationSession: session });
     attempt.deadline = fill.submittedAt + EMAIL_TRANSITION_TIMEOUT_MS;
     while (Date.now() < attempt.deadline) {
       let next = await emailAttemptStep(attempt, () => chrome.tabs.get(tab.id).catch(() => null));
@@ -5755,7 +5776,12 @@ async function executeManualEmailAttempt(tab, emailPage) {
         return { success: true, tab: next };
       }
       const emailState = await emailAttemptStep(attempt, () => detectManualEmailPage(next));
-      if (emailState?.error) throw new Error(EMAIL_FILL_ERROR);
+      if (emailState?.error) throw new Error('Yahoo 提示邮箱验证码错误或已过期，请人工检查');
+      // A fresh input means Yahoo has returned to email verification, even at the same URL.
+      if (emailState?.submitted === false && next?.status === 'complete') {
+        verificationTab = next;
+        return { success: false, repeatEmail: true, tab: next };
+      }
       // Yahoo may skip the text captcha and go straight to the existing PIN flow.
       if (!emailState && next?.status === 'complete' &&
           await emailAttemptStep(attempt, () => detectManualPinPage(next))) {
@@ -5764,27 +5790,52 @@ async function executeManualEmailAttempt(tab, emailPage) {
       }
       await sleep(Math.min(500, Math.max(1, attempt.deadline - Date.now())));
     }
-    throw new Error(EMAIL_FILL_ERROR);
+    throw new Error('邮箱验证码提交后30秒未进入后续验证，请人工处理');
   } catch (error) {
-    return { success: false, error: yahooRefreshed && error?.message === EMAIL_RECEIVE_ERROR ? EMAIL_RECEIVE_ERROR : EMAIL_FILL_ERROR, tab };
+    const reason = error?.message || EMAIL_FILL_ERROR;
+    return { success: false, error: !yahooRefreshed && reason === EMAIL_RECEIVE_ERROR ? EMAIL_FILL_ERROR : reason, tab };
   } finally {
     attempt.active = false;
     if (gmailTab?.id) await closeTabIfExists(gmailTab.id);
+    if (verificationTab.id !== tab.id) {
+      session.tabId = verificationTab.id;
+      await chrome.storage.session.set({ manualEmailVerificationSession: session });
+      rememberManualVerificationTab(verificationTab);
+      await closeTabIfExists(tab.id);
+    }
     await chrome.tabs.update(verificationTab.id, { active: true }).catch(() => {});
   }
 }
 
 async function handleManualEmailVerification(tab, context = {}) {
   if (manualEmailFlows.has(tab.id)) return manualEmailFlows.get(tab.id);
+  if (manualEmailFlows.size) return manualEmailFlows.values().next().value;
+  const flowTabId = tab.id;
   const operation = (async () => {
     let challenge = await ensureManualEmailChallenge(tab, context);
+    if (challenge.message === EMAIL_LOOP_ERROR) throw new Error(EMAIL_LOOP_ERROR);
+    const saved = chrome.storage.session.get ? await chrome.storage.session.get('manualEmailVerificationSession') : {};
+    const session = context.emailSession || {};
+    if (!session.submissions && saved.manualEmailVerificationSession?.tabId === tab.id) {
+      Object.assign(session, saved.manualEmailVerificationSession);
+    }
+    context.emailSession = session;
+    let autoContinue = Boolean(session.submissions) && challenge.phase !== 'error';
     while (true) {
-      await waitForManualCaptchaAnswer(challenge.id);
-      const res = await apiFetch('/api/plugin/manual-captcha/email/claim', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: challenge.id })
-      });
-      const claim = await res.json();
-      if (!claim.claimed) throw new Error('email verification attempt already claimed');
+      const emailState = session.submissions >= 2 ? await detectManualEmailPage(await chrome.tabs.get(tab.id)) : null;
+      if (emailState && (autoContinue || (!session.submitFailed && emailState.submitted === false))) {
+        await ensureManualEmailChallenge(await chrome.tabs.get(tab.id), context, EMAIL_LOOP_ERROR, challenge.id);
+        throw new Error(EMAIL_LOOP_ERROR);
+      }
+      if (!autoContinue) {
+        await waitForManualCaptchaAnswer(challenge.id);
+        const res = await apiFetch('/api/plugin/manual-captcha/email/claim', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: challenge.id })
+        });
+        const claim = await res.json();
+        if (!claim.claimed) throw new Error('email verification attempt already claimed');
+      }
+      autoContinue = false;
       const current = await chrome.tabs.get(tab.id);
       // If the expected captcha arrived just after the timeout, the next human click resumes it.
       if (isManualCaptchaTab(current)) {
@@ -5797,17 +5848,26 @@ async function handleManualEmailVerification(tab, context = {}) {
         await closeManualCaptchaChallenge(challenge.id);
         return current;
       }
-      const result = page ? await executeManualEmailAttempt(current, page) : { success: false, error: EMAIL_FILL_ERROR };
+      if (page && session.submissions >= 2) {
+        await ensureManualEmailChallenge(current, context, EMAIL_LOOP_ERROR, challenge.id);
+        throw new Error(EMAIL_LOOP_ERROR);
+      }
+      const result = page ? await executeManualEmailAttempt(current, page, session) : { success: false, error: EMAIL_FILL_ERROR };
       if (result.success) {
         await closeManualCaptchaChallenge(challenge.id);
         return result.tab;
+      }
+      if (result.repeatEmail) {
+        tab = result.tab;
+        autoContinue = true;
+        continue;
       }
       challenge = await ensureManualEmailChallenge(current, context, result.error, challenge.id);
       // Failure only publishes a fresh button. The next attempt requires a new human click.
     }
   })();
   manualEmailFlows.set(tab.id, operation);
-  try { return await operation; } finally { manualEmailFlows.delete(tab.id); }
+  try { return await operation; } finally { manualEmailFlows.delete(flowTabId); }
 }
 
 function isManualCaptchaTab(tab) {
@@ -5853,7 +5913,13 @@ async function getOpenManualVerificationTabs() {
 async function getManualVerificationLockedTab() {
   if (!manualVerificationTabId) return null;
   const tab = await chrome.tabs.get(manualVerificationTabId).catch(() => null);
-  if (tab && isManualVerificationTab(tab)) return tab;
+  if (tab && isManualVerificationTab(tab)) {
+    const duplicates = manualEmailFlows.size ? [] : await getOpenManualPinTabs();
+    for (const duplicate of duplicates) {
+      if (duplicate.id !== tab.id) await closeTabIfExists(duplicate.id);
+    }
+    return tab;
+  }
   manualVerificationTabId = null;
   return null;
 }
@@ -5874,10 +5940,10 @@ function ignoreDuplicateManualVerificationTabs(tabs = [], keepTab = null) {
   }
 }
 
-async function keepSingleManualPinTab(tabs) {
+async function keepSingleManualPinTab(tabs, preferredTab = null) {
   const pinTabs = Array.isArray(tabs) ? tabs.filter(isLikelyManualPinTab) : [];
   if (!pinTabs.length) return null;
-  const keep = pinTabs.find(tab => tab.active) || pinTabs[0];
+  const keep = pinTabs.find(tab => tab.id === preferredTab?.id) || pinTabs.find(tab => tab.active) || pinTabs[0];
   for (const tab of pinTabs) {
     if (tab.id && tab.id !== keep.id) {
       await closeTabIfExists(tab.id);
@@ -5913,6 +5979,7 @@ async function ensureManualPinChallenge(tab, context = {}) {
 
 async function closeStaleManualChallengeIfVerificationGone(verificationTabs = []) {
   if (Array.isArray(verificationTabs) && verificationTabs.length) return false;
+  await chrome.storage.session.remove('manualEmailVerificationSession');
   const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
   if (!current?.found || !current.id) return false;
   const shouldClose = current.type === 'pin' || current.type === 'email' || current.answered;
@@ -6521,15 +6588,21 @@ async function isStillManualVerificationPage(tab) {
 }
 
 async function handleManualVerificationIfPresent(tab, context = {}) {
+  context = { ...context, emailSession: context.emailSession || {} };
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
+  if (isLikelyManualPinTab(current)) await keepSingleManualPinTab(await getOpenManualPinTabs(), current);
   rememberManualVerificationTab(current);
   let handled = false;
   let pinAnswer = String(context.pinAnswer || '').trim();
   let pinAnswerFromContext = Boolean(pinAnswer);
   let canReusePinAfterCaptcha = false;
   let pinAttempted = Boolean(pinAnswer);
-  for (let step = 0; step < 6 && current?.id; step += 1) {
+  for (let step = 0; step < (context.emailSession.submissions ? 12 : 6) && current?.id; step += 1) {
     current = await chrome.tabs.get(current.id).catch(() => current);
+    if (context.emailSession.submissions && current.status === 'loading') {
+      await waitForTabComplete(current.id, 10000);
+      current = await chrome.tabs.get(current.id);
+    }
     if (await detectManualEmailPage(current)) {
       manualVerificationFlowActive = true;
       rememberManualVerificationTab(current);
@@ -6591,6 +6664,8 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     }
     current = await refreshManualPinPageBeforeAnswer(current);
     rememberManualVerificationTab(current);
+    // A PIN refresh can itself return to email. Never type the PIN into that page.
+    if (await detectManualEmailPage(current)) continue;
     const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
     const fillResult = await fillManualPinAnswer(current.id, pinAnswer);
     if (!fillResult?.success) throw new Error(fillResult?.error || 'manual pin fill failed');
@@ -6616,6 +6691,15 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     if (pinChallengeId && !await isStillManualVerificationPage(current)) await closeManualCaptchaChallenge(pinChallengeId);
     await sleep(500);
   }
+  if (context.emailSession.submissions && await isStillManualVerificationPage(current)) {
+    await ensureManualEmailChallenge(current, context, 'Yahoo 验证流程未完成，请人工处理');
+    throw new Error('Yahoo 验证流程未完成，请人工处理');
+  }
+  if (context.emailSession.submissions && !pinAttempted) {
+    await ensureManualEmailChallenge(current, context, '邮箱验证后未完成 PIN 码验证，请人工处理');
+    throw new Error('邮箱验证后未完成 PIN 码验证，请人工处理');
+  }
+  if (context.emailSession.submissions || pinAttempted) await chrome.storage.session.remove('manualEmailVerificationSession');
   const allOpenVerificationTabs = await chrome.tabs.query({}).then(tabs => tabs.filter(isManualVerificationTab)).catch(() => []);
   const openVerificationTabs = allOpenVerificationTabs.filter(tab => !ignoredManualVerificationTabIds.has(tab.id));
   if (!openVerificationTabs.length) {
@@ -6631,7 +6715,7 @@ async function resumeAnsweredManualPinChallenge(tab, context = {}) {
   const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   if (!current?.id || !isLikelyManualPinTab(current)) return { handled: false, tab: current || tab };
   if (await detectManualEmailPage(current)) {
-    if (manualEmailFlows.has(current.id)) return { handled: true, tab: current };
+    if (manualEmailFlows.size) return { handled: true, tab: current };
     const challenge = await ensureManualEmailChallenge(current, context);
     if (challenge.phase === 'requested') return handleManualVerificationIfPresent(current, context);
     return { handled: true, tab: current };

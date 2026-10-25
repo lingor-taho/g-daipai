@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-22
+**最后更新**: 2026-10-25
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-25 邮箱前置验证已本地改为连续交接原文字验证码／PIN：邮箱及PIN复用单个登录标签，锁定后也清理重复登录页，本次子标签接管后关闭原验证页。首次沿原刷新一次，返回邮箱第二次直接收取新邮件并单次提交，不刷新Yahoo、不复用已用邮件；第三次进入邮箱停止并提示“邮箱跳第三次验证，请人工处理！”。次数及已读邮件标识保存Chrome session，工作进程重启不重置上限，完整验证完成或验证页消失后清理；不保存验证码。主／备用后台第三次报错均隐藏继续，API拒绝继续。仅邮箱成功不能结束整个流程，仍交原PIN；PIN刷新跳回邮箱先交接、不填PIN。需更新插件background.js并reload、API services/manualCaptcha.js并重启及后台dist；无用户端／schema变更，未部署或操作真实登录。详见0an。
 
 2026-10-22 顶部未发货超期提醒改由后台原idle-flags轮询按各账号系统订单生成，不再依赖插件识别Yahoo未发货页面。仅读pending_shipment，起算时间沿原最近进入待发货的审计时间、缺失回退订单updated_at／created_at；超过7个完整日才提醒。复用原shipment-{订单ID}-{完整天数}去重、关闭后同一天不重弹、下一天继续提醒及扫描确认发货／取消后的自动关闭，原提醒文案保持。物流扫描、订单状态、金额及账号归属不变。仅更新API routes/admin.js、routes/plugin.js并重启，无插件／两端dist／schema变化；未部署或修改生产订单，验证与注意见0am。
 
@@ -253,6 +255,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0an. 邮箱验证回跳与单标签保护
+
+已按2026-10-25要求本地修改。邮箱仅是前置步骤，继续完成原文字验证码和PIN；第二次邮箱不刷新Yahoo，第三次在收信／提交前停止。异常提示区分收信超时、页面变化、提交失败、Yahoo拒绝及跳转超时。主／备用账号均显示指定错误，隐藏继续，API保留服务端拒绝保护；人工处理后沿原关闭提醒／页面恢复。
+
+验证：邮箱专项覆盖两次邮箱后交接PIN、第三次零提交／零额外刷新、worker重启上限、锁定后重复登录页清理、原邮件防旧码和超时路径；原插件、多账号、验证码服务与后台显示测试及后台构建通过，语法／编码／diff检查通过。只跑本地模拟，真实Yahoo／Gmail连续登录仍需部署后人工验收，不主动触发真实登录。
+
+部署：`yahoo-plugin/background.js`更新后在各账号reload；`src/server/services/manualCaptcha.js`更新后重启API；发布本轮`src/admin/dist`。不改订单／交易／付款／扫描／任务流转、账号归属或数据库结构。
 
 ### 0am. 未发货超期提醒脱离Yahoo扫描识别
 
@@ -1227,6 +1237,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-25 邮箱回跳限制与原PIN连续验证
+
+邮箱／PIN单登录标签；第二次邮箱不刷新，第三次停止并后台报错，主／备用隐藏继续且API拒绝继续。邮箱交接不作为整个流程完成，保留原PIN；部署与验证见0an。
 
 - 2026-10-21：P消息订单读取／发送复用原消息队列与两端展示，插件增加同商品trade/buyer定位、消息列表提取及等待按钮可用后单次发送核验；用户端无需改动，仅插件更新reload，真实有消息页待验收，见0al。
 
@@ -2731,6 +2745,22 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+邮箱回跳与连续PIN验证（0an）：
+
+```bash
+node yahoo-plugin/emailVerification.test.js
+node yahoo-plugin/background.test.js
+node yahoo-plugin/multiAccount.test.js
+node src/server/services/manualCaptcha.test.js
+node src/admin/src/manualVerificationState.test.js
+node src/admin/src/AdminLayout.display.test.js
+npm run build --prefix src/admin
+node --check yahoo-plugin/background.js
+node yahoo-plugin/encoding.test.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 P交易消息读取／发送：
 

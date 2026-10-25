@@ -138,6 +138,11 @@ async function requestEmailVerification(database, payload = {}) {
     throw error;
   }
   if (challenge.answeredAt) return challenge;
+  if (challenge.message === '邮箱跳第三次验证，请人工处理！') {
+    const error = new Error(challenge.message);
+    error.statusCode = 409;
+    throw error;
+  }
   const next = { ...challenge, answer: 'continue', answeredAt: new Date().toISOString(), phase: 'requested' };
   const result = await database.query(
     `UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ? AND value = ?`,

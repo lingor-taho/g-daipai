@@ -57,3 +57,7 @@ const pendingEmail = getManualVerificationDisplayState({ id: 'email-1', type: 'e
 assert.equal(pendingEmail.status, 'confirming');
 assert.equal(Boolean(pendingEmail.showContinue), false);
 assert.equal(getManualVerificationDisplayState(null, { passedChallengeType: 'email' }).visible, false);
+const terminalEmail = getManualVerificationDisplayState({ id: 'email-terminal', type: 'email', phase: 'error', message: '邮箱跳第三次验证，请人工处理！' });
+assert.equal(terminalEmail.title, '邮箱跳第三次验证，请人工处理！');
+assert.equal(terminalEmail.status, 'error');
+assert.equal(terminalEmail.showContinue, false);
