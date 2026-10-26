@@ -22,8 +22,11 @@ async function checkProducts(database, userId, productIds) {
     `SELECT DISTINCT t.product_id FROM tasks t JOIN users u ON u.id=t.user_id
      WHERE t.user_id<>? AND u.role='user'
        AND (u.id=? OR (u.parent_user_id=? AND COALESCE(u.user_level,1)=1))
-       AND t.product_id IN (${productIds.map(() => '?').join(',')})`,
-    [userId, result.agentId, result.agentId, ...productIds]
+       AND t.product_id IN (${productIds.map(() => '?').join(',')})
+       AND NOT EXISTS (
+         SELECT 1 FROM tasks own WHERE own.user_id=? AND own.product_id=t.product_id
+       )`,
+    [userId, result.agentId, result.agentId, ...productIds, userId]
   );
   return { ...result, conflicts: rows.map(row => row.product_id) };
 }
