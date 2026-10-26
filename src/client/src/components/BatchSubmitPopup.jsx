@@ -5,6 +5,7 @@ import fleamarket from '../../../shared/fleamarket.cjs';
 import { createClientRequestId, enqueueBatchTasks, getApiErrorMessage } from '../utils/api';
 import { createBatchRequestStore, getBatchClientContext, getBatchScope, isBatchContextCurrent } from '../utils/batchSubmit';
 import { colors, outlineButtonStyle, primaryButtonStyle } from '../styles';
+import { allowAgentSubmission } from '../utils/agentProductPolicy';
 
 const { MAX_BATCH_BID_ITEMS, parseBatchBidText } = batchBid;
 const { FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = fleamarket;
@@ -55,6 +56,7 @@ export default function BatchSubmitPopup({ visible, onClose, onSubmitted, bidBlo
     busy.current = true;
     setRunning(true);
     try {
+      if (!await allowAgentSubmission(parsedRows.filter(row => !row.error).map(row => row.productId), context) || shouldStop()) return;
       const response = await enqueueBatchTasks({ text: submittedText, client_request_id: requestId }, context);
       if (!response.data?.success) throw new Error('批量入队结果未确认');
       store.settle(submittedText);

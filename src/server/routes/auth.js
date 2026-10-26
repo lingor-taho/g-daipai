@@ -5,7 +5,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const config = require('../../config');
 const authMiddleware = require('../middleware/auth');
-const { getAllowedActingUsers } = require('../services/actingUser');
+const { getAllowedActingUsers, getClientUser, resolveActingUserId } = require('../services/actingUser');
+const { policyKey, validPolicy, getPolicy, checkProducts } = require('../services/agentProductPolicy');
 const {
   createTokenId,
   getExpiryIso,
@@ -109,6 +110,36 @@ router.get('/acting-users', authMiddleware, async (req, res) => {
     data: users,
     defaultUserId: users[0]?.id || null
   });
+});
+
+router.get('/agent-product-policy', authMiddleware, async (req, res) => {
+  try {
+    const user = await getClientUser(req.user.id);
+    const result = await getPolicy(db, req.user.id);
+    res.set('Cache-Control', 'no-store').json({ success: true, ...result, canConfigure: Number(user?.user_level) === 2 });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/agent-product-policy', authMiddleware, async (req, res) => {
+  try {
+    const user = await getClientUser(req.user.id);
+    if (Number(user?.user_level) !== 2) return res.status(403).json({ error: '仅代理用户可以设置代理组策略' });
+    if (!validPolicy(req.body.policy)) return res.status(400).json({ error: '无效的代理组策略' });
+    await db.query('INSERT INTO config(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [policyKey(user.id), req.body.policy]);
+    res.json({ success: true, policy: req.body.policy });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/agent-product-policy/check', authMiddleware, async (req, res) => {
+  try {
+    const ids = req.body.productIds;
+    if (!Array.isArray(ids) || ids.length > 50 || ids.some(id => typeof id !== 'string' || !/^[a-z]?\d{8,10}$/i.test(id))) {
+      return res.status(400).json({ error: '商品 ID 格式错误' });
+    }
+    const { actingUserId } = await resolveActingUserId(req.user.id, req.headers['x-acting-user-id']);
+    const result = await checkProducts(db, actingUserId, [...new Set(ids.map(id => id.toLowerCase()))]);
+    res.set('Cache-Control', 'no-store').json({ success: true, ...result });
+  } catch (err) { res.status(err.statusCode || 500).json({ error: err.message }); }
 });
 
 module.exports = router;

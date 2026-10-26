@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, List, Popup, SearchBar, Toast } from 'antd-mobile';
-import { getActingUsers, getClientSiteConfig } from '../utils/api';
+import { getActingUsers, getClientSiteConfig, getAgentProductPolicy, saveAgentProductPolicy } from '../utils/api';
+import { agentPolicyOptions } from '../utils/agentProductPolicy';
 import { runDeduped } from '../utils/requestDedupe';
 import { applyClientTheme, colors, getClientTheme, themeOptions } from '../styles';
 
@@ -36,6 +37,22 @@ export default function UserNav() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [siteConfig, setSiteConfig] = useState({ noticeText: '', noticeMarquee: false });
   const [themeName, setThemeName] = useState(getClientTheme());
+  const [policySettings, setPolicySettings] = useState(null);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyAnchor, setPolicyAnchor] = useState({ left: 20, top: 0 });
+
+  async function changePolicy(policy) {
+    if (policySaving || policy === policySettings?.policy) return;
+    setPolicySaving(true);
+    try {
+      await saveAgentProductPolicy(policy);
+      setPolicySettings(current => ({ ...current, policy }));
+      Toast.show({ content: '代理组策略已保存' });
+    } catch (error) {
+      Toast.show({ content: error.response?.data?.error || '策略保存失败，请重试' });
+    } finally { setPolicySaving(false); }
+  }
 
   async function loadActingUsers() {
     try {
@@ -56,6 +73,7 @@ export default function UserNav() {
 
   useEffect(() => {
     loadActingUsers();
+    getAgentProductPolicy().then(res => setPolicySettings(res.data)).catch(() => {});
     getClientSiteConfig()
       .then(res => {
         setSiteConfig({
@@ -171,6 +189,30 @@ export default function UserNav() {
             <span title={localStorage.getItem('username') || '-'} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 700, color: colors.text }}>{localStorage.getItem('username') || '-'}</span>
           </div>
           <Button size="mini" fill="outline" color="primary" style={{ flexShrink: 0, whiteSpace: 'nowrap' }} onClick={logout}>退出</Button>
+          {policySettings?.canConfigure && (
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <button type="button" aria-label="代理组设置" aria-expanded={policyOpen} onClick={async event => {
+                if (policyOpen) { setPolicyOpen(false); return; }
+                const rect = event.currentTarget.getBoundingClientRect();
+                setPolicyAnchor({ left: Math.max(20, Math.min(rect.left, window.innerWidth - 250)), top: rect.bottom + 6 });
+                try {
+                  const res = await getAgentProductPolicy();
+                  setPolicySettings(res.data);
+                  setPolicyOpen(true);
+                } catch (_) { Toast.show({ content: '策略加载失败，请重试' }); }
+              }} style={{ position: 'relative', zIndex: policyOpen ? 101 : undefined, display: 'flex', alignItems: 'center', border: 0, background: 'transparent', color: colors.accent, padding: 3, cursor: 'pointer' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m9 3-.6 2.4-2 .9-2.2-.7-2 3.5 1.7 1.7v2.4l-1.7 1.7 2 3.5 2.3-.7 2 .9L9 21h4l.6-2.4 2-.9 2.2.7 2-3.5-1.7-1.7v-2.4l1.7-1.7-2-3.5-2.3.7-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></svg>
+              </button>
+              {policyOpen && <>
+                <div onClick={() => setPolicyOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+                <div role="radiogroup" aria-label="代理组同商品策略" style={{ position: 'fixed', ...policyAnchor, zIndex: 100, width: 230, boxSizing: 'border-box', maxWidth: 'calc(100vw - 40px)', padding: 10, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.card, boxShadow: `0 4px 16px ${colors.shadow}` }}>
+                  {agentPolicyOptions.map(option => <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0', fontSize: 13, color: colors.text }}>
+                    <input type="radio" name="agent-product-policy" value={option.value} checked={policySettings.policy === option.value} disabled={policySaving} onChange={() => changePolicy(option.value)} />{option.label}
+                  </label>)}
+                </div>
+              </>}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, color: colors.muted }}>

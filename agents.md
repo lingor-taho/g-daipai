@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-25
+**最后更新**: 2026-10-26
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-26 用户端代理组同商品策略已本地接入：仅登录代理级用户在退出后显示齿轮，下拉三选一，默认互斥；服务器复用config按代理ID保存。代理本人及直属普通下属提交时先一次查询策略和组内其他用户的商品任务，任意任务状态均占用，同用户不互斥、不同代理组隔离。用户端决定阻止／继续确认／直提，再沿原多账号分配；任务API、后台及插件不重复执行代理策略。批量同样提交前整批检查，互斥或取消时保留输入、不入队，提示列出冲突商品。需更新auth路由及新服务并重启API、更新用户端dist，无schema／后台／插件变更；未部署或操作真实任务，详见0aq。
 
 2026-10-25 主／备用账号后台验证界面统一复用ManualVerificationAlert：沿原普通Input、日文输入／回车提交、确认中及关闭反馈，账号参数保持隔离。插件新增PIN前无邮箱输入框的手机确认码发送页分支：只点“他の方法でログイン”，弹层只点“パスキー”，不点发送确认码／SMS；中途日文验证码与PIN沿原流程，锁定单个验证标签、不刷新前置页；接管本轮新子页后关闭原页及本轮重复页，验证码／PIN互跳只接管本轮所属新页。允许两轮，第三次进入停止并显示“登录方式跳第三次验证，请人工处理！”，session持久化次数及失败，不自动重放失败。需更新插件background.js并reload、API services/manualCaptcha.js并重启、后台dist；无用户端／schema变化，未部署或操作真实登录。详见0ap。
 
@@ -229,6 +231,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 当前状态：
 
+- 代理组同商品策略本地完成，服务器保存与只读查询，用户端提交前拦截，部署范围与验证见0aq。
 - `products` 已作为商品快照表引入。
 - 运行查询已大量改为 `products` 优先、旧 `tasks` 字段回退。
 - `orders.product_id` 已用于订单和商品关系。
@@ -259,6 +262,16 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0aq. 用户端代理组同商品提交策略
+
+仅实际登录的代理级用户可设置本组策略，默认exclusive（同商品互斥），另有confirm（提醒后允许继续）、allow（无提醒）。设置API以登录身份为准，不接受切换用户改变设置所属代理；普通／管理员等级不能修改。复用config的agent_product_policy:{代理ID}键，无schema迁移。下属各自登录同样实时读取所属代理策略；代理代下属及管理员切换已有权限用户时按实际提交用户所属组查询，组外普通用户不参与。
+
+单条／批量入口在发送原任务提交请求前调用/auth/agent-product-policy/check，只返回策略及冲突商品ID，不分配账号、不建任务。组内只查其他用户tasks，含代理本人及直属普通下属，所有状态均占用；同一用户按原规则，不按Yahoo账号隔离。互斥提示“代理组内该商品有人提交，请联系代理！”，提醒提示“代理组内该商品有人提交，是否继续？”并提供继续／取消；allow直接放行。批量一次查询最多50件，有冲突时整批停在输入窗口（附冲突ID），取消不入队，用户可调整后重交；继续则原批量入队。查询失败不提交、账号切换后不提交旧上下文。策略通过才沿原任务及多账号分配，因此策略2继续或策略3仍可能收到原账号不可分配提示。
+
+按用户明确接受的范围，仅用户端执行策略，不在任务API、批量工作进程或插件加二次拦截，不保证并发严格互斥，也不拦直接API调用；已接收批量不追溯检查。需发布src/server/routes/auth.js和src/server/services/agentProductPolicy.js并重启API，发布用户端dist；后台、插件及schema无需更新，未部署／未创建真实任务。
+
+验证命令：`node scripts/run-isolated-regression.cjs src/server/routes/agentProductPolicy.test.js`、`node scripts/agent-product-policy.browser.test.cjs`（先构建用户端）、`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/task.batch.test.js`、`node scripts/fleamarket-browser.test.cjs`、`node src/client/src/pages/Submit.display.test.mjs`、`node src/client/src/utils/batchSubmit.test.mjs`、`npm run build --prefix src/client`、`npm run encoding:guard`、`git diff --check`，本轮均通过。390／1200像素实测设置默认及保存、下属无齿轮、互斥不发请求、提醒取消／继续、allow沿原账号错误、无冲突放行、查询失败不提交及批量入口；截图.test-artifacts/agent-policy-settings-{宽度}.png。代理策略HTTP与浏览器专项已加入总回归；本轮未执行完整总回归。
 
 ### 0ap. 主备用验证界面复用与其他登录方式前置
 
@@ -1259,6 +1272,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-26 代理组同商品策略仅用户端提交前执行
+
+代理退出后齿轮设置三选一，服务器按组保存默认互斥；本人及下属提交前实时查询，其他用户任何状态任务均算占用，跨组独立、同用户沿原规则。通过策略后走原多账号分配，单条与批量入口均覆盖；任务API／后台／插件不加代理策略拦截。发布及验证见0aq。
 
 ### 2026-10-25 主备用验证组件统一及パスキー前置
 

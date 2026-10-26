@@ -1,4 +1,6 @@
 import productUrls from '../../../shared/productUrl.cjs';
+import { allowAgentSubmission } from '../utils/agentProductPolicy';
+import { getBatchClientContext, isBatchContextCurrent } from '../utils/batchSubmit';
 ﻿import { useEffect, useState } from 'react';
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useCallback, useRef } from 'react';
@@ -556,9 +558,11 @@ export default function Submit() {
     }
     setSubmitting(true);
     try {
+      const submitContext = getBatchClientContext();
       const standardUrl = productUrls.getProductItemUrl(product);
       if (!standardUrl) throw new Error('商品类型缺失，请重新获取商品信息');
       const auctionId = product?.auctionId || extractAuctionId(standardUrl);
+      if (!await allowAgentSubmission([auctionId], submitContext)) return;
       if (selectedStrategy !== 'direct' && auctionId) {
         const taskRes = await getTaskList({ limit: 100 });
         const tasks = taskRes.data?.data || [];
@@ -605,6 +609,7 @@ export default function Submit() {
         pendingFollowupMaxPrice = effectiveMaxPrice;
       }
       // Include product data so server can save title/image_url
+      if (!isBatchContextCurrent(submitContext)) return;
       await submitTask({
         product_url: standardUrl,
         max_price: submittedMaxPrice,
