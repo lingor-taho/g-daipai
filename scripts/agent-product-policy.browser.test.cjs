@@ -83,6 +83,52 @@ const { chromium } = require('playwright');
       assert.ok(checks>=6);
       console.log(`${width}px: default/server save, mobile menu, exclusivity, cancel/continue, allow, no conflict, query failure, original allocation message passed`);
       await page.close();
+      const adminPage=await browser.newPage({viewport:{width,height:950}});adminPage.setDefaultTimeout(12000);
+      const policies=new Map([['8100','exclusive'],['8200','exclusive']]);const saves=[];
+      const users=[{id:8100,username:'policy-agent-a',user_level:2},{id:8200,username:'policy-agent-b',user_level:2},{id:8101,username:'policy-child-a',user_level:1}];
+      await adminPage.addInitScript(()=>{
+        localStorage.setItem('token','test-client-admin');localStorage.setItem('username','client-admin');
+        localStorage.setItem('userLevel','3');localStorage.setItem('actingUserId','8100');
+      });
+      await adminPage.route('**/api/**',async route=>{
+        const req=route.request();const url=new URL(req.url());let data={success:true,data:[],total:0};
+        if(url.pathname==='/api/auth/acting-users')data={success:true,data:users};
+        if(url.pathname==='/api/auth/agent-product-policy'){
+          const target=req.headers()['x-acting-user-id'];
+          if(req.method()==='PUT') {saves.push({target,policy:req.postDataJSON().policy});policies.set(target,req.postDataJSON().policy);}
+          data={success:true,agentId:Number(target),policy:policies.get(target)||'exclusive',canConfigure:users.find(u=>String(u.id)===target)?.user_level===2};
+        }
+        await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+      });
+      await adminPage.goto(`http://127.0.0.1:${server.address().port}/submit`);
+      const adminGear=adminPage.getByRole('button',{name:'代理组设置',exact:true});
+      const adminGroup=adminPage.getByRole('radiogroup',{name:'代理组同商品策略'});
+      async function selectAccount(username){
+        await adminPage.getByText('当前账号',{exact:true}).click();
+        await adminPage.locator('.adm-popup-body').getByText(username,{exact:true}).click();
+      }
+      await adminGear.click();await adminGroup.waitFor();
+      await adminGroup.getByLabel('同商品提醒，能继续拍',{exact:true}).click();
+      await adminPage.waitForFunction(()=>document.querySelector('input[value="confirm"]')?.checked);
+      assert.deepEqual(saves,[{target:'8100',policy:'confirm'}]);
+      await adminGear.click();await selectAccount('policy-agent-b');
+      await adminGear.click();await adminGroup.waitFor();
+      assert.equal(await adminGroup.locator('input:checked').inputValue(),'exclusive');
+      await adminGroup.getByLabel('同商品无提醒，直接拍',{exact:true}).click();
+      await adminPage.waitForFunction(()=>document.querySelector('input[value="allow"]')?.checked);
+      assert.deepEqual(saves.at(-1),{target:'8200',policy:'allow'});
+      await adminPage.screenshot({path:`.test-artifacts/admin-agent-policy-${width}.png`,fullPage:true});
+      await adminGear.click();await Promise.all([adminPage.waitForResponse(r=>r.url().endsWith('/api/auth/agent-product-policy')),selectAccount('policy-child-a')]);
+      assert.equal(await adminGear.count(),0,'Admin selecting a subordinate must have no settings');
+      await selectAccount('policy-agent-a');await adminGear.click();await adminGroup.waitFor();
+      assert.equal(await adminGroup.locator('input:checked').inputValue(),'confirm','Switching back reads agent A, not agent B');
+      assert.equal(policies.get('8200'),'allow');
+      await adminGear.click();await adminPage.reload();await adminGear.click();await adminGroup.waitFor();
+      assert.equal(await adminGroup.locator('input:checked').inputValue(),'confirm','Selected agent policy survives reload');
+      await adminGear.click();await selectAccount('policy-agent-a');await adminGear.click();await adminGroup.waitFor();
+      assert.equal(await adminGroup.locator('input:checked').inputValue(),'confirm','Reselecting the current agent preserves settings');
+      console.log(`${width}px: client admin edits selected A/B independently, hides gear for subordinate, reload preserves target passed`);
+      await adminPage.close();
     }
   } finally {await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

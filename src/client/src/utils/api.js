@@ -67,8 +67,8 @@ api.interceptors.response.use(
 
 export const login = (username, password) => api.post('/auth/login', { username, password });
 export const getActingUsers = () => api.get('/auth/acting-users');
-export const getAgentProductPolicy = () => api.get('/auth/agent-product-policy');
-export const saveAgentProductPolicy = policy => api.put('/auth/agent-product-policy', { policy });
+export const getAgentProductPolicy = context => api.get('/auth/agent-product-policy', { __batchContext: context });
+export const saveAgentProductPolicy = (policy, context) => api.put('/auth/agent-product-policy', { policy }, { __batchContext: context });
 export const checkAgentProducts = (productIds, context) => api.post('/auth/agent-product-policy/check', { productIds }, { __batchContext: context });
 export const submitTask = (data) => api.post('/task/submit', {
   ...data,

@@ -52,6 +52,21 @@ const { checkProducts } = require('../services/agentProductPolicy');
     assert.deepEqual(db.raw.prepare('SELECT * FROM tasks').all(),before,'Queries/settings must never change tasks');
     assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM yahoo_product_assignments').get().n,0);
     assert.equal((await checkProducts(db,8101,ids)).policy,'allow','Saved policy is read from server each time');
+    assert.equal((await request(8400,'GET',null,8100)).data.canConfigure,true);
+    assert.equal((await request(8400,'GET',null,8100)).data.agentId,8100);
+    assert.equal((await request(8400,'PUT',{policy:'confirm'},8100)).status,200);
+    assert.equal((await request(8100)).data.policy,'confirm','Admin edits the selected agent, visible on agent login');
+    assert.equal((await request(8200)).data.policy,'exclusive','Other agent unchanged');
+    assert.equal((await request(8400,'PUT',{policy:'allow'},8200)).status,200);
+    assert.equal((await request(8201)).data.policy,'allow','Agent B subordinates use admin-edited policy');
+    assert.equal((await request(8101)).data.policy,'confirm','Agent A remains isolated');
+    for (const target of [8101,8201,8300]) {
+      assert.equal((await request(8400,'GET',null,target)).data.canConfigure,false);
+      assert.equal((await request(8400,'PUT',{policy:'exclusive'},target)).status,403);
+    }
+    assert.equal((await request(8400,'GET',null,999999)).status,403);
+    assert.equal((await request(8400,'PUT',{policy:'allow'},999999)).status,403);
+    assert.equal((await request(8101,'PUT',{policy:'allow'},8100)).status,403,'Ordinary users cannot impersonate an agent');
     console.log('Agent policy HTTP: permissions, defaults, group isolation, every task status, self exclusion, persistence, read-only checks passed');
   } finally { await new Promise(resolve=>server.close(resolve)); db.raw.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

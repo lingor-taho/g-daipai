@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, List, Popup, SearchBar, Toast } from 'antd-mobile';
 import { getActingUsers, getClientSiteConfig, getAgentProductPolicy, saveAgentProductPolicy } from '../utils/api';
 import { agentPolicyOptions } from '../utils/agentProductPolicy';
+import { getBatchClientContext, isBatchContextCurrent } from '../utils/batchSubmit';
 import { runDeduped } from '../utils/requestDedupe';
 import { applyClientTheme, colors, getClientTheme, themeOptions } from '../styles';
 
@@ -41,17 +42,34 @@ export default function UserNav() {
   const [policyOpen, setPolicyOpen] = useState(false);
   const [policySaving, setPolicySaving] = useState(false);
   const [policyAnchor, setPolicyAnchor] = useState({ left: 20, top: 0 });
+  const policyGeneration = useRef(0);
+
+  useEffect(() => {
+    const generation = ++policyGeneration.current;
+    setPolicyOpen(false);
+    setPolicySettings(null);
+    setPolicySaving(false);
+    if (!users.length) return;
+    const context = getBatchClientContext();
+    getAgentProductPolicy(context).then(res => {
+      if (generation === policyGeneration.current && isBatchContextCurrent(context)) setPolicySettings(res.data);
+    }).catch(() => {});
+    return () => { policyGeneration.current += 1; };
+  }, [selectedId, users.length]);
 
   async function changePolicy(policy) {
     if (policySaving || policy === policySettings?.policy) return;
+    const generation = policyGeneration.current;
+    const context = getBatchClientContext();
     setPolicySaving(true);
     try {
-      await saveAgentProductPolicy(policy);
+      await saveAgentProductPolicy(policy, context);
+      if (generation !== policyGeneration.current || !isBatchContextCurrent(context)) return;
       setPolicySettings(current => ({ ...current, policy }));
       Toast.show({ content: '代理组策略已保存' });
     } catch (error) {
-      Toast.show({ content: error.response?.data?.error || '策略保存失败，请重试' });
-    } finally { setPolicySaving(false); }
+      if (generation === policyGeneration.current && isBatchContextCurrent(context)) Toast.show({ content: error.response?.data?.error || '策略保存失败，请重试' });
+    } finally { if (generation === policyGeneration.current) setPolicySaving(false); }
   }
 
   async function loadActingUsers() {
@@ -73,7 +91,6 @@ export default function UserNav() {
 
   useEffect(() => {
     loadActingUsers();
-    getAgentProductPolicy().then(res => setPolicySettings(res.data)).catch(() => {});
     getClientSiteConfig()
       .then(res => {
         setSiteConfig({
@@ -96,7 +113,10 @@ export default function UserNav() {
 
   function selectUser(nextId) {
     const user = users.find(item => String(item.id) === String(nextId));
-    if (!user) return;
+    if (!user || String(user.id) === String(selectedId)) return;
+    policyGeneration.current += 1;
+    setPolicyOpen(false);
+    setPolicySettings(null);
     saveActingUser(user);
     setSelectedId(String(user.id));
     emitActingUserChange(user);
@@ -195,10 +215,13 @@ export default function UserNav() {
                 if (policyOpen) { setPolicyOpen(false); return; }
                 const rect = event.currentTarget.getBoundingClientRect();
                 setPolicyAnchor({ left: Math.max(20, Math.min(rect.left, window.innerWidth - 250)), top: rect.bottom + 6 });
+                const generation = policyGeneration.current;
+                const context = getBatchClientContext();
                 try {
-                  const res = await getAgentProductPolicy();
+                  const res = await getAgentProductPolicy(context);
+                  if (generation !== policyGeneration.current || !isBatchContextCurrent(context)) return;
                   setPolicySettings(res.data);
-                  setPolicyOpen(true);
+                  setPolicyOpen(Boolean(res.data.canConfigure));
                 } catch (_) { Toast.show({ content: '策略加载失败，请重试' }); }
               }} style={{ position: 'relative', zIndex: policyOpen ? 101 : undefined, display: 'flex', alignItems: 'center', border: 0, background: 'transparent', color: colors.accent, padding: 3, cursor: 'pointer' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m9 3-.6 2.4-2 .9-2.2-.7-2 3.5 1.7 1.7v2.4l-1.7 1.7 2 3.5 2.3-.7 2 .9L9 21h4l.6-2.4 2-.9 2.2.7 2-3.5-1.7-1.7v-2.4l1.7-1.7-2-3.5-2.3.7-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></svg>

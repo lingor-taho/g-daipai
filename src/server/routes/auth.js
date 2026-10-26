@@ -112,22 +112,33 @@ router.get('/acting-users', authMiddleware, async (req, res) => {
   });
 });
 
+async function getPolicySettingsTarget(req) {
+  const loginUser = await getClientUser(req.user.id);
+  // Agents always configure themselves. Client administrators configure only
+  // the selected user, after the existing acting-user permission check.
+  if (Number(loginUser?.user_level) === 3 && req.headers['x-acting-user-id']) {
+    const { actingUser } = await resolveActingUserId(req.user.id, req.headers['x-acting-user-id']);
+    return actingUser;
+  }
+  return loginUser;
+}
+
 router.get('/agent-product-policy', authMiddleware, async (req, res) => {
   try {
-    const user = await getClientUser(req.user.id);
-    const result = await getPolicy(db, req.user.id);
+    const user = await getPolicySettingsTarget(req);
+    const result = await getPolicy(db, user?.id);
     res.set('Cache-Control', 'no-store').json({ success: true, ...result, canConfigure: Number(user?.user_level) === 2 });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.statusCode || 500).json({ error: err.message }); }
 });
 
 router.put('/agent-product-policy', authMiddleware, async (req, res) => {
   try {
-    const user = await getClientUser(req.user.id);
-    if (Number(user?.user_level) !== 2) return res.status(403).json({ error: '仅代理用户可以设置代理组策略' });
+    const user = await getPolicySettingsTarget(req);
+    if (Number(user?.user_level) !== 2) return res.status(403).json({ error: '请选择代理用户设置代理组策略' });
     if (!validPolicy(req.body.policy)) return res.status(400).json({ error: '无效的代理组策略' });
     await db.query('INSERT INTO config(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [policyKey(user.id), req.body.policy]);
     res.json({ success: true, policy: req.body.policy });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.statusCode || 500).json({ error: err.message }); }
 });
 
 router.post('/agent-product-policy/check', authMiddleware, async (req, res) => {
