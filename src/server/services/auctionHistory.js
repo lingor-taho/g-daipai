@@ -15,7 +15,51 @@ function canCollectProduct(product) {
   return !!product && ['normal','store'].includes(getStoredProductType(product)) &&
     (product.auction_history_html ?? '') === '' && (product.auction_history_data ?? '') === '';
 }
+const refreshKey = productId => `auction_history_refresh:${productId}`;
+function relatedOrders(database, productId) {
+  return raw(database).prepare(`SELECT o.id,o.won_at FROM orders o
+    LEFT JOIN tasks t ON t.id=o.task_id
+    WHERE o.product_id=? OR (COALESCE(o.product_id,'')='' AND t.product_id=?)
+    ORDER BY o.id`).all(productId,productId);
+}
+function refreshBoundary(database, productId) {
+  const saved = get(database,refreshKey(productId));
+  return saved ? JSON.parse(saved) : null;
+}
+function collectionEnd(database, product, boundary) {
+  if (!boundary) return product.ended_at;
+  const previous = new Set(boundary.orders);
+  const current = relatedOrders(database,product.product_id).find(order => !previous.has(JSON.stringify([order.id,order.won_at])));
+  // Ignore unchanged orders from the previous auction, without rewriting them.
+  return current ? current.won_at : product.end_time;
+}
+// Called only inside successful user task creation, never from snapshot updates
+// or automatic bidding. Invalidating the claim also fences late old-page results.
+function resetAfterSubmission(database, productId) {
+  return raw(database).transaction(() => {
+    const product = raw(database).prepare('SELECT * FROM products WHERE product_id=?').get(productId);
+    if (!product || !['normal','store'].includes(getStoredProductType(product))) return false;
+    const queue = JSON.parse(get(database,'auction_history_queue','{}'));
+    const previous = refreshBoundary(database,productId);
+    const orders = relatedOrders(database,productId);
+    const queued = queue.ids?.includes(productId);
+    const saved = (product.auction_history_html ?? '') !== '' || (product.auction_history_data ?? '') !== '';
+    if (!saved && !queued && !previous && !orders.length) return false;
+    if (!previous) set(database,refreshKey(productId),JSON.stringify({orders:orders.map(order=>JSON.stringify([order.id,order.won_at]))}));
+    raw(database).prepare('UPDATE products SET auction_history_html=NULL,auction_history_data=NULL WHERE product_id=?').run(productId);
+    if (queued) {
+      if (queue.ids[0] === productId) { delete queue.claim; delete queue.leaseUntil; delete queue.accountId; delete queue.instanceId; }
+      queue.ids = queue.ids.filter(id=>id!==productId);
+      if (queue.failures) delete queue.failures[productId];
+      set(database,'auction_history_queue',JSON.stringify(queue));
+      if (!queue.ids.length) set(database,'auction_history_requested','0');
+    }
+    return true;
+  })();
+}
 function eligible(database, now = Date.now()) {
+  const boundaries = new Map(raw(database).prepare("SELECT key,value FROM config WHERE key GLOB 'auction_history_refresh:*'").all()
+    .filter(row=>row.value).map(row=>[row.key.slice('auction_history_refresh:'.length),JSON.parse(row.value)]));
   return raw(database).prepare(`SELECT p.*, ${auctionEndTimeSql} AS ended_at
     FROM products p
     WHERE COALESCE(p.auction_history_html,'')='' AND COALESCE(p.auction_history_data,'')=''
@@ -25,7 +69,7 @@ function eligible(database, now = Date.now()) {
       if (!canCollectProduct(p)) return false;
       // A winning order, including a manual import, ends at its recorded win time.
       // Missing win times must not fall back to the original auction deadline.
-      const text = String(p.ended_at || '');
+      const text = String(collectionEnd(database,p,boundaries.get(p.product_id)) || '');
       // Recorded times use ISO timestamps; unqualified legacy values are Yahoo local time.
       const ms = Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(text) ? text : text.replace(' ', 'T') + '+09:00');
       return Number.isFinite(ms) && ms <= now;
@@ -157,8 +201,10 @@ function finish(database, payload) {
     }
     if (!skip && payload.expired === true) {
       raw(database).prepare("UPDATE products SET auction_history_html=?,auction_history_data=? WHERE product_id=? AND COALESCE(auction_history_html,'')='' AND COALESCE(auction_history_data,'')=''").run(EXPIRED,EXPIRED,payload.productId);
+      raw(database).prepare('DELETE FROM config WHERE key=?').run(refreshKey(payload.productId));
     } else if (!skip && !failure) {
       const saved = raw(database).prepare("UPDATE products SET auction_history_html=?,auction_history_data=? WHERE product_id=? AND COALESCE(auction_history_html,'')='' AND COALESCE(auction_history_data,'')=''").run(html,JSON.stringify(data),payload.productId);
+      if (saved.changes) raw(database).prepare('DELETE FROM config WHERE key=?').run(refreshKey(payload.productId));
       if (saved.changes && data.length) {
         const product = raw(database).prepare(`SELECT p.end_time,
           EXISTS(SELECT 1 FROM orders o WHERE o.product_id=p.product_id
@@ -215,4 +261,4 @@ function closeAlert(database,id) {
     return {success:true,closed:alerts.length-remaining.length};
   })();
 }
-module.exports = {EXPIRED,get,set,eligible,request,schedule,next,finish,normalizeRows,buildHtml,correctedEndTime,clearProductHistory,getAlerts,closeAlert};
+module.exports = {EXPIRED,get,set,eligible,request,schedule,next,finish,normalizeRows,buildHtml,correctedEndTime,clearProductHistory,resetAfterSubmission,getAlerts,closeAlert};

@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-10-26 重新提交任务后刷新旧拍卖记录已本地接入：普通／商城用户单条及批量任务创建成功时，在原账号分配／建任务事务中清空已有auction_history_html、auction_history_data；重复请求、校验／分配失败不清空，自动多次加价／低价续拍、扫描及快照更新不触发。移除本商品旧采集队列项并作废领取，迟到结果不能回写，其他商品继续；沿原手动／定时流程等本轮结束再采。复用config保存本轮旧订单边界，未变化的旧落札订单不触发提前采集，新订单／新won_at沿原落札时间采集，成功／过期入库后清理标记。无schema／订单历史／任务历史／前端／插件变化；更新API task.js及auctionHistory.js并重启，未部署或修复生产c1248070488，详见0ar。
+
 2026-10-26 代理组策略补齐本人已有任务优先：查询组内冲突时逐商品排除当前提交用户已存在任意状态任务的商品；即使同组多人已分别提交，彼此后续加价／再次提交均沿原规则。本人无该商品任务时仍按组策略互斥／提醒，第三个新用户不放行；不同账号不影响本人资格，批量逐商品判定。只调整services/agentProductPolicy.js的只读查询，无前端／任务提交API／账号分配／schema变化；需更新该服务并重启API，无需重发两端dist或插件。验证见0aq，未部署。
 
 2026-10-26 用户端管理员切换到代理级用户后，退出后同样显示齿轮，读取及修改当前代理的原组策略；切到普通用户隐藏。设置API用数据库中的登录等级和原切换权限核验目标，代理本人仍只改本组，普通用户不能设置。设置请求固定当前用户上下文，切换时关闭菜单并忽略旧请求返回，避免串组。复用原config键，无schema／任务API／后台／插件变化；需更新auth路由重启API和用户端dist，验证见0aq，未部署。
@@ -235,6 +237,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 当前状态：
 
+- 普通／商城成功新提交会使旧拍卖记录失效，按本轮结束时间重新采集；原自动加价、失败及重复请求保留记录，发布／验证见0ar。
 - 代理组同商品策略本地完成；本人已有该商品任务优先放行，仅首次参与查同组其他用户。服务器保存与只读查询，用户端提交前拦截，部署范围与验证见0aq。
 - `products` 已作为商品快照表引入。
 - 运行查询已大量改为 `products` 优先、旧 `tasks` 字段回退。
@@ -266,6 +269,18 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ar. 成功提交新任务后失效旧拍卖记录，避免重上架沿用旧记录
+
+普通／商城单条及批量逐件成功建任务后触发，P排除；仅挂在submitAuctionTask实际创建任务路径，不挂通用商品快照函数，也不挂多次出价状态回写或processPendingFollowupTasks。原分配事务外再包同一同步事务，创建任务／归属及记录失效原子完成；清空失败则任务和归属回滚。请求ID命中已有任务直接返回，校验／分配失败不清记录。普通读取、插件快照／扫描及自动加价均不触发。
+
+同时清空products.auction_history_html及auction_history_data（含“数据已过期”），不删字段／商品／任务／订单／bid_logs。若本商品在旧采集队列，移除本商品并清理该项失败次数；只有本商品持有队首领取时作废claim／lease及账号上下文，旧页回写stale，其他商品已领取工作保留；队列空时复位requested，不立即重新入队。随后沿原手动／定时入队，等本轮结束或新落札后采集，不在提交时抓Yahoo。多次提交为空时保持空，不增加Yahoo访问。
+
+复用config键auction_history_refresh:{商品ID}保存失效时原订单ID／won_at快照，重复提交保留边界；只影响标记商品的采集资格：未变旧订单忽略，按本轮products.end_time等待；新订单或同订单新won_at出现时沿原落札时间判断，新落札时间无效／缺失不回退。无标记商品保持原资格规则。标记批量一次读取，正常／明确过期入库后删除，不改任何订单时间／状态／账号。没有旧历史／旧队列／旧订单的首次提交不创建标记。前端蓝三角仍是用户任务历史，不因清空Yahoo拍卖记录删除。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/routes/task.historyRefresh.test.js`；`node src/server/services/auctionHistory.test.js`；`node yahoo-plugin/auctionHistory.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/task.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/task.batch.test.js`；`node scripts/run-isolated-regression.cjs src/server/services/batchTaskQueue.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/task.endedSubmit.test.js`；`npm run encoding:guard`；`git diff --check`。专项覆盖普通／商城／P排除、过期记录、两字段边界、成功／重复／失败／分配失败、重复加价、低价续拍及插件扫描不触发、在途与其他商品领取保护、旧订单保留／同订单新成交／缺失成交时间、重新采集入库清标记、异常任务与归属回滚。新增专项已加入总回归，本轮不运行全量构建回归（无前端改动）。
+
+发布：只需API routes/task.js与services/auctionHistory.js并重启，无schema迁移、两端dist或插件更新。未部署／未改生产c1248070488；已经成功成交且不会再提交的历史商品，可用原后台拍卖采集清空与手动入队修复，不能宣称本次已修复。
 
 ### 0aq. 用户端代理组同商品提交策略
 
@@ -1282,6 +1297,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-26 用户成功提交后清空旧拍卖记录并按新一轮采集
+
+只处理普通／商城实际成功新建任务，含用户批量；清空两历史字段与任务／归属创建同事务，旧采集回调作废，自动续拍／快照／失败／重复请求不触发。旧订单边界存原config，避免按旧落札时间提前采集；原任务历史和蓝三角保持。部署与验证见0ar。
 
 ### 2026-10-26 本人已有任务时继续提交不受组内互斥影响
 

@@ -13,6 +13,7 @@ if(process.env.GDAIPAI_ISOLATED_TESTS!=='1') {
   process.exit(isolated.status || 0);
 }
 const steps = [
+  ['Resubmission refreshes old auction history safely',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/task.historyRefresh.test.js'],rootDir],
   ['Agent group policy settings and read-only checks',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/agentProductPolicy.test.js'],rootDir],
   ['Atomic won-date cleanup',process.execPath,['src/server/services/forceDateCleanup.test.js'],rootDir],
   ['Product deletion and different-user resubmission',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/admin.productDelete.test.js'],rootDir],

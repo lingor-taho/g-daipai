@@ -801,7 +801,11 @@ async function submitAuctionTask(context, body, {
         followupMaxPrice
       ];
     const inserted = database.raw
-      ? require('../services/yahooAccounts').createAssignedTask(database, input, taskInsertSql, taskInsertParams)
+      ? database.raw.transaction(() => {
+          const task = require('../services/yahooAccounts').createAssignedTask(database, input, taskInsertSql, taskInsertParams);
+          if (!fleamarketProduct) require('../services/auctionHistory').resetAfterSubmission(database,input.productId);
+          return task;
+        })()
       : await database.getOne(taskInsertSql, taskInsertParams);
     return { success: true, task_id: inserted.id, product_id: inserted.product_id, account_id: inserted.account_id };
   });
