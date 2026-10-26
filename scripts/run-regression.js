@@ -13,6 +13,7 @@ if(process.env.GDAIPAI_ISOLATED_TESTS!=='1') {
   process.exit(isolated.status || 0);
 }
 const steps = [
+  ['Agent exclusivity enforced during atomic task creation',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/agentProductPolicy.submit.test.js'],rootDir],
   ['Resubmission refreshes old auction history safely',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/task.historyRefresh.test.js'],rootDir],
   ['Agent group policy settings and read-only checks',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/agentProductPolicy.test.js'],rootDir],
   ['Atomic won-date cleanup',process.execPath,['src/server/services/forceDateCleanup.test.js'],rootDir],
@@ -76,6 +77,7 @@ const steps = [
   ['User deletion admin browser checks',process.execPath,['scripts/user-delete-browser.test.cjs'],rootDir],
   ['Multi-account admin browser checks',process.execPath,['scripts/yahoo-multi-account-browser.test.cjs'],rootDir],
   ['Client build', npmCommand, ['run', 'build'], clientDir],
+  ['Client task list long-title mobile layout',process.execPath,['scripts/task-list-mobile.browser.test.cjs'],rootDir],
   ['Agent group policy client browser checks',process.execPath,['scripts/agent-product-policy.browser.test.cjs'],rootDir],
   ['Fleamarket client browser checks', process.execPath, ['scripts/fleamarket-browser.test.cjs'], rootDir],
   ['Ended product submission display',process.execPath,['scripts/submit-ended-browser.test.cjs'],rootDir],

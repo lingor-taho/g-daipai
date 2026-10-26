@@ -1,0 +1,11 @@
+/* Keep mobile browsers from independently inflating text in wide blocks.
+   The viewport still permits the user's manual zoom. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.client-task-list .adm-list-item-content-main {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

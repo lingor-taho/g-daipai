@@ -802,10 +802,11 @@ async function submitAuctionTask(context, body, {
       ];
     const inserted = database.raw
       ? database.raw.transaction(() => {
+          require('../services/agentProductPolicy').assertSubmissionAllowed(database.raw,input.userId,input.productId);
           const task = require('../services/yahooAccounts').createAssignedTask(database, input, taskInsertSql, taskInsertParams);
           if (!fleamarketProduct) require('../services/auctionHistory').resetAfterSubmission(database,input.productId);
           return task;
-        })()
+        }).immediate()
       : await database.getOne(taskInsertSql, taskInsertParams);
     return { success: true, task_id: inserted.id, product_id: inserted.product_id, account_id: inserted.account_id };
   });

@@ -19,6 +19,10 @@
 
 ## 项目概述
 
+2026-10-26 按用户新授权，代理互斥补齐API最终校验：在原商品锁内、SQLite立即写事务中先按实际提交用户查组策略与冲突，再分配Yahoo账号及建任务；默认exclusive只允许首个无本人任务的同组用户进入，HTTP并发及独立Node进程并发均验证只有一条任务／归属。本人已有该商品任意状态任务仍优先放行，已有多人参与均可各自续拍；第三个首次用户继续拦截。前端预检保留，与API共用组归属／冲突SQL；confirm／allow仍走原多账号分配，自动加价／内部续拍不加拦截。单条／批量逐件及管理员代下属均覆盖，无schema／后台／插件变化；本项只需更新API task.js和agentProductPolicy.js并重启，未部署，详见0at。
+
+2026-10-26 用户端手机任务列表长标题撑宽及字体自动放大已本地修复：任务列表独立作用域下内容flex项允许收缩、长英文任意位置换行，保留13px标题／12px说明及原状态／终止操作。根html设置text-size-adjust与-webkit-text-size-adjust为100%，不禁止用户手动缩放；提交页内嵌列表同步生效。仅用户端静态样式，发布用户端dist，无API／后台／插件／schema变化；320／393／1200浏览器及构建通过，iPhone真机待更新验收，详见0as。
+
 2026-10-26 重新提交任务后刷新旧拍卖记录已本地接入：普通／商城用户单条及批量任务创建成功时，在原账号分配／建任务事务中清空已有auction_history_html、auction_history_data；重复请求、校验／分配失败不清空，自动多次加价／低价续拍、扫描及快照更新不触发。移除本商品旧采集队列项并作废领取，迟到结果不能回写，其他商品继续；沿原手动／定时流程等本轮结束再采。复用config保存本轮旧订单边界，未变化的旧落札订单不触发提前采集，新订单／新won_at沿原落札时间采集，成功／过期入库后清理标记。无schema／订单历史／任务历史／前端／插件变化；更新API task.js及auctionHistory.js并重启，未部署或修复生产c1248070488，详见0ar。
 
 2026-10-26 代理组策略补齐本人已有任务优先：查询组内冲突时逐商品排除当前提交用户已存在任意状态任务的商品；即使同组多人已分别提交，彼此后续加价／再次提交均沿原规则。本人无该商品任务时仍按组策略互斥／提醒，第三个新用户不放行；不同账号不影响本人资格，批量逐商品判定。只调整services/agentProductPolicy.js的只读查询，无前端／任务提交API／账号分配／schema变化；需更新该服务并重启API，无需重发两端dist或插件。验证见0aq，未部署。
@@ -237,6 +241,8 @@ orders.task_id      N --- 0/1 tasks.id
 
 当前状态：
 
+- 代理互斥现由前端预检及API原子建任务双层校验；本人已有任务继续放行，同组首次并发只成功一个，见0at。
+- 手机任务列表长英文撑宽及自动字体放大已本地修复；仅需发布用户端dist，真实iPhone待验收，见0as。
 - 普通／商城成功新提交会使旧拍卖记录失效，按本轮结束时间重新采集；原自动加价、失败及重复请求保留记录，发布／验证见0ar。
 - 代理组同商品策略本地完成；本人已有该商品任务优先放行，仅首次参与查同组其他用户。服务器保存与只读查询，用户端提交前拦截，部署范围与验证见0aq。
 - `products` 已作为商品快照表引入。
@@ -270,6 +276,24 @@ orders.task_id      N --- 0/1 tasks.id
 
 ## 当前主计划
 
+### 0at. 代理互斥在API原子创建任务时执行最终校验
+
+用户本次明确授权API补互斥，取代0aq初版“仅前端拦截、接受首次并发”的边界。仍保留“本人已有该商品任意状态任务则不互斥”，不是删除续拍例外：此前同组多人已参与时均沿原价格／策略／Yahoo归属规则继续提交，无本人任务的新用户才查同组其他人任意状态任务。不同组独立，actual actingUser决定归属，代理本人及下属同规则，用户端管理员代下属同样执行。客户端传policy／force／confirmed或伪造等级不能绕过真实数据库策略。confirm与allow不加最终互斥，仍可能返回原账号不可分配提示。
+
+agentProductPolicy提取共用组归属SQL、冲突SQL及默认策略归一化，前端预检接口继续使用只读异步查询；新增同步assertSubmissionAllowed仅由任务创建事务调用。task.js沿原同商品锁完成验证／抓取后，在SQLite BEGIN IMMEDIATE写事务内先校验exclusive，再原createAssignedTask分配和建任务，最后原拍卖记录失效；冲突409返回“代理组内该商品有人提交，请联系代理！”，不建任务、不占备用账号、不清拍卖记录。已有请求ID直接返回原任务。单条／旧批量逐件接口／持久化批量工作进程共用此函数，已接收批量在实际处理每件时读取当时最新策略，冲突按原批量失败结果提示，其他商品继续。自动多次加价和内部followup沿原路径，不加策略判断。事务不包含网络抓取，不增加前端请求；入库前商品快照更新保持原顺序，冲突时可能已保存正常商品快照。
+
+验证：`node scripts/run-isolated-regression.cjs src/server/routes/agentProductPolicy.submit.test.js`（真实HTTP双前端均预检通过后的同时提交＋两个独立Node进程共用数据库同时建任务，均仅一任务／一Yahoo归属；本人加价、两人原先已参与、pending／processing／success／failed／cancelled、第三人拦截、管理员代提交、跨组、请求ID去重、伪造前端标志无效、confirm／allow及原账号错误、批量双入队仅一件任务成功）；`node scripts/run-isolated-regression.cjs src/server/routes/agentProductPolicy.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/task.historyRefresh.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/task.batch.test.js`；`node scripts/run-isolated-regression.cjs src/server/services/batchTaskQueue.test.js`；`node scripts/run-isolated-regression.cjs src/server/routes/task.test.js`；`npm run encoding:guard`；`git diff --check`。并发专项已加入总回归，本轮未跑完整总回归，无生产／真实Yahoo操作。
+
+发布本项只需API routes/task.js及services/agentProductPolicy.js并重启，无新增接口／字段／索引／两端dist／插件变更。前端原预检保留、不需改变；前一项0as手机布局仍有独立用户端dist待发布，勿混淆部署范围。
+
+### 0as. 手机任务列表长标题换行及文字自动缩放
+
+用户提供iPhone截图中长英文品牌串把部分条目flex内容撑宽，右侧状态及说明被裁切；代码字号始终为标题13px、说明12px，页面未固定移动浏览器text-size-adjust，字体不一致符合iOS自动文字放大的表现，但本机无iOS WebKit运行时，不宣称已真机复现该放大机制。
+
+新增用户端src/index.css由main.jsx引入：html的-webkit-text-size-adjust及text-size-adjust设100%，viewport保持可手动缩放；仅.client-task-list内.adm-list-item-content-main设min-width:0与overflow-wrap:anywhere。TaskList添加专用class，独立任务页与提交页内嵌列表共用，其他列表不扩大布局选择器范围。不改字体数值、标题数据、价格／时间／状态、操作及提交流程。仅需发布用户端dist，无API／后台／插件／数据库变化，未部署，真实iPhone更新后验收。
+
+验证：`npm run build --prefix src/client`、`node scripts/task-list-mobile.browser.test.cjs`、`node src/client/src/pages/TaskList.display.test.mjs`、`node src/client/src/pages/Submit.display.test.mjs`、`npm run encoding:guard`、`git diff --check`。浏览器专项320／393／1200宽度，覆盖截图同类日英长标题、无空格英文、短标题、状态及终止按钮，任务独立／内嵌列表统一13px／12px、内容无横向溢出、控件可见及手动缩放未被禁用；截图.test-artifacts/task-list-mobile-{tasks,submit}.png，已加入总回归，本轮未跑完整总回归。
+
 ### 0ar. 成功提交新任务后失效旧拍卖记录，避免重上架沿用旧记录
 
 普通／商城单条及批量逐件成功建任务后触发，P排除；仅挂在submitAuctionTask实际创建任务路径，不挂通用商品快照函数，也不挂多次出价状态回写或processPendingFollowupTasks。原分配事务外再包同一同步事务，创建任务／归属及记录失效原子完成；清空失败则任务和归属回滚。请求ID命中已有任务直接返回，校验／分配失败不清记录。普通读取、插件快照／扫描及自动加价均不触发。
@@ -294,7 +318,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 单条／批量入口在发送原任务提交请求前调用/auth/agent-product-policy/check，只返回策略及冲突商品ID，不分配账号、不建任务。组内只查其他用户tasks，含代理本人及直属普通下属，所有状态均占用；同一用户按原规则，不按Yahoo账号隔离。互斥提示“代理组内该商品有人提交，请联系代理！”，提醒提示“代理组内该商品有人提交，是否继续？”并提供继续／取消；allow直接放行。批量一次查询最多50件，有冲突时整批停在输入窗口（附冲突ID），取消不入队，用户可调整后重交；继续则原批量入队。查询失败不提交、账号切换后不提交旧上下文。策略通过才沿原任务及多账号分配，因此策略2继续或策略3仍可能收到原账号不可分配提示。
 
-按用户明确接受的范围，仅用户端执行策略，不在任务API、批量工作进程或插件加二次拦截，不保证并发严格互斥，也不拦直接API调用；已接收批量不追溯检查。需发布src/server/routes/auth.js和src/server/services/agentProductPolicy.js并重启API，发布用户端dist；后台、插件及schema无需更新，未部署／未创建真实任务。
+初版仅用户端拦截的范围已被用户后续新授权替代：exclusive现在同时在任务API实际建任务的立即事务中最终校验，单条／批量工作进程均覆盖，堵住首次并发及直接API绕过；本人已有任务继续放行，confirm／allow保持原逻辑，见0at。设置功能原发布范围仍是auth.js／agentProductPolicy.js及用户端dist；本次最终校验的增量只需task.js／agentProductPolicy.js重启API。后台、插件及schema无需更新，未部署／未创建真实任务。
 
 验证命令：`node scripts/run-isolated-regression.cjs src/server/routes/agentProductPolicy.test.js`、`node scripts/agent-product-policy.browser.test.cjs`（先构建用户端）、`node scripts/run-isolated-regression.cjs src/server/routes/yahooMultiAccount.test.js`、`node scripts/run-isolated-regression.cjs src/server/routes/task.batch.test.js`、`node scripts/fleamarket-browser.test.cjs`、`node src/client/src/pages/Submit.display.test.mjs`、`node src/client/src/utils/batchSubmit.test.mjs`、`npm run build --prefix src/client`、`npm run encoding:guard`、`git diff --check`，本轮均通过。390／1200像素实测设置默认及保存、下属无齿轮、互斥不发请求、提醒取消／继续、allow沿原账号错误、无冲突放行、查询失败不提交及批量入口；截图.test-artifacts/agent-policy-settings-{宽度}.png。代理策略HTTP与浏览器专项已加入总回归；本轮未执行完整总回归。
 
@@ -1297,6 +1321,14 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-26 API补齐代理互斥并发保护，保留本人续拍例外
+
+前端预检与API最终校验共用组／冲突SQL；默认互斥在SQLite立即事务中判断再分配／建任务，同组首次并发仅一人成功；本人已有任务的多人仍各自沿原规则续拍。confirm／allow、不同代理组及自动执行保持，发布和验证见0at。
+
+### 2026-10-26 手机任务列表长标题及文字缩放适配
+
+任务列表内容允许收缩并对长英文换行，页面文字自动缩放固定100%且保留手动缩放；不改字号及业务，仅发布用户端dist。独立／内嵌列表320／393／1200浏览器与构建通过，真实iPhone待验收，详见0as。
 
 ### 2026-10-26 用户成功提交后清空旧拍卖记录并按新一轮采集
 

@@ -181,6 +181,7 @@ export default function TaskList({ limit = 10, embedded = false, onRebid }) {
       )}
 
       <List
+        className="client-task-list"
         header={<div style={{ borderBottom: '1px solid #eee', paddingBottom: 10 }}>任务列表</div>}
         style={{ ...listStyle, marginTop: embedded ? 12 : 8 }}
       >
