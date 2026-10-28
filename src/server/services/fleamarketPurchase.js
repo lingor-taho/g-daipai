@@ -26,8 +26,9 @@ function beginPurchase(raw, id, context, claim, evidence) {
   })();
 }
 
-// Reclaim ONLY uncertain purchases for read-only done-page verification. Never
-// turn them back into ordinary pending tasks or authorize another purchase click.
+// Reclaim ONLY interrupted, still-processing purchases for read-only verification.
+// Failed P tasks stay stopped, including failures of a previous recovery attempt.
+// Never turn uncertain purchases into pending tasks or authorize another click.
 function claimRecovery(raw, context, limit = 1, now = Date.now()) {
   return raw.transaction(() => {
     const concurrency = Math.max(1, Math.min(10, Number(raw.prepare("SELECT value FROM config WHERE key='bid_concurrency_limit'").get()?.value || 2)));
@@ -36,7 +37,7 @@ function claimRecovery(raw, context, limit = 1, now = Date.now()) {
     if (!count) return [];
     const candidates = raw.prepare(`SELECT t.*,p.product_url,p.product_type FROM tasks t
       LEFT JOIN products p ON p.product_id=t.product_id
-      WHERE t.account_id=? AND t.execution_unknown=1 AND t.status IN ('processing','failed')
+      WHERE t.account_id=? AND t.execution_unknown=1 AND t.status='processing'
       AND t.bid_mode='buyout' AND t.strategy='direct' AND datetime(t.updated_at)<=datetime(?)
       AND p.product_type='fleamarket'
       AND NOT EXISTS(SELECT 1 FROM orders o WHERE o.product_id=t.product_id OR o.task_id=t.id)

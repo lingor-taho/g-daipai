@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-10-26
+**最后更新**: 2026-10-28
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-10-28 P商品失败后停止自动核对已本地修复：恢复查询仅领取原有过期processing＋execution_unknown任务，不再领取failed；首次购买失败或只读核对失败后均保持失败，旧失败任务也不再自动开页。保留结果未知标记及重复提交／重复购买保护，不自动判定未成交；普通／商城重试、P价格核对／购买／成功补单及订单后续流程保持。仅需更新API services/fleamarketPurchase.js并重启，无插件／两端dist／schema变化；未部署或修改生产数据，已删除的z704299570不另处理，详见0av。
 
 2026-10-26 按用户新授权，代理互斥补齐API最终校验：在原商品锁内、SQLite立即写事务中先按实际提交用户查组策略与冲突，再分配Yahoo账号及建任务；默认exclusive只允许首个无本人任务的同组用户进入，HTTP并发及独立Node进程并发均验证只有一条任务／归属。本人已有该商品任意状态任务仍优先放行，已有多人参与均可各自续拍；第三个首次用户继续拦截。前端预检保留，与API共用组归属／冲突SQL；confirm／allow仍走原多账号分配，自动加价／内部续拍不加拦截。单条／批量逐件及管理员代下属均覆盖，无schema／后台／插件变化；本项只需更新API task.js和agentProductPolicy.js并重启，未部署，详见0at。
 
@@ -275,6 +277,14 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0av. P商品失败即停止自动核对
+
+用户确认z704299570未购买成功并已删除商品，本轮仅修复程序，不恢复该商品。原claimRecovery将failed＋execution_unknown任务再次领取为processing，核对失败又回到failed，形成持续开页循环。现仅允许原有过期processing任务进入只读完成页核对；已经failed的P任务不再领取，包括首次执行失败、恢复核对失败及旧失败记录。普通／商城的原重试规则、账号／并发／两分钟领取间隔、P购买按钮／原价校验／成功双标识与原子补单均保持。
+
+失败停止不清除execution_unknown，避免把未确认结果误当成未购买并允许重复提交；失败记录、原因和领取凭证不因轮询而变化。真正仍处于processing的中断任务保持原只读恢复资格，恢复失败后即停止，不再反复核对。此前0p中“失败任务两分钟后继续核对”的规则由本项替代。无schema或历史数据更新。
+
+验证：先增加真实隔离HTTP回归，旧实现会重新领取旧失败任务并失败；修改后通过。覆盖新／旧P失败、unknown为0／1、恢复领取后经原状态接口报失败再多轮轮询、未知标记保留且重复提交仍拒绝、执行中断的原恢复／成功补单、跨账号隔离及按商品表类型判断。发布仅更新API services/fleamarketPurchase.js并重启；插件、两端dist无需更新。未部署生产或操作真实Yahoo。
 
 ### 0at. 代理互斥在API原子创建任务时执行最终校验
 
@@ -1321,6 +1331,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-10-28 P任务失败后停止重复核对
+
+P恢复查询排除failed，首次购买或只读核对失败后保持失败，旧失败记录同样不再领取；保留未知结果的防重复购买保护及原processing中断恢复，普通／商城重试不变。仅更新API services/fleamarketPurchase.js并重启，验证与发布见0av，未部署或操作生产数据。
 
 ### 2026-10-26 API补齐代理互斥并发保护，保留本人续拍例外
 
@@ -2861,6 +2875,18 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+P任务失败停止自动核对（0av）：
+
+```bash
+node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.test.js
+node yahoo-plugin/fleamarketPurchase.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js
+node yahoo-plugin/multiAccount.test.js
+node --check src/server/services/fleamarketPurchase.js
+node scripts/encoding-guard.js
+git diff --check
+```
 
 共用验证界面与其他登录方式前置（0ap）：
 
