@@ -5441,10 +5441,46 @@ const EMAIL_RECEIVE_TIMEOUT_MS = 60000;
 const EMAIL_TRANSITION_TIMEOUT_MS = 30000;
 const EMAIL_RECEIVE_ERROR = '60秒未收到验证码，请重试';
 const EMAIL_FILL_ERROR = 'gmail验证码填入错误，请重试';
+const EMAIL_SECOND_MESSAGE = '第二次邮箱验证';
 const EMAIL_LOOP_ERROR = '邮箱跳第三次验证，请人工处理！';
 const manualEmailFlows = new Map();
 const manualAlternativeLoginFlows = new Map();
 const ALTERNATIVE_LOGIN_LOOP_ERROR = '登录方式跳第三次验证，请人工处理！';
+
+
+const manualPasskeyProbes = new Map();
+async function selectManualGooglePasskey(tab, options = {}) {
+  if (!tab?.id || !isLikelyManualPinTab(tab) || !await getYahooBinding()) return { detected: false };
+  const cached = manualPasskeyProbes.get(tab.id);
+  if (!options.force && cached && Date.now() - cached.at < 2000 && cached.result?.detected === false) return cached.result;
+  const deadline = options.deadline || Date.now() + 20000;
+  const result = await withYahooForeground(async () => {
+    if (Date.now() >= deadline) throw new Error('Google 通行密钥选择已超时，请人工处理');
+    const current = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!current || !isLikelyManualPinTab(current) || current.url !== tab.url || current.status !== 'complete') return { detected: false };
+    await focusManualPinTabForSystemInput(current.id, yahooForegroundToken);
+    const binding = await getYahooBinding();
+    const windowTitle = 'GDAIPAI-' + binding.accountId + '-' + pluginInstanceId + '-PASSKEY';
+    await chrome.scripting.executeScript({ target: { tabId: current.id }, func: title => { document.title = title; }, args: [windowTitle] });
+    const saved = chrome.storage.session.get ? await chrome.storage.session.get('manualPasskeyProviderSession') : {};
+    const previous = saved.manualPasskeyProviderSession;
+    if (Date.now() >= deadline) throw new Error('Google 通行密钥选择已超时，请人工处理');
+    const response = await apiFetch('/api/plugin/manual-passkey/select', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ windowTitle, foreground_token: yahooForegroundToken, deadline,
+        previousDialogId: previous?.tabId === current.id && previous.url === current.url ? previous.dialogId : '' })
+    });
+    const state = await response.json();
+    if (!state.success) throw new Error(state.error || 'Google 通行密钥选择失败，请人工处理');
+    if (state.clicked) {
+      await chrome.storage.session.set({ manualPasskeyProviderSession: { tabId: current.id, url: current.url, dialogId: state.dialogId } });
+      console.log('[Yahoo Bid] Selected Google Password Manager passkey in the account window');
+    } else if (!state.detected && previous?.tabId === current.id) await chrome.storage.session.remove('manualPasskeyProviderSession');
+    return state;
+  });
+  manualPasskeyProbes.set(tab.id, { at: Date.now(), result });
+  return result;
+}
 
 async function getManualAlternativeLoginState(tab, action = '') {
   if (!tab?.id || !isLikelyManualPinTab(tab)) return null;
@@ -5569,6 +5605,8 @@ async function handleManualAlternativeLogin(tab, context = {}) {
             await lockAlternativeLoginTab(current, { previousTabIds: beforeIds });
           }
           if (current.status !== 'complete') continue;
+          const nativePasskey = expected === 'verification' ? await selectManualGooglePasskey(current, { deadline }) : { detected: false };
+          if (nativePasskey.detected) return null;
           const next = await getManualAlternativeLoginState(current);
           if (expected === 'methods' && next?.stage === 'methods') return next;
           if (expected === 'verification' && next?.stage === 'entry' && !next.alreadyClicked) return next;
@@ -5630,11 +5668,11 @@ async function ensureManualEmailChallenge(tab, context = {}, message = '需要�
   const id = buildManualVerificationId('email', tab, context);
   await postManualCaptchaChallenge({
     id, type: 'email', tabId: tab.id,
-    phase: message === '需要邮箱验证码。' ? 'waiting' : 'error',
+    phase: (message === '需要邮箱验证码。' || message === EMAIL_SECOND_MESSAGE) ? 'waiting' : 'error',
     message, pageUrl: tab.url || '', expectedId,
     productId: context.productId || current?.productId || '', source: context.source || ''
   });
-  return { id, type: 'email', tabId: tab.id, message, phase: message === '需要邮箱验证码。' ? 'waiting' : 'error' };
+  return { id, type: 'email', tabId: tab.id, message, phase: (message === '需要邮箱验证码。' || message === EMAIL_SECOND_MESSAGE) ? 'waiting' : 'error' };
 }
 
 function assertEmailAttemptActive(attempt) {
@@ -5932,6 +5970,8 @@ async function executeManualEmailAttempt(tab, emailPage, session = {}) {
         verificationTab = next;
         return { success: true, tab: next };
       }
+      const nativePasskey = await emailAttemptStep(attempt, () => selectManualGooglePasskey(next, { deadline: attempt.deadline }));
+      if (nativePasskey.detected) { verificationTab = next; return { success: true, tab: next }; }
       const emailState = await emailAttemptStep(attempt, () => detectManualEmailPage(next));
       if (emailState?.error) throw new Error('Yahoo 提示邮箱验证码错误或已过期，请人工检查');
       // A fresh input means Yahoo has returned to email verification, even at the same URL.
@@ -5969,7 +6009,7 @@ async function handleManualEmailVerification(tab, context = {}) {
   if (manualEmailFlows.size) return manualEmailFlows.values().next().value;
   const flowTabId = tab.id;
   const operation = (async () => {
-    let challenge = await ensureManualEmailChallenge(tab, context);
+    let challenge = await ensureManualEmailChallenge(tab, context, context.emailSession?.submissions === 1 ? EMAIL_SECOND_MESSAGE : undefined);
     if (challenge.message === EMAIL_LOOP_ERROR) throw new Error(EMAIL_LOOP_ERROR);
     const saved = chrome.storage.session.get ? await chrome.storage.session.get('manualEmailVerificationSession') : {};
     const session = context.emailSession || {};
@@ -5977,22 +6017,18 @@ async function handleManualEmailVerification(tab, context = {}) {
       Object.assign(session, saved.manualEmailVerificationSession);
     }
     context.emailSession = session;
-    let autoContinue = Boolean(session.submissions) && challenge.phase !== 'error';
     while (true) {
       const emailState = session.submissions >= 2 ? await detectManualEmailPage(await chrome.tabs.get(tab.id)) : null;
-      if (emailState && (autoContinue || (!session.submitFailed && emailState.submitted === false))) {
+      if (emailState && !session.submitFailed && emailState.submitted === false) {
         await ensureManualEmailChallenge(await chrome.tabs.get(tab.id), context, EMAIL_LOOP_ERROR, challenge.id);
         throw new Error(EMAIL_LOOP_ERROR);
       }
-      if (!autoContinue) {
-        await waitForManualCaptchaAnswer(challenge.id);
-        const res = await apiFetch('/api/plugin/manual-captcha/email/claim', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: challenge.id })
-        });
-        const claim = await res.json();
-        if (!claim.claimed) throw new Error('email verification attempt already claimed');
-      }
-      autoContinue = false;
+      await waitForManualCaptchaAnswer(challenge.id);
+      const res = await apiFetch('/api/plugin/manual-captcha/email/claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: challenge.id })
+      });
+      const claim = await res.json();
+      if (!claim.claimed) throw new Error('email verification attempt already claimed');
       const current = await chrome.tabs.get(tab.id);
       // If the expected captcha arrived just after the timeout, the next human click resumes it.
       if (isManualCaptchaTab(current)) {
@@ -6016,7 +6052,9 @@ async function handleManualEmailVerification(tab, context = {}) {
       }
       if (result.repeatEmail) {
         tab = result.tab;
-        autoContinue = true;
+        if (session.submissions < 2) {
+          challenge = await ensureManualEmailChallenge(tab, context, EMAIL_SECOND_MESSAGE, challenge.id);
+        }
         continue;
       }
       challenge = await ensureManualEmailChallenge(current, context, result.error, challenge.id);
@@ -6661,6 +6699,7 @@ async function refreshManualPinPageBeforeAnswer(tab) {
   if (!current?.id) return tab;
   const pinDetected = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
   if (!pinDetected) return current;
+  if ((await selectManualGooglePasskey(current, { force: true })).detected) return current;
   await chrome.tabs.update(current.id, { active: true }).catch(() => {});
   if (chrome.tabs.reload) {
     await chrome.tabs.reload(current.id).catch(() => {});
@@ -6778,6 +6817,12 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       await waitForTabComplete(current.id, 10000);
       current = await chrome.tabs.get(current.id);
     }
+    const nativePasskey = await selectManualGooglePasskey(current);
+    if (nativePasskey.detected) {
+      manualVerificationFlowActive = true; handled = true; rememberManualVerificationTab(current);
+      await sleep(500);
+      continue;
+    }
     if (await getManualAlternativeLoginState(current)) {
       manualVerificationFlowActive = true;
       rememberManualVerificationTab(current);
@@ -6848,6 +6893,14 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     }
     current = await refreshManualPinPageBeforeAnswer(current);
     rememberManualVerificationTab(current);
+    // A PIN refresh can open Chrome's native passkey chooser before the PIN.
+    let chooser = await selectManualGooglePasskey(current, { force: true });
+    for (let waiting = 0; chooser.detected && waiting < 4; waiting += 1) {
+      await sleep(500);
+      current = await chrome.tabs.get(current.id).catch(() => current);
+      chooser = await selectManualGooglePasskey(current, { force: true });
+    }
+    if (chooser.detected) throw new Error('Google 通行密钥选择窗口未关闭，请人工处理');
     // A PIN refresh can itself return to email. Never type the PIN into that page.
     if (await detectManualEmailPage(current) || await getManualAlternativeLoginState(current)) continue;
     const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
@@ -9570,6 +9623,7 @@ globalThis.__G_DAIPAI_BACKGROUND_TEST__ = {
   handleManualVerificationIfPresent,
   detectManualEmailPage,
   getManualAlternativeLoginState,
+  selectManualGooglePasskey,
   handleManualAlternativeLogin,
   detectManualPinPage,
   executeManualEmailAttempt,

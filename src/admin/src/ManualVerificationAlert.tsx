@@ -78,7 +78,7 @@ export default function ManualVerificationAlert({ accountId, accountTitle = '', 
     showIcon style={{ marginBottom: 12 }}
     message={<Space direction="vertical" size={8} style={{ width: '100%' }}>
       <Typography.Text strong>{accountTitle ? `${accountTitle}：` : ''}{view.title}</Typography.Text>
-      {view.showContinue ? <Button type="primary" size="small" loading={busy} onClick={() => act('continue')}>继续</Button> : null}
+      {view.showContinue ? <Button type="primary" size="small" loading={busy} onClick={() => act('continue')}>{view.continueLabel || '继续'}</Button> : null}
       {challenge ? <Space wrap align="start">
         {!isPin && view.showInput && challenge.imageDataUrl ? <img src={challenge.imageDataUrl} alt="Yahoo 验证码"
           style={{ maxWidth: 360, width: '100%', border: '1px solid #d9d9d9', background: '#fff' }} /> : null}

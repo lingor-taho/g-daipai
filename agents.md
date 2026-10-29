@@ -19,7 +19,11 @@
 
 ## 项目概述
 
+2026-10-29 第二次邮箱验证改为后台提示后由管理员点击继续：每次进入邮箱验证均需独立点击，第二次不刷新 Yahoo 页面，继续排除已用邮件并沿原 60 秒收信、失败重试、第三次停止及 PIN 交接规则。第二次按钮显示“第二次邮箱验证 继续”。需更新插件 background.js 并 reload 和后台 dist；无 API／用户端 dist／schema 变化，未部署或操作真实登录。验证：邮箱验证、后台提示、通行密钥测试和后台构建、git diff --check。
+
 2026-10-28 P商品失败后停止自动核对已本地修复：恢复查询仅领取原有过期processing＋execution_unknown任务，不再领取failed；首次购买失败或只读核对失败后均保持失败，旧失败任务也不再自动开页。保留结果未知标记及重复提交／重复购买保护，不自动判定未成交；普通／商城重试、P价格核对／购买／成功补单及订单后续流程保持。仅需更新API services/fleamarketPurchase.js并重启，无插件／两端dist／schema变化；未部署或修改生产数据，已删除的z704299570不另处理，详见0av。
+
+2026-10-28 PIN前Chrome原生通行密钥提供方选择已本地接入：复用原Windows系统输入／前台锁通道，用UI Automation在当前账号与插件实例的Chrome窗口内匹配“保存した yahoo.co.jp のパスキーを使用する”原生弹窗，仅点击唯一Google パスワード マネージャー项，之后交原PIN流程。初次登录、其他登录方式转换、邮箱提交后及PIN刷新后均接入；同一原生控件ID存session防重复，非目标／多候选／失焦不点击，不输入Google密码或PIN，不发SMS。需更新API plugin.js及新services/manualPasskey.js并重启、各账号插件background.js并reload；无两端dist／schema变化，未部署或操作真实登录，原生真实控件待验收，详见0au。
 
 2026-10-26 按用户新授权，代理互斥补齐API最终校验：在原商品锁内、SQLite立即写事务中先按实际提交用户查组策略与冲突，再分配Yahoo账号及建任务；默认exclusive只允许首个无本人任务的同组用户进入，HTTP并发及独立Node进程并发均验证只有一条任务／归属。本人已有该商品任意状态任务仍优先放行，已有多人参与均可各自续拍；第三个首次用户继续拦截。前端预检保留，与API共用组归属／冲突SQL；confirm／allow仍走原多账号分配，自动加价／内部续拍不加拦截。单条／批量逐件及管理员代下属均覆盖，无schema／后台／插件变化；本项只需更新API task.js和agentProductPolicy.js并重启，未部署，详见0at。
 
@@ -243,6 +247,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 当前状态：
 
+- PIN前原生Google通行密钥选择本地完成，复用系统输入通道与多账号前台锁，真实弹窗待部署验收，见0au。
 - 代理互斥现由前端预检及API原子建任务双层校验；本人已有任务继续放行，同组首次并发只成功一个，见0at。
 - 手机任务列表长英文撑宽及自动字体放大已本地修复；仅需发布用户端dist，真实iPhone待验收，见0as。
 - 普通／商城成功新提交会使旧拍卖记录失效，按本轮结束时间重新采集；原自动加价、失败及重复请求保留记录，发布／验证见0ar。
@@ -285,6 +290,18 @@ orders.task_id      N --- 0/1 tasks.id
 失败停止不清除execution_unknown，避免把未确认结果误当成未购买并允许重复提交；失败记录、原因和领取凭证不因轮询而变化。真正仍处于processing的中断任务保持原只读恢复资格，恢复失败后即停止，不再反复核对。此前0p中“失败任务两分钟后继续核对”的规则由本项替代。无schema或历史数据更新。
 
 验证：先增加真实隔离HTTP回归，旧实现会重新领取旧失败任务并失败；修改后通过。覆盖新／旧P失败、unknown为0／1、恢复领取后经原状态接口报失败再多轮轮询、未知标记保留且重复提交仍拒绝、执行中断的原恢复／成功补单、跨账号隔离及按商品表类型判断。发布仅更新API services/fleamarketPurchase.js并重启；插件、两端dist无需更新。未部署生产或操作真实Yahoo。
+
+### 0au. PIN前Chrome原生Google通行密钥提供方选择
+
+用户截图为Chrome浏览器原生WebAuthn弹窗，不属于Yahoo DOM。新增services/manualPasskey.js生成Windows UI Automation脚本，由原API机器执行；沿用现有Windows交互会话及前台锁，不新增Native Messaging安装。只枚举可见Chrome顶层窗口，标题必须含当前账号／实例唯一GDAIPAI-{accountId}-{instanceId}-PASSKEY标识；限定主窗口或其拥有的原生弹窗，排除任何Document网页子树。匹配指定yahoo.co.jp保存通行密钥标题、取消按钮及唯一Google密码管理器可操作项；多候选／不可用／失焦／超时不点击，优先InvokePattern，缺少该模式时只用所识别控件GetClickablePoint，未使用固定屏幕坐标。只选提供方，不获取／保存Google凭据、不发送密码或PIN、不点取消／短信。
+
+新增POST /api/plugin/manual-passkey/select复用绑定鉴权及foreground.check，窗口标识须完整匹配账号和插件实例，错误token、其他账号／实例请求拒绝。PowerShell以EncodedCommand传递Unicode脚本，windowsHide、STA及8秒执行上限；请求截止时间传到点击前再次检查。系统脚本不输出邮箱／密钥，仅返回detected、clicked、原生runtimeId组成的dialogId。插件session保存上次tab／URL／dialogId，同一仍显示的弹窗不重复点，确认弹窗消失后清理；未检测到的探测短时缓存减少重复系统调用。
+
+插件selectManualGooglePasskey在原单账号前台锁内激活并标记验证标签，初次验证、原其他登录方式选择后的30秒转换、邮箱验证码已提交后的30秒转换、PIN原刷新前后接入。新选择成功不作为登录完成或任务成功，后续仍由原PIN／文字验证码判断；原邮箱两轮及其他方式两轮上限、单标签／子页归属、价格／订单／付款及账号执行边界保持。PIN刷新若重新弹出新选择框也处理，框仍未关闭时不输入PIN。对未绑定的纯测试／非验证标签不调用本地原生接口。
+
+验证：node src/server/services/manualPasskey.test.js（Unicode编码、参数转义、超时／错误输出、PowerShell AST解析及真实不存在账号窗口的安全无动作探测，不点击任何真实窗口）；node scripts/run-isolated-regression.cjs src/server/routes/manualPasskey.test.js（真实隔离HTTP／模拟原生选择服务，前台token、完整账号实例窗口标识、跨账号拒绝及8秒截止）；node yahoo-plugin/nativePasskey.test.js（模拟初次选择→PIN、邮箱→选择→PIN、原PIN刷新新弹窗、同一弹窗只选一次、失败不输PIN）；node yahoo-plugin/alternativeLogin.test.js；node yahoo-plugin/emailVerification.test.js；node yahoo-plugin/multiAccount.test.js；node yahoo-plugin/background.test.js；node scripts/run-isolated-regression.cjs src/server/routes/plugin.test.js；node scripts/encoding-guard.js；git diff --check。新增3项已加入总回归。本轮未跑完整总回归；原生真实弹窗的UIA可访问控件名、Invoke及实际跳转仍需目标Windows机器更新后验收，不宣称已完成真实登录。
+
+发布：API routes/plugin.js、新services/manualPasskey.js并重启，插件background.js在各账号reload；无manifest权限、两端dist或schema变更。原API与Chrome须和既有系统PIN输入一样位于可交互的Windows会话；未部署／未输入真实凭据／未操作Yahoo交易。
 
 ### 0at. 代理互斥在API原子创建任务时执行最终校验
 
@@ -1335,6 +1352,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ### 2026-10-28 P任务失败后停止重复核对
 
 P恢复查询排除failed，首次购买或只读核对失败后保持失败，旧失败记录同样不再领取；保留未知结果的防重复购买保护及原processing中断恢复，普通／商城重试不变。仅更新API services/fleamarketPurchase.js并重启，验证与发布见0av，未部署或操作生产数据。
+
+### 2026-10-28 PIN前原生Google通行密钥选择
+
+复用原Windows系统输入与多账号前台锁，只识别目标账号／实例下原生yahoo.co.jp弹窗并选择唯一Google密码管理器项，邮箱后及PIN刷新后同样覆盖。后续交原PIN，不把提供方选择当作登录成功；真实弹窗待更新验收，发布和验证见0au。
 
 ### 2026-10-26 API补齐代理互斥并发保护，保留本人续拍例外
 

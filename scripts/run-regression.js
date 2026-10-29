@@ -13,6 +13,9 @@ if(process.env.GDAIPAI_ISOLATED_TESTS!=='1') {
   process.exit(isolated.status || 0);
 }
 const steps = [
+  ['Native Google passkey helper',process.execPath,['src/server/services/manualPasskey.test.js'],rootDir],
+  ['Native Google passkey HTTP account isolation',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/manualPasskey.test.js'],rootDir],
+  ['Native Google passkey verification handoff',process.execPath,['yahoo-plugin/nativePasskey.test.js'],rootDir],
   ['Agent exclusivity enforced during atomic task creation',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/agentProductPolicy.submit.test.js'],rootDir],
   ['Resubmission refreshes old auction history safely',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/task.historyRefresh.test.js'],rootDir],
   ['Agent group policy settings and read-only checks',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/agentProductPolicy.test.js'],rootDir],

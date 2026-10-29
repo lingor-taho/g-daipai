@@ -468,6 +468,7 @@ async function run() {
   await testTwoEmailRoundsCompleteOriginalPinBeforeReturning();
   await testThirdEmailAfterWorkerRestartNeverReadsOrSubmits();
   await testLockedEmailTabClosesDuplicateLoginPages();
+  await testSecondEmailWaitsForClick();
   await testRepeatedEmailIsBoundedWithoutRefresh();
   await testEmailSubmissionHandsOffToOriginalPinFlow();
   await testRetryOnExistingPinDoesNotRefreshOrReadGmail();
@@ -506,7 +507,7 @@ async function testTwoEmailRoundsCompleteOriginalPinBeforeReturning() {
   const result = await fixture.api.handleManualVerificationIfPresent({ id: 7, url: emailUrl });
   assert.equal(result.handled, true);
   assert.equal(result.tab.url, 'https://auctions.yahoo.co.jp/', 'only return after PIN has completed');
-  assert.deepEqual(types, ['email', 'pin']);
+  assert.deepEqual(types, ['email', 'email', 'pin']);
   assert.equal(fixture.counts().fills, 2);
   assert.equal(fixture.counts().reloads, 2, 'initial email refresh plus original PIN refresh; no second email refresh');
 }
@@ -552,6 +553,32 @@ async function testLockedEmailTabClosesDuplicateLoginPages() {
   assert.deepEqual(removed, [8]);
   assert.deepEqual([...tabs.keys()], [7]);
 }
+async function testSecondEmailWaitsForClick() {
+  let answers = 0;
+  let releaseSecond;
+  let notifyWaiting;
+  const waiting = new Promise(resolve => { notifyWaiting = resolve; });
+  const fixture = createAttemptFixture({ emailLoops: 1, pinAfterSubmit: true, fetch: async (url) => {
+    if (String(url).includes('/current')) return { async json() { return { found: false }; } };
+    if (String(url).includes('/answer/')) {
+      answers += 1;
+      if (answers === 2) {
+        notifyWaiting();
+        await new Promise(resolve => { releaseSecond = resolve; });
+      }
+    }
+    return { async json() { return { success: true, answered: true, answer: 'continue', claimed: true }; } };
+  } });
+  const operation = fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl });
+  await waiting;
+  assert.equal(fixture.counts().fills, 1, 'second email is not submitted before another click');
+  assert.equal(fixture.counts().reloads, 1);
+  releaseSecond();
+  await operation;
+  assert.equal(fixture.counts().fills, 2);
+  assert.equal(fixture.counts().reloads, 1, 'second email page is not refreshed');
+}
+
 async function testRepeatedEmailIsBoundedWithoutRefresh() {
   for (const emailLoops of [1, 2]) {
     const posted = [];
@@ -565,7 +592,9 @@ async function testRepeatedEmailIsBoundedWithoutRefresh() {
     if (emailLoops === 1) {
       const tab = await fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl });
       assert.equal(await fixture.api.detectManualPinPage(tab), true, 'second email continues to the original PIN handler');
-      assert.equal(posted.length, 1, 'second email needs no extra continue prompt');
+      assert.equal(posted.length, 2, 'second email publishes a new continue prompt');
+      assert.equal(posted[1].message, '第二次邮箱验证');
+      assert.equal(posted[1].phase, 'waiting');
     } else {
       await assert.rejects(fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl }), /邮箱跳第三次验证，请人工处理！/);
       assert.equal(posted.at(-1).message, '邮箱跳第三次验证，请人工处理！');
@@ -573,7 +602,7 @@ async function testRepeatedEmailIsBoundedWithoutRefresh() {
     }
     assert.equal(fixture.counts().fills, 2, 'never submit the third email verification');
     assert.equal(fixture.counts().reloads, 1, 'only the initial email page refreshes');
-    assert.equal(claims, 1, 'one human continue starts both email rounds');
+    assert.equal(claims, 2, 'each email round requires a human continue');
   }
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

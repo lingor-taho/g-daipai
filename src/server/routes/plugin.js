@@ -10,6 +10,7 @@ const db = require('../models');
 const yahooAccounts = require('../services/yahooAccounts');
 const accountScope = require('../services/yahooAccountContext');
 const foreground = require('../services/yahooForeground');
+const { selectGooglePasskey } = require('../services/manualPasskey');
 
 router.get('/binding/bootstrap', (req, res) => {
   const accounts = yahooAccounts.list(db, Date.now(), true);
@@ -3479,6 +3480,16 @@ router.post('/manual-captcha/email/claim', async (req, res) => {
 router.post('/manual-captcha/close', async (req, res) => {
   const result = await closeCaptchaChallenge(db, req.body?.id || '');
   res.json({ success: true, ...result });
+});
+
+router.post('/manual-passkey/select', async (req,res) => {
+  try {
+    foreground.check(db.raw,req.body?.foreground_token);
+    const expectedTitle = `GDAIPAI-${accountScope.accountId()}-${accountScope.context()?.instanceId}-PASSKEY`;
+    if (req.body?.windowTitle !== expectedTitle) throw yahooAccounts.fail('通行密钥窗口账号标识不匹配');
+    const result = await selectGooglePasskey({windowTitle:expectedTitle,deadline:Math.min(Number(req.body?.deadline) || Date.now()+8000,Date.now()+8000),previousDialogId:String(req.body?.previousDialogId || '').slice(0,300)});
+    res.json(result);
+  } catch (error) { res.status(error.statusCode || 500).json({success:false,error:error.message || 'Google 通行密钥选择失败，请人工处理'}); }
 });
 
 router.post('/manual-pin/type', async (req, res) => {

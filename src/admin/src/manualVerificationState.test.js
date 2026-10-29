@@ -67,3 +67,7 @@ for (const phase of ['waiting', 'error']) {
   assert.equal(view.showContinue, false);
   assert.equal(view.status, phase === 'error' ? 'error' : 'confirming');
 }
+
+const secondEmail = getManualVerificationDisplayState({ id: 'email-second', type: 'email', message: '第二次邮箱验证', phase: 'waiting' });
+assert.equal(secondEmail.continueLabel, '第二次邮箱验证 继续');
+assert.equal(secondEmail.showContinue, true);

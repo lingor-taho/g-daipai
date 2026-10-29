@@ -40,6 +40,7 @@ function getManualVerificationDisplayState(challenge, options = {}) {
       status: challenge.phase === 'error' ? 'error' : 'continue',
       showInput: false,
       showContinue: challenge.message !== '邮箱跳第三次验证，请人工处理！',
+      continueLabel: challenge.message === '第二次邮箱验证' ? '第二次邮箱验证 继续' : '继续',
       title: challenge.message || '需要邮箱验证码。'
     };
   }
