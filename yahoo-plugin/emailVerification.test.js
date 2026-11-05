@@ -14,6 +14,9 @@ function createAttemptFixture(options = {}) {
   let fills = 0;
   let pinReady = false;
   let pinFinished = false;
+  let captchaPassed = false;
+  let alternativeStage = 'entry';
+  const alternativeClicks = [];
   const removed = [];
   const scripts = [];
   class Clock extends Date { static now() { return now; } }
@@ -39,8 +42,9 @@ function createAttemptFixture(options = {}) {
       async get(id) {
         if (pinFinished) return { id, url: 'https://auctions.yahoo.co.jp/', status: 'complete' };
         if (id === 7 && !options.newTabCaptcha && !options.newTabPin && submittedAt && options.transitionAfter !== null && now - submittedAt >= (options.transitionAfter || 0)) {
-          pinReady = Boolean(options.pinAfterSubmit) && fills > (options.emailLoops || 0);
-          yahooUrl = pinReady || options.emailLoops ? emailUrl : 'https://login.yahoo.co.jp/ncaptcha?fido=1';
+          pinReady = Boolean(options.pinAfterSubmit) && (fills > (options.emailLoops || 0) || alternativeStage === 'pin');
+          yahooUrl = (pinReady || options.emailLoops) && (!options.captchaBetween || captchaPassed)
+            ? emailUrl : 'https://login.yahoo.co.jp/ncaptcha?fido=1';
         }
         if (id === 91 && options.newTabPin) return { id, url: emailUrl, status: 'complete' };
         return { id, url: yahooUrl, status: 'complete' };
@@ -58,6 +62,20 @@ function createAttemptFixture(options = {}) {
     scripting: {
       async executeScript(payload) {
         scripts.push(String(payload.func));
+        if (options.captchaBetween && String(payload.func).includes('captchaAnswer')) {
+          assert.equal(payload.args[0], 'あいう');
+          captchaPassed = true;
+          return [{ result: { success: true } }];
+        }
+        if (String(payload.func).includes('loginAction')) {
+          const [action, fromEmail] = payload.args;
+          if (!fromEmail || !captchaPassed || alternativeStage === 'pin') return [{ result: null }];
+          if (!action) return [{ result: { stage: alternativeStage } }];
+          assert.equal(action, alternativeStage);
+          alternativeClicks.push(action);
+          alternativeStage = action === 'entry' ? 'methods' : 'pin';
+          return [{ result: { stage: action, clicked: true } }];
+        }
         if (String(payload.func).includes('const codeInput') &&
             (pinReady || (options.newTabPin && payload.target.tabId === 91))) return [{ result: null }];
         if (String(payload.func).includes('document.readyState')) return [{ result: true }];
@@ -79,7 +97,7 @@ function createAttemptFixture(options = {}) {
       }
     }
   });
-  return { api, counts: () => ({ reloads, fills, removed, elapsed: now - start, submittedElapsed: now - submittedAt }), scripts };
+  return { api, counts: () => ({ reloads, fills, removed, elapsed: now - start, submittedElapsed: now - submittedAt }), scripts, alternativeClicks };
 }
 
 async function testOneRefreshOneSubmitAndSeparateTimeouts() {
@@ -254,6 +272,38 @@ async function testEmailFillScriptDoesOneNativeInputAndOneClick() {
   assert.deepEqual(events, ['input', 'change']);
   assert.equal((await api.fillManualEmailCodeOnce(7, '012345', Date.now() - 1)).success, false);
   assert.equal(clicks, 1);
+}
+
+async function testEmailAlternativeOnlyClicksEntryAndDialogPasskey() {
+  const clicks = [];
+  let opened = false;
+  const element = (innerText, click = () => {}) => ({ innerText, offsetWidth: 100, offsetHeight: 20, getAttribute: () => '', click });
+  const otherAccount = element('別のYahoo! JAPAN IDでログイン', () => clicks.push('other account'));
+  const entry = element('他の方法でログイン', () => { clicks.push('entry'); opened = true; });
+  const login = element('ログイン', () => clicks.push('email login'));
+  const outsidePasskey = element('パスキー', () => clicks.push('outside passkey'));
+  const passkey = element('パスキー', () => clicks.push('passkey'));
+  const sms = element('確認コード（SMS）', () => clicks.push('sms'));
+  const dialog = { querySelectorAll: () => [passkey, sms] };
+  const heading = { ...element('他の方法でログイン'), closest: () => dialog };
+  const input = { ...element(''), placeholder: '確認コード' };
+  const document = {
+    body: { innerText: 'メールに届いた確認コードを入力してください。' },
+    querySelectorAll(selector) {
+      if (selector === 'input') return [input];
+      if (selector === 'h1,h2,h3,p,div,span') return opened ? [heading] : [];
+      return opened ? [otherAccount, entry, login, outsidePasskey, passkey, sms] : [otherAccount, entry, login, outsidePasskey];
+    }
+  };
+  const api = loadBackgroundForTest({ disableAutoStart: true, document,
+    scripting: { async executeScript(payload) { return [{ result: payload.func(...payload.args) }]; } }
+  });
+  const tab = { id: 7, url: emailUrl };
+  assert.equal(await api.getManualAlternativeLoginState(tab), null, 'first email page does not trigger alternative login');
+  assert.equal((await api.getManualAlternativeLoginState(tab, 'entry', true)).clicked, true);
+  assert.equal((await api.getManualAlternativeLoginState(tab, 'methods', true)).clicked, true);
+  assert.equal((await api.getManualAlternativeLoginState(tab, 'methods', true)).clicked, false);
+  assert.deepEqual(clicks, ['entry', 'passkey']);
 }
 
 async function testClaimedEmailAfterWorkerRestartBecomesRetryWithoutReplay() {
@@ -465,11 +515,10 @@ async function testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(ex
 }
 
 async function run() {
-  await testTwoEmailRoundsCompleteOriginalPinBeforeReturning();
+  await testSecondEmailContinuesViaPasskeyAfterCaptcha();
   await testThirdEmailAfterWorkerRestartNeverReadsOrSubmits();
   await testLockedEmailTabClosesDuplicateLoginPages();
-  await testSecondEmailWaitsForClick();
-  await testRepeatedEmailIsBoundedWithoutRefresh();
+  await testRepeatedEmailBeforeCaptchaStops();
   await testEmailSubmissionHandsOffToOriginalPinFlow();
   await testRetryOnExistingPinDoesNotRefreshOrReadGmail();
   await testEmailReturnsToOuterPinChallengeWithoutReusingCode();
@@ -479,6 +528,7 @@ async function run() {
   testFreshMailSelectionRejectsOldOtherAccountAndWrongSender();
   await testEmailDetectionOverridesPinUrlUsingActualPageScript();
   await testEmailFillScriptDoesOneNativeInputAndOneClick();
+  await testEmailAlternativeOnlyClicksEntryAndDialogPasskey();
   await testClaimedEmailAfterWorkerRestartBecomesRetryWithoutReplay();
   await testGmailPageReaderUsesNewMessageAndDoesNotClickAfterExpiry();
   await testLateGmailTabCreationIsCleanedWithoutYahooRefresh();
@@ -490,27 +540,44 @@ async function run() {
   await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(true, { cached: true, oldDate: true });
   console.log('Email verification tests passed.');
 }
-async function testTwoEmailRoundsCompleteOriginalPinBeforeReturning() {
-  let pinPosted = false;
-  const types = [];
-  const fixture = createAttemptFixture({ emailLoops: 1, pinAfterSubmit: true, finishPin: true,
+async function testSecondEmailContinuesViaPasskeyAfterCaptcha() {
+  let releaseSecond;
+  let notifyWaiting;
+  let challenge;
+  const waiting = new Promise(resolve => { notifyWaiting = resolve; });
+  const posted = [];
+  const fixture = createAttemptFixture({ emailLoops: 1, captchaBetween: true, pinAfterSubmit: true, finishPin: true,
     fetch: async (url, request = {}) => {
       if (String(url).includes('/current')) return { async json() { return { found: false }; } };
       if (String(url).includes('/challenge')) {
-        const challenge = JSON.parse(request.body);
-        types.push(challenge.type);
-        if (challenge.type === 'pin') pinPosted = true;
+        challenge = JSON.parse(request.body);
+        posted.push(challenge);
       }
-      return { async json() { return { success: true, answered: true, answer: pinPosted ? '765432' : 'continue', claimed: true }; } };
+      if (String(url).includes('/answer/') && challenge.message === '第二次邮箱验证') {
+        notifyWaiting();
+        await new Promise(resolve => { releaseSecond = resolve; });
+      }
+      const answers = { email: 'continue', captcha: 'あいう', pin: '765432' };
+      return { async json() { return { success: true, answered: true, answer: answers[challenge?.type], claimed: true }; } };
     }
   });
-  const result = await fixture.api.handleManualVerificationIfPresent({ id: 7, url: emailUrl });
+  const flow = fixture.api.handleManualVerificationIfPresent({ id: 7, url: emailUrl });
+  await Promise.race([waiting, flow.then(() => assert.fail('expected second continue before PIN'))]);
+  assert.deepEqual(posted.map(challenge => challenge.type), ['email', 'captcha', 'email']);
+  assert.equal(fixture.counts().fills, 1);
+  assert.equal(fixture.counts().reloads, 1);
+  assert.deepEqual(fixture.alternativeClicks, []);
+  releaseSecond();
+  const result = await flow;
   assert.equal(result.handled, true);
-  assert.equal(result.tab.url, 'https://auctions.yahoo.co.jp/', 'only return after PIN has completed');
-  assert.deepEqual(types, ['email', 'email', 'pin']);
-  assert.equal(fixture.counts().fills, 2);
-  assert.equal(fixture.counts().reloads, 2, 'initial email refresh plus original PIN refresh; no second email refresh');
+  assert.equal(result.tab.url, 'https://auctions.yahoo.co.jp/');
+  assert.deepEqual(posted.map(challenge => challenge.type), ['email', 'captcha', 'email', 'login', 'pin']);
+  assert.deepEqual(fixture.alternativeClicks, ['entry', 'methods']);
+  assert.equal(fixture.counts().fills, 1);
+  assert.deepEqual(fixture.counts().removed, [90], 'Gmail was opened only once');
+  assert.equal(fixture.counts().reloads, 2, 'only the first email and original PIN refresh');
 }
+
 async function testThirdEmailAfterWorkerRestartNeverReadsOrSubmits() {
   const posted = [];
   const api = loadBackgroundForTest({ disableAutoStart: true,
@@ -553,56 +620,21 @@ async function testLockedEmailTabClosesDuplicateLoginPages() {
   assert.deepEqual(removed, [8]);
   assert.deepEqual([...tabs.keys()], [7]);
 }
-async function testSecondEmailWaitsForClick() {
-  let answers = 0;
-  let releaseSecond;
-  let notifyWaiting;
-  const waiting = new Promise(resolve => { notifyWaiting = resolve; });
-  const fixture = createAttemptFixture({ emailLoops: 1, pinAfterSubmit: true, fetch: async (url) => {
+async function testRepeatedEmailBeforeCaptchaStops() {
+  const posted = [];
+  let claims = 0;
+  const fixture = createAttemptFixture({ emailLoops: 1, pinAfterSubmit: true, fetch: async (url, request = {}) => {
     if (String(url).includes('/current')) return { async json() { return { found: false }; } };
-    if (String(url).includes('/answer/')) {
-      answers += 1;
-      if (answers === 2) {
-        notifyWaiting();
-        await new Promise(resolve => { releaseSecond = resolve; });
-      }
-    }
+    if (String(url).includes('/challenge')) posted.push(JSON.parse(request.body));
+    if (String(url).includes('/claim')) claims += 1;
     return { async json() { return { success: true, answered: true, answer: 'continue', claimed: true }; } };
   } });
-  const operation = fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl });
-  await waiting;
-  assert.equal(fixture.counts().fills, 1, 'second email is not submitted before another click');
+  await assert.rejects(fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl }), /尚未通过日文验证码/);
+  assert.equal(posted.at(-1).phase, 'error');
+  assert.equal(fixture.counts().fills, 1);
   assert.equal(fixture.counts().reloads, 1);
-  releaseSecond();
-  await operation;
-  assert.equal(fixture.counts().fills, 2);
-  assert.equal(fixture.counts().reloads, 1, 'second email page is not refreshed');
+  assert.deepEqual(fixture.alternativeClicks, []);
+  assert.equal(claims, 1);
 }
 
-async function testRepeatedEmailIsBoundedWithoutRefresh() {
-  for (const emailLoops of [1, 2]) {
-    const posted = [];
-    let claims = 0;
-    const fixture = createAttemptFixture({ emailLoops, pinAfterSubmit: true, fetch: async (url, request = {}) => {
-      if (String(url).includes('/current')) return { async json() { return { found: false }; } };
-      if (String(url).includes('/challenge')) posted.push(JSON.parse(request.body));
-      if (String(url).includes('/claim')) claims += 1;
-      return { async json() { return { success: true, answered: true, answer: 'continue', claimed: true }; } };
-    } });
-    if (emailLoops === 1) {
-      const tab = await fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl });
-      assert.equal(await fixture.api.detectManualPinPage(tab), true, 'second email continues to the original PIN handler');
-      assert.equal(posted.length, 2, 'second email publishes a new continue prompt');
-      assert.equal(posted[1].message, '第二次邮箱验证');
-      assert.equal(posted[1].phase, 'waiting');
-    } else {
-      await assert.rejects(fixture.api.handleManualEmailVerification({ id: 7, url: emailUrl }), /邮箱跳第三次验证，请人工处理！/);
-      assert.equal(posted.at(-1).message, '邮箱跳第三次验证，请人工处理！');
-      assert.equal(posted.at(-1).phase, 'error');
-    }
-    assert.equal(fixture.counts().fills, 2, 'never submit the third email verification');
-    assert.equal(fixture.counts().reloads, 1, 'only the initial email page refreshes');
-    assert.equal(claims, 2, 'each email round requires a human continue');
-  }
-}
 run().catch(error => { console.error(error); process.exitCode = 1; });

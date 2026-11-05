@@ -3457,6 +3457,7 @@ router.get('/manual-captcha/current', async (req, res) => {
     id: challenge.id,
     type: challenge.type || 'captcha',
     phase: challenge.phase || '',
+    message: challenge.message || '',
     tabId: challenge.tabId || null,
     answered: !!challenge.answer,
     answer: challenge.answer || '',

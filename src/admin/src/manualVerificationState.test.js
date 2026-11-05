@@ -61,6 +61,9 @@ const terminalEmail = getManualVerificationDisplayState({ id: 'email-terminal', 
 assert.equal(terminalEmail.title, '邮箱跳第三次验证，请人工处理！');
 assert.equal(terminalEmail.status, 'error');
 assert.equal(terminalEmail.showContinue, false);
+assert.equal(getManualVerificationDisplayState({
+  id: 'email-unfinished', type: 'email', phase: 'error', message: '第一次邮箱验证尚未通过日文验证码，请人工处理'
+}).showContinue, false);
 for (const phase of ['waiting', 'error']) {
   const view = getManualVerificationDisplayState({ id: 'login-1', type: 'login', phase, message: '登录方式跳第三次验证，请人工处理！' });
   assert.equal(view.showInput, false);
@@ -69,5 +72,5 @@ for (const phase of ['waiting', 'error']) {
 }
 
 const secondEmail = getManualVerificationDisplayState({ id: 'email-second', type: 'email', message: '第二次邮箱验证', phase: 'waiting' });
-assert.equal(secondEmail.continueLabel, '第二次邮箱验证 继续');
+assert.equal(secondEmail.continueLabel, '第二次パスキー验证 继续');
 assert.equal(secondEmail.showContinue, true);

@@ -174,6 +174,8 @@ async function testEmailContinueAndClaimAreOneShot() {
   await saveCaptchaChallenge(db, { id: 'email-terminal', type: 'email', phase: 'error', message: '邮箱跳第三次验证，请人工处理！' });
   await assert.rejects(requestEmailVerification(db, { id: 'email-terminal' }), /邮箱跳第三次验证/);
   assert.equal((await claimEmailVerification(db, { id: 'email-terminal' })).claimed, false);
+  await saveCaptchaChallenge(db, { id: 'email-unfinished', type: 'email', phase: 'error', message: '第一次邮箱验证尚未通过日文验证码，请人工处理' });
+  await assert.rejects(requestEmailVerification(db, { id: 'email-unfinished' }), /尚未通过日文验证码/);
 }
 
 run().catch(error => {

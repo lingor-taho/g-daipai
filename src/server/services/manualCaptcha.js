@@ -143,7 +143,7 @@ async function requestEmailVerification(database, payload = {}) {
     throw error;
   }
   if (challenge.answeredAt) return challenge;
-  if (challenge.message === '邮箱跳第三次验证，请人工处理！') {
+  if (['邮箱跳第三次验证，请人工处理！', '第一次邮箱验证尚未通过日文验证码，请人工处理'].includes(challenge.message)) {
     const error = new Error(challenge.message);
     error.statusCode = 409;
     throw error;
