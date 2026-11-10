@@ -1,10 +1,10 @@
 const assert = require('assert/strict');
 const {loadBackgroundForTest}=require('./background.test');
 const loginUrl='https://login.yahoo.co.jp/config/login?src=auc';
-function fixture({start='provider',error=false,holdProvider=false}={}){
- let phase=start;let now=100000;let emailFills=0;const calls=[];const nativeClicks=[];const titles=[];const storage={};let challenge;
+function fixture({start='provider',error=false,holdProvider=false,nativePin=false,pinError=false,pinAppearsOnAnswer=false}={}){
+ let phase=start;let now=100000;let emailFills=0;const calls=[];const nativeClicks=[];const titles=[];const storage={};let challenge;let answerReceived=false;
  class Clock extends Date{static now(){return now;}}
- const tab=()=>({id:7,windowId:9,status:'complete',active:true,url:phase==='done'?'https://auctions.yahoo.co.jp/':loginUrl});
+ const tab=()=>({id:7,windowId:9,status:'complete',active:true,url:phase==='done'?'https://auctions.yahoo.co.jp/':nativePin && !pinAppearsOnAnswer?'https://login.yahoo.co.jp/config/login?cpt=test':loginUrl});
  const api=loadBackgroundForTest({disableAutoStart:true,Date:Clock,
   setTimeout(fn,ms){if(!String(fn).includes('reject(')){now+=ms;queueMicrotask(fn);}return 1;},
   localStorage:{async get(){return {yahooBinding:{accountId:2,token:'bound-test'}};},async set(){}},
@@ -34,16 +34,24 @@ function fixture({start='provider',error=false,holdProvider=false}={}){
      if(body.previousDialogId==='provider-1')return json({success:true,detected:true,clicked:false,alreadyClicked:true,dialogId:'provider-1'});
      nativeClicks.push(body);if(!holdProvider)phase='pin';return json({success:true,detected:true,clicked:true,dialogId:'provider-'+nativeClicks.length});
     }
-    return json({success:true,detected:false});
+    return json({success:true,detected:false,pinDetected:nativePin && phase==='pin' && (!pinAppearsOnAnswer || answerReceived)});
    }
    if(path.endsWith('/challenge'))challenge=body;
    if(path.endsWith('/email/claim'))return json({success:true,claimed:true});
    if(path.endsWith('/current'))return json(challenge?{found:true,...challenge}:{found:false});
-   if(path.endsWith('/manual-pin/type')){assert.equal(phase,'pin');assert.equal(body.pin,'123456');phase='done';}
+   if(path.includes('/manual-captcha/answer/') && challenge?.type==='pin')answerReceived=true;
+   if(path.endsWith('/manual-pin/type')){
+    assert.equal(phase,'pin');assert.equal(body.pin,'123456');
+    assert.equal(Boolean(body.nativePin),nativePin);
+    assert.equal(body.foreground_token,'owned-lock');
+    assert.ok(body.windowTitle.endsWith(nativePin?'-PASSKEY':'-PIN'));
+    if(pinError)return json({success:false,error:'native PIN focus failed'});
+    phase='done';return json({success:true,digits:6});
+   }
    return json({success:true,answered:true,answer:'123456'});
   }
  });
- return {api,tab,calls,nativeClicks,titles,storage,phase:()=>phase,emailFills:()=>emailFills};
+ return {api,tab,calls,nativeClicks,titles,storage,phase:()=>phase,emailFills:()=>emailFills,challenge:()=>challenge};
 }
 (async()=>{
  const f=fixture();const first=await f.api.selectManualGooglePasskey(f.tab());assert.equal(first.clicked,true);
@@ -57,6 +65,20 @@ function fixture({start='provider',error=false,holdProvider=false}={}){
  assert.equal(flow.nativeClicks.length,2,'Initial chooser and a new chooser reopened by original PIN refresh are each handled');
  const selectedAt=flow.calls.indexOf('/api/plugin/manual-passkey/select');const typedAt=flow.calls.indexOf('/api/plugin/manual-pin/type');assert.ok(selectedAt<typedAt);
  assert.equal(flow.calls.filter(p=>p==='/api/plugin/manual-pin/type').length,1);
+ assert.equal(flow.calls.filter(p=>p==='reload').length,1,'ordinary PIN keeps its original refresh');
+ for(const options of [{start:'provider'},{start:'pin'},{start:'pin',pinAppearsOnAnswer:true}]){
+  const native=fixture({...options,nativePin:true});
+  const result=await native.api.handleManualVerificationIfPresent(native.tab());
+  assert.equal(result.tab.url,'https://auctions.yahoo.co.jp/');
+  assert.equal(native.nativeClicks.length,options.start==='provider'?1:0);
+  assert.equal(native.calls.includes('reload'),false);
+  assert.equal(native.calls.filter(p=>p==='/api/plugin/manual-pin/type').length,1);
+ }
+ const noFocus=fixture({start:'pin',nativePin:true,pinError:true});
+ await assert.rejects(noFocus.api.handleManualVerificationIfPresent(noFocus.tab()),/native PIN focus failed/);
+ assert.equal(noFocus.calls.includes('reload'),false);
+ assert.equal(noFocus.calls.filter(p=>p==='/api/plugin/manual-pin/type').length,1);
+ assert.equal(noFocus.challenge().phase,'error');
  const held=fixture({holdProvider:true});await held.api.selectManualGooglePasskey(held.tab());
  assert.equal((await held.api.selectManualGooglePasskey(held.tab(),{force:true})).alreadyClicked,true);assert.equal(held.nativeClicks.length,1,'Do not click the same native dialog twice');
  const afterEmail=fixture({start:'email'});const emailResult=await afterEmail.api.handleManualVerificationIfPresent(afterEmail.tab());
