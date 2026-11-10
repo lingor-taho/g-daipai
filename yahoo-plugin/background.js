@@ -2164,7 +2164,6 @@ async function closeManualCaptchaChallenge(id) {
 
 async function typeManualPinWithSystemKeyboard(answer, context = {}) {
   const pin = String(answer || '').replace(/\D/g, '');
-  const method = context.nativePin ? 'nativePasskeyPin' : 'systemSendKeys';
   if (!pin) return { success: false, error: 'pin digits are required' };
   try {
     const res = await apiFetch('/api/plugin/manual-pin/type', {
@@ -2172,19 +2171,18 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         pin,
-        ...(context.nativePin ? { nativePin: true } : {}),
         foreground_token:yahooForegroundToken,
         windowTitle: String(context.windowTitle || context.title || '').slice(0, 200)
       })
     });
-    const result = await res.json().catch(() => ({ success: !context.nativePin && res.ok }));
+    const result = await res.json().catch(() => ({ success: !context.requireJson && res.ok }));
     return result?.success
       ? {
           success: true,
-          method,
+          method: 'systemSendKeys',
           digits: result.digits || pin.length,
           diagnostics: [
-            `method=${method}`,
+            'method=systemSendKeys',
             result.windowTitle ? `windowTitle=${String(result.windowTitle).slice(0, 120)}` : '',
             result.stdout ? `stdout=${String(result.stdout).slice(0, 240)}` : ''
           ].filter(Boolean).join(',')
@@ -2192,7 +2190,7 @@ async function typeManualPinWithSystemKeyboard(answer, context = {}) {
       : {
           success: false,
           error: result?.error || 'system keyboard PIN input failed',
-          diagnostics: [`method=${method}`, result?.stdout ? `stdout=${String(result.stdout).slice(0, 240)}` : ''].filter(Boolean).join(',')
+          diagnostics: result?.stdout ? `method=systemSendKeys,stdout=${String(result.stdout).slice(0, 240)}` : 'method=systemSendKeys'
         };
   } catch (e) {
     return { success: false, error: e.message || 'system keyboard PIN input failed' };
@@ -5454,35 +5452,40 @@ const ALTERNATIVE_LOGIN_LOOP_ERROR = '登录方式跳第三次验证，请人工
 
 const manualPasskeyProbes = new Map();
 async function selectManualGooglePasskey(tab, options = {}) {
-  if (!tab?.id || !isLikelyManualPinTab(tab) || !await getYahooBinding()) return { detected: false };
+  const { probeOnly = false } = options;
+  const canProbe = candidate => isLikelyManualPinTab(candidate) || (probeOnly &&
+    /^https:\/\/(?:login\.yahoo\.co\.jp\/|account\.edit\.yahoo\.co\.jp\/|paypayfleamarket-sec\.yahoo\.co\.jp\/item\/z\d{8,10}\/order(?:[/?#]|$))/i.test(candidate?.url || ''));
+  if (!tab?.id || !canProbe(tab) || !await getYahooBinding()) return { detected: false };
   const cached = manualPasskeyProbes.get(tab.id);
-  if (!options.force && cached && Date.now() - cached.at < 2000 && !cached.result?.pinDetected && cached.result?.detected === false) return cached.result;
+  if (!probeOnly && !options.force && cached && Date.now() - cached.at < 2000 && !cached.result?.pinDetected && cached.result?.detected === false) return cached.result;
   const deadline = options.deadline || Date.now() + 20000;
   const result = await withYahooForeground(async () => {
     if (Date.now() >= deadline) throw new Error('Google 通行密钥选择已超时，请人工处理');
     const current = await chrome.tabs.get(tab.id).catch(() => null);
-    if (!current || !isLikelyManualPinTab(current) || current.url !== tab.url || current.status !== 'complete') return { detected: false };
-    await focusManualPinTabForSystemInput(current.id, yahooForegroundToken);
+    if (!current || !canProbe(current) || current.url !== tab.url ||
+        (probeOnly ? !current.active : current.status !== 'complete')) return { detected: false };
+    if (!probeOnly) await focusManualPinTabForSystemInput(current.id, yahooForegroundToken);
     const binding = await getYahooBinding();
     const windowTitle = 'GDAIPAI-' + binding.accountId + '-' + pluginInstanceId + '-PASSKEY';
     await chrome.scripting.executeScript({ target: { tabId: current.id }, func: title => { document.title = title; }, args: [windowTitle] });
-    const saved = chrome.storage.session.get ? await chrome.storage.session.get('manualPasskeyProviderSession') : {};
+    const saved = !probeOnly && chrome.storage.session.get ? await chrome.storage.session.get('manualPasskeyProviderSession') : {};
     const previous = saved.manualPasskeyProviderSession;
     if (Date.now() >= deadline) throw new Error('Google 通行密钥选择已超时，请人工处理');
-    const response = await apiFetch('/api/plugin/manual-passkey/select', {
+    const response = await apiFetch(`/api/plugin/manual-passkey/${probeOnly ? 'pin-probe' : 'select'}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ windowTitle, foreground_token: yahooForegroundToken, deadline,
         previousDialogId: previous?.tabId === current.id && previous.url === current.url ? previous.dialogId : '' })
     });
     const state = await response.json();
     if (!state.success) throw new Error(state.error || 'Google 通行密钥选择失败，请人工处理');
+    if (probeOnly) return state;
     if (state.clicked) {
       await chrome.storage.session.set({ manualPasskeyProviderSession: { tabId: current.id, url: current.url, dialogId: state.dialogId } });
       console.log('[Yahoo Bid] Selected Google Password Manager passkey in the account window');
     } else if (!state.detected && previous?.tabId === current.id) await chrome.storage.session.remove('manualPasskeyProviderSession');
     return state;
   });
-  manualPasskeyProbes.set(tab.id, { at: Date.now(), result });
+  if (!probeOnly) manualPasskeyProbes.set(tab.id, { at: Date.now(), result });
   return result;
 }
 
@@ -6650,23 +6653,23 @@ async function fillManualPinAnswer(tabId, answer, options = {}) {
   return withYahooForeground(() => fillManualPinAnswerUnlocked(tabId, answer, options));
 }
 async function fillManualPinAnswerUnlocked(tabId, answer, { nativePin = false } = {}) {
-  const pinTab = nativePin ? null : await focusManualPinTabForSystemInput(tabId,yahooForegroundToken);
+  const pinTab = await focusManualPinTabForSystemInput(tabId,yahooForegroundToken);
   const binding=await getYahooBinding();
   if (nativePin && !binding) return { success: false, error: '无法确认 Chrome 原生 PIN 弹窗所属账号' };
   let windowTitle=pinTab?.title || '';
   if(binding) {
-    windowTitle=`GDAIPAI-${binding.accountId}-${pluginInstanceId}-${nativePin ? 'PASSKEY' : 'PIN'}`;
-    if (!nativePin) await chrome.scripting.executeScript({target:{tabId},func:title=>{document.title=title;},args:[windowTitle]});
+    windowTitle=`GDAIPAI-${binding.accountId}-${pluginInstanceId}-PIN`;
+    await chrome.scripting.executeScript({target:{tabId},func:title=>{document.title=title;},args:[windowTitle]});
   }
-  const systemResult = await typeManualPinWithSystemKeyboard(answer, { windowTitle, nativePin });
+  const systemResult = await typeManualPinWithSystemKeyboard(answer, { windowTitle, requireJson: nativePin });
   console.log('[Yahoo Bid] Manual PIN system keyboard result:', systemResult?.success ? 'success' : 'failed', systemResult?.diagnostics || systemResult?.error || '');
   await postPluginDiagnostic({
     type: 'pin',
     level: systemResult?.success ? 'info' : 'warn',
     action: 'manualPin',
-    method: nativePin ? 'nativePasskeyPin' : 'systemSendKeys',
+    method: 'systemSendKeys',
     message: systemResult?.success ? 'manual PIN system keyboard input dispatched' : (systemResult?.error || 'manual PIN system keyboard input failed'),
-    diagnostics: systemResult?.diagnostics || systemResult?.error || ''
+    diagnostics: [nativePin ? 'nativePinDetected=true' : '', systemResult?.diagnostics || systemResult?.error || ''].filter(Boolean).join(',')
   });
   if (systemResult?.success || nativePin) return systemResult;
   console.warn('[Yahoo Bid] System keyboard PIN input failed, falling back to debugger:', systemResult?.error || systemResult);
@@ -6946,7 +6949,9 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     // A PIN refresh can itself return to email. Never type the PIN into that page.
     if (!nativePin && (await detectManualEmailPage(current) || await getManualAlternativeLoginState(current))) continue;
     const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
-    const fillResult = await fillManualPinAnswer(current.id, pinAnswer, { nativePin });
+    const fillResult = nativePin && !chooser.pinDetected
+      ? { success: false, error: 'Chrome 原生 PIN 弹窗已消失，请检查当前验证页面' }
+      : await fillManualPinAnswer(current.id, pinAnswer, { nativePin });
     if (nativePin && !fillResult?.success) {
       const message = fillResult?.error || 'Chrome 原生 PIN 输入失败，请检查弹窗';
       await postManualCaptchaChallenge({ id: buildManualVerificationId('login', current, context), type: 'login', tabId: current.id,
@@ -9167,11 +9172,20 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
   const secure = url.origin === 'https://paypayfleamarket-sec.yahoo.co.jp';
   const checkout = secure && url.pathname === `/item/${id}/order`;
   const done = secure && url.pathname === `/item/${id}/order/done`;
-  if (!item && !checkout && !done) return { state: 'foreign' };
+  const auth = ['https://login.yahoo.co.jp', 'https://account.edit.yahoo.co.jp'].includes(url.origin);
+  if (!item && !checkout && !done && !auth) return { state: 'foreign' };
   const text = node => String(node?.innerText || node?.textContent || '').replace(/\s+/g, '');
   const visible = node => !!node?.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none';
   // Success requires rendered text, never a phrase embedded in hydration scripts.
   const body = String(document.body?.innerText || '').replace(/\s+/g,'');
+  if (auth || checkout) {
+    const pinPrompt = /PIN(?:コード)?(?:を|の)入力|PIN(?:コード)?確認|Enter(?:your|the)?PIN/i.test(body);
+    const pinInput = [...document.querySelectorAll('input')].some(node => visible(node) && !node.disabled &&
+      (node.type === 'password' || node.type === 'tel' || node.type === 'number' || node.inputMode === 'numeric' ||
+        /\bpin\b/i.test([node.placeholder, node.name, node.id, node.getAttribute('aria-label')].join(' '))));
+    if (pinPrompt && pinInput) return { state: 'pin' };
+    if (auth) return { state: 'auth' };
+  }
   const buttons = root => [...root.querySelectorAll('button,a,[role="button"],input[type="submit"]')].filter(visible);
   const exactButton = (root, label) => buttons(root).find(node => text(node) === label || node.value === label);
   const productPrice = root => {
@@ -9233,7 +9247,9 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
 async function executeFleamarketPurchaseTask(task, options = {}) {
   const id = String(task.product_id || normalizeAuctionId(task.product_url) || '').toLowerCase();
   const recoveryOnly = task.fleamarket_recovery_only === true;
-  let tab, armed = recoveryOnly, completed = false;
+  let tab, armed = recoveryOnly, completed = false, waitingForPin = false, nextPinProbeAt = 0;
+  const authUrl = /^https:\/\/(?:login|account\.edit)\.yahoo\.co\.jp\//i;
+  const checkoutUrl = new RegExp(`^https://paypayfleamarket-sec\\.yahoo\\.co\\.jp/item/${id}/order(?:[/?#]|$)`);
   const acted = new Set();
   const request = async (name, body) => {
     const response = await apiFetch(`/api/plugin/task/${task.id}/fleamarket/${name}`, {
@@ -9267,9 +9283,11 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
       // Follow only new child tabs belonging to this run, never an existing checkout.
       const tabs = await chrome.tabs.query({});
       const owned = managedTaskTabIdsByTaskId.get(task.id) || new Set([tab.id]);
-      const child = tabs.find(value => !previousIds.has(value.id) && !owned.has(value.id) && owned.has(value.openerTabId) &&
-        new RegExp(`^https://paypayfleamarket-sec\\.yahoo\\.co\\.jp/item/${id}/order(?:[/?#]|$)`).test(value.url || value.pendingUrl || ''));
+      const children = tabs.filter(value => !previousIds.has(value.id) && !owned.has(value.id) && owned.has(value.openerTabId));
+      const child = children.find(value => authUrl.test(value.url || value.pendingUrl || '')) ||
+        children.find(value => checkoutUrl.test(value.url || value.pendingUrl || ''));
       if (child) { registerManagedTaskTab(task.id, child.id); tab = child; }
+      tab = tabs.find(value => value.id === tab.id) || tab;
       let snapshot;
       try {
         const results = await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketPageStep,args:[id]});
@@ -9288,6 +9306,24 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
         return;
       }
       const state = snapshot?.state;
+      let pin = state === 'pin';
+      if (!pin && tab.active && Date.now() >= nextPinProbeAt &&
+          (authUrl.test(tab.url || '') || checkoutUrl.test(tab.url || ''))) {
+        nextPinProbeAt = Date.now() + 5000;
+        const probe = await selectManualGooglePasskey(tab, { probeOnly: true, deadline }).catch(() => null);
+        pin = probe?.pinDetected === true;
+      }
+      if (pin) {
+        waitingForPin = true;
+        if (authUrl.test(tab.url || '')) rememberManualVerificationTab(tab);
+        for (let attempt = 0; ; attempt++) {
+          try { await request('pin-failed'); return; }
+          catch (error) {
+            if (attempt === 2 || error.definiteRejection) throw error;
+            await sleep(1000);
+          }
+        }
+      }
       if (!armed && snapshot?.ready && ['item','placement','review','confirm'].includes(state) && !acted.has(state)) {
         if (state === 'confirm') {
           if (!Number.isSafeInteger(snapshot.itemPrice)) throw new Error('フリマ确认页商品价格读取失败，未点击购买确认');
@@ -9307,13 +9343,13 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
       }
       await sleep(1000);
     }
-    throw new Error(armed ? 'フリマ购买结果待核对，请勿重复购买' : 'フリマ購入页面等待超时');
+    throw new Error('フリマ購入页面等待超时');
   } catch (error) {
     await markTaskStatus(task.id,'failed',error.message,{executionClaim:task.claim_token,result_unknown:armed});
     console.error('[Yahoo Fleamarket] Purchase stopped:',task.id,error.message);
   } finally {
-    // Retain an uncertain payment tab for inspection; it must not be refreshed/replayed.
-    if (completed || !armed || recoveryOnly) await closeManagedTaskTabs(task.id,tab?.id).catch(() => {});
+    // Keep the verification tab available to the administrator and retain uncertain payment evidence.
+    if (!waitingForPin && (completed || !armed || recoveryOnly)) await closeManagedTaskTabs(task.id,tab?.id).catch(() => {});
     else releaseManagedTaskTabs(task.id);
     yahooActiveBidClaims.delete(Number(task.id));
     if (!options.preserveActiveRun) activeBidRuns.delete(task.id);

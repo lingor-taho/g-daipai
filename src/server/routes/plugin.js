@@ -10,7 +10,7 @@ const db = require('../models');
 const yahooAccounts = require('../services/yahooAccounts');
 const accountScope = require('../services/yahooAccountContext');
 const foreground = require('../services/yahooForeground');
-const { selectGooglePasskey, typeGooglePasskeyPin } = require('../services/manualPasskey');
+const { selectGooglePasskey } = require('../services/manualPasskey');
 
 router.get('/binding/bootstrap', (req, res) => {
   const accounts = yahooAccounts.list(db, Date.now(), true);
@@ -404,7 +404,7 @@ async function failPricedOutPendingTasks(database = db) {
 async function resetStaleProcessingTasks(database = db, nowMs = Date.now()) {
   const cutoffIso = new Date(nowMs - 60 * 1000).toISOString();
   if (database.raw) database.raw.prepare(`UPDATE tasks SET status='failed',
-    error_msg='フリマ购买结果待核对，请勿重复购买',updated_at=CURRENT_TIMESTAMP
+    error_msg='フリマ購入执行超时',updated_at=CURRENT_TIMESTAMP
     WHERE status='processing' AND execution_unknown=1 AND datetime(updated_at)<=datetime(?)
     AND (? IS NULL OR account_id=?)
     AND product_id IN (SELECT product_id FROM products WHERE product_type='fleamarket')`)
@@ -1122,6 +1122,10 @@ router.get('/fleamarket/recovery/jobs', (req, res) => {
 router.post('/task/:id/fleamarket/complete', (req, res) => {
   try { res.json(fleamarketPurchase.completePurchase(db.raw, Number(req.params.id), accountScope.context(), req.get('X-Yahoo-Claim'), req.body)); }
   catch (error) { res.status(error.statusCode || 500).json({error:error.message}); }
+});
+router.post('/task/:id/fleamarket/pin-failed', (req, res) => {
+  try { res.json(fleamarketPurchase.failForPin(db.raw, Number(req.params.id), accountScope.context(), req.get('X-Yahoo-Claim'))); }
+  catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
 });
 // PATCH /api/plugin/task/:id/status
 router.patch('/task/:id/status', async (req, res) => {
@@ -3493,18 +3497,21 @@ router.post('/manual-passkey/select', async (req,res) => {
   } catch (error) { res.status(error.statusCode || 500).json({success:false,error:error.message || 'Google 通行密钥选择失败，请人工处理'}); }
 });
 
+router.post('/manual-passkey/pin-probe', async (req, res) => {
+  try {
+    foreground.check(db.raw, req.body?.foreground_token);
+    const windowTitle = `GDAIPAI-${accountScope.accountId()}-${accountScope.context()?.instanceId}-PASSKEY`;
+    if (req.body?.windowTitle !== windowTitle) throw yahooAccounts.fail('通行密钥窗口账号标识不匹配');
+    const state = await selectGooglePasskey({ windowTitle, probeOnly: true });
+    res.json({ success: true, pinDetected: state.pinDetected === true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/manual-pin/type', async (req, res) => {
   try {
     foreground.check(db.raw,req.body?.foreground_token);
-    if (req.body?.nativePin === true) {
-      const windowTitle = `GDAIPAI-${accountScope.accountId()}-${accountScope.context()?.instanceId}-PASSKEY`;
-      if (req.body.windowTitle !== windowTitle) throw yahooAccounts.fail('PIN 窗口账号或插件标识不匹配');
-      const pin = String(req.body.pin || '');
-      if (!/^\d{4,12}$/.test(pin)) return res.status(400).json({ success: false, error: 'valid pin is required' });
-      const result = await typeGooglePasskeyPin({ windowTitle, pin });
-      if (!result.success || result.digits !== pin.length) throw new Error('未能将 PIN 输入 Chrome 原生弹窗');
-      return res.json(result);
-    }
     if(!String(req.body?.windowTitle || '').startsWith(`GDAIPAI-${accountScope.accountId()}-`)) throw yahooAccounts.fail('PIN 窗口账号标识不匹配');
     const result = await typeManualPinWithSystemKeyboard(req.body?.pin || req.body?.answer || '', {
       windowTitle: req.body?.windowTitle || req.body?.title || '',strictWindow:true

@@ -1,7 +1,7 @@
 const assert = require('assert/strict');
 const {loadBackgroundForTest}=require('./background.test');
 const loginUrl='https://login.yahoo.co.jp/config/login?src=auc';
-function fixture({start='provider',error=false,holdProvider=false,nativePin=false,pinError=false,pinAppearsOnAnswer=false}={}){
+function fixture({start='provider',error=false,holdProvider=false,nativePin=false,pinError=false,pinAppearsOnAnswer=false,pinDisappearsOnAnswer=false}={}){
  let phase=start;let now=100000;let emailFills=0;const calls=[];const nativeClicks=[];const titles=[];const storage={};let challenge;let answerReceived=false;
  class Clock extends Date{static now(){return now;}}
  const tab=()=>({id:7,windowId:9,status:'complete',active:true,url:phase==='done'?'https://auctions.yahoo.co.jp/':nativePin && !pinAppearsOnAnswer?'https://login.yahoo.co.jp/config/login?cpt=test':loginUrl});
@@ -34,7 +34,8 @@ function fixture({start='provider',error=false,holdProvider=false,nativePin=fals
      if(body.previousDialogId==='provider-1')return json({success:true,detected:true,clicked:false,alreadyClicked:true,dialogId:'provider-1'});
      nativeClicks.push(body);if(!holdProvider)phase='pin';return json({success:true,detected:true,clicked:true,dialogId:'provider-'+nativeClicks.length});
     }
-    return json({success:true,detected:false,pinDetected:nativePin && phase==='pin' && (!pinAppearsOnAnswer || answerReceived)});
+    return json({success:true,detected:false,pinDetected:nativePin && phase==='pin' &&
+      (!pinAppearsOnAnswer || answerReceived) && (!pinDisappearsOnAnswer || !answerReceived)});
    }
    if(path.endsWith('/challenge'))challenge=body;
    if(path.endsWith('/email/claim'))return json({success:true,claimed:true});
@@ -42,9 +43,9 @@ function fixture({start='provider',error=false,holdProvider=false,nativePin=fals
    if(path.includes('/manual-captcha/answer/') && challenge?.type==='pin')answerReceived=true;
    if(path.endsWith('/manual-pin/type')){
     assert.equal(phase,'pin');assert.equal(body.pin,'123456');
-    assert.equal(Boolean(body.nativePin),nativePin);
+    assert.equal(body.nativePin,undefined,'all PIN entry uses the original server keyboard request');
     assert.equal(body.foreground_token,'owned-lock');
-    assert.ok(body.windowTitle.endsWith(nativePin?'-PASSKEY':'-PIN'));
+    assert.ok(body.windowTitle.endsWith('-PIN'));
     if(pinError)return json({success:false,error:'native PIN focus failed'});
     phase='done';return json({success:true,digits:6});
    }
@@ -79,6 +80,10 @@ function fixture({start='provider',error=false,holdProvider=false,nativePin=fals
  assert.equal(noFocus.calls.includes('reload'),false);
  assert.equal(noFocus.calls.filter(p=>p==='/api/plugin/manual-pin/type').length,1);
  assert.equal(noFocus.challenge().phase,'error');
+ const disappeared=fixture({start:'pin',nativePin:true,pinDisappearsOnAnswer:true});
+ await assert.rejects(disappeared.api.handleManualVerificationIfPresent(disappeared.tab()),/原生 PIN 弹窗已消失/);
+ assert.equal(disappeared.calls.includes('reload'),false);
+ assert.equal(disappeared.calls.includes('/api/plugin/manual-pin/type'),false);
  const held=fixture({holdProvider:true});await held.api.selectManualGooglePasskey(held.tab());
  assert.equal((await held.api.selectManualGooglePasskey(held.tab(),{force:true})).alreadyClicked,true);assert.equal(held.nativeClicks.length,1,'Do not click the same native dialog twice');
  const afterEmail=fixture({start:'email'});const emailResult=await afterEmail.api.handleManualVerificationIfPresent(afterEmail.tab());

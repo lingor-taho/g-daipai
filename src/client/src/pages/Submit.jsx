@@ -5,7 +5,7 @@ import { getBatchClientContext, isBatchContextCurrent } from '../utils/batchSubm
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getApiErrorMessage, getClientBidConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
+import { checkFleamarketSubmitLock, getApiErrorMessage, getClientBidConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import auctionDeadline from '../../../shared/auctionDeadline.cjs';
@@ -562,6 +562,7 @@ export default function Submit() {
       const standardUrl = productUrls.getProductItemUrl(product);
       if (!standardUrl) throw new Error('商品类型缺失，请重新获取商品信息');
       const auctionId = product?.auctionId || extractAuctionId(standardUrl);
+      if (fleamarketProduct) await checkFleamarketSubmitLock();
       if (!await allowAgentSubmission([auctionId], submitContext)) return;
       if (selectedStrategy !== 'direct' && auctionId) {
         const taskRes = await getTaskList({ limit: 100 });

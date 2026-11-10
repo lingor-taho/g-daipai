@@ -1,6 +1,9 @@
 const { isStoredFleamarketProduct: isFleamarketProduct } = require('../../shared/fleamarket.cjs');
 const { randomUUID } = require('crypto');
 const { normalizeYahooWonTimeText } = require('./yahooWonTime');
+const PIN_LOCK_KEY = 'fleamarket_pin_lock';
+const PIN_LOCK_MESSAGE = 'paypay商品暂时锁定，请联系管理员！';
+const PIN_FAILURE = '因为pin失败';
 
 function fail(message) { const error = new Error(message); error.statusCode = 409; throw error; }
 
@@ -12,12 +15,54 @@ function purchaseTask(raw, id, context, claim) {
   return task;
 }
 
+function getPinLock(raw) {
+  const row = raw.prepare('SELECT value FROM config WHERE key=?').get(PIN_LOCK_KEY);
+  return row ? JSON.parse(row.value) : null;
+}
+
+function assertPinUnlocked(raw) {
+  if (getPinLock(raw)) fail(PIN_LOCK_MESSAGE);
+}
+
+function assertPurchaseSubmissionAllowed(raw, productId) {
+  assertPinUnlocked(raw);
+  if (raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(productId)) {
+    fail('该フリマ商品已有成交订单，请勿重复提交');
+  }
+  if (raw.prepare("SELECT 1 FROM tasks WHERE product_id=? AND status IN ('pending','processing')").get(productId)) {
+    fail('该フリマ商品已有待执行任务，请勿重复提交');
+  }
+}
+
+function failForPin(raw, id, context, claim) {
+  return raw.transaction(() => {
+    const task = purchaseTask(raw, id, context, claim);
+    if (task.status === 'failed' && task.error_msg === PIN_FAILURE) return { success: true, duplicate: true };
+    if (task.status !== 'processing') fail('任务已结束本次执行，拒绝迟到回写');
+    raw.prepare("UPDATE tasks SET status='failed',error_msg=?,is_highest_bidder=0,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .run(PIN_FAILURE, task.id);
+    raw.prepare('INSERT OR IGNORE INTO config (key,value,updated_at) VALUES (?,?,CURRENT_TIMESTAMP)')
+      .run(PIN_LOCK_KEY, JSON.stringify({ taskId: task.id, productId: task.product_id }));
+    return { success: true };
+  }).immediate();
+}
+
+function reopenAfterPin(raw, taskId) {
+  return raw.transaction(() => {
+    const lock = getPinLock(raw);
+    if (!lock) return { success: true };
+    if (lock.taskId !== taskId) fail('P商品锁定已变化，请刷新后再操作');
+    raw.prepare('DELETE FROM config WHERE key=?').run(PIN_LOCK_KEY);
+    return { success: true };
+  }).immediate();
+}
+
 function beginPurchase(raw, id, context, claim, evidence) {
   return raw.transaction(() => {
     const task = purchaseTask(raw, id, context, claim);
     if (task.status !== 'processing' || task.execution_unknown ||
-        raw.prepare('SELECT 1 FROM tasks WHERE product_id=? AND execution_unknown=1 AND id<>?').get(task.product_id,id) ||
-        raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(task.product_id)) fail('购买已确认或结果待核对，不可重复购买');
+        raw.prepare("SELECT 1 FROM tasks WHERE product_id=? AND status='processing' AND execution_unknown=1 AND id<>?").get(task.product_id,id) ||
+        raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(task.product_id)) fail('已有成交或正在确认购买，请勿重复购买');
     const itemPrice = evidence?.itemPrice;
     if (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 || itemPrice !== Number(task.max_price)) fail('フリマ确认商品价格必须等于任务提交价格');
     // Persist BEFORE the irreversible click. An interrupted worker must never buy again.
@@ -84,4 +129,4 @@ function completePurchase(raw, id, context, claim, evidence) {
   })();
 }
 
-module.exports = { beginPurchase, completePurchase, claimRecovery };
+module.exports = { beginPurchase, completePurchase, claimRecovery, getPinLock, assertPinUnlocked, assertPurchaseSubmissionAllowed, failForPin, reopenAfterPin };

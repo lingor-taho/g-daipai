@@ -1,6 +1,8 @@
 const assert = require('assert/strict');
 if (!process.env.DATABASE_URL?.includes('gdaipai-regression-')) throw new Error('Run with scripts/run-isolated-regression.cjs');
+process.env.JWT_SECRET = 'fleamarket-purchase-regression';
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const db = require('../models');
 const accounts = require('../services/yahooAccounts');
 const scope = require('../services/yahooAccountContext');
@@ -25,16 +27,21 @@ sheets.appendRows = async payload => {
   });
 };
 const plugin = require('./plugin');
-const {submitAuctionTask} = require('./task');
+const taskRouter = require('./task');
+const {submitAuctionTask} = taskRouter;
+const adminRouter = require('./admin');
 
 (async () => {
   const raw = db.raw;
   raw.exec("INSERT INTO users(id,username,password_hash,role,user_level) VALUES(1,'flea-test','x','user',1)");
+  raw.exec("INSERT INTO users(id,username,password_hash,role,user_level) VALUES(2,'flea-admin','x','admin',3)");
   const accountId = accounts.list(db)[0].id;
   const account = accounts.list(db,Date.now(),true)[0];
   const context = {accountId,instanceId:'fleamarket-test-instance-0001'};
   const headers = {'Content-Type':'application/json','X-Yahoo-Account':String(accountId),'X-Yahoo-Token':account.binding_token,'X-Yahoo-Instance':context.instanceId,'X-Yahoo-Claim':'claim-flea'};
   const app = express(); app.use(express.json()); app.use('/api/plugin',plugin);
+  app.use('/api/task',taskRouter);
+  app.use('/api/admin',adminRouter);
   const server = await new Promise(resolve => {const value=app.listen(0,'127.0.0.1',()=>resolve(value));});
   const base = `http://127.0.0.1:${server.address().port}/api/plugin`;
   const seed = (id,product,status='processing',unknown=0) => {
@@ -212,8 +219,7 @@ const {submitAuctionTask} = require('./task');
     for (let poll=0;poll<3;poll++) assert.deepEqual(await recover(),[],'a failed P task must never be reclaimed on later polls');
     assert.deepEqual(raw.prepare('SELECT * FROM tasks WHERE id=11').get(),stoppedRecovery,'failed read-only recovery remains stopped');
     assert.deepEqual(failedTasks(),agedFailures,'old failures remain unchanged after repeated polling');
-    assert.equal(stoppedRecovery.execution_unknown,1,'stopping recovery must preserve uncertain-purchase protection');
-    await assert.rejects(duplicateSubmit('z705860842'),/已有待执行任务|购买结果待核对/);
+    assert.equal(stoppedRecovery.execution_unknown,1,'stopping recovery preserves the old confirmation record');
     seed(90,'z705860990');
     raw.prepare("UPDATE products SET product_type='normal' WHERE product_id='z705860990'").run();
     await call(90,'fleamarket/begin',{},409);
@@ -238,6 +244,71 @@ const {submitAuctionTask} = require('./task');
       }});
     assert.equal(raw.prepare('SELECT bid_mode FROM tasks WHERE id=?').get(normalSubmission.task_id).bid_mode,'bid');
     assert.equal(raw.prepare("SELECT product_type FROM products WHERE product_id='z777777777'").get().product_type,'normal','submission and snapshot must preserve the saved type');
+    const root = `http://127.0.0.1:${server.address().port}`;
+    const auth = (id, role) => ({
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt.sign({id,role},process.env.JWT_SECRET)}`
+    });
+    const userRequest = async (path, body) => fetch(root+path,{headers:auth(1,'user'),
+      ...(body ? {method:'POST',body:JSON.stringify(body)} : {})});
+    const adminRequest = (path, method='GET') => fetch(root+path,{method,headers:auth(2,'admin')});
+    const newPurchase = { product_url:'https://paypayfleamarket.yahoo.co.jp/item/z765432101',max_price:300,
+      bid_mode:'buyout',product_type:'fleamarket',product_title:'P test',product_image_url:'https://example.com/p.jpg',
+      current_price:300,buyout_price:300,tax_type:'tax_zero',shipping_fee_text:'送料無料' };
+    const failedProductId = 'z705860842';
+    const failedProductUrl = `https://paypayfleamarket.yahoo.co.jp/item/${failedProductId}`;
+    const submissionContext = {user:{id:1,user_level:1},actingUser:{id:1,user_level:1}};
+    const oldSnapshot = {...newPurchase,product_url:failedProductUrl};
+    let liveChecks=0;
+    const submitAgain = (auctionStatus, source='http') => submitAuctionTask(submissionContext,oldSnapshot,{
+      database:db,fetchProduct:async url=>{
+        assert.equal(url,failedProductUrl);
+        liveChecks++;
+        return {success:true,source,data:{auctionId:failedProductId,productType:'fleamarket',taxType:'tax_zero',
+          auctionStatus,title:'Live P test',currentPrice:300,buyoutPrice:300,imageUrl:newPurchase.product_image_url,shippingFeeText:'送料無料'}};
+      }
+    });
+    await assert.rejects(submitAgain('ended'),/商品已结束/);
+    await assert.rejects(submitAgain('open','cache-fallback'),/无法确认/);
+    const resubmitted = await submitAgain('open');
+    assert.equal(liveChecks,3,'even a complete client snapshot must be checked again after failure');
+    assert.notEqual(resubmitted.task_id,11);
+    await assert.rejects(submitAgain('open'),/已有待执行任务/);
+    assert.equal(liveChecks,3,'an active task is still fenced before the fetch');
+    const claimResponse = await fetch(`${base}/task/${resubmitted.task_id}/status`,{
+      method:'PATCH',headers:recoveryHeaders,body:JSON.stringify({status:'processing'})
+    });
+    const newClaim = await claimResponse.json();
+    assert.equal(newClaim.success,true,JSON.stringify(newClaim));
+    await call(resubmitted.task_id,'fleamarket/begin',{itemPrice:300},200,{...recoveryHeaders,'X-Yahoo-Claim':newClaim.claim_token});
+    assert.equal(raw.prepare('SELECT execution_unknown FROM tasks WHERE id=11').get().execution_unknown,1,'old proof is kept without blocking the new task');
+    seed(501,'z765432100','processing',1);
+    seed(502,'z765432102');
+    raw.prepare('UPDATE tasks SET claim_instance=? WHERE id IN (90,501,502)').run(recoveryHeaders['X-Yahoo-Instance']);
+    await call(90,'fleamarket/pin-failed',{},409,recoveryHeaders);
+    await call(501,'fleamarket/pin-failed',{},409,{...recoveryHeaders,'X-Yahoo-Claim':'stale'});
+    await call(501,'fleamarket/pin-failed',{},200,recoveryHeaders);
+    await call(502,'fleamarket/pin-failed',{},200,recoveryHeaders);
+    const pinTask = raw.prepare('SELECT status,error_msg,execution_unknown FROM tasks WHERE id=?').get(501);
+    assert.deepEqual(pinTask,{status:'failed',error_msg:'因为pin失败',execution_unknown:1});
+    const flags = await (await adminRequest('/api/admin/idle-flags')).json();
+    assert.deepEqual(flags.fleamarketPinLock,{taskId:501,productId:'z765432100'});
+    for (const [path,body] of [['/api/task/fleamarket-submit-lock'],['/api/task/submit',newPurchase]]) {
+      const rejected = await userRequest(path,body);
+      assert.equal(rejected.status,409);
+      assert.equal((await rejected.json()).error,'paypay商品暂时锁定，请联系管理员！');
+    }
+    assert.equal(raw.prepare("SELECT count(*) AS n FROM tasks WHERE product_id='z765432101'").get().n,0);
+    assert.equal((await userRequest('/api/task/submit',{...newPurchase,product_url:'https://auctions.yahoo.co.jp/jp/auction/c765432104',
+      product_type:'normal',bid_mode:'bid',end_time:'2099-01-01T00:00:00+09:00'})).status,200);
+    assert.equal((await userRequest('/api/admin/fleamarket-pin-lock/501/reopen',{})).status,403);
+    assert.equal((await adminRequest('/api/admin/fleamarket-pin-lock/502/reopen','POST')).status,409);
+    assert.equal((await adminRequest('/api/admin/fleamarket-pin-lock/501/reopen','POST')).status,200);
+    assert.equal((await call(501,'fleamarket/pin-failed',{},200,recoveryHeaders)).duplicate,true);
+    assert.equal((await userRequest('/api/task/fleamarket-submit-lock')).status,200);
+    assert.equal((await userRequest('/api/task/submit',newPurchase)).status,200);
+    assert.equal((await (await adminRequest('/api/admin/idle-flags')).json()).fleamarketPinLock,null);
+    assert.deepEqual(raw.prepare('SELECT status,error_msg,execution_unknown FROM tasks WHERE id=?').get(501),pinTask);
     console.log('Fleamarket purchase HTTP, atomic order, claims and recovery tests passed');
   } finally { await new Promise(resolve=>server.close(resolve)); raw.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

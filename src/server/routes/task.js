@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { isFleamarketProduct, isStoredFleamarketProduct, getStoredProductType, FLEAMARKET_BATCH_UNSUPPORTED_MESSAGE } = require('../../shared/fleamarket.cjs');
+const { assertPinUnlocked, assertPurchaseSubmissionAllowed } = require('../services/fleamarketPurchase');
 const { isAuctionEnded } = require('../../shared/auctionDeadline.cjs');
 const { withEndedTaskReason } = require('../services/endedTaskReason');
 const db = require('../models');
@@ -673,16 +674,11 @@ async function submitAuctionTask(context, body, {
         ? Math.ceil(input.maxPrice * 1.1 - 1e-6)
         : input.maxPrice;
     } else if (fleamarketProduct) {
-      if (database.raw) {
-        if (database.raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(input.productId)) throw submitError('该フリマ商品已有成交订单，请勿重复提交',409);
-        if (database.raw.prepare("SELECT 1 FROM tasks WHERE product_id=? AND (execution_unknown=1 OR status IN ('pending','processing'))").get(input.productId)) {
-          throw submitError('该フリマ商品已有待执行任务或购买结果待核对，请勿重复提交',409);
-        }
-      }
-      // Like auction submissions, reuse the detail already fetched by the client.
-      // P has no auction deadline; its absence must not force a second fetch.
-      // The plugin checks availability and the exact price before purchase.
-      const hasProductSnapshot = product_title && product_image_url && Number(current_price) > 0 &&
+      if (database.raw) assertPurchaseSubmissionAllowed(database.raw, input.productId);
+      // A previous failure may have occurred after final confirmation.
+      // For a resubmission, read the live purchase button instead of using the old snapshot.
+      const previousFailure = database.raw?.prepare("SELECT 1 FROM tasks WHERE product_id=? AND status='failed'").get(input.productId);
+      const hasProductSnapshot = !previousFailure && product_title && product_image_url && Number(current_price) > 0 &&
         Number(buyout_price) > 0 && tax_type && product_type && shipping_fee_text;
       const result = hasProductSnapshot ? {
         success: true,
@@ -698,6 +694,7 @@ async function submitAuctionTask(context, body, {
         throw submitError('无法确认フリマ商品信息，请重新获取后提交');
       }
       if (productInfo.auctionStatus === 'ended') throw submitError('商品已结束，不能提交任务');
+      if (!hasProductSnapshot && productInfo.auctionStatus !== 'open') throw submitError('无法确认フリマ商品可购买，请重新获取后提交');
       if (Number(productInfo.buyoutPrice) !== input.maxPrice) throw submitError('商品即决价格已变化，请重新获取商品信息后提交');
     } else if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
       try {
@@ -802,6 +799,7 @@ async function submitAuctionTask(context, body, {
       ];
     const inserted = database.raw
       ? database.raw.transaction(() => {
+          if (fleamarketProduct) assertPurchaseSubmissionAllowed(database.raw, input.productId);
           require('../services/agentProductPolicy').assertSubmissionAllowed(database.raw,input.userId,input.productId);
           const task = require('../services/yahooAccounts').createAssignedTask(database, input, taskInsertSql, taskInsertParams);
           if (!fleamarketProduct) require('../services/auctionHistory').resetAfterSubmission(database,input.productId);
@@ -850,6 +848,16 @@ router.post('/submit', async (req, res) => {
     res.json(await submitAuctionTask({ user: req.user, actingUser: req.actingUser }, req.body));
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+router.get('/fleamarket-submit-lock', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    assertPinUnlocked(db.raw);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 

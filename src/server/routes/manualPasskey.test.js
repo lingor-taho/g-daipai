@@ -7,9 +7,11 @@ const foreground=require('../services/yahooForeground');
 const accounts=require('../services/yahooAccounts');
 const native=require('../services/manualPasskey');
 let calls=0;
-let pinCalls=0;
-native.selectGooglePasskey=async options=>{calls++;assert.ok(options.deadline<=Date.now()+8000);return {success:true,detected:true,clicked:true,dialogId:'test-dialog'};};
-native.typeGooglePasskeyPin=async options=>{pinCalls++;assert.equal(options.pin,'012345');return {success:true,digits:options.pin.length};};
+let probes=0;
+native.selectGooglePasskey=async options=>{
+ if(options.probeOnly){probes++;return {success:true,pinDetected:true};}
+ calls++;assert.ok(options.deadline<=Date.now()+8000);return {success:true,detected:true,clicked:true,dialogId:'test-dialog'};
+};
 const plugin=require('./plugin');
 (async()=>{
  foreground.ensure(db.raw);
@@ -32,18 +34,15 @@ const plugin=require('./plugin');
   assert.equal(calls,0);
   const result=await request(a,'/manual-passkey/select',{windowTitle:title,foreground_token:lock.token,deadline:Date.now()+100000});
   assert.equal(result.status,200);assert.equal(result.data.clicked,true);assert.equal(calls,1);
-  const pinRequest={nativePin:true,pin:'012345',windowTitle:title,foreground_token:lock.token};
-  assert.equal((await request(a,'/manual-pin/type',{...pinRequest,windowTitle:title.replace('-PASSKEY','-PIN')})).status,409);
-  assert.equal((await request(a,'/manual-pin/type',{...pinRequest,windowTitle:title.replace('instance-'+a,'instance-other')})).status,409);
-  assert.equal((await request(a,'/manual-pin/type',{...pinRequest,pin:'12'})).status,400);
-  assert.equal((await request(b,'/manual-pin/type',pinRequest)).status,409);
-  assert.equal(pinCalls,0);
-  assert.equal((await request(a,'/manual-pin/type',pinRequest)).data.digits,6);
-  assert.equal(pinCalls,1);
+  const probeBody={windowTitle:title,foreground_token:lock.token};
+  assert.equal((await request(b,'/manual-passkey/pin-probe',probeBody)).status,409);
+  const probe=await request(a,'/manual-passkey/pin-probe',probeBody);
+  assert.deepEqual(probe.data,{success:true,pinDetected:true});
+  assert.equal(probes,1);
+  assert.equal(calls,1);
   assert.equal((await request(a,'/foreground/release',{token:lock.token})).status,200);
-  assert.equal((await request(a,'/manual-pin/type',pinRequest)).status,409);
   assert.equal((await request(a,'/manual-passkey/select',{windowTitle:title,foreground_token:lock.token})).status,409);
   assert.equal(calls,1);
-  console.log('Passkey and native PIN HTTP: foreground token, exact account/instance window, cross-account rejection and deadline cap passed');
+  console.log('Passkey HTTP: foreground token, exact account/instance window, cross-account rejection and deadline cap passed');
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));db.raw.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

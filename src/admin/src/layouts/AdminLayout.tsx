@@ -76,6 +76,8 @@ export default function AdminLayout() {
   const [shipmentAlerts, setShipmentAlerts] = useState<any[]>([]);
   const [googleSheetAlerts, setGoogleSheetAlerts] = useState<any[]>([]);
   const [auctionHistoryAlerts, setAuctionHistoryAlerts] = useState<any[]>([]);
+  const [fleamarketPinLock, setFleamarketPinLock] = useState<{ taskId: number; productId: string } | null>(null);
+  const [reopeningFleamarket, setReopeningFleamarket] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
 
@@ -102,6 +104,7 @@ export default function AdminLayout() {
           setShipmentAlerts(Array.isArray(flags.shipmentAlerts) ? flags.shipmentAlerts : []);
           setGoogleSheetAlerts(Array.isArray(flags.googleSheetAlerts) ? flags.googleSheetAlerts : []);
           setAuctionHistoryAlerts(Array.isArray(flags.auctionHistoryAlerts) ? flags.auctionHistoryAlerts : []);
+          setFleamarketPinLock(flags.fleamarketPinLock || null);
         }
       } catch {
         if (active) {
@@ -153,6 +156,18 @@ export default function AdminLayout() {
       message.success('付款任务已继续');
     } catch (e: any) {
       message.error(e.message || '继续付款任务失败');
+    }
+  }
+
+  async function reopenFleamarket(taskId: number) {
+    setReopeningFleamarket(true);
+    try {
+      await fetchAdminJson(`/api/admin/fleamarket-pin-lock/${taskId}/reopen`, { method: 'POST' });
+      setFleamarketPinLock(current => current?.taskId === taskId ? null : current);
+    } catch (error: any) {
+      message.error(error.message || 'P商品重开失败');
+    } finally {
+      setReopeningFleamarket(false);
     }
   }
 
@@ -245,6 +260,12 @@ export default function AdminLayout() {
         ) : null}
         <Layout className="admin-main" style={{ marginLeft: isMobile ? 0 : (collapsed ? 50 : 210), transition: 'margin-left 0.2s' }}>
           <Content className="admin-content" style={{ padding: 20, background: '#f5f5f5', minHeight: 'calc(100vh - 64px)' }}>
+            {fleamarketPinLock && (
+              <Alert type="error" showIcon style={{ marginBottom: 12 }} message={<Space wrap>
+                <Typography.Text type="danger">{fleamarketPinLock.productId}商品，因为pin失败</Typography.Text>
+                <Button size="small" loading={reopeningFleamarket} onClick={() => reopenFleamarket(fleamarketPinLock.taskId)}>P商品重开</Button>
+              </Space>} />
+            )}
             {yahooAccounts.filter(a=>!a.is_primary).map(a=><YahooAccountAlerts key={a.account_id} account={a} />)}
             {auctionHistoryAlerts.map(alert => (
               <Alert key={alert.id} type="error" showIcon style={{ marginBottom: 12 }}

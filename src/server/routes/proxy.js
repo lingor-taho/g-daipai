@@ -596,8 +596,8 @@ function hasFleamarketPurchaseButton(html, auctionId) {
     const attributes = match[2];
     if (normalizeComparableText(match[3]) !== '購入手続きへ') continue;
     if (/(?:^|\s)(?:disabled|hidden)(?:\s|=|$)|aria-(?:disabled|hidden)=["']true["']|display\s*:\s*none|visibility\s*:\s*hidden/i.test(attributes)) continue;
-    if (/\bid=["']item_buy_button["']/i.test(attributes)) return true;
-    const href = attributes.match(/\bhref=["']([^"']+)["']/i)?.[1];
+    if (/(?:^|\s)id=["']item_buy_button["']/i.test(attributes)) return true;
+    const href = attributes.match(/(?:^|\s)href=["']([^"']+)["']/i)?.[1];
     if (href) {
       try {
         const target = new URL(href, 'https://paypayfleamarket-sec.yahoo.co.jp');
@@ -632,8 +632,7 @@ function parseFleamarketProductHtml(html, auctionId, standardUrl) {
   const details = offer?.shippingDetails;
   const shipping = Array.isArray(details) ? details[0] : details;
   const shippingValue = shipping?.shippingRate?.value;
-  const unavailable = /\/(?:OutOfStock|SoldOut|Discontinued)$/.test(offer?.availability || '') ||
-    !hasFleamarketPurchaseButton(html, auctionId);
+  const unavailable = !hasFleamarketPurchaseButton(html, auctionId);
   return {
     auctionId, standardUrl, title: String(product.name), currentPrice: price, buyoutPrice: price,
     buyoutOnly: true, isFleamarket: true, bidCount: 0, taxType: 'tax_zero', productType: 'fleamarket',

@@ -32,6 +32,7 @@ async function run() {
     `<div id="description"><a id="item_buy_button">購入手続きへ</a></div>`,
     `<a href="https://paypayfleamarket-sec.yahoo.co.jp/item/z123456789/order">購入手続きへ</a>`,
     '<a id="item_buy_button" aria-disabled="true">購入手続きへ</a>',
+    '<a data-id="item_buy_button">購入手続きへ</a>',
     '<a id="item_buy_button" style="display:none">購入手続きへ</a>'
   ]) assert.equal(parseProductHtml(noPurchaseButton+extra,id,url).auctionStatus,'ended','unrelated/hidden/script/description text is not a purchase button');
   assert.equal(parseProductHtml(noPurchaseButton+`<a href="https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/order"><span>購入手続きへ</span></a>`,id,url).auctionStatus,'open');
@@ -54,7 +55,8 @@ async function run() {
   const usedService=createProductService({httpFetcher:async()=>usedHtml});
   assert.equal((await usedService.fetchProduct(usedUrl)).data.conditionName,'やや傷や汚れあり','proxy/cache payload retains the extracted condition');
 
-  assert.equal(parseProductHtml(productHtml.replace('InStock', 'OutOfStock'), id, url).auctionStatus, 'ended');
+  assert.equal(parseProductHtml(productHtml.replace('InStock', 'OutOfStock'), id, url).auctionStatus, 'open',
+    'the matching purchase button is authoritative even when offer metadata is stale');
   assert.throws(() => parseProductHtml('<title>Yahoo generic page</title>', id, url));
   assert.throws(() => parseProductHtml(productHtml.replace(id, 'z123456789'), id, url));
   const cards = extractSearchProductCards(searchHtml);

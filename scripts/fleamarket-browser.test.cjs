@@ -35,6 +35,7 @@ const { chromium } = require('playwright');
         ]));
       });
       const submitted = []; const detailRequests = []; const batchRequests = [];
+      let fleamarketLocked = false;
       await page.route('**/api/**', async route => {
         const request = route.request(); const target = new URL(request.url());
         let data = { success: true, data: [], total: 0 };
@@ -65,6 +66,9 @@ const { chromium } = require('playwright');
             has_auction_history: 1, bid_history: [{ task_id: 1, amount: 30000, submitted_at: '2026-10-17T00:00:00Z' }] })) };
         if (target.pathname.includes('website-rate')) data = { success: true, rate: 0.05 };
         if (target.pathname.includes('bid-config')) data = { success: true, data: { multiBidStartHours: 12, multiBidIntervalMinutes: 5, multiBidMinPrice: 5000 } };
+        if (target.pathname === '/api/task/fleamarket-submit-lock' && fleamarketLocked) {
+          return route.fulfill({ status: 409, json: { error: 'paypay商品暂时锁定，请联系管理员！' } });
+        }
         if (target.pathname === '/api/task/submit') { submitted.push(request.postDataJSON()); data = { success: true, task_id: 1 }; }
         await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
       });
@@ -177,6 +181,13 @@ const { chromium } = require('playwright');
         assert.equal(await page.locator('input[type=checkbox]').isDisabled(), true);
       }
       await page.screenshot({ path: `.test-artifacts/fleamarket-buyout-${width}.png`, fullPage: true });
+      const inputBeforeLock = await input.inputValue();
+      fleamarketLocked = true;
+      await page.getByRole('button', { name: '提交任务', exact: true }).click();
+      await page.getByText('paypay商品暂时锁定，请联系管理员！', { exact: true }).waitFor();
+      assert.equal(submitted.length, 0);
+      assert.equal(await input.inputValue(), inputBeforeLock);
+      fleamarketLocked = false;
       await Promise.all([
         page.waitForResponse(response => response.url().includes('/api/task/submit')),
         page.getByRole('button', { name: '提交任务', exact: true }).click()

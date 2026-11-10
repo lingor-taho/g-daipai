@@ -70,6 +70,7 @@ export const getActingUsers = () => api.get('/auth/acting-users');
 export const getAgentProductPolicy = context => api.get('/auth/agent-product-policy', { __batchContext: context });
 export const saveAgentProductPolicy = (policy, context) => api.put('/auth/agent-product-policy', { policy }, { __batchContext: context });
 export const checkAgentProducts = (productIds, context) => api.post('/auth/agent-product-policy/check', { productIds }, { __batchContext: context });
+export const checkFleamarketSubmitLock = () => api.get('/task/fleamarket-submit-lock');
 export const submitTask = (data) => api.post('/task/submit', {
   ...data,
   client_request_id: data?.client_request_id || createClientRequestId()

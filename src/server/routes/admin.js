@@ -12,6 +12,7 @@ const bcrypt = require('bcryptjs');
 const fs = require('fs/promises');
 const authMiddleware = require('../middleware/auth');
 const adminAuthMiddleware = require('../middleware/adminAuth');
+const { getPinLock, reopenAfterPin } = require('../services/fleamarketPurchase');
 const {
   chooseNextPluginTask,
   getMultiBidConfig: getPluginMultiBidConfig,
@@ -3413,7 +3414,12 @@ router.get('/idle-flags',async(req,res)=>{
     const workClaims=db.raw.prepare('SELECT kind,object_id,instance_id,created_at FROM yahoo_work_claims WHERE account_id=?').all(a.id);
     items.push({...flags,workClaims,instance_id:a.instance_id,account_id:a.id,account_name:a.account_name,yahoo_id:a.yahoo_id,is_primary:a.is_primary,online:a.online,enabled:a.enabled,yahooLogin:{status:values.yahoo_login_status||'unknown',message:values.yahoo_login_message||''}});
   }
-  res.json({...items.find(a=>a.is_primary),accounts:items});
+  res.json({...items.find(a=>a.is_primary),accounts:items,fleamarketPinLock:getPinLock(db.raw)});
+});
+
+router.post('/fleamarket-pin-lock/:taskId/reopen', (req, res) => {
+  try { res.json(reopenAfterPin(db.raw, Number(req.params.taskId))); }
+  catch (error) { res.status(error.statusCode || 500).json({ error: error.message }); }
 });
 
 router.post('/auction-history-alerts/:id/close', (req,res) => res.json(auctionHistory.closeAlert(db,String(req.params.id))));
