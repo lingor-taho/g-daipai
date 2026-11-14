@@ -18,7 +18,7 @@ async function checkBrowser(baseUrl) {
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
   try {
-    for (const [id, level, orderId, productId, width] of [[1, 1, 4, 'z123456789', 390], [3, 3, 5, 'a123456789', 1200]]) {
+    for (const [id, level, orderId, productId, width] of [[1, 1, 4, 'z123456789', 1200], [3, 3, 5, 'a123456789', 390]]) {
       const page = await browser.newPage({ viewport: { width, height: 950 } });
       await page.addInitScript(({ auth, level }) => {
         localStorage.setItem('token', auth);
@@ -34,17 +34,33 @@ async function checkBrowser(baseUrl) {
       const pending = page.locator('.adm-list-item').filter({ hasText: 'b123456789' });
       assert.equal(await pending.getByRole('button', { name: '订单删除', exact: true }).isDisabled(), true);
       assert.equal(await deleteButton.isEnabled(), true);
+      assert.equal((await deleteButton.locator('svg').boundingBox()).width, 22);
       await deleteButton.click();
       await page.getByRole('button', { name: '取消', exact: true }).click();
       assert.equal(db.raw.prepare('SELECT user_deleted_at FROM orders WHERE id = ?').get(orderId).user_deleted_at, null);
       await deleteButton.click();
       await page.getByRole('button', { name: '删除', exact: true }).click();
       if (level === 3) {
-        const marker = row.getByText('用户已删除', { exact: true });
+        const marker = row.getByText('已删', { exact: true });
         await marker.waitFor();
         assert.equal(await marker.evaluate(node => node.previousElementSibling.textContent), '完了');
         assert.equal(await row.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(229, 231, 235)');
         assert.equal(await deleteButton.count(), 0);
+        for (const [hiddenRow, status, background] of [
+          [row, '完了', 'rgb(230, 244, 255)'],
+          [page.locator('.adm-list-item').filter({ hasText: 'z123456789' }), '取消', 'rgb(255, 241, 240)']
+        ]) {
+          const restoreButton = hiddenRow.getByRole('button', { name: '恢复显示订单', exact: true });
+          await restoreButton.click();
+          await page.getByText('是否恢复显示该订单？', { exact: true }).waitFor();
+          await page.getByRole('button', { name: '取消', exact: true }).click();
+          await restoreButton.click();
+          await page.getByRole('button', { name: '恢复显示', exact: true }).click();
+          await hiddenRow.getByRole('button', { name: '订单删除', exact: true }).waitFor();
+          assert.equal(await hiddenRow.getByText('已删', { exact: true }).count(), 0);
+          assert.equal(await hiddenRow.getByText(status, { exact: true }).count(), 1);
+          assert.equal(await hiddenRow.evaluate(node => getComputedStyle(node).backgroundColor), background);
+        }
       } else {
         await row.waitFor({ state: 'detached' });
         await page.reload();
@@ -72,7 +88,7 @@ async function run() {
     (1, 1, 'c123456789', 'completed', 1000, datetime('now', '-1 day')),
     (2, 2, 'b123456789', 'pending_receipt', 2000, datetime('now', '-2 days')),
     (3, 3, 'c987654321', 'completed', 3000, datetime('now', '-3 days')),
-    (4, 4, 'z123456789', 'completed', 4000, datetime('now', '-4 days')),
+    (4, 4, 'z123456789', 'cancelled', 4000, datetime('now', '-4 days')),
     (5, 5, 'a123456789', 'completed', 5000, datetime('now', '-5 days'));`);
 
   const app = express();
@@ -115,8 +131,21 @@ async function run() {
       assert.equal(firstPage.data[0].order_id, level === 3 ? 1 : 2);
     }
     assert.deepEqual(await (await request(2, 2, 1, '-stats')).json(), statsBefore);
+    assert.equal((await request(1, 3, 1, '/1/restore', 'POST')).status, 403);
+    assert.equal((await request(2, 3, 1, '/1/restore', 'POST')).status, 403);
+    assert.equal((await request(3, 3, 4, '/1/restore', 'POST')).status, 404);
+    assert.equal((await request(3, 1, 1, '/1/restore', 'POST')).status, 200);
+    assert.deepEqual(raw.prepare('SELECT * FROM orders WHERE id = 1').get(), { ...stored, user_deleted_at: null });
+    const visibleAgain = await (await request(2, 2, 1, '?search=c123456789')).json();
+    assert.equal(visibleAgain.total, 1);
+    assert.equal(visibleAgain.data[0].order_id, 1);
+    assert.equal((await request(2, 2, 1, '/4', 'DELETE')).status, 200);
+    assert.equal((await (await request(1, 1, 1, '?search=z123456789')).json()).total, 0);
+    assert.equal((await request(3, 3, 1, '/4/restore', 'POST')).status, 200);
+    assert.equal((await (await request(1, 1, 1, '?search=z123456789')).json()).data[0].order_status, 'cancelled');
+    assert.deepEqual(await (await request(2, 2, 1, '-stats')).json(), statsBefore);
     if (process.argv.includes('--browser')) await checkBrowser(base);
-    console.log('Completed order delete, role visibility, pagination, and unchanged statistics passed');
+    console.log('Completed and cancelled order hiding, admin restoration, pagination, and statistics passed');
   } finally {
     await new Promise(resolve => server.close(resolve));
     raw.close();

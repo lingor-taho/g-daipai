@@ -89,6 +89,9 @@ export const getWonTaskList = (params) => api.get('/task/won', { params });
 export const deleteWonOrder = (orderId, context) => api.delete(`/task/won/${orderId}`, {
   __batchContext: context, __allowRetry: true
 });
+export const restoreWonOrder = (orderId, context) => api.post(`/task/won/${orderId}/restore`, {}, {
+  __batchContext: context
+});
 export const resumeWonOrder = (orderId) => api.post(`/task/won/${orderId}/resume`);
 export const saveWonItemRemark = (orderId, remark) => api.put(`/task/won/${orderId}/remark`, { remark });
 export const deleteWonItemRemark = (orderId) => api.delete(`/task/won/${orderId}/remark`);

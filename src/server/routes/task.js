@@ -1125,7 +1125,7 @@ router.get('/won', async (req, res) => {
   }
 });
 
-// DELETE /api/task/won/:orderId - 隐藏当前所选用户已完了的订单
+// DELETE /api/task/won/:orderId - 隐藏当前所选用户完了或取消的订单
 router.delete('/won/:orderId', async (req, res) => {
   const orderId = Number(req.params.orderId);
   if (!Number.isSafeInteger(orderId) || orderId <= 0) {
@@ -1135,7 +1135,7 @@ router.delete('/won/:orderId', async (req, res) => {
     const order = await db.getOne(
       `UPDATE orders
        SET user_deleted_at = COALESCE(user_deleted_at, CURRENT_TIMESTAMP)
-       WHERE id = ? AND order_status = 'completed'
+       WHERE id = ? AND order_status IN ('completed', 'cancelled')
          AND EXISTS (
            SELECT 1 FROM tasks owner_task
            WHERE owner_task.id = orders.task_id AND owner_task.user_id = ?
@@ -1143,10 +1143,38 @@ router.delete('/won/:orderId', async (req, res) => {
        RETURNING id AS order_id`,
       [orderId, req.actingUser.id]
     );
-    if (!order) return res.status(404).json({ error: '找不到可删除的完了订单' });
+    if (!order) return res.status(404).json({ error: '找不到可删除的订单' });
     res.json({ success: true, ...order });
   } catch (err) {
     res.status(500).json({ error: '订单删除失败' });
+  }
+});
+
+// POST /api/task/won/:orderId/restore - 用户端管理员恢复订单显示
+router.post('/won/:orderId/restore', async (req, res) => {
+  const orderId = Number(req.params.orderId);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    return res.status(400).json({ error: '无效的订单编号' });
+  }
+  try {
+    const loginUser = await getClientUser(req.user.id);
+    if (Number(loginUser?.user_level) !== 3) {
+      return res.status(403).json({ error: '只有管理员可以恢复显示订单' });
+    }
+    const order = await db.getOne(
+      `UPDATE orders
+       SET user_deleted_at = NULL
+       WHERE id = ? AND EXISTS (
+         SELECT 1 FROM tasks owner_task
+         WHERE owner_task.id = orders.task_id AND owner_task.user_id = ?
+       )
+       RETURNING id AS order_id`,
+      [orderId, req.actingUser.id]
+    );
+    if (!order) return res.status(404).json({ error: '找不到该订单' });
+    res.json({ success: true, ...order });
+  } catch (err) {
+    res.status(500).json({ error: '订单恢复显示失败' });
   }
 });
 

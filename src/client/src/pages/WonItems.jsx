@@ -7,7 +7,7 @@ import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
 import BidPriceTimeline from '../components/BidPriceTimeline';
 import AuctionHistoryChart, { AuctionHistoryChartButton } from '../components/AuctionHistoryChart';
 import { Button, Dialog, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
-import { deleteWonItemRemark, deleteWonOrder, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
+import { deleteWonItemRemark, deleteWonOrder, getWonTaskList, restoreWonOrder, resumeWonOrder, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
@@ -271,6 +271,18 @@ function PauseIcon({ active }) {
   );
 }
 
+function DeleteOrderIcon({ color }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" />
+    </svg>
+  );
+}
+
+function canChangeOrderVisibility(item) {
+  return Boolean(item.order_id) && (item.user_deleted_at || ['completed', 'cancelled'].includes(item.order_status));
+}
+
 export default function WonItems() {
   const navigate = useNavigate();
   const [detailItem, setDetailItem] = useState(null);
@@ -285,7 +297,7 @@ export default function WonItems() {
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkDeleting, setRemarkDeleting] = useState(false);
   const [resumingOrderId, setResumingOrderId] = useState(null);
-  const [deletingOrder, setDeletingOrder] = useState(false);
+  const [changingOrderVisibility, setChangingOrderVisibility] = useState(false);
   const [orderListRevision, setOrderListRevision] = useState(0);
   const [searchInput, setSearchInput] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -414,27 +426,35 @@ export default function WonItems() {
     }
   }
 
-  async function handleDeleteOrder(item) {
-    if (!item.order_id || item.order_status !== 'completed' || item.user_deleted_at || deletingOrder) return;
+  async function handleOrderVisibility(item) {
+    if (!canChangeOrderVisibility(item) || changingOrderVisibility) return;
+    const restoring = Boolean(item.user_deleted_at);
     const context = {
       token: localStorage.getItem('token'),
       actingUserId: localStorage.getItem('actingUserId')
     };
     const stillViewingUser = () => localStorage.getItem('token') === context.token &&
       localStorage.getItem('actingUserId') === context.actingUserId;
-    setDeletingOrder(true);
+    setChangingOrderVisibility(true);
     try {
-      const confirmed = await Dialog.confirm({ content: '确定删除这笔订单吗？', confirmText: '删除', cancelText: '取消' });
+      const confirmed = await Dialog.confirm({
+        content: restoring ? '是否恢复显示该订单？' : '确定删除这笔订单吗？',
+        confirmText: restoring ? '恢复显示' : '删除',
+        cancelText: '取消'
+      });
       if (!confirmed || !stillViewingUser()) return;
-      await deleteWonOrder(item.order_id, context);
+      if (restoring) await restoreWonOrder(item.order_id, context);
+      else await deleteWonOrder(item.order_id, context);
       if (!stillViewingUser()) return;
       requestGenerationRef.current += 1;
       setOrderListRevision(revision => revision + 1);
-      Toast.show({ content: '订单已删除' });
+      Toast.show({ content: restoring ? '订单已恢复显示' : '订单已删除' });
     } catch (error) {
-      if (stillViewingUser()) Toast.show({ content: error.response?.data?.error || '订单删除失败，请重试' });
+      if (stillViewingUser()) Toast.show({
+        content: error.response?.data?.error || (restoring ? '订单恢复显示失败，请重试' : '订单删除失败，请重试')
+      });
     } finally {
-      setDeletingOrder(false);
+      setChangingOrderVisibility(false);
     }
   }
 
@@ -514,7 +534,8 @@ export default function WonItems() {
           const wonTime = getWonTimeDisplay(item);
           const isCancelled = item.order_status === 'cancelled';
           const canViewPurchasePage = item.order_status === 'completed';
-          const canDeleteOrder = canViewPurchasePage && Boolean(item.order_id) && !deletingOrder;
+          const canChangeVisibility = canChangeOrderVisibility(item) && !changingOrderVisibility;
+          const visibilityLabel = item.user_deleted_at ? '恢复显示订单' : '订单删除';
           return (
             <List.Item key={item.order_id || item.id} style={getWonItemStyle(item)}>
               <div style={{ display: 'flex', gap: 12 }}>
@@ -531,7 +552,7 @@ export default function WonItems() {
                     <div style={imageThumbStyle} />
                   )}
                   </button>
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
                     <button
                       type="button"
                       aria-label={item.user_remark ? '修改商品备注' : '添加商品备注'}
@@ -554,31 +575,28 @@ export default function WonItems() {
                       </button>
                       <AuctionHistoryChartButton item={item} onClick={() => setHistoryChartItem(item)} />
                     </>)}
-                  </div>
-                  {!item.user_deleted_at && (
-                    <Button
-                      size="mini"
-                      fill="outline"
-                      disabled={!canDeleteOrder}
-                      style={{
-                        ...outlineButtonStyle,
-                        marginTop: 6,
-                        '--border-radius': '4px',
-                        '--border-color': canDeleteOrder ? colors.danger : colors.faint,
-                        '--text-color': canDeleteOrder ? colors.danger : colors.muted
-                      }}
-                      onClick={() => handleDeleteOrder(item)}
+                    <button
+                      type="button"
+                      aria-label={visibilityLabel}
+                      title={visibilityLabel}
+                      disabled={!canChangeVisibility}
+                      style={{ border: 0, background: 'transparent', padding: '5px 4px 0', lineHeight: 0, cursor: canChangeVisibility ? 'pointer' : 'default' }}
+                      onClick={() => handleOrderVisibility(item)}
                     >
-                      订单删除
-                    </Button>
-                  )}
+                      <DeleteOrderIcon color={canChangeVisibility ? colors.danger : colors.faint} />
+                    </button>
+                  </div>
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
-                      {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">{dealLabel}成功</Tag>}
-                      {!isCancelled && renderOrderStatusTag(item.order_status)}
-                      {item.user_deleted_at && <Tag color="danger">用户已删除</Tag>}
+                      {!isCancelled && <Tag color="success">{dealLabel}成功</Tag>}
+                      {item.user_deleted_at ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+                          {renderOrderStatusTag(item.order_status)}
+                          <Tag color="danger">已删</Tag>
+                        </span>
+                      ) : renderOrderStatusTag(item.order_status)}
                       <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                     </div>
                     {canViewPurchasePage ? (
