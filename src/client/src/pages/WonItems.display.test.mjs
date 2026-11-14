@@ -70,8 +70,10 @@ assert.equal(
   'WonItems remark editor must support saving and deleting a 1000-character remark'
 );
 
+const deleteRemarkHandler = source.match(/async function handleDeleteRemark\(\) \{[\s\S]*?\n  \}/)?.[0];
+assert.ok(deleteRemarkHandler);
 assert.equal(
-  source.includes('Dialog.confirm') || source.includes('确定删除该商品的备注吗'),
+  deleteRemarkHandler.includes('Dialog.confirm'),
   false,
   'WonItems must delete a remark directly without a second confirmation dialog'
 );

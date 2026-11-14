@@ -23,6 +23,7 @@ const steps = [
   ['Product deletion and different-user resubmission',process.execPath,['scripts/run-isolated-regression.cjs','src/server/routes/admin.productDelete.test.js'],rootDir],
   ['Fleamarket purchase HTTP and atomic order completion', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/fleamarketPurchase.test.js'], rootDir],
   ['P/normal/shop order time and shared won-list sorting', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/fleamarketPurchase.time.test.js'], rootDir],
+  ['Completed order deletion and role visibility', process.execPath, ['scripts/run-isolated-regression.cjs','src/server/routes/task.won-delete.test.js'], rootDir],
   ['Legacy P order time repair and backup',process.execPath,['scripts/repair-fleamarket-order-time.test.js'],rootDir],
   ['Fleamarket purchase browser and executor', process.execPath, ['yahoo-plugin/fleamarketPurchase.test.js'], rootDir],
   ['Stored product type task routing',process.execPath,['yahoo-plugin/productTypeRouting.test.js'],rootDir],

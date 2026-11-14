@@ -112,6 +112,7 @@ ensureColumn('orders', 'tracking_rescan_requested', 'INTEGER DEFAULT 0');
 ensureColumn('orders', 'order_remark', 'TEXT');
 ensureColumn('orders', 'user_remark', 'TEXT');
 ensureColumn('orders', 'user_remark_updated_at', 'DATETIME');
+ensureColumn('orders', 'user_deleted_at', 'DATETIME');
 ensureColumn('users', 'user_level', 'INTEGER DEFAULT 1');
 ensureColumn('users', 'parent_user_id', 'INTEGER');
 ensureColumn('users', 'bid_strategy_scope', "VARCHAR(32) DEFAULT 'all'");

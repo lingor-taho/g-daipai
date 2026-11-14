@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-11-10
+**最后更新**: 2026-11-14
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -255,6 +255,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 当前状态：
 
+- 用户端「成交商品」支持隐藏完了订单，普通用户和代理的列表及搜索排除已隐藏订单，用户端管理员仍可查看，部署与验证见0aw。
 - PIN前原生Google通行密钥选择本地完成，复用系统输入通道与多账号前台锁，真实弹窗待部署验收，见0au。
 - 代理互斥现由前端预检及API原子建任务双层校验；本人已有任务继续放行，同组首次并发只成功一个，见0at。
 - 手机任务列表长英文撑宽及自动字体放大已本地修复；仅需发布用户端dist，真实iPhone待验收，见0as。
@@ -290,6 +291,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0aw. 用户端成交商品隐藏完了订单
+
+订单所属用户、可切换到该用户的上级代理和用户端管理员均可删除。图片下方保留「订单删除」按钮，只有存在订单且为完了时可点击，确认成功后重新读取列表。API 用当前所选用户及订单状态核验，原子写入 `orders.user_deleted_at`，重复提交保留首次时间。普通用户和代理的列表、计数及搜索排除这类订单。用户端管理员按数据库登录等级识别，通过原用户切换查看，已隐藏订单灰底并显示红色「用户已删除」，移除删除按钮。统计及 CSV 继续包含这类订单，订单状态、交易和结算沿原流程。
+
+部署需更新 API 的 routes/task.js 和 models/index.js 并重启，启动自动补齐 SQLite 字段，再发布用户端 dist。新库初始化脚本已同步字段。隔离 HTTP、390／1200 浏览器、原统计及成交列表专项、用户端构建通过，命令见下方。未部署生产。
 
 ### 0av. P商品失败即停止自动核对
 
@@ -1356,6 +1363,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-11-14 用户端「完了」订单支持隐藏
+
+按订单记录隐藏时间。所属用户、可切换的上级代理和用户端管理员均可操作，普通用户及代理隐藏，管理员保留灰底与红色标记。统计和导出继续包含该订单，部署与验证见0aw。
 
 ### 2026-10-28 P任务失败后停止重复核对
 
@@ -2904,6 +2915,18 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+用户端隐藏完了订单（0aw）：
+
+```bash
+npm run build --prefix src/client
+node scripts/run-isolated-regression.cjs src/server/routes/task.won-delete.test.js --browser
+node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.time.test.js
+node src/server/routes/task.won-stats.test.js
+node src/client/src/pages/WonItems.display.test.mjs
+npm run encoding:guard
+git diff --check
+```
 
 P任务失败停止自动核对（0av）：
 

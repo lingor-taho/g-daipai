@@ -6,8 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import ProductItemDetailPopup from '../components/ProductItemDetailPopup';
 import BidPriceTimeline from '../components/BidPriceTimeline';
 import AuctionHistoryChart, { AuctionHistoryChartButton } from '../components/AuctionHistoryChart';
-import { Button, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
-import { deleteWonItemRemark, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
+import { Button, Dialog, Empty, InfiniteScroll, List, SearchBar, SpinLoading, Tag, TextArea, Toast } from 'antd-mobile';
+import { deleteWonItemRemark, deleteWonOrder, getWonTaskList, resumeWonOrder, saveWonItemRemark } from '../utils/api';
 import { isUserIdle, USER_ACTIVE_EVENT } from '../utils/activity';
 import { runDeduped } from '../utils/requestDedupe';
 import { formatBeijingDateTime } from '../utils/datetime';
@@ -246,6 +246,7 @@ function renderOrderStatusTag(status) {
 }
 
 function getWonItemStyle(item) {
+  if (item.user_deleted_at) return { ...itemCardStyle, background: colors.userDeletedBg };
   if (item.order_status === 'cancelled') return { ...itemCardStyle, background: colors.cancelledBg };
   if (item.order_status === 'completed') return { ...itemCardStyle, background: colors.completedBg };
   return itemCardStyle;
@@ -284,6 +285,8 @@ export default function WonItems() {
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkDeleting, setRemarkDeleting] = useState(false);
   const [resumingOrderId, setResumingOrderId] = useState(null);
+  const [deletingOrder, setDeletingOrder] = useState(false);
+  const [orderListRevision, setOrderListRevision] = useState(0);
   const [searchInput, setSearchInput] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
   const requestGenerationRef = useRef(0);
@@ -307,7 +310,7 @@ export default function WonItems() {
     try {
       const actingUserKey = localStorage.getItem('actingUserId') || 'self';
       const res = await runDeduped(
-        `WonItems:getWonTaskList:${actingUserKey}:${searchKeyword}:1`,
+        `WonItems:getWonTaskList:${actingUserKey}:${searchKeyword}:${orderListRevision}:1`,
         () => getWonTaskList({ page: 1, limit: pageSize, search: searchKeyword })
       );
       if (requestGenerationRef.current !== requestGeneration || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
@@ -323,7 +326,7 @@ export default function WonItems() {
     } finally {
       if (requestGenerationRef.current === requestGeneration) setLoading(false);
     }
-  }, [searchKeyword]);
+  }, [searchKeyword, orderListRevision]);
 
   const loadMore = useCallback(async () => {
     const nextPage = page + 1;
@@ -348,7 +351,7 @@ export default function WonItems() {
     const refreshLimit = Math.min(Math.max(page, 1) * pageSize, 100);
     try {
       const res = await runDeduped(
-        `WonItems:refresh:${actingUserKey}:${searchKeyword}:${refreshLimit}`,
+        `WonItems:refresh:${actingUserKey}:${searchKeyword}:${orderListRevision}:${refreshLimit}`,
         () => getWonTaskList({ page: 1, limit: refreshLimit, search: searchKeyword })
       );
       if (requestGenerationRef.current !== requestGeneration || (localStorage.getItem('actingUserId') || 'self') !== actingUserKey) return;
@@ -357,7 +360,7 @@ export default function WonItems() {
       setTotal(Number(res.data?.total || 0));
       setPage(Math.max(1, Math.ceil(refreshedItems.length / pageSize)));
     } catch (_) {}
-  }, [page, searchKeyword]);
+  }, [page, searchKeyword, orderListRevision]);
 
   useEffect(() => {
     resetWonItems();
@@ -408,6 +411,30 @@ export default function WonItems() {
       refreshLoadedItems();
     } finally {
       setResumingOrderId(null);
+    }
+  }
+
+  async function handleDeleteOrder(item) {
+    if (!item.order_id || item.order_status !== 'completed' || item.user_deleted_at || deletingOrder) return;
+    const context = {
+      token: localStorage.getItem('token'),
+      actingUserId: localStorage.getItem('actingUserId')
+    };
+    const stillViewingUser = () => localStorage.getItem('token') === context.token &&
+      localStorage.getItem('actingUserId') === context.actingUserId;
+    setDeletingOrder(true);
+    try {
+      const confirmed = await Dialog.confirm({ content: '确定删除这笔订单吗？', confirmText: '删除', cancelText: '取消' });
+      if (!confirmed || !stillViewingUser()) return;
+      await deleteWonOrder(item.order_id, context);
+      if (!stillViewingUser()) return;
+      requestGenerationRef.current += 1;
+      setOrderListRevision(revision => revision + 1);
+      Toast.show({ content: '订单已删除' });
+    } catch (error) {
+      if (stillViewingUser()) Toast.show({ content: error.response?.data?.error || '订单删除失败，请重试' });
+    } finally {
+      setDeletingOrder(false);
     }
   }
 
@@ -487,6 +514,7 @@ export default function WonItems() {
           const wonTime = getWonTimeDisplay(item);
           const isCancelled = item.order_status === 'cancelled';
           const canViewPurchasePage = item.order_status === 'completed';
+          const canDeleteOrder = canViewPurchasePage && Boolean(item.order_id) && !deletingOrder;
           return (
             <List.Item key={item.order_id || item.id} style={getWonItemStyle(item)}>
               <div style={{ display: 'flex', gap: 12 }}>
@@ -527,12 +555,30 @@ export default function WonItems() {
                       <AuctionHistoryChartButton item={item} onClick={() => setHistoryChartItem(item)} />
                     </>)}
                   </div>
+                  {!item.user_deleted_at && (
+                    <Button
+                      size="mini"
+                      fill="outline"
+                      disabled={!canDeleteOrder}
+                      style={{
+                        ...outlineButtonStyle,
+                        marginTop: 6,
+                        '--border-radius': '4px',
+                        '--border-color': canDeleteOrder ? colors.danger : colors.faint,
+                        '--text-color': canDeleteOrder ? colors.danger : colors.muted
+                      }}
+                      onClick={() => handleDeleteOrder(item)}
+                    >
+                      订单删除
+                    </Button>
+                  )}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
                       {isCancelled ? <Tag color="danger">取消</Tag> : <Tag color="success">{dealLabel}成功</Tag>}
                       {!isCancelled && renderOrderStatusTag(item.order_status)}
+                      {item.user_deleted_at && <Tag color="danger">用户已删除</Tag>}
                       <span style={{ fontSize: 12, color: colors.muted }}>{strategy}</span>
                     </div>
                     {canViewPurchasePage ? (

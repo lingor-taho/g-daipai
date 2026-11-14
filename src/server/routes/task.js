@@ -1046,13 +1046,17 @@ router.get('/won', async (req, res) => {
   try {
     const input = buildWonTaskListInput(req.user, req.query);
     input.userId = req.actingUser.id;
+    const loginUser = await getClientUser(req.user.id);
+    const visibilityFilter = Number(loginUser?.user_level) === 3 ? '' : 'AND o.user_deleted_at IS NULL';
     const searchFilter = buildWonTaskSearchFilter(input.search);
     const totalRow = await db.getOne(
       `SELECT COUNT(*) AS total
        FROM tasks won_task
+       LEFT JOIN orders o ON o.task_id = won_task.id
        LEFT JOIN products p ON p.product_id = won_task.product_id
        WHERE won_task.user_id = ?
          AND won_task.status = 'success'
+         ${visibilityFilter}
          ${searchFilter.sql}`,
       [input.userId, ...searchFilter.params]
     );
@@ -1090,6 +1094,7 @@ router.get('/won', async (req, res) => {
          o.tracking_number,
          o.user_remark,
          o.user_remark_updated_at,
+         o.user_deleted_at,
          CASE WHEN m.message_html IS NOT NULL AND TRIM(m.message_html) <> '' THEN m.message_html ELSE NULL END AS seller_message_html,
          m.updated_at AS seller_message_updated_at
        FROM tasks won_task
@@ -1106,6 +1111,7 @@ router.get('/won', async (req, res) => {
        LEFT JOIN yahoo_trade_messages m ON m.order_id = o.id
        WHERE won_task.user_id = ?
          AND won_task.status = 'success'
+         ${visibilityFilter}
          ${searchFilter.sql}
        ORDER BY datetime(COALESCE(o.won_at, won_task.updated_at)) DESC, won_task.id DESC
        LIMIT ? OFFSET ?`,
@@ -1113,9 +1119,34 @@ router.get('/won', async (req, res) => {
     );
     const histories = await getTaskSubmissionHistory(db, input.userId, [...new Set(tasks.map(task => task.product_id))]);
     const data = tasks.map(task => ({ ...task, bid_history: histories.get(task.product_id) || [] }));
-    res.json({ success: true, data, total: totalRow?.total || 0, page: input.page, limit: input.limit });
+    res.set('Cache-Control', 'no-store').json({ success: true, data, total: totalRow?.total || 0, page: input.page, limit: input.limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/task/won/:orderId - 隐藏当前所选用户已完了的订单
+router.delete('/won/:orderId', async (req, res) => {
+  const orderId = Number(req.params.orderId);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    return res.status(400).json({ error: '无效的订单编号' });
+  }
+  try {
+    const order = await db.getOne(
+      `UPDATE orders
+       SET user_deleted_at = COALESCE(user_deleted_at, CURRENT_TIMESTAMP)
+       WHERE id = ? AND order_status = 'completed'
+         AND EXISTS (
+           SELECT 1 FROM tasks owner_task
+           WHERE owner_task.id = orders.task_id AND owner_task.user_id = ?
+         )
+       RETURNING id AS order_id`,
+      [orderId, req.actingUser.id]
+    );
+    if (!order) return res.status(404).json({ error: '找不到可删除的完了订单' });
+    res.json({ success: true, ...order });
+  } catch (err) {
+    res.status(500).json({ error: '订单删除失败' });
   }
 });
 

@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS orders (
   order_remark TEXT,
   user_remark TEXT,
   user_remark_updated_at DATETIME,
+  user_deleted_at DATETIME,
   shipped_at DATETIME,
   settled_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

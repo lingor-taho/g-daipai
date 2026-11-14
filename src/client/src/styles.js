@@ -25,6 +25,7 @@ const themeVars = {
     noticeBg: '#f8fbff',
     cancelledBg: '#fff1f0',
     completedBg: '#e6f4ff',
+    userDeletedBg: '#e5e7eb',
     shadow: 'rgba(37, 99, 235, 0.08)',
     buttonShadow: 'rgba(37, 99, 235, 0.18)'
   },
@@ -44,6 +45,7 @@ const themeVars = {
     noticeBg: '#fff7e6',
     cancelledBg: '#fff1ec',
     completedBg: '#edf7f4',
+    userDeletedBg: '#e5e7eb',
     shadow: 'rgba(119, 77, 31, 0.10)',
     buttonShadow: 'rgba(15, 118, 110, 0.18)'
   },
@@ -63,6 +65,7 @@ const themeVars = {
     noticeBg: '#fff1f2',
     cancelledBg: '#fff1f2',
     completedBg: '#ecfdf5',
+    userDeletedBg: '#e5e7eb',
     shadow: 'rgba(22, 163, 74, 0.08)',
     buttonShadow: 'rgba(22, 163, 74, 0.18)'
   },
@@ -82,6 +85,7 @@ const themeVars = {
     noticeBg: '#eef4fb',
     cancelledBg: '#fef2f2',
     completedBg: '#e8f0f8',
+    userDeletedBg: '#e5e7eb',
     shadow: 'rgba(15, 23, 42, 0.09)',
     buttonShadow: 'rgba(31, 79, 122, 0.20)'
   },
@@ -101,6 +105,7 @@ const themeVars = {
     noticeBg: '#162036',
     cancelledBg: '#311820',
     completedBg: '#12283a',
+    userDeletedBg: '#30343b',
     shadow: 'rgba(0, 0, 0, 0.30)',
     buttonShadow: 'rgba(96, 165, 250, 0.28)'
   }
@@ -122,6 +127,7 @@ export const colors = {
   noticeBg: 'var(--client-notice-bg)',
   cancelledBg: 'var(--client-cancelled-bg)',
   completedBg: 'var(--client-completed-bg)',
+  userDeletedBg: 'var(--client-user-deleted-bg)',
   shadow: 'var(--client-shadow)',
   buttonShadow: 'var(--client-button-shadow)'
 };
