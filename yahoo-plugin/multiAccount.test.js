@@ -11,7 +11,7 @@ function load(binding,transport,overrides={}) {
     setTimeout,clearTimeout,setInterval(){},clearInterval(){},crypto:{randomUUID},
     chrome:{storage:{local:{async get(){return {yahooBinding:binding};},async set(){}},session:{async set(){},async remove(){}},onChanged:listen},
       runtime:{onInstalled:listen,onStartup:listen,onMessage:{addListener(fn){messages.push(fn);}}},alarms:{onAlarm:listen,create(){}},
-      tabs:{onUpdated:listen,onRemoved:listen},windows:{async update(id,options){calls.push({focus:id});return {id};}}},
+      tabs:{async query(){return [];},onUpdated:listen,onRemoved:listen},windows:{async update(id,options){calls.push({focus:id});return {id};}}},
     fetch:async(url,options={})=>{calls.push({url,options});return transport(url,options);},...overrides};
   let source=fs.readFileSync(require.resolve('./background.js'),'utf8');
   source=source.replace(/\r?\nstartPolling\(\);\r?\n\r?\n\/\/ Listen for messages from content script or client page/,'\n// Listen for messages from content script or client page');

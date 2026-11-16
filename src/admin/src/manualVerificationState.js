@@ -6,9 +6,9 @@ function getManualVerificationDisplayState(challenge, options = {}) {
     if (passedChallengeType === 'captcha') {
       return {
         visible: true,
-        status: 'passed',
+        status: 'confirming',
         showInput: false,
-        title: '验证通过！'
+        title: '日文验证码已提交，请等待后续验证'
       };
     }
     return {

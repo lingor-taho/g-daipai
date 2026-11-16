@@ -4265,6 +4265,57 @@ async function testRunTransactionStartSkipsOrderPausedAfterBatchFetch() {
   assert.equal(openedTransactionPage, false);
 }
 
+async function testTransactionBatchPausesWhenVerificationFails() {
+  const jobs = [1, 2].map(orderId => ({
+    orderId, productType: 'normal', productId: `n10000000${orderId}`,
+    transactionUrl: `https://contact.auctions.yahoo.co.jp/buyer/top?aid=n10000000${orderId}`
+  }));
+  const requests = [];
+  const opened = [];
+  const removed = [];
+  let captchaTab;
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    console: { ...console, warn() {} },
+    tabs: {
+      async query() { return captchaTab ? [captchaTab] : []; },
+      async create({ url }) {
+        opened.push(url);
+        captchaTab = { id: 51, status: 'complete', url: 'https://login.yahoo.co.jp/ncaptcha' };
+        return captchaTab;
+      },
+      async get() { return captchaTab; },
+      async remove(id) { removed.push(id); }
+    },
+    async fetch(url) {
+      requests.push(String(url));
+      return { async json() {
+        if (url.includes('/idle-action/next')) return { action: 'transaction_start' };
+        if (url.includes('/transaction-start/jobs')) return { jobs };
+        if (url.includes('/manual-captcha/challenge')) return { success: false, error: 'fixture challenge unavailable' };
+        return { success: true };
+      } };
+    }
+  });
+  await api.runWorkflowAction();
+  assert.deepEqual(opened, [jobs[0].transactionUrl]);
+  assert.deepEqual(removed, []);
+  assert.ok(requests.some(url => url.includes('/transaction-start/status')));
+  assert.ok(!requests.some(url => url.includes('/idle-action/complete')));
+  assert.equal(await api.runTransactionStartJobs(), false);
+  assert.equal(requests.filter(url => url.includes('/transaction-start/jobs')).length, 1);
+
+  const redirectTab = { id: 51, status: 'loading', url: 'about:blank' };
+  const resumed = loadBackgroundForTest({
+    disableAutoStart: true,
+    tabs: { async query() { return [redirectTab]; }, async get() { return redirectTab; } },
+    sessionStorage: { async get() { return { manualEmailVerificationSession: { submissions: 1, tabId: 51 } }; } },
+    async fetch() { assert.fail('unfinished email session must pause before fetching jobs'); }
+  });
+  assert.equal(await resumed.pauseIdleWorkForOpenManualPin(), true);
+  assert.equal(await resumed.runTransactionStartJobs(), false);
+}
+
 async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping() {
   const statusCalls = [];
   const clickedActions = [];
@@ -12020,6 +12071,7 @@ await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   await testRunTransactionStartJobsCanOnlyRefreshServerSideStoreOrders();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartSkipsOrderPausedAfterBatchFetch();
+  await testTransactionBatchPausesWhenVerificationFails();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, true, false, true);
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, false, false, true);

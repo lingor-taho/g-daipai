@@ -6128,6 +6128,18 @@ async function getOpenManualVerificationTabs() {
   return tabs.filter(tab => !isYahooMessageTab(tab) && isManualVerificationTab(tab) && !ignoredManualVerificationTabIds.has(tab.id));
 }
 
+async function hasPendingManualVerification() {
+  return manualVerificationFlowActive || (await getOpenManualVerificationTabs()).length > 0 ||
+    Boolean(await getUnfinishedEmailVerificationTab());
+}
+
+async function getUnfinishedEmailVerificationTab() {
+  const saved = await chrome.storage.session.get?.('manualEmailVerificationSession');
+  const session = saved?.manualEmailVerificationSession;
+  if (!session?.submissions || !session.tabId) return null;
+  return chrome.tabs.get(session.tabId).catch(() => null);
+}
+
 async function getManualVerificationLockedTab() {
   if (!manualVerificationTabId) return null;
   const tab = await chrome.tabs.get(manualVerificationTabId).catch(() => null);
@@ -6245,6 +6257,8 @@ async function pauseIdleWorkForOpenManualPin() {
   const pinTabs = verificationTabs.filter(isLikelyManualPinTab);
   const captchaTabs = verificationTabs.filter(isManualCaptchaTab);
   if (!verificationTabs.length) {
+    // The owned tab can be between redirects or on a page the verification detector does not recognize.
+    if (await getUnfinishedEmailVerificationTab()) return true;
     await closeStaleManualChallengeIfVerificationGone(verificationTabs);
   }
   if (verificationTabs.length) {
@@ -6962,8 +6976,12 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     pinAttempted = true;
     pinAnswerFromContext = false;
     canReusePinAfterCaptcha = false;
+    const pinTransitionOptions = {
+      preferCaptcha: true,
+      singleAlternativeTab: Boolean(context.alternativeSession.attempts || context.emailSession.submissions)
+    };
     if (fillResult.method === 'debuggerRealKeyboard') {
-      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, { preferCaptcha: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
+      current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, pinTransitionOptions);
       rememberManualVerificationTab(current);
       const stillPinAfterKeyboard = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
       if (stillPinAfterKeyboard) {
@@ -6971,11 +6989,11 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
         const beforeInsertTextRetryTabIds = await getTabIds().catch(() => new Set());
         const insertTextResult = await dispatchTrustedManualPinInput(current.id, pinAnswer, { preferKeyboard: false });
         if (!insertTextResult?.success) throw new Error(insertTextResult?.error || 'manual pin insertText retry failed');
-        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds, { preferCaptcha: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
+        current = await waitForManualVerificationPageTransition(current, 15000, beforeInsertTextRetryTabIds, pinTransitionOptions);
         rememberManualVerificationTab(current);
       }
     } else {
-      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds, { preferCaptcha: true, singleAlternativeTab: Boolean(context.alternativeSession.attempts) });
+      current = await waitForManualVerificationPageTransition(current, 15000, beforeVerificationTabIds, pinTransitionOptions);
       rememberManualVerificationTab(current);
     }
     if (pinChallengeId && !await isStillManualVerificationPage(current)) await closeManualCaptchaChallenge(pinChallengeId);
@@ -6991,7 +7009,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     await ensureManualEmailChallenge(current, context, 'Yahoo 验证流程未完成，请人工处理');
     throw new Error('Yahoo 验证流程未完成，请人工处理');
   }
-  if (context.emailSession.submissions && !pinAttempted) {
+  if (context.emailSession.submissions && !pinSubmitted) {
     await ensureManualEmailChallenge(current, context, '邮箱验证后未完成 PIN 码验证，请人工处理');
     throw new Error('邮箱验证后未完成 PIN 码验证，请人工处理');
   }
@@ -7804,6 +7822,7 @@ async function executeTransactionStartJob(job) {
       await releaseWorkJobs('transaction-start', [job]);
       return { processedProductIds: [job.productId] };
     }
+    if (await hasPendingManualVerification()) return { stop: true };
     tab = await openTransactionPage(job, beforeTabIds);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_TRANSACTION_START_INFO' }).catch(error => {
       console.error('[Yahoo Bid] Failed to extract transaction start info:', error);
@@ -7923,21 +7942,22 @@ async function executeTransactionStartJob(job) {
 }
 
 async function runTransactionStartJobs(options = {}) {
+  if (await hasPendingManualVerification()) return false;
   const jobs = await fetchTransactionStartJobs(options);
   return withWorkBatch('transaction-start',jobs,async started => {
-  if (options.processNormalJobs === false) {
-    return;
-  }
-  const processedProducts = new Set();
-  for (const job of jobs) {
-    if (processedProducts.has(String(job.productId || '').toLowerCase())) continue;
-    started(job);
-    const result = await executeTransactionStartJob(job);
-    for (const productId of result?.processedProductIds || []) {
-      processedProducts.add(String(productId || '').toLowerCase());
+    if (options.processNormalJobs === false) return;
+    const processedProducts = new Set();
+    for (const job of jobs) {
+      if (processedProducts.has(String(job.productId || '').toLowerCase())) continue;
+      if (await hasPendingManualVerification()) return false;
+      started(job);
+      const result = await executeTransactionStartJob(job);
+      if (await hasPendingManualVerification()) return false;
+      for (const productId of result?.processedProductIds || []) {
+        processedProducts.add(String(productId || '').toLowerCase());
+      }
+      if (result?.stop) break;
     }
-    if (result?.stop) break;
-  }
   });
 }
 
@@ -7952,7 +7972,9 @@ async function closeTabsForTransactionFlow(tab, beforeTabIds = new Set()) {
     if (isManualVerificationTab(candidate)) continue;
     if (isLikelyYahooTransactionCleanupTab(candidate)) ids.add(candidate.id);
   }
+  const unfinishedEmailTabId = (await getUnfinishedEmailVerificationTab())?.id;
   for (const id of ids) {
+    if (id === unfinishedEmailTabId) continue;
     if (yahooMessageTabOwners.has(id)) continue;
     if (managedTaskTabs.has(id)) continue;
     const current = await chrome.tabs.get(id).catch(() => null);
@@ -8958,7 +8980,7 @@ async function runYahooMessageJobs() {
   try {
     // Claim only when ready to execute: queued messages should not age as processing.
     while (processed < 3) {
-      if (manualVerificationFlowActive || (await getOpenManualVerificationTabs()).length) break;
+      if (await hasPendingManualVerification()) break;
       const jobs = await fetchYahooMessageJobs();
       if (!jobs.length) break;
       for (const job of jobs) {
@@ -9012,20 +9034,23 @@ async function syncIdleYahooPages() {
   }
   lastIdleSyncAt = now;
   await openBiddingPageForSync();
+  if (await hasPendingManualVerification()) return;
   await openWonPageForSync();
+  if (await hasPendingManualVerification()) return;
   await executeNextWorkflowAction();
 }
 
 async function syncMonitorYahooPages() {
   if (monitorRunning) return;
   await refreshPluginConfig();
+  if (await hasPendingManualVerification()) return;
   const now = Date.now();
   if (now - lastMonitorSyncAt < idleSyncIntervalMs) return;
   monitorRunning = true;
   lastMonitorSyncAt = now;
   try {
     await openBiddingPageForSync({ closeAfter: true });
-    await openWonPageForSync({ closeAfter: true });
+    if (!await hasPendingManualVerification()) await openWonPageForSync({ closeAfter: true });
   } catch (error) {
     if (isTabsTemporarilyUneditableError(error)) {
       lastMonitorSyncAt = 0;
@@ -9129,10 +9154,11 @@ async function runAuctionHistoryJobs() {
 async function executeNextWorkflowAction() {
   const idleAction = await fetchNextIdleAction();
   if (idleAction?.action === 'transaction_start') {
-    await runTransactionStartJobs({
+    const outcome = await runTransactionStartJobs({
       includeAfterCutoff: idleAction?.config?.transactionStartRequestSource === 'manual',
       processNormalJobs: TRANSACTION_START_ENABLED
     });
+    if (outcome === false) return;
   } else if (idleAction?.action === 'manual_order_import') {
     await runManualOrderImportJobs();
   } else if (idleAction?.action === 'yahoo_message') {
@@ -9566,6 +9592,7 @@ async function pollBidPool() {
     return;
   }
   await refreshPluginConfig();
+  if (await hasPendingManualVerification()) return;
   const slots = Math.max(0, bidConcurrencyLimit - activeBidRuns.size);
   if (slots <= 0) return;
   let recoveries = [];

@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-11-14
+**最后更新**: 2026-11-16
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -255,6 +255,7 @@ orders.task_id      N --- 0/1 tasks.id
 
 当前状态：
 
+- 交易批次遇到未完的 Yahoo 验证时保留当前验证页和交易请求，暂停新开任务；假名提交后后台显示等待，见0ax。
 - 用户端「成交商品」支持隐藏完了和取消订单。普通用户和代理的列表及搜索排除已隐藏订单，用户端管理员可以查看并恢复显示，部署与验证见0aw。
 - PIN前原生Google通行密钥选择本地完成，复用系统输入通道与多账号前台锁，真实弹窗待部署验收，见0au。
 - 代理互斥现由前端预检及API原子建任务双层校验；本人已有任务继续放行，同组首次并发只成功一个，见0at。
@@ -291,6 +292,12 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ax. Yahoo 邮箱与 PIN 未完成时暂停开新页
+
+生产反馈北京时间 11 月 15 日午夜前后假名提交后重现普通「继续」和两个验证页，具体订单及生产诊断未核实。本地补齐交易开页前及逐单结束后的验证门槛。存在未完验证时，批次释放领取并保留交易 flag，后续轮询先处理当前验证页。当前邮箱验证页短暂跳转时继续用 Chrome session 绑定标签，暂停新交易、监控和竞拍领取。正常邮箱验证只在实际提交 PIN 并退出验证页后清理会话；假名交接、第二轮通行密钥及原生系统键盘沿原入口。后台验证码提交后的短提示改为等待后续验证。
+
+需更新各账号的 `yahoo-plugin/background.js` 并 reload，再发布后台 dist。验证命令见下方，未部署或操作真实 Yahoo 验证。
 
 ### 0aw. 用户端成交商品隐藏与恢复显示
 
@@ -1363,6 +1370,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-11-16 未完 PIN 的交易暂停与后台提示
+
+原验证标签存续时，交易批次暂停开下一单并保留 flag。邮箱流程收尾要求实际提交 PIN，后台假名提交提示改为等待，详见0ax。
 
 ### 2026-11-14 用户端订单隐藏与恢复显示
 
@@ -2915,6 +2926,21 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+Yahoo 邮箱与 PIN 验证暂停（0ax）：
+
+```bash
+node yahoo-plugin/background.test.js
+node yahoo-plugin/emailVerification.test.js
+node yahoo-plugin/alternativeLogin.test.js
+node yahoo-plugin/nativePasskey.test.js
+node yahoo-plugin/multiAccount.test.js
+node yahoo-plugin/fleamarketPurchase.test.js
+node src/admin/src/manualVerificationState.test.js
+npm run build --prefix src/admin
+npm run encoding:guard
+git diff --check
+```
 
 用户端订单隐藏与恢复显示（0aw）：
 
