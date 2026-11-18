@@ -25,6 +25,13 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
     assert.equal((await read('<h2>購入が完了しました</h2>')).type,'unknown','purchase completion is not shipment confirmation');
     assert.equal((await read('<div>配送中</div><div>お問い合わせ番号 123456789012</div><button>受取評価</button>')).type,'unknown','unsupported shipment/receipt DOM is left unchanged');
     const shippedHtml = fs.readFileSync(require.resolve('./fixtures/fleamarket-shipped.html'),'utf8');
+    const cancelledHeading = '<h1>取引がキャンセルされました</h1>';
+    const sellerMessage = '<section><h2>出品者</h2><p>取引がキャンセルされました</p></section>';
+    assert.equal((await read(cancelledHeading + '<p>取引が取り消され、購入者に返金されました</p>' + sellerMessage)).type, 'cancelled');
+    assert.equal((await read(cancelledHeading + shippedHtml)).type, 'cancelled', 'explicit cancellation takes precedence');
+    assert.equal((await read(`<div hidden>${cancelledHeading}</div>${sellerMessage}`)).type, 'unknown');
+    assert.equal((await read(sellerMessage + '<h1>出品者の発送をお待ちください</h1>')).type, 'pending_shipment');
+    assert.equal((await read(cancelledHeading, url.replace(id, 'z123456789'))).type, 'unknown');
     const shipped = await read(shippedHtml);
     assert.equal(shipped.type,'shipped');assert.equal(shipped.shippingCompany,'お問い合わせ');
     assert.equal(shipped.trackingNumber,'646960564235');assert.equal(shipped.shipmentDetailsRendered,true);
@@ -83,7 +90,7 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
 
 
   } finally {await browser.close();}
-  for(const [kind,type,rescan] of [['scan','pending_shipment',false],['scan','unknown',false],['scan','pending_shipment',true],['confirm-receipt','pending_shipment',false],['confirm-receipt','unknown',false],['scan','shipped',false],['scan','shipped',true],['scan','shipped-delayed',false],['scan','shipped-missing',false],['confirm-receipt','shipped',false]]) {
+  for(const [kind,type,rescan] of [['scan','cancelled',false],['scan','pending_shipment',false],['scan','unknown',false],['scan','pending_shipment',true],['confirm-receipt','pending_shipment',false],['confirm-receipt','unknown',false],['scan','shipped',false],['scan','shipped',true],['scan','shipped-delayed',false],['scan','shipped-missing',false],['confirm-receipt','shipped',false]]) {
     let time=0,closed=0,created=0,reads=0;const updates=[],releases=[];
     class TestDate extends Date {static now(){return time;}}
     const context = {
@@ -99,7 +106,12 @@ const url = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/trade/buyer`;
     vm.runInNewContext(`${code}\nthis.execute=executeFleamarketTradeJob`,context);
     await context.execute({orderId:9,productId:id,orderStatus:'pending_shipment',trackingRescanRequested:rescan},kind);
     assert.equal(created,1);assert.equal(closed,1);
-    if(kind==='scan'&&type==='pending_shipment'&&!rescan){assert.equal(updates.length,1);assert.equal(updates[0].pendingShipment,true);}
+    if(kind==='scan'&&type==='cancelled') {
+      assert.deepEqual(updates.map(update => ({...update})), [{orderId:9,cancelled:true}]);
+      assert.equal(reads,1);
+      assert.equal(releases.length,0);
+    }
+    else if(kind==='scan'&&type==='pending_shipment'&&!rescan){assert.equal(updates.length,1);assert.equal(updates[0].pendingShipment,true);}
     else if(kind==='scan'&&['shipped','shipped-delayed'].includes(type)) {
       assert.equal(updates.length,1);assert.equal(updates[0].shipped,true);
       assert.equal(updates[0].shippingCompany,'お問い合わせ');assert.equal(updates[0].trackingNumber,'646960564235');

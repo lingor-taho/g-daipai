@@ -8085,11 +8085,12 @@ function readFleamarketTradePage(productId) {
   const text = String(document.body?.innerText || '').replace(/\s+/g,'');
   const visible = node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
   const normalized = node => String(node.innerText || '').replace(/\s+/g,'');
-  // Only the actual page heading confirms shipment; progress labels and seller
-  // messages mentioning delivery are not shipment evidence.
-  const shipped = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')]
-    .some(node => visible(node) && normalized(node) === '商品の到着をお待ちください');
-  if (shipped) {
+  // Match trade status headings, excluding seller message text and progress labels.
+  const headings = [...document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')].filter(visible).map(normalized);
+  if (headings.includes('取引がキャンセルされました')) {
+    return {type:'cancelled',pageVariant:'fleamarket',transactionUrl:expected};
+  }
+  if (headings.includes('商品の到着をお待ちください')) {
     const numbers = [...document.querySelectorAll('#deliverystatus a[href]')]
       .filter(visible).map(node => normalized(node).replace(/[-－]/g,''))
       .filter(value => /^\d{8,20}$/.test(value));
@@ -8226,7 +8227,8 @@ async function executeFleamarketTradeJob(job, kind = 'scan') {
     const deadline = Date.now() + PENDING_SHIPMENT_SCAN_RENDER_WAIT_MS;
     do {
       result = (await chrome.scripting.executeScript({target:{tabId:tab.id},func:readFleamarketTradePage,args:[id]}))?.[0]?.result;
-      if (result?.type === 'pending_shipment' || (result?.type === 'shipped' && result.shipmentDetailsRendered !== false)) break;
+      if (result?.type === 'cancelled' || result?.type === 'pending_shipment' ||
+          (result?.type === 'shipped' && result.shipmentDetailsRendered !== false)) break;
       await sleep(PENDING_SHIPMENT_SCAN_POLL_MS);
     } while (Date.now() < deadline);
     if (kind === 'scan') {
