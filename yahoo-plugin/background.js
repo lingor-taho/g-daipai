@@ -9045,14 +9045,13 @@ async function syncIdleYahooPages() {
 async function syncMonitorYahooPages() {
   if (monitorRunning) return;
   await refreshPluginConfig();
-  if (await hasPendingManualVerification()) return;
   const now = Date.now();
   if (now - lastMonitorSyncAt < idleSyncIntervalMs) return;
   monitorRunning = true;
   lastMonitorSyncAt = now;
   try {
     await openBiddingPageForSync({ closeAfter: true });
-    if (!await hasPendingManualVerification()) await openWonPageForSync({ closeAfter: true });
+    await openWonPageForSync({ closeAfter: true });
   } catch (error) {
     if (isTabsTemporarilyUneditableError(error)) {
       lastMonitorSyncAt = 0;

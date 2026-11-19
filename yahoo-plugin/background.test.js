@@ -4970,6 +4970,9 @@ async function testMonitorSyncSkipsTabThatDisappearsBeforeInjection() {
 async function testMonitorSyncCollectsAllBiddingPagesBeforeSync() {
   const fetchCalls = [];
   const visitedUrls = [];
+  const closedTabIds = [];
+  const pinTab = { id: 51, active: true, status: 'complete', url: 'https://login.yahoo.co.jp/config/login?auth_lv=1' };
+  const wonOrder = { productId: 'c1234567890' };
   let currentBiddingUrl = 'https://auctions.yahoo.co.jp/my/bidding';
   const api = loadBackgroundForTest({
     disableAutoStart: true,
@@ -4981,6 +4984,7 @@ async function testMonitorSyncCollectsAllBiddingPagesBeforeSync() {
       return { ok: true, async json() { return { success: true }; } };
     },
     tabs: {
+      async query() { return [pinTab]; },
       async create(details) {
         visitedUrls.push(details.url);
         if (String(details.url).includes('/my/bidding')) {
@@ -5010,11 +5014,11 @@ async function testMonitorSyncCollectsAllBiddingPagesBeforeSync() {
           };
         }
         if (message?.type === 'EXTRACT_ORDER_HISTORY') {
-          return { success: true, orders: [], loginStatus: { status: 'ok' } };
+          return { success: true, orders: [wonOrder], loginStatus: { status: 'ok' } };
         }
         return { success: true };
       },
-      async remove() {}
+      async remove(id) { closedTabIds.push(id); }
     }
   });
 
@@ -5028,6 +5032,10 @@ async function testMonitorSyncCollectsAllBiddingPagesBeforeSync() {
     visitedUrls.filter(url => String(url).includes('/my/bidding')),
     ['https://auctions.yahoo.co.jp/my/bidding', 'https://auctions.yahoo.co.jp/my/bidding?page=2']
   );
+  const wonSyncCalls = fetchCalls.filter(call => call.url.includes('/api/plugin/orders/sync'));
+  assert.equal(wonSyncCalls.length, 1, 'won sync continues while the PIN tab is open');
+  assert.deepEqual(JSON.parse(wonSyncCalls[0].options.body).orders, [wonOrder]);
+  assert.equal(closedTabIds.includes(pinTab.id), false);
 }
 
 async function testMonitorSyncSkipsFrameRemovedBeforeInjection() {
