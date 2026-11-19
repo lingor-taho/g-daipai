@@ -9594,7 +9594,6 @@ async function pollBidPool() {
     return;
   }
   await refreshPluginConfig();
-  if (await hasPendingManualVerification()) return;
   const slots = Math.max(0, bidConcurrencyLimit - activeBidRuns.size);
   if (slots <= 0) return;
   let recoveries = [];

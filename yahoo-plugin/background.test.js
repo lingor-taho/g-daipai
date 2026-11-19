@@ -4316,6 +4316,57 @@ async function testTransactionBatchPausesWhenVerificationFails() {
   assert.equal(await resumed.runTransactionStartJobs(), false);
 }
 
+async function testBidPoolKeepsExecutingWhileTradeVerificationIsOpen() {
+  const productId = 'c1252660140';
+  const productUrl = `https://auctions.yahoo.co.jp/jp/auction/${productId}`;
+  const endTime = '2099-06-28T22:01:24+09:00';
+  const captchaTab = { id: 51, status: 'complete', url: 'https://login.yahoo.co.jp/ncaptcha' };
+  const bidTab = { id: 52, status: 'complete', url: productUrl };
+  const opened = [];
+  const removed = [];
+  const statuses = [];
+  const api = loadBackgroundForTest({
+    disableAutoStart: true,
+    setTimeout(callback, delay) { return delay >= 30000 ? 1 : setTimeout(callback, 0); },
+    tabs: {
+      async query() { return [captchaTab]; },
+      async get(id) { return id === captchaTab.id ? captchaTab : bidTab; },
+      async create({ url }) { opened.push(url); return bidTab; },
+      async sendMessage(id, message) {
+        if (message.type === 'GET_PRODUCT_SNAPSHOT') return { auctionId: productId, currentPrice: 1000, endTime };
+        if (message.type === 'EXECUTE_BID') {
+          assert.equal(id, bidTab.id);
+          assert.equal(message.taskId, 16100);
+          return { success: true, bidPrice: 8000 };
+        }
+        return { success: true };
+      },
+      async remove(id) { removed.push(id); }
+    },
+    async fetch(url, options = {}) {
+      if (url.includes('/transaction-start/jobs')) assert.fail('trade verification should still pause transaction starts');
+      if (url.includes('/api/plugin/tasks?')) {
+        return { async json() { return { tasks: [{
+          id: 16100, product_id: productId, product_type: 'normal', product_url: productUrl,
+          status: 'pending', strategy: 'direct', bid_mode: 'bid', max_price: 8000, end_time: endTime
+        }] }; } };
+      }
+      if (url.includes('/api/plugin/task/16100/status')) statuses.push(JSON.parse(options.body));
+      return { ok: true, async json() { return { success: true }; } };
+    }
+  });
+
+  assert.equal(await api.runTransactionStartJobs(), false);
+  await api.pollBidPool();
+  for (let tick = 0; tick < 50 && api.getActiveBidRunCount(); tick += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.deepEqual(opened, [productUrl]);
+  assert.deepEqual(statuses.map(({ status, bid_price }) => ({ status, bid_price })), [{ status: 'bidding', bid_price: 8000 }]);
+  assert.deepEqual(removed, [bidTab.id]);
+  assert.equal(await api.runTransactionStartJobs(), false);
+}
+
 async function testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping() {
   const statusCalls = [];
   const clickedActions = [];
@@ -12072,6 +12123,7 @@ await testMessageMouseFallbackDoesNotStealWorkflowFocus();
   await testIdleTransactionStartRefreshesStoreOrdersWhenNormalFlowDisabled();
   await testRunTransactionStartSkipsOrderPausedAfterBatchFetch();
   await testTransactionBatchPausesWhenVerificationFails();
+  await testBidPoolKeepsExecutingWhileTradeVerificationIsOpen();
   await testRunTransactionStartMarksAlreadyWaitingShippingPageWaitingShipping();
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, true, false, true);
   await testRunTransactionStartContinuesSingleItemAfterBundleRejected(true, false, false, true);
