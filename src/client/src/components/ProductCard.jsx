@@ -132,10 +132,15 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
           <button type="button" aria-label="砍价" title="砍价"
             disabled={!knifeEnabled} aria-expanded={knifeEnabled && showNegotiation}
             onClick={() => setShowNegotiation(open => !open)}
-            style={{ border: 0, padding: '4px 8px', marginBottom: 6, background: 'transparent', color: '#722ed1',
-              fontSize: 16, lineHeight: '16px', verticalAlign: 'middle', opacity: knifeEnabled ? 1 : 0.45,
+            style={{ border: 0, padding: '4px 8px', marginBottom: 6, background: 'transparent',
+              verticalAlign: 'middle', opacity: knifeEnabled ? 1 : 0.45,
               cursor: knifeEnabled ? 'pointer' : 'default' }}>
-            <span aria-hidden="true">🔪</span>
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 20 20"
+              style={{ display: 'block' }} stroke="#272321" strokeWidth="1.25" strokeLinejoin="round">
+              <path d="m7.3 6 7 6.8c1.7 1.7 3 3.6 3.7 5.1-2.7-.4-4.9-1.6-6.9-3.6L5.6 8.6Z" fill="#e5e7eb" />
+              <path d="m7 8 5 5" fill="none" stroke="#9198a0" strokeWidth="1" strokeLinecap="round" />
+              <path d="M2.6 2.6a2 2 0 0 1 2.8 0l4.2 4.2-2.8 2.8-4.2-4.2a2 2 0 0 1 0-2.8Z" fill="#a16c42" />
+            </svg>
           </button>
         )}
         <button
