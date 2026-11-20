@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { isStoredFleamarketProduct: isFleamarketProduct, getStoredProductType } = require('../../shared/fleamarket.cjs');
 const fleamarketPurchase = require('../services/fleamarketPurchase');
+const fleamarketNegotiation = require('../services/fleamarketNegotiation');
 const { normalizeYahooWonTimeText } = require('../services/yahooWonTime');
 const { ENDED_REASON } = require('../services/endedTaskReason');
 const { execFile } = require('child_process');
@@ -3361,10 +3362,27 @@ router.post('/manual-order-import/status', async (req, res) => {
 
 router.get('/yahoo-messages/jobs', async (req, res) => {
   try {
-    const result = await getYahooMessageJobs(db, req.query.limit || 3);
+    const includeNegotiation = req.query.includeNegotiation === '1';
+    if (includeNegotiation && req.query.preferNegotiation === '1') {
+      const job = fleamarketNegotiation.claim(db.raw, accountScope.context());
+      if (job) return res.json({ success: true, jobs: [job] });
+    }
+    const result = await getYahooMessageJobs(db, includeNegotiation ? 1 : req.query.limit || 3);
+    if (includeNegotiation && !result.jobs.length && req.query.preferNegotiation !== '1') {
+      const job = fleamarketNegotiation.claim(db.raw, accountScope.context());
+      if (job) return res.json({ success: true, jobs: [job] });
+    }
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'message jobs failed' });
+  }
+});
+
+router.post('/fleamarket-negotiation/status', (req, res) => {
+  try {
+    res.json(fleamarketNegotiation.update(db.raw, accountScope.context(), req.body || {}));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 

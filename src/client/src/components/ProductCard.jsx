@@ -1,8 +1,12 @@
+import { useEffect, useRef, useState } from 'react';
+import { Toast } from 'antd-mobile';
 import ProductTypeTag from './ProductTypeTag';
 import { getBuyoutPrice } from '../utils/bidPrice';
 import { formatTotalAmount } from '../utils/totalAmount';
 import { cardStyle, colors } from '../styles';
 import fleamarket from '../../../shared/fleamarket.cjs';
+import negotiation from '../../../shared/fleamarketNegotiation.cjs';
+import { getApiErrorMessage, getFleamarketNegotiation, submitFleamarketNegotiation } from '../utils/api';
 
 function getDisplayPrice(price, taxType) {
   const value = Number(price || 0);
@@ -37,8 +41,78 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
   const taxLabel = taxType === 'tax_included' ? '税込' : '税0円';
   const bidCount = Number(product.bidCount ?? product.bid_count ?? 0);
   const isFleamarket = fleamarket.isStoredFleamarketProduct(product);
+  const productId = product.auctionId;
+  const canNegotiate = isFleamarket && !ended && product.canNegotiate;
+  const [showNegotiation, setShowNegotiation] = useState(false);
+  const [negotiationSnapshot, setNegotiationSnapshot] = useState(null);
+  const negotiationStatus = negotiationSnapshot?.product === product ? negotiationSnapshot.data : null;
+  const [offer, setOffer] = useState('');
+  const [sendingOffer, setSendingOffer] = useState(false);
+  const awaitingResult = useRef(false);
+
+  useEffect(() => {
+    if (!isFleamarket || !productId || sendingOffer) return;
+    const controller = new AbortController();
+    let timer;
+    function schedule() {
+      timer = setTimeout(refresh, 2500);
+    }
+    async function refresh() {
+      try {
+        const { data } = await getFleamarketNegotiation(productId, controller.signal);
+        if (controller.signal.aborted) return;
+        setNegotiationSnapshot({ product, data });
+        if (data.state === 'submitted' && awaitingResult.current) {
+          Toast.show({ content: '砍价信息已提交！' });
+        }
+        if (data.state === 'pending') {
+          setShowNegotiation(false);
+          schedule();
+        } else {
+          awaitingResult.current = false;
+        }
+      } catch (_) {
+        if (!controller.signal.aborted) schedule();
+      }
+    }
+    refresh();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [isFleamarket, productId, product, sendingOffer, showNegotiation]);
+
+  const canSubmitOffer = canNegotiate && negotiationStatus?.state === 'available';
+  const hasNegotiationHistory = negotiationStatus?.state === 'submitted';
+  const showKnife = canNegotiate || hasNegotiationHistory || negotiationStatus?.state === 'pending';
+  const knifeEnabled = canSubmitOffer || hasNegotiationHistory;
+  const minimum = Math.max(300, negotiation.minimumNegotiationPrice(displayPrice));
+
+  async function handleNegotiation() {
+    if (sendingOffer || !canSubmitOffer) return;
+    const price = /^\d+$/.test(offer.trim()) ? Number(offer) : NaN;
+    if (!negotiation.isNegotiationPriceValid(price, displayPrice)) {
+      Toast.show({ content: `请输入 ${minimum.toLocaleString('ja-JP')}–${(displayPrice - 1).toLocaleString('ja-JP')} 円的整数报价` });
+      return;
+    }
+    setSendingOffer(true);
+    try {
+      const { data } = await submitFleamarketNegotiation(productId, price);
+      awaitingResult.current = true;
+      setNegotiationSnapshot({ product, data });
+      setShowNegotiation(false);
+      setOffer('');
+      Toast.show({ content: '砍价信息已排队' });
+    } catch (error) {
+      awaitingResult.current = !error.response;
+      Toast.show({ content: getApiErrorMessage(error, '砍价提交失败') });
+    } finally {
+      setSendingOffer(false);
+    }
+  }
 
   return (
+    <>
     <div style={{ ...cardStyle, margin: '14px 0', overflow: 'hidden', display: 'flex' }}>
       {product.imageUrl && (
         <button
@@ -54,6 +128,16 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
       )}
       <div style={{ padding: 12, minWidth: 0, flex: 1 }}>
         <ProductTypeTag product={product} fullName />
+        {showKnife && (
+          <button type="button" aria-label="砍价" title="砍价"
+            disabled={!knifeEnabled} aria-expanded={knifeEnabled && showNegotiation}
+            onClick={() => setShowNegotiation(open => !open)}
+            style={{ border: 0, padding: '4px 8px', marginBottom: 6, background: 'transparent', color: '#722ed1',
+              fontSize: 16, lineHeight: '16px', verticalAlign: 'middle', opacity: knifeEnabled ? 1 : 0.45,
+              cursor: knifeEnabled ? 'pointer' : 'default' }}>
+            <span aria-hidden="true">🔪</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpenDetail}
@@ -82,5 +166,31 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
         )}
       </div>
     </div>
+    {knifeEnabled && showNegotiation && (
+      <div style={{ ...cardStyle, padding: '10px 12px', margin: '-6px 0 14px', border: `1px solid ${colors.danger}`, fontSize: 13 }}>
+        {hasNegotiationHistory && (
+          <div>该商品在 {new Date(negotiationStatus.submittedAt).toLocaleString('zh-CN', {
+            timeZone: 'Asia/Shanghai', hour12: false
+          })} 以 <strong style={{ color: colors.danger }}>{negotiationStatus.price.toLocaleString('ja-JP')} 円</strong> 提交了砍价。</div>
+        )}
+        {canSubmitOffer && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="text" inputMode="numeric" maxLength={7} aria-label="砍价报价（日元）"
+              placeholder={`最低 ${minimum.toLocaleString('ja-JP')} 円`}
+              value={offer} disabled={sendingOffer} onChange={event => setOffer(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') { event.preventDefault(); void handleNegotiation(); }
+              }}
+              style={{ flex: '1 1 100px', minWidth: 0, padding: '7px 8px', border: `1px solid ${colors.border}`,
+                borderRadius: 6, background: colors.cardSoft, color: colors.text, fontSize: 14 }} />
+            <button type="button" disabled={sendingOffer} onClick={handleNegotiation}
+              style={{ border: 0, borderRadius: 6, padding: '8px 12px', background: colors.accent, color: '#fff' }}>
+              {sendingOffer ? '提交中…' : '提交砍价'}
+            </button>
+          </div>
+        )}
+      </div>
+    )}
+    </>
   );
 }

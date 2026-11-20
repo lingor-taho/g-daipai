@@ -117,6 +117,10 @@ export function createGetProductInfo({ apiClient = api } = {}) {
 
 // Product details are resolved by the server so user browsers do not need Yahoo access.
 export const getProductInfo = createGetProductInfo();
+export const getFleamarketNegotiation = (id, signal) =>
+  api.get(`/proxy/fleamarket-negotiation/${encodeURIComponent(id)}`, { signal });
+export const submitFleamarketNegotiation = (id, price) =>
+  api.post(`/proxy/fleamarket-negotiation/${encodeURIComponent(id)}`, { price }, { timeout: 45000 });
 export function createGetProductSearchResults({ apiClient = api } = {}) {
   return (keyword, page = 1) => apiClient.get('/proxy/search', {
     params: { keyword: String(keyword || '').trim(), page }

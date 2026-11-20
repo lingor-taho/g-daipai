@@ -334,6 +334,7 @@ export default function Submit() {
         buyoutPrice: data.buyoutPrice ?? data.buyout_price ?? 0,
         bidCount: Number(data.bidCount ?? data.bid_count ?? 0),
         buyoutOnly: Boolean(data.buyoutOnly || data.buyout_only),
+        canNegotiate: data.canNegotiate === true && res.data?.source !== 'cache-fallback',
         taxType: data.taxType || 'tax_zero',
         productType: data.productType || data.product_type || (data.taxType === 'tax_included' ? 'store' : 'normal'),
         shippingFeeText: data.shippingFeeText || data.shipping_fee_text || '',
@@ -711,7 +712,7 @@ export default function Submit() {
       />
 
       {product && (
-        <ProductCard product={product} ended={productEnded} onOpenDetail={() => setSingleProductDetailVisible(true)} />
+        <ProductCard key={product.auctionId} product={product} ended={productEnded} onOpenDetail={() => setSingleProductDetailVisible(true)} />
       )}
 
       {product && (

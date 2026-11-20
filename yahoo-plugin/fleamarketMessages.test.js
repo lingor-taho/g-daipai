@@ -6,7 +6,7 @@ const { chromium } = require('playwright');
 
 const source = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
 const pageCode = source.slice(source.indexOf('async function fleamarketMessageFromPage('), source.indexOf('function extractYahooTradeMessageFromPage('));
-const openCode = source.slice(source.indexOf('async function openYahooMessageTransactionPage('), source.indexOf('// Injected independently'));
+const openCode = source.slice(source.indexOf('async function openYahooMessageOwnedTab('), source.indexOf('// Injected independently'));
 const sendCode = source.slice(source.indexOf('async function sendYahooTradeMessage('), source.indexOf('function extractAuctionIdFromText('));
 const fixture = fs.readFileSync(path.join(__dirname, 'fixtures/fleamarket-messages.html'), 'utf8');
 const id = 'z707487598';

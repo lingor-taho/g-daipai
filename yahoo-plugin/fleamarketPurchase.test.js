@@ -5,6 +5,8 @@ const { chromium } = require('playwright');
 const source = fs.readFileSync(require.resolve('./background.js'),'utf8');
 const implementation = source.slice(source.indexOf('function fleamarketPageStep('),source.indexOf('async function executeBidTask('));
 const helpers = vm.runInNewContext(`${implementation}\n({fleamarketPageStep,executeFleamarketPurchaseTask})`,{URL});
+const negotiationImplementation = source.slice(source.indexOf('function fleamarketNegotiationPageStep('), source.indexOf('async function runYahooMessageJobs('));
+const negotiationPageStep = vm.runInNewContext(`${negotiationImplementation}\nfleamarketNegotiationPageStep`, { URL });
 const id = 'z705860836';
 const itemUrl = `https://paypayfleamarket.yahoo.co.jp/item/${id}`;
 const orderUrl = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/order`;
@@ -33,6 +35,10 @@ async function domTests() {
     assert.equal((await step('item')).clicked,true);
     assert.equal((await step('item')).clicked,undefined);
     assert.equal(await page.evaluate('window.clicks'),1);
+    await load(itemUrl, `<a href="${orderUrl.replace(id, 'z876543210')}">相談した価格で購入手続きへ</a>` +
+      `<a href="${orderUrl}" onclick="event.preventDefault(); window.clicks=(window.clicks||0)+1">相談した価格で購入手続きへ</a>`);
+    assert.equal((await step('item')).clicked, true);
+    assert.equal(await page.evaluate('window.clicks'), 1);
     await load(itemUrl,'<h1>商品</h1><p>売り切れました</p>');
     assert.equal((await step('item')).ready,false,'unavailable product cannot enter checkout');
     assert.equal(await page.evaluate('window.clicks'),undefined);
@@ -92,6 +98,33 @@ async function domTests() {
     assert.equal((await step()).state,'foreign');
     await load('https://example.com/item/'+id,button('購入手続きへ'));
     assert.equal((await step('item')).state,'foreign');
+    const negotiate = (action, price = 800) =>
+      page.evaluate(`(${negotiationPageStep.toString()})(${JSON.stringify(id)},${price},${JSON.stringify(action)})`);
+    const offerForm = `<span class="ItemPrice__Component"><span><span>1,000</span><span>円</span></span></span>
+      <div id="fltdscnt"><span>価格の相談</span><input type="tel" placeholder="購入したい金額を入力"
+        oninput="this.nextElementSibling.disabled=false"><button disabled data-cl-params="_cl_link:discount;_cl_position:1;"
+        onclick="window.offerClicks=(window.offerClicks||0)+1">➤</button></div><a href="${orderUrl}">購入手続きへ</a>`;
+    await load(itemUrl, offerForm);
+    assert.equal(await negotiate('prepare', 799), 'price');
+    assert.equal(await negotiate('prepare'), 'waiting');
+    assert.equal(await page.locator('#fltdscnt input').inputValue(), '800');
+    assert.equal(await negotiate('prepare'), 'ready');
+    assert.equal(await negotiate('click'), 'clicked');
+    assert.equal(await negotiate('click'), 'clicked');
+    assert.equal(await page.evaluate('window.offerClicks'), 1);
+    await load(itemUrl, offerForm.replace('1,000', '1,001'));
+    assert.equal(await negotiate('prepare'), 'price');
+    await load(itemUrl, '<div id="description">同じ商品に対して同時に価格の相談は行えません</div>');
+    assert.equal(await negotiate('observe'), 'waiting');
+    await load(itemUrl, '<div><p>同じ商品に対して同時に価格の相談は行えません</p><button>OK</button></div>');
+    assert.equal(await negotiate('observe'), 'rejected');
+    const sent = '<p>価格の相談を送りました。出品者が同意した場合、通知でお知らせします</p>';
+    await load(itemUrl, sent);
+    assert.equal(await negotiate('observe'), 'waiting');
+    await load(itemUrl + '/negotiate', sent);
+    assert.equal(await negotiate('observe'), 'success');
+    await load(itemUrl.replace(id, 'z876543210') + '/negotiate', sent);
+    assert.equal(await negotiate('observe'), 'foreign');
     console.log('Fleamarket product-price DOM, coupon/points allowance, zero payment and success-marker checks passed');
   } finally {await browser.close();}
 }
@@ -166,8 +199,45 @@ async function executorTest({placement=false,child=false,loseBegin=false,rejectB
   if(placement)assert(actions.includes('placement'));
 }
 
+async function negotiationExecutorTest(mode, expected) {
+  const events = [];
+  let clock = 0;
+  let acknowledgements = 0;
+  const execute = vm.runInNewContext(`${negotiationImplementation}\nexecuteFleamarketNegotiationJob`, {
+    Date: { now: () => clock }, console, MESSAGE_JOB_TIMEOUT_MS: 1000, yahooMessageTabOwners: new Map(),
+    openYahooMessageOwnedTab: async url => { assert.equal(url, itemUrl); return { id: 1 }; },
+    waitForYahooMessageDocument: async () => {},
+    closeYahooMessageTabs: async () => events.push('close'),
+    isManualVerificationTab: () => false,
+    sleep: async ms => { clock += ms; },
+    yahooMessageApiJson: async (url, options) => {
+      const { action, claimToken } = JSON.parse(options.body);
+      assert.equal(url, '/api/plugin/fleamarket-negotiation/status');
+      assert.equal(claimToken, 'negotiation-claim');
+      events.push(action);
+      if (mode === 'ack-lost' && action === 'success' && ++acknowledgements === 1) throw new Error('response lost');
+    },
+    chrome: { tabs: { get: async () => ({ id: 1 }) }, scripting: { executeScript: async ({ args }) => {
+      const action = args[2];
+      if (action === 'prepare') return [{ result: mode === 'sold' ? 'unavailable' : 'ready' }];
+      if (action === 'click') {
+        events.push('click');
+        if (mode === 'unknown') throw new Error('tab navigated away');
+        return [{ result: 'clicked' }];
+      }
+      return [{ result: mode === 'unknown' ? 'waiting' : mode === 'rejected' ? 'rejected' : 'success' }];
+    } } }
+  });
+  await execute({ productId: id, price: 800, claimToken: 'negotiation-claim' });
+  assert.deepEqual(events, expected);
+}
+
 (async()=>{
   await domTests();
+  await negotiationExecutorTest('ack-lost', ['begin','click','success','success','close']);
+  await negotiationExecutorTest('sold', ['close','failed']);
+  await negotiationExecutorTest('rejected', ['begin','click','close','failed']);
+  await negotiationExecutorTest('unknown', ['begin','click','close','failed']);
   for(const options of [{},{unavailable:true},{placement:true,child:true},{navigation:true},{loseBegin:true},{rejectBegin:true},{loseLease:true},{wrongPrice:true},{missingPrice:true},{discountPrice:true},{appliedDiscount:true},{timeout:true},{loseComplete:true},{recoveryOnly:true},{recoveryOnly:true,recoveryMissing:true},{pinPage:true},{nativePin:true}])await executorTest(options);
   assert.match(source,/if \(isFleamarketManualImportItem\(task\)\) return executeFleamarketPurchaseTask/);
   console.log('Fleamarket executor, child tab, lost-response, navigation and no-repeat tests passed');

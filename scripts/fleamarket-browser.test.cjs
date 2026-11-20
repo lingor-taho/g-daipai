@@ -15,12 +15,12 @@ const { chromium } = require('playwright');
   const url = 'https://paypayfleamarket.yahoo.co.jp/item/z650804548';
   const image = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="lightblue"/></svg>';
   const product = { auctionId: 'z650804548', standardUrl: url, title: 'ワンフェス WF2026S Plastic Stick 影輝鋼衣龍王丸',
-    currentPrice: 29700, buyoutPrice: 29700, buyoutOnly: true, isFleamarket: true,
+    currentPrice: 29700, buyoutPrice: 29700, buyoutOnly: true, isFleamarket: true, canNegotiate: true,
     shippingFeeText: '送料無料', taxType: 'tax_zero', productType: 'fleamarket',
     imageUrl: image, images: [{ url: image }, { url: image }], descriptionText: '新品\n未塗装未組立のガレージキットです', endTime: '',auctionStatus:'open' };
   const normalProduct = { ...product, auctionId: 'x1234567890', standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/x1234567890', title: '普通拍卖商品', productType: 'normal', isFleamarket: false, buyoutOnly: false, bidCount: 9, endTime: '2099-01-01T00:00:00+09:00' };
   const storeProduct = { ...normalProduct, auctionId: 'a1234567890', standardUrl: 'https://auctions.yahoo.co.jp/jp/auction/a1234567890', title: '商城拍卖商品', productType: 'store', taxType: 'tax_included' };
-  const usedProduct = {...product, auctionId:'z705858626',standardUrl:'https://paypayfleamarket.yahoo.co.jp/item/z705858626',
+  const usedProduct = {...product, canNegotiate:false, auctionId:'z705858626',standardUrl:'https://paypayfleamarket.yahoo.co.jp/item/z705858626',
     title:'ボストン型 伊達メガネ べっ甲柄 ブルーライトカット 度なし',currentPrice:300,buyoutPrice:300,
     conditionName:'やや傷や汚れあり',auctionStatus:'ended'};
   try {
@@ -35,6 +35,8 @@ const { chromium } = require('playwright');
         ]));
       });
       const submitted = []; const detailRequests = []; const batchRequests = [];
+      const offers = [];
+      let offerStatus = { state: 'available' };
       let fleamarketLocked = false;
       await page.route('**/api/**', async route => {
         const request = route.request(); const target = new URL(request.url());
@@ -49,6 +51,14 @@ const { chromium } = require('playwright');
           const input = target.searchParams.get('url'); detailRequests.push(input);
           const detail = [normalProduct, storeProduct, usedProduct].find(item => input.includes(item.auctionId)) || product;
           data = { success: true, data: detail };
+        }
+        if (target.pathname.startsWith('/api/proxy/fleamarket-negotiation/')) {
+          if (request.method() === 'POST') {
+            offers.push(request.postDataJSON());
+            offerStatus = { state: 'pending' };
+            return route.fulfill({ status: 202, json: offerStatus });
+          }
+          data = target.pathname.endsWith(product.auctionId) ? offerStatus : { state: 'available' };
         }
         if (target.pathname === '/api/task/batch-submit') {
           batchRequests.push(request.postDataJSON()); data = { success: true, count: request.postDataJSON().text.trim().split('\n').length, batch_id: batchRequests.length };
@@ -181,6 +191,40 @@ const { chromium } = require('playwright');
         assert.equal(await page.locator('input[type=checkbox]').isDisabled(), true);
       }
       await page.screenshot({ path: `.test-artifacts/fleamarket-buyout-${width}.png`, fullPage: true });
+      const knife = page.getByRole('button', { name: '砍价', exact: true });
+      await knife.click();
+      const offer = page.getByRole('textbox', { name: '砍价报价（日元）' });
+      const sendOffer = page.getByRole('button', { name: '提交砍价', exact: true });
+      await offer.fill('23759');
+      await sendOffer.click();
+      await page.getByText('请输入 23,760–29,699 円的整数报价').waitFor();
+      assert.equal(offers.length, 0);
+      await offer.fill('23760');
+      await sendOffer.click();
+      await page.getByText('砍价信息已排队', { exact: true }).waitFor();
+      await page.waitForFunction(() => document.querySelector('button[aria-label="砍价"]')?.disabled === true);
+      assert.equal(await offer.count(), 0);
+      assert.deepEqual(offers, [{ price: 23760 }]);
+      assert.equal(submitted.length, 0);
+      assert.equal(await page.getByRole('button', { name: '提交任务', exact: true }).isEnabled(), true);
+      await Promise.all([
+        page.waitForResponse(response => response.url().includes('/api/proxy/fleamarket-negotiation/')),
+        fetch.click()
+      ]);
+      assert.equal(await knife.isDisabled(), true);
+      assert.equal(await offer.count(), 0);
+      offerStatus = { state: 'available' };
+      await knife.click();
+      await offer.fill('23760');
+      await sendOffer.click();
+      await page.waitForFunction(() => document.querySelector('button[aria-label="砍价"]')?.disabled === true);
+      assert.deepEqual(offers, [{ price: 23760 }, { price: 23760 }]);
+      offerStatus = { state: 'submitted', productId: product.auctionId, submittedAt: '2026-11-20T03:30:00Z', price: 23760 };
+      await page.getByText('砍价信息已提交！', { exact: true }).waitFor();
+      await knife.click();
+      await page.getByText('23,760 円', { exact: true }).waitFor();
+      assert.equal(await offer.count(), 0);
+      await page.screenshot({ path: `.test-artifacts/fleamarket-negotiation-${width}.png`, fullPage: true });
       const inputBeforeLock = await input.inputValue();
       fleamarketLocked = true;
       await page.getByRole('button', { name: '提交任务', exact: true }).click();

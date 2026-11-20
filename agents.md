@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-11-19
+**最后更新**: 2026-11-20
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-11-20 P 商品砍价已本地接入。商品卡检测 Yahoo 价格协商区并显示小刀，报价为整数日元、至少是原售价的 80%（且最低 300 円），提交时由用户端、API 和插件分别核验。砍价与留言共用插件标签页队列，按商品 ID 全站去重；排队或执行期间小刀不可点，不展示砍价内容。Yahoo 明确确认已发送后，服务器仅保留商品 ID、时间、报价，小刀恢复为历史入口；失败或超时释放占位，可手动再提交。砍价不写入商品、任务、订单、留言或账号归属。P 购买独立兼容新旧两个入口，结账沿原任务价格核对，不读取砍价记录。发布需更新 API 并重启、用户端 dist、插件 background.js 并 reload，无 schema 或后台 dist 改动。未部署或实际提交 Yahoo 砍价，详见 0az。
 
 2026-11-10 P 商品有历史失败记录时，重新提交必须读取 Yahoo 当前详情，实际「購入手続きへ」按钮决定是否可购买，缺失／禁用按结束处理，缓存回退不能提交。历史失败的购买结果标记不再阻止新提交或新任务开始购买，保留原记录用于已有明确完成证据的回写；失败任务不会自动重试。首次提交仍可复用完整快照，现有待执行任务、已成交订单、PIN 全局提交锁及价格核对仍生效。需更新 API routes/proxy.js、routes/task.js、routes/plugin.js 与 services/fleamarketPurchase.js 并重启、更新插件 background.js 并 reload；本项不增加数据库或静态页面改动，未部署。
 
@@ -293,6 +295,13 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0az. P 商品砍价与购买按钮兼容
+
+- 以同商品购买入口旁的「価格の相談」金额输入区识别可砍价；待执行期间小刀禁用，不展示面板。成功后点击小刀查看提交时间和红字报价。
+- 原子占位及成功记录沿现有 config 持久缓存；提交前校验实时商品和 80% 下限，插件在留言队列中串行领取并仅点击一次。仅同商品 `/negotiate` 页面出现已送出文案后保留成功记录。其他结果一律释放占位，领取或发送租约过期也清理，不自动重发，迟到回写无效。Yahoo 接收后确认页未返回时，下次手动提交可能被 Yahoo 判定为重复，此场景以后完善。
+- 原 P 购买在详情抓取和插件执行兼容「購入手続きへ」及「相談した価格で購入手続きへ」，继续核对购买任务金额。砍价不关联购买用户、价格或 Yahoo 账号分配。
+- 更新 API（含 shared 报价规则）并重启，发布用户端 dist，更新并 reload 插件。验证命令见下方 0az；生产和真实 Yahoo 执行账号待验收。
 
 ### 0ay. P 商品发货扫描识别取消
 
@@ -1377,6 +1386,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-11-20 P 商品价格协商
+
+砍价独立缓存、全站去重，复用留言标签页队列。占位期间禁用小刀，成功后显示历史，其余结果释放占位。购买只兼容新的 Yahoo 入口，原结账流程及金额校验保持，详见 0az。
 
 ### 2026-11-19 恢复拍卖轮询和列表同步
 
@@ -2941,6 +2954,18 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+P 商品砍价与购买按钮（0az）：
+
+```bash
+node scripts/run-isolated-regression.cjs src/server/routes/fleamarketNegotiation.test.js
+node yahoo-plugin/fleamarketPurchase.test.js
+node yahoo-plugin/fleamarketMessages.test.js
+npm --prefix src/client run build
+node scripts/fleamarket-browser.test.cjs
+npm run encoding:guard
+git diff --check
+```
 
 P 商品扫描取消（0ay）：
 

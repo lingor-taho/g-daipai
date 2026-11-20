@@ -39,6 +39,7 @@ const activeBidRuns = new Map();
 let monitorRunning = false;
 let workflowRunning = false;
 let yahooMessagesRunning = false;
+let preferFleamarketNegotiation = false;
 const yahooMessageTabOwners = new Map();
 let manualVerificationFlowActive = false;
 let manualVerificationTabId = null;
@@ -1186,7 +1187,8 @@ async function updatePaymentStatus(payload) {
 
 async function fetchYahooMessageJobs() {
   try {
-    const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1');
+    const preference = preferFleamarketNegotiation ? '&preferNegotiation=1' : '';
+    const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1&includeNegotiation=1' + preference);
     return Array.isArray(data.jobs) ? data.jobs : [];
   } catch (error) {
     // Reload creates a new instance; the previous heartbeat expires after 45s.
@@ -1287,6 +1289,15 @@ async function waitForYahooMessageDocument(tabId, context) {
   throw new Error('Yahoo 消息页面加载超时');
 }
 
+async function openYahooMessageOwnedTab(url, context, jobKey) {
+  const tab = await chrome.tabs.create({ url: `about:blank#gdaipai-message-${jobKey}`, active: false });
+  context.tabIds.add(tab.id);
+  yahooMessageTabOwners.set(tab.id, context);
+  assertYahooMessageActive(context);
+  await chrome.tabs.update(tab.id, { url, active: false });
+  return tab;
+}
+
 async function openYahooMessageTransactionPage(job, context) {
   const fleamarket = job.productType === 'fleamarket';
   const productId = String(job.productId || '').trim().toLowerCase();
@@ -1294,11 +1305,7 @@ async function openYahooMessageTransactionPage(job, context) {
   const transactionUrl = fleamarket
     ? `https://paypayfleamarket-sec.yahoo.co.jp/item/${productId}/trade/buyer`
     : job.transactionUrl;
-  const tab = await chrome.tabs.create({ url: `about:blank#gdaipai-message-${job.orderId}`, active: false });
-  context.tabIds.add(tab.id);
-  yahooMessageTabOwners.set(tab.id, context);
-  assertYahooMessageActive(context);
-  await chrome.tabs.update(tab.id, { url: transactionUrl || 'https://auctions.yahoo.co.jp/my/won', active: false });
+  const tab = await openYahooMessageOwnedTab(transactionUrl || 'https://auctions.yahoo.co.jp/my/won', context, job.orderId);
   if (transactionUrl) await waitForYahooMessageDocument(tab.id, context);
   else await waitForTabComplete(tab.id, MESSAGE_NAVIGATION_WAIT_MS);
   assertYahooMessageActive(context);
@@ -8975,6 +8982,119 @@ async function executeYahooMessageJob(job) {
   }
 }
 
+function fleamarketNegotiationPageStep(productId, price, action, deadline = Infinity) {
+  const itemPath = `/item/${productId}`;
+  if (location.origin !== 'https://paypayfleamarket.yahoo.co.jp') return 'foreign';
+  const visible = node => node?.getClientRects().length && getComputedStyle(node).visibility === 'visible' &&
+    !node.closest('[hidden], [inert], [aria-hidden="true"]');
+  const text = node => String(node?.innerText || '').replace(/\s+/g, '');
+  const body = text(document.body);
+  if (location.pathname === itemPath + '/negotiate') {
+    return body.includes('価格の相談を送りました。出品者が同意した場合、通知でお知らせします') ? 'success' : 'waiting';
+  }
+  if (location.pathname !== itemPath) return 'foreign';
+  for (const button of document.querySelectorAll('button,a,[role="button"]')) {
+    if (!visible(button) || text(button) !== 'OK' || button.closest('#description')) continue;
+    for (let dialog = button.parentElement; dialog && dialog !== document.body; dialog = dialog.parentElement) {
+      const message = text(dialog);
+      if (message.length > 160) break;
+      if (message.includes('同じ商品に対して同時に価格の相談は行えません') ||
+          message.includes('相談できる金額は元値の80%以上です')) return 'rejected';
+    }
+  }
+  if (action === 'observe') return 'waiting';
+  const form = document.getElementById('fltdscnt');
+  const input = form?.querySelector('input[placeholder="購入したい金額を入力"]');
+  const send = form?.querySelector('button[data-cl-params*="_cl_link:discount;"]');
+  const buy = [...document.querySelectorAll('a[href]')].some(node => {
+    if (!visible(node) || text(node) !== '購入手続きへ' ||
+        node.getAttribute('aria-disabled') === 'true' || node.closest('#description')) return false;
+    const link = new URL(node.href);
+    return link.origin === 'https://paypayfleamarket-sec.yahoo.co.jp' && link.pathname === `${itemPath}/order`;
+  });
+  if (!buy || !visible(form) || !text(form).includes('価格の相談') || form.closest('#description') ||
+      !visible(input) || input.disabled || input.readOnly || !visible(send)) return 'unavailable';
+  const prices = new Set([...document.querySelectorAll('.ItemPrice__Component span')].filter(visible)
+    .map(node => text(node).match(/^([\d,]+)円$/)?.[1]).filter(Boolean)
+    .map(value => Number(value.replace(/,/g, ''))));
+  if (prices.size !== 1) return 'unavailable';
+  const [itemPrice] = prices;
+  if (!Number.isSafeInteger(price) || price < Math.max(300, Math.ceil(itemPrice * 4 / 5)) || price >= itemPrice) return 'price';
+  if (action === 'prepare' && input.value !== String(price)) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(price));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'waiting';
+  }
+  if (input.value !== String(price) || send.disabled || send.getAttribute('aria-disabled') === 'true') return 'waiting';
+  if (action === 'click') {
+    if (Date.now() >= deadline) return 'waiting';
+    if (window.__gdaipaiNegotiationClicked) return 'clicked';
+    window.__gdaipaiNegotiationClicked = true;
+    send.click();
+    return 'clicked';
+  }
+  return 'ready';
+}
+
+async function executeFleamarketNegotiationJob(job) {
+  if (!/^z\d{8,10}$/.test(job.productId)) return;
+  const context = { tabIds: new Set(), closed: false };
+  const deadline = Date.now() + MESSAGE_JOB_TIMEOUT_MS;
+  const update = action => yahooMessageApiJson('/api/plugin/fleamarket-negotiation/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId: job.productId, claimToken: job.claimToken, action })
+  });
+  let completed = false;
+  try {
+    const tab = await openYahooMessageOwnedTab(
+      `https://paypayfleamarket.yahoo.co.jp/item/${job.productId}`, context, `negotiation-${job.productId}`
+    );
+    const step = async action => {
+      const current = await chrome.tabs.get(tab.id);
+      if (isManualVerificationTab(current)) return 'login';
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, func: fleamarketNegotiationPageStep, args: [job.productId, job.price, action, deadline]
+      });
+      return result?.result;
+    };
+    const wait = async (action, terminal) => {
+      while (Date.now() < deadline) {
+        const state = await step(action).catch(() => 'waiting');
+        if (terminal.includes(state)) return state;
+        await sleep(350);
+      }
+      return 'timeout';
+    };
+    await waitForYahooMessageDocument(tab.id, context).catch(() => {});
+    const state = await wait('prepare', ['ready', 'price', 'login', 'unavailable', 'rejected']);
+    if (state !== 'ready') return;
+    await update('begin');
+    if (Date.now() >= deadline) return;
+    const click = await step('click').catch(() => null);
+    if (click && click !== 'clicked') return;
+    const result = await wait('observe', ['success', 'rejected', 'login']);
+    if (result !== 'success') return;
+    // Retry only the server acknowledgement, never the Yahoo click.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await update('success');
+        completed = true;
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+      }
+    }
+  } catch (error) {
+    console.warn('[Yahoo Fleamarket] Negotiation stopped:', job.productId, error.message);
+  } finally {
+    context.closed = true;
+    await closeYahooMessageTabs(context).catch(() => {});
+    for (const id of context.tabIds) yahooMessageTabOwners.delete(id);
+    if (!completed) await update('failed').catch(() => {});
+  }
+}
+
 async function runYahooMessageJobs() {
   if (yahooMessagesRunning) return 0;
   yahooMessagesRunning = true;
@@ -8986,7 +9106,9 @@ async function runYahooMessageJobs() {
       const jobs = await fetchYahooMessageJobs();
       if (!jobs.length) break;
       for (const job of jobs) {
-        await executeYahooMessageJob(job);
+        if (job.jobType === 'negotiate') await executeFleamarketNegotiationJob(job);
+        else await executeYahooMessageJob(job);
+        preferFleamarketNegotiation = job.jobType !== 'negotiate';
         processed += 1;
       }
     }
@@ -9249,7 +9371,16 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
   }
   if (body.includes('決済処理中')) return {state:'processing'};
   let state = 'waiting', target = null, confirmationDialog = null;
-  if (item) { state = 'item'; target = exactButton(document, '購入手続きへ'); }
+  if (item) {
+    state = 'item';
+    target = buttons(document).find(node => {
+      if (!['購入手続きへ', '相談した価格で購入手続きへ'].includes(text(node) || node.value) ||
+          node.disabled || node.getAttribute('aria-disabled') === 'true' || node.closest('#description')) return false;
+      if (!node.getAttribute('href')) return true;
+      const link = new URL(node.getAttribute('href'), location.href);
+      return link.origin === 'https://paypayfleamarket-sec.yahoo.co.jp' && link.pathname === `/item/${id}/order`;
+    });
+  }
   if (checkout) {
     const confirm = dialogFor('購入を確定しますか');
     const placement = dialogFor('初期設定されました');

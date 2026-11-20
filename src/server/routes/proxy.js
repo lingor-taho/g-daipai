@@ -8,6 +8,9 @@ const {
   normalizeTaxType
 } = require('../../shared/priceRules.cjs');
 const db = require('../models');
+const authMiddleware = require('../middleware/auth');
+const negotiation = require('../services/fleamarketNegotiation');
+const { isNegotiationPriceValid } = require('../../shared/fleamarketNegotiation.cjs');
 
 const router = express.Router();
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -594,10 +597,10 @@ function hasFleamarketPurchaseButton(html, auctionId) {
   const source = stripScriptAndStyleHtml(stripProductDescriptionHtml(html));
   for (const match of source.matchAll(/<(a|button)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
     const attributes = match[2];
-    if (normalizeComparableText(match[3]) !== '購入手続きへ') continue;
+    if (!['購入手続きへ', '相談した価格で購入手続きへ'].includes(normalizeComparableText(match[3]))) continue;
     if (/(?:^|\s)(?:disabled|hidden)(?:\s|=|$)|aria-(?:disabled|hidden)=["']true["']|display\s*:\s*none|visibility\s*:\s*hidden/i.test(attributes)) continue;
-    if (/(?:^|\s)id=["']item_buy_button["']/i.test(attributes)) return true;
     const href = attributes.match(/(?:^|\s)href=["']([^"']+)["']/i)?.[1];
+    if (!href && /(?:^|\s)id=["']item_buy_button["']/i.test(attributes)) return true;
     if (href) {
       try {
         const target = new URL(href, 'https://paypayfleamarket-sec.yahoo.co.jp');
@@ -606,6 +609,18 @@ function hasFleamarketPurchaseButton(html, auctionId) {
     }
   }
   return false;
+}
+
+function hasFleamarketNegotiationForm(html) {
+  const source = stripScriptAndStyleHtml(stripProductDescriptionHtml(html));
+  const form = extractElementHtmlById(source, 'fltdscnt');
+  if (!/^<[^>]+\sid=["']fltdscnt["']/i.test(form) ||
+      !/<span\b[^>]*>\s*価格の相談\s*<\/span>/i.test(form) ||
+      !/<button\b[^>]*\sdata-cl-params=["'][^"']*_cl_link:discount;/i.test(form)) return false;
+  return [...form.matchAll(/<input\b([^>]*)>/gi)].some(([, attributes]) =>
+    /(?:^|\s)placeholder=["']購入したい金額を入力["']/i.test(attributes) &&
+    !/(?:^|\s)(?:disabled|readonly|hidden)(?:\s|=|$)|aria-(?:disabled|hidden)=["']true["']|display\s*:\s*none|visibility\s*:\s*hidden/i.test(attributes)
+  );
 }
 
 // Fleamarket pages expose the main product as JSON-LD, including all photos.
@@ -636,6 +651,7 @@ function parseFleamarketProductHtml(html, auctionId, standardUrl) {
   return {
     auctionId, standardUrl, title: String(product.name), currentPrice: price, buyoutPrice: price,
     buyoutOnly: true, isFleamarket: true, bidCount: 0, taxType: 'tax_zero', productType: 'fleamarket',
+    ...(!unavailable && price > 300 && hasFleamarketNegotiationForm(html) ? { canNegotiate: true } : {}),
     shippingFeeText: shippingValue != null && Number.isFinite(Number(shippingValue))
       ? Number(shippingValue) === 0 ? '送料無料' : `送料${Number(shippingValue)}円` : '',
     endTime: '', imageUrl: images[0]?.url || '', images, descriptionText,
@@ -1178,6 +1194,36 @@ function createProductService({
 }
 
 const productService = createProductService();
+
+router.get('/fleamarket-negotiation/:id', authMiddleware, (req, res) => {
+  try {
+    const id = negotiation.normalizeId(req.params.id);
+    res.set('Cache-Control', 'no-store').json(negotiation.getStatus(db.raw, id));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+router.post('/fleamarket-negotiation/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = negotiation.normalizeId(req.params.id);
+    const price = req.body?.price;
+    negotiation.assertAvailable(db.raw, id);
+    if (!Number.isSafeInteger(price) || price <= 0) {
+      return res.status(400).json({ error: '请输入整数日元报价' });
+    }
+    const result = await productService.fetchProduct(id, { recordedProductType: 'fleamarket' });
+    if (result.source === 'cache-fallback' || result.data?.auctionId !== id || !result.data?.canNegotiate) {
+      return res.status(409).json({ error: '该商品目前无法砍价，请重新获取商品信息' });
+    }
+    if (!isNegotiationPriceValid(price, result.data.currentPrice)) {
+      return res.status(400).json({ error: '报价至少为当前售价的 80%（最低 300 円），且必须低于当前售价' });
+    }
+    res.status(202).json(negotiation.enqueue(db.raw, id, price));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
 
 router.get('/fetch', async (req, res) => {
   const { url, keyword } = req.query;
