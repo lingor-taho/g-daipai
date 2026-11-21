@@ -19,6 +19,7 @@ function createAttemptFixture(options = {}) {
   const alternativeClicks = [];
   const removed = [];
   const scripts = [];
+  let unrenderedEmailChecks = 2;
   class Clock extends Date { static now() { return now; } }
   const api = loadBackgroundForTest({
     disableAutoStart: true, Date: Clock,
@@ -78,6 +79,11 @@ function createAttemptFixture(options = {}) {
         }
         if (String(payload.func).includes('const codeInput') &&
             (pinReady || (options.newTabPin && payload.target.tabId === 91))) return [{ result: null }];
+        if (String(payload.func).includes('const codeInput') && options.delayedSecondEmail && captchaPassed && unrenderedEmailChecks > 0) {
+          unrenderedEmailChecks -= 1;
+          return [{ result: null }];
+        }
+        if (String(payload.func).includes('input.getClientRects()')) return [{ result: pinReady || (options.newTabPin && payload.target.tabId === 91) }];
         if (String(payload.func).includes('document.readyState')) return [{ result: true }];
         if (String(payload.func).includes('settings.baseline')) {
           if (payload.args[0].baseline) return [{ result: { ready: true, rows: [{ threadId: 'thread1', messageId: 'a1' }] } }];
@@ -154,7 +160,7 @@ async function testRetryOnExistingPinDoesNotRefreshOrReadGmail() {
     },
     tabs: { async get() { return { id: 7, url: emailUrl, status: 'complete' }; },
       async reload() { refreshed += 1; }, async create() { throw new Error('must not reopen Gmail'); } },
-    scripting: { async executeScript() { return [{ result: null }]; } }
+    scripting: { async executeScript({func}) { return [{ result: String(func).includes('input.getClientRects()') }]; } }
   });
   const next = await api.handleManualEmailVerification({ id: 7, url: emailUrl });
   assert.equal(next.id, 7);
@@ -235,16 +241,24 @@ function testFreshMailSelectionRejectsOldOtherAccountAndWrongSender() {
 }
 
 async function testEmailDetectionOverridesPinUrlUsingActualPageScript() {
-  const input = { placeholder: '確認コード', name: '', disabled: false, offsetWidth: 200, getAttribute: () => '' };
+  const input = { placeholder: '確認コード', name: '', type: 'text', disabled: false, offsetWidth: 200, getAttribute: () => '', getClientRects: () => [1] };
   const document = {
     body: { innerText: 'do*******@g******** に届いた確認コードを入力してください。' },
     querySelectorAll(selector) { return selector === 'input' ? [input] : []; }
   };
   const api = loadBackgroundForTest({ disableAutoStart: true, document,
     tabs: { async get() { return { id: 7, url: emailUrl }; } },
-    scripting: { async executeScript(payload) { return [{ result: payload.func() }]; } }
+    scripting: { async executeScript(payload) {
+      const func = payload.func;
+      const result = String(func).includes('getComputedStyle(input)')
+        ? new Function('document', 'getComputedStyle', `return (${func})();`)(document, () => ({ visibility: 'visible' }))
+        : func();
+      return [{ result }];
+    } }
   });
   assert.equal((await api.detectManualEmailPage({ id: 7, url: emailUrl })).maskedAddress, mask);
+  assert.equal(await api.detectManualPinPage({ id: 7, url: emailUrl }), false);
+  document.body.innerText = 'ログイン';
   assert.equal(await api.detectManualPinPage({ id: 7, url: emailUrl }), false);
   document.body.innerText = 'PINコードを入力してください';
   assert.equal(await api.detectManualPinPage({ id: 7, url: emailUrl }), true);
@@ -546,7 +560,7 @@ async function testSecondEmailContinuesViaPasskeyAfterCaptcha() {
   let challenge;
   const waiting = new Promise(resolve => { notifyWaiting = resolve; });
   const posted = [];
-  const fixture = createAttemptFixture({ emailLoops: 1, captchaBetween: true, pinAfterSubmit: true, finishPin: true,
+  const fixture = createAttemptFixture({ emailLoops: 1, captchaBetween: true, delayedSecondEmail: true, pinAfterSubmit: true, finishPin: true,
     fetch: async (url, request = {}) => {
       if (String(url).includes('/current')) return { async json() { return { found: false }; } };
       if (String(url).includes('/challenge')) {

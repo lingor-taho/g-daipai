@@ -38,6 +38,7 @@ function fixture(options = {}) {
         return [{ result: { stage, clicked: true } }];
       }
       if (source.includes('const codeInput')) return [{ result: null }];
+      if (source.includes('input.getClientRects()')) return [{ result: phase === 'pin' }];
       if (source.includes('captchaAnswer')) {
         assert.equal(payload.args[0], 'んすをらあすえ');
         phase = (options.afterCaptcha || ['pin'])[round - 1] || 'pin';

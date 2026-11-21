@@ -19,6 +19,7 @@ function fixture({start='provider',error=false,holdProvider=false,nativePin=fals
     return [{result:null}];
    }
    if(source.includes('const codeInput'))return [{result:phase==='email'?{email:true,maskedAddress:'do*******@g********',submitted:false}:null}];
+   if(source.includes('input.getClientRects()'))return [{result:phase==='pin' && (!nativePin || pinAppearsOnAnswer)}];
    if(source.includes('settings.baseline'))return [{result:payload.args[0].baseline?{ready:true,rows:[]}:{messages:[{messageId:'fresh-code',sender:'login-master@mail.yahoo.co.jp',recipient:'donald@gmail.com',date:new Date(now).toISOString(),text:'確認コード：012345'}]}}];
    if(source.includes('emailCode')){assert.equal(payload.args[0],'012345');emailFills++;phase='provider';return [{result:{success:true,submittedAt:now}}];}
    return [{result:null}];

@@ -6196,6 +6196,8 @@ async function ensureManualPinChallenge(tab, context = {}) {
   if (!tab?.id || !isLikelyManualPinTab(tab)) return { posted: false };
   if (await getManualAlternativeLoginState(tab)) return { posted: false };
   if (await detectManualEmailPage(tab)) return ensureManualEmailChallenge(tab, context);
+  const native = await selectManualGooglePasskey(tab);
+  if (native.detected || (!native.pinDetected && !await detectManualPinPage(tab))) return { posted: false };
   const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
   if (current?.found && current.type === 'pin' && !current.answered) {
     const currentPageUrl = String(current.pageUrl || '');
@@ -6546,20 +6548,23 @@ async function fillManualCaptchaAnswer(tabId, answer) {
 
 async function detectManualPinPage(tab) {
   const current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
-  if (!current?.id || !isLikelyManualPinTab(current)) return false;
+  if (!current?.id || current.status === 'loading' || !isLikelyManualPinTab(current)) return false;
   if (await detectManualEmailPage(current)) return false;
   if (await getManualAlternativeLoginState(current)) return false;
-  if (isYahooAuthLevelPinUrl(current.url)) return true;
   const result = await chrome.scripting.executeScript({
     target: { tabId: current.id },
     world: 'MAIN',
     func: () => {
       const text = String(document.body?.innerText || document.body?.textContent || '').replace(/\s+/g, ' ');
-      const hasInput = !!document.querySelector('input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])');
-      return hasInput && /(PIN|pin|\u78ba\u8a8d\u30b3\u30fc\u30c9|\u8a8d\u8a3c\u30b3\u30fc\u30c9|\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u30b3\u30fc\u30c9|\u30b3\u30fc\u30c9)/.test(text);
+      const inputs = [...document.querySelectorAll('input')].filter(input => !input.disabled && !input.readOnly &&
+        input.getClientRects().length && getComputedStyle(input).visibility === 'visible' &&
+        ['text', 'tel', 'number', 'password'].includes(input.type));
+      if (/(?:届いた|メール.{0,60}|SMS.{0,60})確認コード/.test(text)) return false;
+      return inputs.some(input => /\bPIN\b/i.test([input.placeholder, input.name, input.id, input.getAttribute('aria-label')].join(' '))) ||
+        (inputs.length > 0 && /\bPIN\s*(?:コード)?\s*(?:を|の)\s*入力|\bEnter\s+(?:(?:your|the)\s+)?PIN\b/i.test(text));
     }
-  }).catch(() => [{ result: isLikelyManualPinTab(current) }]);
-  return !!result?.[0]?.result;
+  }).catch(() => []);
+  return result?.[0]?.result === true;
 }
 
 function getDigitKeyEventParams(digit) {
@@ -6744,7 +6749,7 @@ async function fillManualPinAnswerUnlocked(tabId, answer, { nativePin = false } 
 async function refreshManualPinPageBeforeAnswer(tab) {
   let current = tab?.id ? await chrome.tabs.get(tab.id).catch(() => tab) : tab;
   if (!current?.id) return { tab };
-  const pinDetected = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+  const pinDetected = await detectManualPinPage(current).catch(() => false);
   if (!pinDetected) return { tab: current };
   const nativePasskey = await selectManualGooglePasskey(current, { force: true });
   if (nativePasskey.detected || nativePasskey.pinDetected) return { tab: current, nativePin: nativePasskey.pinDetected };
@@ -6834,8 +6839,8 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
     if (current?.id && current.id !== tab?.id) break;
     if (url && url !== startUrl) break;
     const captchaPage = isManualCaptchaTab(current);
-    const pinPage = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
-    if (!captchaPage && !pinPage) break;
+    if (!captchaPage && !isLikelyManualPinTab(current)) break;
+    if (!captchaPage && (await detectManualEmailPage(current) || await getManualAlternativeLoginState(current))) break;
   }
   return current || tab;
 }
@@ -6845,7 +6850,7 @@ async function isStillManualVerificationPage(tab) {
   if (isManualCaptchaTab(tab)) return true;
   if (await detectManualEmailPage(tab)) return true;
   if (await getManualAlternativeLoginState(tab)) return true;
-  return await detectManualPinPage(tab).catch(() => isLikelyManualPinTab(tab));
+  return isLikelyManualPinTab(tab);
 }
 
 async function handleManualVerificationIfPresent(tab, context = {}) {
@@ -6933,8 +6938,12 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       continue;
     }
 
-    const pinDetected = nativePasskey.pinDetected || await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
-    if (!pinDetected) break;
+    const pinDetected = nativePasskey.pinDetected || await detectManualPinPage(current).catch(() => false);
+    if (!pinDetected) {
+      if (!isLikelyManualPinTab(current)) break;
+      await sleep(500);
+      continue;
+    }
     manualVerificationFlowActive = true;
     rememberManualVerificationTab(current);
     handled = true;
@@ -6969,6 +6978,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     nativePin ||= Boolean(chooser.pinDetected);
     // A PIN refresh can itself return to email. Never type the PIN into that page.
     if (!nativePin && (await detectManualEmailPage(current) || await getManualAlternativeLoginState(current))) continue;
+    if (!nativePin && !await detectManualPinPage(current).catch(() => false)) continue;
     const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
     const fillResult = nativePin && !chooser.pinDetected
       ? { success: false, error: 'Chrome 原生 PIN 弹窗已消失，请检查当前验证页面' }
@@ -6990,7 +7000,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     if (fillResult.method === 'debuggerRealKeyboard') {
       current = await waitForManualVerificationPageTransition(current, 3000, beforeVerificationTabIds, pinTransitionOptions);
       rememberManualVerificationTab(current);
-      const stillPinAfterKeyboard = await detectManualPinPage(current).catch(() => isLikelyManualPinTab(current));
+      const stillPinAfterKeyboard = await detectManualPinPage(current).catch(() => false);
       if (stillPinAfterKeyboard) {
         console.warn('[Yahoo Bid] PIN page still open after real keyboard; retrying with insertText fallback');
         const beforeInsertTextRetryTabIds = await getTabIds().catch(() => new Set());
@@ -7020,6 +7030,7 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
     await ensureManualEmailChallenge(current, context, '邮箱验证后未完成 PIN 码验证，请人工处理');
     throw new Error('邮箱验证后未完成 PIN 码验证，请人工处理');
   }
+  if (isLikelyManualPinTab(current)) throw new Error('Yahoo 登录验证尚未完成，请检查当前页面');
   if (context.emailSession.submissions || pinAttempted) await chrome.storage.session.remove('manualEmailVerificationSession');
   if (context.alternativeSession.attempts || pinAttempted) await chrome.storage.session.remove('manualAlternativeLoginSession');
   const allOpenVerificationTabs = await chrome.tabs.query({}).then(tabs => tabs.filter(isManualVerificationTab)).catch(() => []);

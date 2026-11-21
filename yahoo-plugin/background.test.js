@@ -9514,6 +9514,7 @@ async function testIdleSyncPostsPinWhenActivePinTabOverridesStaleCaptcha() {
     },
     scripting: {
       async executeScript(payload) {
+        if (String(payload.func || '').includes('input.getClientRects()')) return [{ result: true }];
         if (payload.files) return undefined;
         return [{ result: false }];
       }
@@ -9890,6 +9891,9 @@ async function testManualPinRefreshesPageBeforeEnteringAnswer() {
         reloadCount += 1;
       }
     },
+    scripting: { async executeScript(payload) {
+        if (String(payload.func || '').includes('input.getClientRects()')) return [{ result: true }];
+    } },
     debuggerApi: {
       async attach() {},
       async sendCommand(target, command, params) {
@@ -9954,6 +9958,7 @@ async function testIdleSyncResumesAnsweredPinChallengeOnTimedOutLoginPage() {
     },
     scripting: {
       async executeScript(payload) {
+        if (String(payload.func || '').includes('input.getClientRects()')) return [{ result: true }];
         if (payload.files) return undefined;
         return [{ result: false }];
       }
@@ -10088,7 +10093,7 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
         if (id === 7 && stage === 'pin') {
           return { id: 7, url: 'https://login.yahoo.co.jp/config/login?auth_lv=1&done=https%3A%2F%2Fcontact.auctions.yahoo.co.jp%2Fbuyer%2Ftop%3Faid%3Dj1230839418', status: 'complete', windowId: 3 };
         }
-        if (id === 7) return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 };
+        if (id === 7 && stage === 'captcha') return { id: 7, url: 'https://login.yahoo.co.jp/ncaptcha?fido=1', status: 'complete', windowId: 3 };
         return { id, url: 'https://contact.auctions.yahoo.co.jp/buyer/top?aid=j1230839418', status: 'complete', windowId: 3 };
       },
       async query() {
@@ -10114,6 +10119,7 @@ async function testManualVerificationReusesPinWhenCaptchaReturnsToPinPage() {
     },
     scripting: {
       async executeScript(payload) {
+        if (String(payload.func || '').includes('input.getClientRects()')) return [{ result: stage === 'pin' }];
         if (payload.files) return undefined;
         if (String(payload.func || '').includes('captchaAnswer')) {
           stage = 'pin';
@@ -10194,6 +10200,7 @@ async function testCaptchaAnswerClosesCaptchaAndShowsPinWhenPinTabAppears() {
     },
     scripting: {
       async executeScript(payload) {
+        if (String(payload.func || '').includes('input.getClientRects()')) return [{ result: stage === 'pin' }];
         if (payload.files) return undefined;
         if (String(payload.func || '').includes('captchaAnswer')) {
           stage = 'pin';
