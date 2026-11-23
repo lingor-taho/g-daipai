@@ -277,6 +277,7 @@ db.prepare(`
   CREATE TABLE IF NOT EXISTS data_cleanup_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_type VARCHAR(32) NOT NULL,
+    cleanup_scope VARCHAR(16) NOT NULL DEFAULT 'data',
     local_date VARCHAR(10),
     retention_days INTEGER NOT NULL,
     cutoff_at DATETIME,
@@ -284,9 +285,12 @@ db.prepare(`
     bid_log_count INTEGER DEFAULT 0,
     order_count INTEGER DEFAULT 0,
     bidding_item_count INTEGER DEFAULT 0,
+    cache_count INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
+ensureColumn('data_cleanup_logs', 'cleanup_scope', "VARCHAR(16) NOT NULL DEFAULT 'data'");
+ensureColumn('data_cleanup_logs', 'cache_count', 'INTEGER NOT NULL DEFAULT 0');
 
 db.prepare(`
   CREATE TABLE IF NOT EXISTS user_finance_overrides (

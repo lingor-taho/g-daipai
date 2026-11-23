@@ -3,11 +3,13 @@ import {
   Alert,
   Button,
   Card,
+  Col,
   DatePicker,
   Descriptions,
   Form,
   InputNumber,
   Modal,
+  Row,
   Space,
   Switch,
   Table,
@@ -36,28 +38,6 @@ function formatDateTime(value: string | null | undefined) {
   }).formatToParts(date);
   const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second}`;
-}
-
-async function saveCleanupConfig(values: any) {
-  const res = await fetch('/api/admin/data-cleanup/config', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(values)
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(getAdminHttpErrorMessage(res.status, data, '保存失败'));
-  return data;
-}
-
-async function runCleanup(retentionDays: number) {
-  const res = await fetch('/api/admin/data-cleanup/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ retentionDays })
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(getAdminHttpErrorMessage(res.status, data, '执行失败'));
-  return data;
 }
 
 async function previewWonDateCleanup(cleanupDate: string) {
@@ -104,11 +84,82 @@ function ForceCleanupSummary({ summary }: { summary: any }) {
   );
 }
 
-export default function DataCleanupPage() {
+function CleanupSettingsCard({ scope, onComplete }: { scope: 'data' | 'cache'; onComplete: () => Promise<void> }) {
   const [form] = Form.useForm();
-  const [forceForm] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const isCache = scope === 'cache';
+  const endpoint = isCache ? '/api/admin/data-cleanup/cache' : '/api/admin/data-cleanup';
+  const defaults = { enabled: false, cleanupHour: 3, retentionDays: isCache ? 1 : 30 };
+
+  useEffect(() => {
+    fetchAdminJson(`${endpoint}/config`)
+      .then(data => form.setFieldsValue(data))
+      .catch((error: Error) => message.error(error.message || '清理配置加载失败'));
+  }, [endpoint, form]);
+
+  async function handleAction(action: 'save' | 'run') {
+    const values = await form.validateFields().catch(() => null);
+    if (!values) return;
+    const isSave = action === 'save';
+    const setBusy = isSave ? setSaving : setRunning;
+    setBusy(true);
+    try {
+      const result = await fetchAdminJson(`${endpoint}/${isSave ? 'config' : 'run'}`, {
+        method: isSave ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isSave ? values : { retentionDays: values.retentionDays })
+      });
+      if (isSave) {
+        message.success('清理配置已保存');
+      } else {
+        const totalCount = Number(result.totalCount || 0);
+        if (totalCount > 0) {
+          message.success(`清理完成，共清理 ${totalCount} 条${isCache ? '砍价缓存' : '关联数据'}`);
+        } else {
+          message.info('清理完成：没有符合条件的数据');
+        }
+        await onComplete();
+      }
+    } catch (error: any) {
+      message.error(error.message || (isSave ? '保存失败' : '执行失败'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Form name={`${scope}-cleanup`} form={form} layout="vertical" initialValues={defaults}>
+      <Card title={isCache ? '清理缓存' : '清理数据'}>
+        <Form.Item name="enabled" label="自动清理" valuePropName="checked">
+          <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+        </Form.Item>
+        <Form.Item name="cleanupHour" label="每天执行时间" rules={[{ required: true, message: '请输入执行时间' }]}>
+          <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点" style={{ width: '100%' }} />
+        </Form.Item>
+        <Form.Item name="retentionDays" label={isCache ? '清理多少天以前的缓存' : '清理多少天以前的数据'}
+          rules={[{ required: true, message: '请输入保留天数' }]}>
+          <InputNumber min={1} step={1} precision={0} addonAfter="天" style={{ width: '100%' }} />
+        </Form.Item>
+        <Typography.Text type="secondary">
+          {isCache
+            ? '清理范围：按砍价成功时间清理已满保留天数的 P 商品砍价记录。清理后可重新提交砍价。'
+            : '清理范围：超过保留天数的失败、中止、已出价任务，并删除对应出价日志、订单和入札缓存；成功订单不会清理。'}
+        </Typography.Text>
+        <div style={{ marginTop: 16 }}>
+          <Space>
+            <Button type="primary" onClick={() => handleAction('save')} loading={saving}>保存配置</Button>
+            <Button danger onClick={() => handleAction('run')} loading={running}>手动执行</Button>
+          </Space>
+        </div>
+      </Card>
+    </Form>
+  );
+}
+
+export default function DataCleanupPage() {
+  const [forceForm] = Form.useForm();
+  const [clearingLogs, setClearingLogs] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [forceRunning, setForceRunning] = useState(false);
   const [forcePreview, setForcePreview] = useState<any>(null);
@@ -132,50 +183,29 @@ export default function DataCleanupPage() {
   }
 
   useEffect(() => {
-    fetchAdminJson('/api/admin/data-cleanup/config')
-      .then(data => {
-        form.setFieldsValue({
-          enabled: Boolean(data.enabled),
-          cleanupHour: data.cleanupHour ?? 3,
-          retentionDays: data.retentionDays ?? 30
-        });
-      })
-      .catch((e: any) => {
-        message.error(e.message || '清理配置加载失败');
-      });
     fetchLogs(1);
   }, []);
 
-  async function handleSave() {
-    const values = await form.validateFields();
-    setSaving(true);
-    try {
-      await saveCleanupConfig(values);
-      message.success('清理配置已保存');
-    } catch (e: any) {
-      message.error(e.message || '保存失败');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleRun() {
-    const values = await form.validateFields();
-    setRunning(true);
-    try {
-      const result = await runCleanup(values.retentionDays);
-      const totalCount = Number(result.totalCount || 0);
-      if (totalCount > 0) {
-        message.success(`清理完成，共清理 ${totalCount} 条关联数据`);
-      } else {
-        message.info('清理完成：没有符合条件的数据');
+  function handleClearLogs() {
+    Modal.confirm({
+      title: '清空清理日志？',
+      content: '将删除日常数据清理和缓存清理的全部日志。',
+      okText: '清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setClearingLogs(true);
+        try {
+          await fetchAdminJson('/api/admin/data-cleanup/logs', { method: 'DELETE' });
+          message.success('清理日志已清空');
+          await fetchLogs(1);
+        } catch (error: any) {
+          message.error(error.message || '清空日志失败');
+        } finally {
+          setClearingLogs(false);
+        }
       }
-      await fetchLogs(1);
-    } catch (e: any) {
-      message.error(e.message || '执行失败');
-    } finally {
-      setRunning(false);
-    }
+    });
   }
 
   async function handleForcePreview() {
@@ -230,60 +260,33 @@ export default function DataCleanupPage() {
 
   const columns = [
     { title: '操作时间', dataIndex: 'created_at', render: (_: any, row: any) => formatDateTime(row.created_at) },
+    { title: '清理范围', dataIndex: 'cleanup_scope', render: (scope: string) => scope === 'cache' ? '缓存' : '数据' },
     { title: '类型', dataIndex: 'run_type', render: (_: any, row: any) => row.run_type === 'auto' ? '自动' : '手动' },
     { title: '保留天数', dataIndex: 'retention_days' },
     { title: '任务', dataIndex: 'task_count' },
     { title: '出价日志', dataIndex: 'bid_log_count' },
     { title: '订单', dataIndex: 'order_count' },
     { title: '入札缓存', dataIndex: 'bidding_item_count' },
+    { title: '砍价缓存', dataIndex: 'cache_count', render: (count: number) => count ?? 0 },
     {
       title: '合计',
       render: (_: any, row: any) => Number(row.task_count || 0) +
         Number(row.bid_log_count || 0) +
         Number(row.order_count || 0) +
-        Number(row.bidding_item_count || 0)
+        Number(row.bidding_item_count || 0) +
+        Number(row.cache_count || 0)
     }
   ];
 
   const regularCleanup = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Form
-        form={form}
-        layout="vertical"
-        initialValues={{ enabled: false, cleanupHour: 3, retentionDays: 30 }}
-        style={{ maxWidth: 560 }}
-      >
-        <Card title="清理数据">
-          <Form.Item name="enabled" label="自动清理" valuePropName="checked">
-            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-          </Form.Item>
-          <Form.Item
-            name="cleanupHour"
-            label="每天执行时间"
-            rules={[{ required: true, message: '请输入执行时间' }]}
-          >
-            <InputNumber min={0} max={23} step={1} precision={0} addonAfter="点" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="retentionDays"
-            label="清理多少天以前的数据"
-            rules={[{ required: true, message: '请输入保留天数' }]}
-          >
-            <InputNumber min={1} step={1} precision={0} addonAfter="天" style={{ width: '100%' }} />
-          </Form.Item>
-          <Typography.Text type="secondary">
-            清理范围：超过保留天数的失败、中止、已出价任务，并删除对应出价日志、订单和入札缓存；成功订单不会清理。
-          </Typography.Text>
-          <div style={{ marginTop: 16 }}>
-            <Space>
-              <Button type="primary" onClick={handleSave} loading={saving}>保存配置</Button>
-              <Button danger onClick={handleRun} loading={running}>手动执行</Button>
-            </Space>
-          </div>
-        </Card>
-      </Form>
+      <Row gutter={[16, 16]} style={{ maxWidth: 1136 }}>
+        <Col xs={24} lg={12}><CleanupSettingsCard scope="data" onComplete={() => fetchLogs(1)} /></Col>
+        <Col xs={24} lg={12}><CleanupSettingsCard scope="cache" onComplete={() => fetchLogs(1)} /></Col>
+      </Row>
 
-      <Card title="清理日志">
+      <Card title={<Space size={16}>清理日志<Button size="small" danger disabled={loadingLogs || !total}
+        loading={clearingLogs} onClick={handleClearLogs}>清空</Button></Space>}>
         <Table
           rowKey="id"
           columns={columns}

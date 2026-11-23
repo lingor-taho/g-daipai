@@ -33,6 +33,12 @@ function removeExpired(raw, keyPattern, now) {
   )`).run(keyPattern, now);
 }
 
+function deleteHistoryThrough(raw, cutoffAt) {
+  return raw.prepare(`DELETE FROM config WHERE key GLOB ?
+    AND julianday(CASE WHEN json_valid(value) THEN json_extract(value,'$.submittedAt') END) <= julianday(?)`)
+    .run(HISTORY_PREFIX + '*', cutoffAt).changes;
+}
+
 function getStatus(raw, productId, now = Date.now()) {
   const historyKey = HISTORY_PREFIX + productId;
   const queueKey = QUEUE_PREFIX + productId;
@@ -100,4 +106,4 @@ function update(raw, context, { productId, claimToken, action }, now = Date.now(
   }).immediate();
 }
 
-module.exports = { normalizeId, getStatus, assertAvailable, enqueue, claim, update };
+module.exports = { normalizeId, getStatus, assertAvailable, enqueue, claim, update, deleteHistoryThrough };

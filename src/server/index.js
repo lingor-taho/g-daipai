@@ -8,6 +8,7 @@ const pluginRoutes = require('./routes/plugin');
 const debugRoutes = require('./routes/debug');
 const db = require('./models');
 const {
+  deleteStaleNegotiationCache,
   deleteStaleTaskData,
   getDataCleanupConfig,
   shouldRunAutoCleanup
@@ -92,21 +93,18 @@ async function sweepPendingTasks() {
   }
 }
 
-async function runScheduledDataCleanup() {
+async function runScheduledDataCleanup(scope, cleanup, nowMs) {
   try {
-    const cleanupConfig = await getDataCleanupConfig(db);
-    const nowMs = Date.now();
-    if (!(await shouldRunAutoCleanup(db, cleanupConfig, nowMs))) return;
-    const result = await deleteStaleTaskData(db, {
+    const cleanupConfig = await getDataCleanupConfig(db, scope);
+    if (!(await shouldRunAutoCleanup(db, cleanupConfig, nowMs, scope))) return;
+    const result = await cleanup(db, {
       retentionDays: cleanupConfig.retentionDays,
       runType: 'auto',
       nowMs
     });
-    console.log(
-      `Data cleanup completed: tasks=${result.taskCount}, bidLogs=${result.bidLogCount}, orders=${result.orderCount}, biddingItems=${result.biddingItemCount}`
-    );
+    if (result) console.log(`Scheduled ${scope} cleanup completed: deleted=${result.totalCount}`);
   } catch (err) {
-    console.error('Failed to run scheduled data cleanup:', err);
+    console.error(`Failed to run scheduled ${scope} cleanup:`, err);
   }
 }
 
@@ -124,7 +122,9 @@ async function runScheduledDatabaseBackupCleanup(nowMs = Date.now()) {
 }
 
 async function runScheduledMaintenance() {
-  await runScheduledDataCleanup();
+  const nowMs = Date.now();
+  await runScheduledDataCleanup('data', deleteStaleTaskData, nowMs);
+  await runScheduledDataCleanup('cache', deleteStaleNegotiationCache, nowMs);
   await runScheduledDatabaseBackupCleanup();
 }
 

@@ -54,7 +54,7 @@ async function testShouldRunAutoCleanupSkipsSameDayAutoLog() {
   const fakeDb = {
     async getOne(sql, params) {
       assert.match(sql, /data_cleanup_logs/);
-      assert.deepEqual(params, ['auto', '2026-05-25']);
+      assert.deepEqual(params, ['2026-05-25', 'data', 'data_cleanup_last_auto_date', '2026-05-25']);
       return { id: 1 };
     }
   };

@@ -3,6 +3,8 @@ const DEFAULT_CLEANUP_CONFIG = {
   cleanupHour: 3,
   retentionDays: 30
 };
+const DEFAULT_CACHE_CLEANUP_CONFIG = { ...DEFAULT_CLEANUP_CONFIG, retentionDays: 1 };
+const { deleteHistoryThrough } = require('./fleamarketNegotiation');
 
 const {
   CLEANUP_TASK_STATUSES,
@@ -19,39 +21,42 @@ function normalizePositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_
   return intValue;
 }
 
-function buildDataCleanupConfig(values = {}) {
+function cleanupDefaults(scope) {
+  return scope === 'cache' ? DEFAULT_CACHE_CLEANUP_CONFIG : DEFAULT_CLEANUP_CONFIG;
+}
+
+function cleanupConfigKeys(scope) {
+  return ['enabled', 'hour', 'retention_days'].map(name => `${scope}_cleanup_${name}`);
+}
+
+function buildDataCleanupConfig(values = {}, scope = 'data') {
+  const [enabledKey, hourKey, retentionKey] = cleanupConfigKeys(scope);
+  const defaults = cleanupDefaults(scope);
   return {
-    enabled: values.data_cleanup_enabled === true ||
-      values.data_cleanup_enabled === '1' ||
-      values.data_cleanup_enabled === 1 ||
-      values.data_cleanup_enabled === 'true',
-    cleanupHour: normalizePositiveInt(values.data_cleanup_hour, DEFAULT_CLEANUP_CONFIG.cleanupHour, { min: 0, max: 23 }),
-    retentionDays: normalizePositiveInt(values.data_cleanup_retention_days, DEFAULT_CLEANUP_CONFIG.retentionDays, { min: 1 })
+    enabled: [true, '1', 1, 'true'].includes(values[enabledKey]),
+    cleanupHour: normalizePositiveInt(values[hourKey], defaults.cleanupHour, { min: 0, max: 23 }),
+    retentionDays: normalizePositiveInt(values[retentionKey], defaults.retentionDays)
   };
 }
 
-async function getDataCleanupConfig(database) {
+async function getDataCleanupConfig(database, scope = 'data') {
   const rows = await database.getAll(
-    "SELECT key, value FROM config WHERE key IN ('data_cleanup_enabled', 'data_cleanup_hour', 'data_cleanup_retention_days')"
+    'SELECT key, value FROM config WHERE key IN (?, ?, ?)',
+    cleanupConfigKeys(scope)
   );
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
-  return buildDataCleanupConfig(values);
+  return buildDataCleanupConfig(values, scope);
 }
 
-async function saveDataCleanupConfig(database, config) {
-  const cleanupHour = normalizePositiveInt(config.cleanupHour, DEFAULT_CLEANUP_CONFIG.cleanupHour, { min: 0, max: 23 });
-  const retentionDays = normalizePositiveInt(config.retentionDays, DEFAULT_CLEANUP_CONFIG.retentionDays, { min: 1 });
+async function saveDataCleanupConfig(database, config, scope = 'data') {
+  const defaults = cleanupDefaults(scope);
+  const cleanupHour = normalizePositiveInt(config.cleanupHour, defaults.cleanupHour, { min: 0, max: 23 });
+  const retentionDays = normalizePositiveInt(config.retentionDays, defaults.retentionDays);
+  const [enabledKey, hourKey, retentionKey] = cleanupConfigKeys(scope);
   await database.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('data_cleanup_enabled', ?, CURRENT_TIMESTAMP)`,
-    [config.enabled ? '1' : '0']
-  );
-  await database.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('data_cleanup_hour', ?, CURRENT_TIMESTAMP)`,
-    [String(cleanupHour)]
-  );
-  await database.query(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('data_cleanup_retention_days', ?, CURRENT_TIMESTAMP)`,
-    [String(retentionDays)]
+    `INSERT OR REPLACE INTO config (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP), (?, ?, CURRENT_TIMESTAMP), (?, ?, CURRENT_TIMESTAMP)`,
+    [enabledKey, config.enabled ? '1' : '0', hourKey, String(cleanupHour), retentionKey, String(retentionDays)]
   );
   return { enabled: Boolean(config.enabled), cleanupHour, retentionDays };
 }
@@ -69,19 +74,54 @@ function getLocalDateKey(nowMs = Date.now()) {
   return `${year}-${month}-${day}`;
 }
 
-async function shouldRunAutoCleanup(database, config, nowMs = Date.now()) {
+const autoCleanupRecorded = `SELECT 1 FROM data_cleanup_logs
+  WHERE run_type = 'auto' AND local_date = ? AND cleanup_scope = ?
+  UNION ALL
+  SELECT 1 FROM config WHERE key = ? AND value = ?
+  LIMIT 1`;
+
+function autoCleanupParams(scope, localDate) {
+  return [localDate, scope, `${scope}_cleanup_last_auto_date`, localDate];
+}
+
+async function shouldRunAutoCleanup(database, config, nowMs = Date.now(), scope = 'data') {
   if (!config?.enabled) return false;
   const hour = normalizePositiveInt(config.cleanupHour, DEFAULT_CLEANUP_CONFIG.cleanupHour, { min: 0, max: 23 });
   if (new Date(nowMs).getHours() !== hour) return false;
-  const dateKey = getLocalDateKey(nowMs);
-  const existing = await database.getOne(
-    `SELECT id FROM data_cleanup_logs
-     WHERE run_type = ?
-       AND local_date = ?
-     LIMIT 1`,
-    ['auto', dateKey]
-  );
+  const existing = await database.getOne(autoCleanupRecorded, autoCleanupParams(scope, getLocalDateKey(nowMs)));
   return !existing;
+}
+
+function deleteStaleNegotiationCache(database, options = {}) {
+  const nowMs = options.nowMs ?? Date.now();
+  const retentionDays = normalizePositiveInt(options.retentionDays, DEFAULT_CACHE_CLEANUP_CONFIG.retentionDays);
+  const runType = options.runType === 'auto' ? 'auto' : 'manual';
+  const cutoffAt = getCleanupCutoffIso(retentionDays, nowMs);
+  const localDate = getLocalDateKey(nowMs);
+  const raw = database.raw;
+  return raw.transaction(() => {
+    if (runType === 'auto' && raw.prepare(autoCleanupRecorded).get(...autoCleanupParams('cache', localDate))) return null;
+    const cacheCount = deleteHistoryThrough(raw, cutoffAt);
+    raw.prepare(`INSERT INTO data_cleanup_logs
+      (cleanup_scope, run_type, local_date, retention_days, cutoff_at, cache_count)
+      VALUES ('cache', ?, ?, ?, ?, ?)`).run(runType, localDate, retentionDays, cutoffAt, cacheCount);
+    return { cleanupScope: 'cache', runType, localDate, retentionDays, cutoffAt, cacheCount, totalCount: cacheCount };
+  }).immediate();
+}
+
+function clearDataCleanupLogs(database) {
+  const raw = database.raw;
+  return raw.transaction(() => {
+    // Log removal must not reopen today's schedule, including runs made before this upgrade.
+    raw.prepare(`INSERT INTO config (key, value, updated_at)
+      SELECT cleanup_scope || '_cleanup_last_auto_date', MAX(local_date), CURRENT_TIMESTAMP
+      FROM data_cleanup_logs
+      WHERE run_type = 'auto' AND local_date IS NOT NULL AND cleanup_scope IN ('data', 'cache')
+      GROUP BY cleanup_scope
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      WHERE excluded.value > config.value`).run();
+    return raw.prepare('DELETE FROM data_cleanup_logs').run().changes;
+  }).immediate();
 }
 
 async function deleteStaleTaskData(database, options = {}) {
@@ -167,6 +207,8 @@ module.exports = {
   CLEANUP_STATUSES,
   DEFAULT_CLEANUP_CONFIG,
   buildDataCleanupConfig,
+  clearDataCleanupLogs,
+  deleteStaleNegotiationCache,
   deleteStaleTaskData,
   getCleanupCutoffIso,
   getDataCleanupConfig,

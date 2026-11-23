@@ -1,6 +1,6 @@
 # g-daipai 项目说明与当前计划
 
-**最后更新**: 2026-11-21
+**最后更新**: 2026-11-23
 
 本文件是后续接手本项目的主说明和计划记录。只保留当前仍有用的架构、业务规则、生产注意事项、验证命令和下一步计划；已解决且无后续价值的流水记录不要继续堆在这里。
 
@@ -18,6 +18,8 @@
 ---
 
 ## 项目概述
+
+2026-11-23 后台「日常清理」新增「清理缓存」。按 SQLite config 中 P 商品砍价成功时间清理，默认保留 1 天、凌晨 3 点、自动关闭，开启后复用 API 原日常调度，也可手动执行。与日常数据清理共用清理日志，支持一键清空两类日志，保留当天自动执行标记防止重复运行。仅更新 API 并重启、发布后台 dist，清理日志旧表启动时自动补列。未部署或清理生产数据，详见 0ba。
 
 2026-11-21 Yahoo 再认证 URL 只用于筛选验证标签。后台 PIN 提示和提交前均需识别 Chrome 原生 PIN 弹窗或网页可见 PIN 输入。日文验证码后邮箱表单延迟出现时，先等页面识别，识别到第二次邮箱后显示「第二次パスキー验证 继续」。无输入框的手机确认码发送页仍按原「他の方法でログイン」进入通行密钥。仅需更新各账号插件 background.js 并 reload，真实页面待验收。
 
@@ -297,6 +299,13 @@ orders.task_id      N --- 0/1 tasks.id
 ---
 
 ## 当前主计划
+
+### 0ba. P 商品砍价缓存日常清理
+
+- 后台新增独立设置，默认保留 1 天、每天 3 点、自动关闭。开启后按原调度用服务器本地时间每天运行一次；保留期以实际执行时间往前计算，不是逐条到期即删。手动执行采用表单填写的保留天数。
+- SQLite 仅按砍价成功历史的 submittedAt 删除满保留期的记录；排队占位、其他 config、商品和订单不在范围。删掉成功历史后，本站恢复该商品的砍价入口。
+- 两类日常清理共用 data_cleanup_logs，启动补齐清理范围和缓存条数两列，旧日志归为数据清理。清空只删除两类日志并保留当天自动执行标记，不影响同日调度去重。
+- 更新 API 并重启、发布后台 dist；不涉及用户端或插件。验证命令见下方，未部署生产。
 
 ### 0az. P 商品砍价与购买按钮兼容
 
@@ -1390,6 +1399,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-11-23 后台 P 商品砍价缓存清理
+
+新增自动和手动缓存清理，默认保留一天；两类日常清理共用日志并支持清空，详见 0ba。
 
 ### 2026-11-21 Yahoo PIN 提醒改用页面证据
 
@@ -2962,6 +2975,18 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+P 商品砍价缓存日常清理（0ba）：
+
+```bash
+node scripts/run-isolated-regression.cjs src/server/routes/admin.cacheCleanup.test.js
+node src/server/services/dataCleanup.test.js
+node src/server/services/forceDateCleanup.test.js
+npm --prefix src/admin run build
+node scripts/admin-cache-cleanup.browser.test.cjs
+npm run encoding:guard
+git diff --check
+```
 
 Yahoo 登录页识别验证使用 `node yahoo-plugin/emailVerification.test.js`、`node yahoo-plugin/alternativeLogin.test.js`、`node yahoo-plugin/nativePasskey.test.js` 和 `node yahoo-plugin/background.test.js`。
 
