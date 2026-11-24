@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-11-24 补齐第一轮邮箱后的假名交接。假名提交后立即按标签保存进度，超过原 20 秒仍保留当前验证；同一标签迟到的邮箱页由插件轮询恢复「第二次パスキー验证 继续」。仅需更新并重载插件，真实 Yahoo 页面待验收。
+
 2026-11-24 第一轮邮箱后的假名提交沿原 20 秒交接窗口等待，允许同一标签经过尚未识别的中间页。识别到回跳邮箱后显示「第二次パスキー验证 继续」，点后沿原其他登录方式选择パスキー；识别到 PIN 则走原 PIN。仅需更新插件 background.js 并 reload，真实页面待验收。
 
 2026-11-23 后台「日常清理」新增「清理缓存」。按 SQLite config 中 P 商品砍价成功时间清理，默认保留 1 天、凌晨 3 点、自动关闭，开启后复用 API 原日常调度，也可手动执行。与日常数据清理共用清理日志，支持一键清空两类日志，保留当天自动执行标记防止重复运行。仅更新 API 并重启、发布后台 dist，清理日志旧表启动时自动补列。未部署或清理生产数据，详见 0ba。
@@ -323,6 +325,8 @@ orders.task_id      N --- 0/1 tasks.id
 仅需更新各账号的 `yahoo-plugin/background.js` 并 reload。生产页面结构依据截图，浏览器测试采用模拟标题结构，未部署或执行生产订单扫描。
 
 ### 0ax. Yahoo 邮箱与 PIN 未完成时暂停开新页
+
+假名已经提交但 Yahoo 仍在跳转时保留当前提醒，避免将短暂中间页误报为邮箱后的 PIN 失败。测试覆盖超过 20 秒后，轮询在原标签发现邮箱页并恢复第二次通行密钥按钮。
 
 第一轮邮箱后的假名提交等待实际验证界面，再保存假名交接状态。模拟覆盖经过中间页后回跳邮箱及直接 PIN，验证使用 `node yahoo-plugin/emailVerification.test.js`、`node yahoo-plugin/alternativeLogin.test.js`、`node yahoo-plugin/nativePasskey.test.js`。
 
@@ -1403,6 +1407,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-11-24 假名交接超时后恢复第二次邮箱按钮
+
+进度写入 Chrome session，后台轮询可续接，详见 0ax。验证使用 `node yahoo-plugin/emailVerification.test.js`、`node yahoo-plugin/alternativeLogin.test.js`、`node yahoo-plugin/nativePasskey.test.js`。
 
 ### 2026-11-24 邮箱假名提交后的验证交接
 

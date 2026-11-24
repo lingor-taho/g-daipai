@@ -21,9 +21,15 @@ function createAttemptFixture(options = {}) {
   const removed = [];
   const scripts = [];
   let unrenderedEmailChecks = 2;
+  const sessionStorage = {};
   class Clock extends Date { static now() { return now; } }
   const api = loadBackgroundForTest({
     disableAutoStart: true, Date: Clock,
+    sessionStorage: {
+      async get() { return structuredClone(sessionStorage); },
+      async set(values) { Object.assign(sessionStorage, structuredClone(values)); },
+      async remove(key) { delete sessionStorage[key]; }
+    },
     fetch: (...args) => {
       if (options.finishPin && String(args[0]).includes('/manual-pin/type')) {
         assert.equal(JSON.parse(args[1].body).pin, '765432', 'email code must never become the PIN');
@@ -43,7 +49,7 @@ function createAttemptFixture(options = {}) {
       async update(id, props) { return { id, url: id === 7 ? yahooUrl : props.url, status: 'complete' }; },
       async get(id) {
         if (pinFinished) return { id, url: 'https://auctions.yahoo.co.jp/', status: 'complete' };
-        if (options.delayedSecondEmail && captchaPassed && now - captchaSubmittedAt < 3500) {
+        if (options.delayedSecondEmail && captchaPassed && now - captchaSubmittedAt < (options.redirectDelay || 3500)) {
           return { id, url: 'https://login.yahoo.co.jp/config/login', status: 'complete' };
         }
         if (id === 7 && !options.newTabCaptcha && !options.newTabPin && submittedAt && options.transitionAfter !== null && now - submittedAt >= (options.transitionAfter || 0)) {
@@ -109,7 +115,7 @@ function createAttemptFixture(options = {}) {
       }
     }
   });
-  return { api, counts: () => ({ reloads, fills, removed, elapsed: now - start, submittedElapsed: now - submittedAt }), scripts, alternativeClicks };
+  return { api, advance: ms => { now += ms; }, counts: () => ({ reloads, fills, removed, elapsed: now - start, submittedElapsed: now - submittedAt }), scripts, alternativeClicks };
 }
 
 async function testOneRefreshOneSubmitAndSeparateTimeouts() {
@@ -536,6 +542,7 @@ async function testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(ex
 
 async function run() {
   await testSecondEmailContinuesViaPasskeyAfterCaptcha();
+  await testSecondEmailContinuesViaPasskeyAfterCaptcha(true);
   await testDirectPinAfterCaptchaRedirect();
   await testThirdEmailAfterWorkerRestartNeverReadsOrSubmits();
   await testLockedEmailTabClosesDuplicateLoginPages();
@@ -561,15 +568,16 @@ async function run() {
   await testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(true, { cached: true, oldDate: true });
   console.log('Email verification tests passed.');
 }
-async function testSecondEmailContinuesViaPasskeyAfterCaptcha() {
+async function testSecondEmailContinuesViaPasskeyAfterCaptcha(late = false) {
   let releaseSecond;
   let notifyWaiting;
   let challenge;
   const waiting = new Promise(resolve => { notifyWaiting = resolve; });
   const posted = [];
-  const fixture = createAttemptFixture({ emailLoops: 1, captchaBetween: true, delayedSecondEmail: true, pinAfterSubmit: true, finishPin: true,
+  const fixture = createAttemptFixture({ emailLoops: 1, captchaBetween: true, delayedSecondEmail: true,
+    redirectDelay: late ? 30000 : undefined, pinAfterSubmit: true, finishPin: true,
     fetch: async (url, request = {}) => {
-      if (String(url).includes('/current')) return { async json() { return { found: false }; } };
+      if (String(url).includes('/current')) return { async json() { return late && challenge ? { ...challenge, found: true } : { found: false }; } };
       if (String(url).includes('/challenge')) {
         challenge = JSON.parse(request.body);
         posted.push(challenge);
@@ -582,7 +590,17 @@ async function testSecondEmailContinuesViaPasskeyAfterCaptcha() {
       return { async json() { return { success: true, answered: true, answer: answers[challenge?.type], claimed: true }; } };
     }
   });
-  const flow = fixture.api.handleManualVerificationIfPresent({ id: 7, url: emailUrl });
+  const tab = { id: 7, url: emailUrl };
+  let flow = fixture.api.handleManualVerificationIfPresent(tab);
+  if (late) {
+    await assert.rejects(flow, /日文验证码已提交，等待 Yahoo 后续验证页面/);
+    assert.deepEqual(posted.map(challenge => challenge.type), ['email', 'captcha']);
+    fixture.advance(15000);
+    await fixture.api.pauseIdleWorkForOpenManualPin();
+    await fixture.api.pauseIdleWorkForOpenManualPin();
+    assert.equal(challenge.message, '第二次邮箱验证');
+    flow = fixture.api.handleManualVerificationIfPresent(tab);
+  }
   await Promise.race([waiting, flow.then(() => assert.fail('expected second continue before PIN'))]);
   assert.deepEqual(posted.map(challenge => challenge.type), ['email', 'captcha', 'email']);
   assert.equal(fixture.counts().fills, 1);

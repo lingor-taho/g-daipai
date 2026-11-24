@@ -6043,10 +6043,10 @@ async function handleManualEmailVerification(tab, context = {}) {
       throw new Error(challenge.message || message);
     };
     if (session.passkeyAttempted || session.submissions >= 2) return fail(tab, EMAIL_LOOP_ERROR);
-    if ((session.submissions && !session.captchaCompleted) || (!session.submissions && savedSession?.submissions)) {
+    const second = isSecondManualEmailVerification(session, tab);
+    if ((session.submissions && !second) || (!session.submissions && savedSession?.submissions)) {
       return fail(tab, EMAIL_UNFINISHED_ERROR);
     }
-    const second = session.submissions === 1 && session.captchaCompleted;
     let challenge = await ensureManualEmailChallenge(tab, context, second ? EMAIL_SECOND_MESSAGE : undefined);
     if (EMAIL_TERMINAL_MESSAGES.includes(challenge.message)) throw new Error(challenge.message);
     if (!second && challenge.message === EMAIL_SECOND_MESSAGE) return fail(tab, EMAIL_UNFINISHED_ERROR, challenge.id);
@@ -6092,6 +6092,11 @@ async function handleManualEmailVerification(tab, context = {}) {
   })();
   manualEmailFlows.set(tab.id, operation);
   try { return await operation; } finally { manualEmailFlows.delete(flowTabId); }
+}
+
+function isSecondManualEmailVerification(session, tab) {
+  return session?.submissions === 1 && (session.captchaCompleted ||
+    (session.captchaSubmitted && session.tabId === tab.id));
 }
 
 function isManualCaptchaTab(tab) {
@@ -6195,7 +6200,7 @@ async function keepSingleManualPinTab(tabs, preferredTab = null) {
 async function ensureManualPinChallenge(tab, context = {}) {
   if (!tab?.id || !isLikelyManualPinTab(tab)) return { posted: false };
   if (await getManualAlternativeLoginState(tab)) return { posted: false };
-  if (await detectManualEmailPage(tab)) return ensureManualEmailChallenge(tab, context);
+  if (await detectManualEmailPage(tab)) return resumeAnsweredManualPinChallenge(tab, context);
   const native = await selectManualGooglePasskey(tab);
   if (native.detected || (!native.pinDetected && !await detectManualPinPage(tab))) return { posted: false };
   const current = await fetchCurrentManualCaptchaChallenge().catch(() => null);
@@ -6933,18 +6938,25 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       const beforeVerificationTabIds = await getTabIds().catch(() => new Set());
       const fillResult = await fillManualCaptchaAnswer(current.id, answer);
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
+      const waitForEmailCaptchaHandoff = context.emailSession.submissions === 1 && !context.emailSession.captchaCompleted;
+      if (waitForEmailCaptchaHandoff) {
+        context.emailSession.captchaSubmitted = true;
+        context.emailSession.tabId = current.id;
+        await chrome.storage.session.set({ manualEmailVerificationSession: context.emailSession });
+      }
       if (pinAnswer) canReusePinAfterCaptcha = true;
       current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds, { preferPin: true,
         singleAlternativeTab: Boolean(context.alternativeSession.attempts || context.emailSession.submissions),
-        waitForEmailCaptchaHandoff: context.emailSession.submissions === 1 && !context.emailSession.captchaCompleted });
+        waitForEmailCaptchaHandoff });
       rememberManualVerificationTab(current);
       if (!isManualCaptchaTab(current)) {
         if (context.emailSession.submissions === 1 && isManualVerificationTab(current)) {
           context.emailSession.captchaCompleted = true;
+          delete context.emailSession.captchaSubmitted;
           context.emailSession.tabId = current.id;
           await chrome.storage.session.set({ manualEmailVerificationSession: context.emailSession });
         }
-        await closeManualCaptchaChallenge(id);
+        if (!context.emailSession.captchaSubmitted) await closeManualCaptchaChallenge(id);
       }
       await sleep(500);
       continue;
@@ -7034,6 +7046,9 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       phase: 'error', message: error, pageUrl: current.url || '', productId: context.productId || '', source: context.source || '' });
     throw new Error(error);
   }
+  if (context.emailSession.captchaSubmitted && !context.emailSession.passkeyAttempted && !pinSubmitted) {
+    throw new Error('日文验证码已提交，等待 Yahoo 后续验证页面');
+  }
   if (context.emailSession.submissions && await isStillManualVerificationPage(current)) {
     await ensureManualEmailChallenge(current, context, 'Yahoo 验证流程未完成，请人工处理');
     throw new Error('Yahoo 验证流程未完成，请人工处理');
@@ -7069,7 +7084,7 @@ async function resumeAnsweredManualPinChallenge(tab, context = {}) {
     const session = saved.manualEmailVerificationSession;
     const message = session?.tabId === current.id && session.submissions
       ? (session.passkeyAttempted || session.submissions >= 2 ? EMAIL_LOOP_ERROR :
-        session.captchaCompleted ? EMAIL_SECOND_MESSAGE : EMAIL_UNFINISHED_ERROR)
+        isSecondManualEmailVerification(session, current) ? EMAIL_SECOND_MESSAGE : EMAIL_UNFINISHED_ERROR)
       : undefined;
     const challenge = await ensureManualEmailChallenge(current, context, message);
     if (challenge.phase === 'requested') return handleManualVerificationIfPresent(current, context);
