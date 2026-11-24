@@ -121,6 +121,10 @@ export const getFleamarketNegotiation = (id, signal) =>
   api.get(`/proxy/fleamarket-negotiation/${encodeURIComponent(id)}`, { signal });
 export const submitFleamarketNegotiation = (id, price) =>
   api.post(`/proxy/fleamarket-negotiation/${encodeURIComponent(id)}`, { price }, { timeout: 45000 });
+export const requestFleamarketPriceCheck = (id, signal) =>
+  api.post(`/proxy/fleamarket-price-check/${encodeURIComponent(id)}`, {}, { signal });
+export const getFleamarketPriceCheck = (id, requestId, signal) =>
+  api.get(`/proxy/fleamarket-price-check/${encodeURIComponent(id)}/${encodeURIComponent(requestId)}`, { signal });
 export function createGetProductSearchResults({ apiClient = api } = {}) {
   return (keyword, page = 1) => apiClient.get('/proxy/search', {
     params: { keyword: String(keyword || '').trim(), page }

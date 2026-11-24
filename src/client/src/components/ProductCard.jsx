@@ -31,7 +31,7 @@ export function BidCountIcon() {
   );
 }
 
-export default function ProductCard({ product, onOpenDetail, ended = false }) {
+export default function ProductCard({ product, onOpenDetail, ended = false, onVerifyPrice, checkingPrice, priceCheckDisabled, priceCheckMessage }) {
   const taxType = product.taxType || product.tax_type || 'tax_zero';
   const displayPrice = getDisplayPrice(product.currentPrice, taxType);
   const displayBuyoutPrice = getBuyoutPrice(product);
@@ -84,6 +84,7 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
 
   const canSubmitOffer = canNegotiate && negotiationStatus?.state === 'available';
   const hasNegotiationHistory = negotiationStatus?.state === 'submitted';
+  const canVerifyPrice = !ended && hasNegotiationHistory && displayPrice > negotiationStatus.price && Boolean(onVerifyPrice);
   const showKnife = canNegotiate || hasNegotiationHistory || negotiationStatus?.state === 'pending';
   const knifeEnabled = canSubmitOffer || hasNegotiationHistory;
   const minimum = Math.max(300, negotiation.minimumNegotiationPrice(displayPrice));
@@ -176,7 +177,16 @@ export default function ProductCard({ product, onOpenDetail, ended = false }) {
         {hasNegotiationHistory && (
           <div>该商品在 {new Date(negotiationStatus.submittedAt).toLocaleString('zh-CN', {
             timeZone: 'Asia/Shanghai', hour12: false
-          })} 以 <strong style={{ color: colors.danger }}>{negotiationStatus.price.toLocaleString('ja-JP')} 円</strong> 提交了砍价。</div>
+          })} 以 <strong style={{ color: colors.danger }}>{negotiationStatus.price.toLocaleString('ja-JP')} 円</strong> 提交了砍价。
+            {canVerifyPrice && (
+              <button type="button" onClick={onVerifyPrice} disabled={checkingPrice || priceCheckDisabled}
+                style={{ color: colors.accent, background: 'transparent', border: 0, padding: '0 6px',
+                  minHeight: 24, textDecoration: 'underline', cursor: checkingPrice ? 'default' : 'pointer' }}>
+                {checkingPrice ? '核验中…' : '核验价格'}
+              </button>
+            )}
+            <span role="status">{priceCheckMessage}</span>
+          </div>
         )}
         {canSubmitOffer && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

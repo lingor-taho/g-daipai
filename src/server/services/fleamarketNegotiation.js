@@ -112,4 +112,4 @@ function update(raw, context, { productId, claimToken, action }, now = Date.now(
   }).immediate();
 }
 
-module.exports = { normalizeId, getStatus, assertAvailable, enqueue, claim, update, deleteHistoryThrough };
+module.exports = { normalizeId, getStatus, assertAvailable, enqueue, claim, update, deleteHistoryThrough, isEnabledPrimary };

@@ -1188,7 +1188,7 @@ async function updatePaymentStatus(payload) {
 async function fetchYahooMessageJobs() {
   try {
     const preference = preferFleamarketNegotiation ? '&preferNegotiation=1' : '';
-    const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1&includeNegotiation=1' + preference);
+    const data = await yahooMessageApiJson('/api/plugin/yahoo-messages/jobs?limit=1&includeNegotiation=1&includePriceCheck=1' + preference);
     return Array.isArray(data.jobs) ? data.jobs : [];
   } catch (error) {
     // Reload creates a new instance; the previous heartbeat expires after 45s.
@@ -9137,6 +9137,62 @@ async function executeFleamarketNegotiationJob(job) {
   }
 }
 
+function readFleamarketPriceCheckPage(productId) {
+  const itemPath = `/item/${productId}`;
+  if (location.origin !== 'https://paypayfleamarket.yahoo.co.jp' || location.pathname !== itemPath) return null;
+  const visible = node => node.getClientRects().length && getComputedStyle(node).visibility === 'visible' &&
+    !node.closest('[hidden], [inert], [aria-hidden="true"], #description');
+  const text = node => String(node.innerText || '').replace(/\s+/g, '');
+  const canBuy = [...document.querySelectorAll('a[href]')].some(node => {
+    if (!visible(node) || node.getAttribute('aria-disabled') === 'true' ||
+        !['購入手続きへ', '相談した価格で購入手続きへ'].includes(text(node))) return false;
+    const target = new URL(node.href);
+    return target.origin === 'https://paypayfleamarket-sec.yahoo.co.jp' && target.pathname === `${itemPath}/order`;
+  });
+  if (!canBuy) return null;
+  const prices = new Set([...document.querySelectorAll('.ItemPrice__Component span')]
+    .filter(visible).map(node => text(node).match(/^([\d,]+)円$/)?.[1]).filter(Boolean)
+    .map(price => Number(price.replace(/,/g, ''))));
+  const [price] = prices;
+  return prices.size === 1 && Number.isSafeInteger(price) && price > 0 ? price : null;
+}
+
+async function executeFleamarketPriceCheckJob(job) {
+  if (!/^z\d{8,10}$/.test(job.productId)) return;
+  const context = { tabIds: new Set(), closed: false };
+  const deadline = Date.now() + 18_000;
+  let price = null;
+  try {
+    const tab = await openYahooMessageOwnedTab(
+      `https://paypayfleamarket.yahoo.co.jp/item/${job.productId}`, context, `price-check-${job.requestId}`
+    );
+    await waitForYahooMessageDocument(tab.id, context);
+    while (Date.now() < deadline) {
+      const current = await chrome.tabs.get(tab.id);
+      if (isManualVerificationTab(current)) break;
+      if (current.status === 'complete') {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, func: readFleamarketPriceCheckPage, args: [job.productId]
+        }).catch(() => null);
+        price = results?.[0]?.result ?? null;
+        if (price) break;
+      }
+      await sleep(350);
+    }
+  } catch (_) {
+    // A failed page read is reported as an unavailable price.
+  } finally {
+    context.closed = true;
+    await closeYahooMessageTabs(context).catch(() => {});
+    for (const id of context.tabIds) yahooMessageTabOwners.delete(id);
+  }
+  await yahooMessageApiJson('/api/plugin/fleamarket-price-check/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId: job.productId, requestId: job.requestId, claimToken: job.claimToken, price })
+  }).catch(() => {});
+}
+
 async function runYahooMessageJobs() {
   if (yahooMessagesRunning) return 0;
   yahooMessagesRunning = true;
@@ -9149,8 +9205,9 @@ async function runYahooMessageJobs() {
       if (!jobs.length) break;
       for (const job of jobs) {
         if (job.jobType === 'negotiate') await executeFleamarketNegotiationJob(job);
+        else if (job.jobType === 'price-check') await executeFleamarketPriceCheckJob(job);
         else await executeYahooMessageJob(job);
-        preferFleamarketNegotiation = job.jobType !== 'negotiate';
+        preferFleamarketNegotiation = job.jobType !== 'negotiate' && job.jobType !== 'price-check';
         processed += 1;
       }
     }

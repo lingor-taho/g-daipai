@@ -5,7 +5,7 @@ import { getBatchClientContext, isBatchContextCurrent } from '../utils/batchSubm
 import { Input, Button, Toast, List, Picker, Checkbox, Dialog, Radio } from 'antd-mobile';
 import { useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { checkFleamarketSubmitLock, getApiErrorMessage, getClientBidConfig, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, submitTask } from '../utils/api';
+import { checkFleamarketSubmitLock, getApiErrorMessage, getClientBidConfig, getFleamarketPriceCheck, getProductInfo, getProductSearchResults, getTaskList, getWebsiteRate, requestFleamarketPriceCheck, submitTask } from '../utils/api';
 import { formatCnyAmount, getActualBidDisplay, getBidInputYenPrice, getBuyoutPrice, getBuyoutSubmitPrice, getMinimumBidComparableInputPrice, getMinimumBidInputRequirement, getSubmitMaxPrice, getSubmitTaxType, getYenAsCnyAmount, isBuyoutOnlyProduct, isStoreProduct } from '../utils/bidPrice';
 import ProductCard from '../components/ProductCard';
 import auctionDeadline from '../../../shared/auctionDeadline.cjs';
@@ -146,6 +146,17 @@ export default function Submit() {
   const [strategyPickerVisible, setStrategyPickerVisible] = useState(false);
   const [bidStrategyScope, setBidStrategyScope] = useState(localStorage.getItem('actingUserBidStrategyScope') || 'all');
   const [fetching, setFetching] = useState(false);
+  const priceCheckRequest = useRef(null);
+  const [priceCheckFeedback, setPriceCheckFeedback] = useState(null);
+  const currentPriceCheckFeedback = priceCheckFeedback?.product === product ? priceCheckFeedback : null;
+  const checkingPrice = currentPriceCheckFeedback?.pending === true;
+  useEffect(() => () => {
+    const active = priceCheckRequest.current;
+    if (active && active.product === product) {
+      active.controller.abort();
+      priceCheckRequest.current = null;
+    }
+  }, [product]);
   const [submitting, setSubmitting] = useState(false);
   const [storeBidPriceMode, setStoreBidPriceMode] = useState('tax_before');
   const [bidCurrency, setBidCurrency] = useState('jpy');
@@ -501,7 +512,52 @@ export default function Submit() {
     return `实际出价：${display.actualYenPrice.toLocaleString('ja-JP')}日元`;
   }
 
+  async function handlePriceCheck() {
+    if (priceCheckRequest.current || submitting || fetching || !fleamarketProduct || productEnded) return;
+    const auctionId = product.auctionId;
+    const userContext = getBatchClientContext();
+    const controller = new AbortController();
+    const { signal } = controller;
+    const active = { product, controller };
+    priceCheckRequest.current = active;
+    setPriceCheckFeedback({ product, pending: true });
+    try {
+      const { data: request } = await requestFleamarketPriceCheck(auctionId, signal);
+      const deadline = Date.now() + 95_000;
+      while (!signal.aborted && isBatchContextCurrent(userContext) && Date.now() < deadline) {
+        const { data } = await getFleamarketPriceCheck(auctionId, request.requestId, signal);
+        if (signal.aborted || !isBatchContextCurrent(userContext)) return;
+        if (data.state === 'verified' && Number.isSafeInteger(data.price) && data.price > 0 && data.expiresAt > Date.now()) {
+          setProduct(current => current === product ? {
+            ...current, currentPrice: data.price, buyoutPrice: data.price,
+            priceCheck: {
+              requestId: data.requestId, expiresAt: data.expiresAt,
+              publicCurrentPrice: current.priceCheck?.publicCurrentPrice ?? current.currentPrice,
+              publicBuyoutPrice: current.priceCheck?.publicBuyoutPrice ?? current.buyoutPrice
+            }
+          } : current);
+          return;
+        }
+        if (data.state !== 'pending') throw new Error('未能读取 Yahoo 商品现价，请重试');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      if (!signal.aborted && isBatchContextCurrent(userContext)) throw new Error('价格核验超时，请重试');
+    } catch (error) {
+      if (!signal.aborted && isBatchContextCurrent(userContext)) {
+        setPriceCheckFeedback({ product, message: getApiErrorMessage(error, error.message || '价格核验失败') });
+      }
+    } finally {
+      if (priceCheckRequest.current === active) priceCheckRequest.current = null;
+      setPriceCheckFeedback(current => current?.product === product && current.pending ? null : current);
+    }
+  }
+
   async function handleSubmit() {
+    if (checkingPrice || priceCheckRequest.current?.product === product) return;
+    if (product?.priceCheck && product.priceCheck.expiresAt <= Date.now()) {
+      Toast.show({ content: '核验价已失效，请重新获取商品信息后核验' });
+      return;
+    }
     if (submitting) return;
     if (isBidBlockedUser) {
       Toast.show({ content: '出价功能被一时限制，请联系管理员。' });
@@ -620,8 +676,9 @@ export default function Submit() {
         buyout_only: buyoutOnly,
         product_title: product?.title || null,
         product_image_url: product?.imageUrl || null,
-        current_price: product?.currentPrice || null,
-        buyout_price: buyoutPrice || null,
+        current_price: (product?.priceCheck?.publicCurrentPrice ?? product?.currentPrice) || null,
+        buyout_price: (product?.priceCheck?.publicBuyoutPrice ?? buyoutPrice) || null,
+        ...(product?.priceCheck ? { price_check_id: product.priceCheck.requestId } : {}),
         bid_count: product?.bidCount ?? product?.bid_count ?? 0,
         tax_type: submitTaxType,
         product_type: product?.productType || product?.product_type || (submitTaxType === 'tax_included' ? 'store' : 'normal'),
@@ -712,7 +769,10 @@ export default function Submit() {
       />
 
       {product && (
-        <ProductCard key={product.auctionId} product={product} ended={productEnded} onOpenDetail={() => setSingleProductDetailVisible(true)} />
+        <ProductCard key={product.auctionId} product={product} ended={productEnded}
+          onOpenDetail={() => setSingleProductDetailVisible(true)}
+          onVerifyPrice={handlePriceCheck} checkingPrice={checkingPrice} priceCheckDisabled={submitting || fetching}
+          priceCheckMessage={currentPriceCheckFeedback?.message || (product.priceCheck ? '已核验 Yahoo 现价' : '')} />
       )}
 
       {product && (
@@ -883,7 +943,7 @@ export default function Submit() {
           )}
 
           <div style={{ padding: '14px 0 16px' }}>
-            <Button block color="primary" loading={submitting} disabled={submitting} onClick={handleSubmit} style={primaryButtonStyle}>
+            <Button block color="primary" loading={submitting} disabled={submitting || checkingPrice} onClick={handleSubmit} style={primaryButtonStyle}>
               {submitting ? '提交中...' : '提交任务'}
             </Button>
           </div>

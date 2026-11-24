@@ -62,6 +62,8 @@ const parse = html => proxy.parseProductHtml(html, id, url);
   const route = '/proxy/fleamarket-negotiation/' + id;
   const report = (action, claimToken) => request('/plugin/fleamarket-negotiation/status', binding, { action, productId: id, claimToken });
   try {
+    const priceRoute = '/proxy/fleamarket-price-check/' + id;
+    assert.equal((await request(priceRoute, user(1), {})).status, 409);
     assert.equal((await request(route, {}, { price: 23760 })).status, 401);
     assert.equal((await request(route, user(1), { price: 23760 })).status, 409, 'a stale cached product cannot queue a quote');
     source = 'http';
@@ -111,14 +113,43 @@ const parse = html => proxy.parseProductHtml(html, id, url);
     for (const table of ['products', 'tasks', 'orders', 'yahoo_trade_messages', 'yahoo_product_assignments']) {
       assert.equal(db.raw.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, table);
     }
-    const purchase = await request('/task/submit', user(2), {
-      product_url: url, max_price: 29700, strategy: 'direct', bid_mode: 'buyout', product_type: 'fleamarket',
+    const check = await request(priceRoute, user(2), {});
+    assert.equal(check.status, 202);
+    const { requestId } = check.body;
+    assert.equal((await request(priceRoute, user(2), {})).body.requestId, requestId);
+    const checkStatus = priceRoute + '/' + requestId;
+    assert.equal((await request(checkStatus, user(1))).status, 409);
+    const priceQueue = sharedQueue + '&includePriceCheck=1';
+    assert.deepEqual((await request(sharedQueue, binding)).body.jobs, [], 'older plugin cannot claim the new job');
+    assert.deepEqual((await request(priceQueue, backupBinding)).body.jobs, []);
+    const [priceJob] = (await request(priceQueue, binding)).body.jobs;
+    assert.equal(priceJob.jobType, 'price-check');
+    assert.equal(priceJob.requestId, requestId);
+    const reportPrice = '/plugin/fleamarket-price-check/status';
+    assert.equal((await request(reportPrice, backupBinding, { ...priceJob, price: 23000 })).status, 409);
+    assert.equal((await request(reportPrice, binding, { ...priceJob, price: 23000 })).status, 200);
+    const verified = (await request(checkStatus, user(2))).body;
+    assert.equal(verified.price, 23000, 'read the actual page price independently of the 23760 offer');
+    assert.equal(verified.state, 'verified');
+    db.raw.prepare("INSERT INTO products(product_id,product_type) VALUES(?,'fleamarket')").run(id);
+    db.raw.prepare("INSERT INTO tasks(user_id,product_id,account_id,max_price,status) VALUES(2,?,?,29700,'failed')").run(id,account.id);
+    const purchaseInput = {
+      product_url: url, max_price: 23000, price_check_id: requestId,
+      strategy: 'direct', bid_mode: 'buyout', product_type: 'fleamarket',
       product_title: data.title, product_image_url: data.imageUrl, current_price: 29700, buyout_price: 29700,
       tax_type: 'tax_zero', shipping_fee_text: '送料無料'
-    });
+    };
+    assert.equal((await request('/task/submit', user(1), purchaseInput)).status, 409);
+    assert.equal((await request('/task/submit', user(2), { ...purchaseInput, max_price: 29700 })).status, 400);
+    source = 'cache-fallback';
+    assert.equal((await request('/task/submit', user(2), purchaseInput)).status, 400, 'failed tasks still require a live availability check');
+    source = 'http';
+    const purchase = await request('/task/submit', user(2), purchaseInput);
     assert.equal(purchase.status, 200, JSON.stringify(purchase.body));
-    assert.deepEqual(db.raw.prepare('SELECT user_id,max_price FROM tasks WHERE product_id=?').get(id), { user_id: 2, max_price: 29700 });
-    console.log('Fleamarket negotiation parser, global HTTP dedupe, failure/timeout release, shared queue, and independent purchase passed');
+    assert.deepEqual(db.raw.prepare('SELECT user_id,max_price FROM tasks WHERE id=?').get(purchase.body.task_id), { user_id: 2, max_price: 23000 });
+    assert.equal(db.raw.prepare('SELECT buyout_price FROM products WHERE product_id=?').get(id).buyout_price, 29700);
+    assert.equal((await request(route, user(2))).body.price, 23760);
+    console.log('Fleamarket negotiation, main-account price check, restricted result access and verified-price resubmission passed');
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

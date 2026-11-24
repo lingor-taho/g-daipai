@@ -6,7 +6,9 @@ const source = fs.readFileSync(require.resolve('./background.js'),'utf8');
 const implementation = source.slice(source.indexOf('function fleamarketPageStep('),source.indexOf('async function executeBidTask('));
 const helpers = vm.runInNewContext(`${implementation}\n({fleamarketPageStep,executeFleamarketPurchaseTask})`,{URL});
 const negotiationImplementation = source.slice(source.indexOf('function fleamarketNegotiationPageStep('), source.indexOf('async function runYahooMessageJobs('));
-const negotiationPageStep = vm.runInNewContext(`${negotiationImplementation}\nfleamarketNegotiationPageStep`, { URL });
+const { negotiationPageStep, readFleamarketPriceCheckPage } = vm.runInNewContext(
+  `${negotiationImplementation}\n({ negotiationPageStep: fleamarketNegotiationPageStep, readFleamarketPriceCheckPage })`, { URL }
+);
 const id = 'z705860836';
 const itemUrl = `https://paypayfleamarket.yahoo.co.jp/item/${id}`;
 const orderUrl = `https://paypayfleamarket-sec.yahoo.co.jp/item/${id}/order`;
@@ -125,6 +127,20 @@ async function domTests() {
     assert.equal(await negotiate('observe'), 'success');
     await load(itemUrl.replace(id, 'z876543210') + '/negotiate', sent);
     assert.equal(await negotiate('observe'), 'foreign');
+    const checkPrice = () => page.evaluate(`(${readFleamarketPriceCheckPage.toString()})(${JSON.stringify(id)})`);
+    const priceMarkup = amount => `<span class="ItemPrice__Component"><span><span>${amount}</span><span>円</span></span></span>`;
+    const purchaseLink = (label, href = orderUrl) => `<a href="${href}" onclick="window.purchaseClicks=1">${label}</a>`;
+    await load(itemUrl, priceMarkup('2,500') + purchaseLink('相談した価格で購入手続きへ'));
+    assert.equal(await checkPrice(), 2500);
+    assert.equal(await page.evaluate('window.purchaseClicks'), undefined);
+    await load(itemUrl, priceMarkup('2,780') + purchaseLink('購入手続きへ'));
+    assert.equal(await checkPrice(), 2780, 'read the current price even without any negotiation markup');
+    await load(itemUrl, priceMarkup('2,400') + purchaseLink('購入手続きへ'));
+    assert.equal(await checkPrice(), 2400);
+    await load(itemUrl, priceMarkup('2,500') + priceMarkup('2,780') + purchaseLink('購入手続きへ'));
+    assert.equal(await checkPrice(), null);
+    await load(itemUrl, priceMarkup('2,500') + purchaseLink('購入手続きへ', orderUrl.replace(id, 'z876543210')));
+    assert.equal(await checkPrice(), null);
     console.log('Fleamarket product-price DOM, coupon/points allowance, zero payment and success-marker checks passed');
   } finally {await browser.close();}
 }

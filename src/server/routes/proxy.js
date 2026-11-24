@@ -10,6 +10,7 @@ const {
 const db = require('../models');
 const authMiddleware = require('../middleware/auth');
 const negotiation = require('../services/fleamarketNegotiation');
+const priceCheck = require('../services/fleamarketPriceCheck');
 const { isNegotiationPriceValid } = require('../../shared/fleamarketNegotiation.cjs');
 
 const router = express.Router();
@@ -1194,6 +1195,23 @@ function createProductService({
 }
 
 const productService = createProductService();
+
+router.post('/fleamarket-price-check/:id', authMiddleware, (req, res) => {
+  try {
+    res.status(202).json(priceCheck.enqueue(db.raw, req.user.id, req.params.id));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+router.get('/fleamarket-price-check/:id/:requestId', authMiddleware, (req, res) => {
+  try {
+    const result = priceCheck.status(db.raw, req.user.id, req.params.id, req.params.requestId);
+    res.set('Cache-Control', 'no-store').json(result);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
 
 router.get('/fleamarket-negotiation/:id', authMiddleware, (req, res) => {
   try {

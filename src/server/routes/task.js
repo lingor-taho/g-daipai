@@ -35,6 +35,7 @@ const {
   BID_STRATEGY_SCOPE_BLOCKED
 } = require('../../shared/domainConstants.cjs');
 const { upsertProductSnapshot } = require('../services/productRepository');
+const { verifiedPrice } = require('../services/fleamarketPriceCheck');
 const { setOrderPaused } = require('../services/orderPause');
 router.use(authMiddleware);
 router.use(actingUserMiddleware);
@@ -662,6 +663,8 @@ async function submitAuctionTask(context, body, {
     assertNoActiveAutomaticStrategy(activeAutomaticTask);
 
     let productInfo = null;
+    let verifiedBuyoutPrice = null;
+    const priceCheckId = fleamarketProduct ? body.price_check_id : null;
     if (strictBatch) {
       const pending = await database.getOne(
         "SELECT id FROM tasks WHERE product_id = ? AND user_id = ? AND status IN ('pending', 'processing') LIMIT 1",
@@ -675,6 +678,7 @@ async function submitAuctionTask(context, body, {
         : input.maxPrice;
     } else if (fleamarketProduct) {
       if (database.raw) assertPurchaseSubmissionAllowed(database.raw, input.productId);
+      if (priceCheckId) verifiedBuyoutPrice = verifiedPrice(database.raw, context.user.id, input.productId, priceCheckId);
       // A previous failure may have occurred after final confirmation.
       // For a resubmission, read the live purchase button instead of using the old snapshot.
       const previousFailure = database.raw?.prepare("SELECT 1 FROM tasks WHERE product_id=? AND status='failed'").get(input.productId);
@@ -695,7 +699,9 @@ async function submitAuctionTask(context, body, {
       }
       if (productInfo.auctionStatus === 'ended') throw submitError('商品已结束，不能提交任务');
       if (!hasProductSnapshot && productInfo.auctionStatus !== 'open') throw submitError('无法确认フリマ商品可购买，请重新获取后提交');
-      if (Number(productInfo.buyoutPrice) !== input.maxPrice) throw submitError('商品即决价格已变化，请重新获取商品信息后提交');
+      if ((verifiedBuyoutPrice ?? Number(productInfo.buyoutPrice)) !== input.maxPrice) {
+        throw submitError(priceCheckId ? '任务价格与核验价不一致，请重新核验' : '商品即决价格已变化，请重新获取商品信息后提交');
+      }
     } else if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
       try {
         const result = await fetchProduct(input.standardUrl, {recordedProductType:savedType || undefined});
@@ -709,8 +715,8 @@ async function submitAuctionTask(context, body, {
     const fetchedBuyoutPrice = Number(productInfo?.buyoutPrice || 0) || 0;
     const submittedBuyoutPrice = Number(buyout_price || 0) || 0;
     const buyoutPrices = resolveBuyoutTaskPrices({
-      fetchedBuyoutPrice,
-      submittedBuyoutPrice,
+      fetchedBuyoutPrice: verifiedBuyoutPrice ?? fetchedBuyoutPrice,
+      submittedBuyoutPrice: verifiedBuyoutPrice ?? submittedBuyoutPrice,
       inputMaxPrice: input.maxPrice,
       taxType: resolvedTaxType
     });
@@ -773,7 +779,7 @@ async function submitAuctionTask(context, body, {
       productTitle: fleamarketProduct ? productInfo?.title : product_title,
       productImageUrl: fleamarketProduct ? productInfo?.imageUrl : product_image_url,
       currentPrice: fleamarketProduct ? productInfo?.currentPrice : current_price,
-      buyoutPrice,
+      buyoutPrice: verifiedBuyoutPrice ? productInfo.buyoutPrice : buyoutPrice,
       bidCount,
       resolvedTaxType,
       resolvedProductType,
@@ -800,6 +806,7 @@ async function submitAuctionTask(context, body, {
     const inserted = database.raw
       ? database.raw.transaction(() => {
           if (fleamarketProduct) assertPurchaseSubmissionAllowed(database.raw, input.productId);
+          if (priceCheckId) verifiedPrice(database.raw, context.user.id, input.productId, priceCheckId);
           require('../services/agentProductPolicy').assertSubmissionAllowed(database.raw,input.userId,input.productId);
           const task = require('../services/yahooAccounts').createAssignedTask(database, input, taskInsertSql, taskInsertParams);
           if (!fleamarketProduct) require('../services/auctionHistory').resetAfterSubmission(database,input.productId);

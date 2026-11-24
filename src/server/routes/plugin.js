@@ -4,6 +4,7 @@ const router = express.Router();
 const { isStoredFleamarketProduct: isFleamarketProduct, getStoredProductType } = require('../../shared/fleamarket.cjs');
 const fleamarketPurchase = require('../services/fleamarketPurchase');
 const fleamarketNegotiation = require('../services/fleamarketNegotiation');
+const fleamarketPriceCheck = require('../services/fleamarketPriceCheck');
 const { normalizeYahooWonTimeText } = require('../services/yahooWonTime');
 const { ENDED_REASON } = require('../services/endedTaskReason');
 const { execFile } = require('child_process');
@@ -3363,18 +3364,32 @@ router.post('/manual-order-import/status', async (req, res) => {
 router.get('/yahoo-messages/jobs', async (req, res) => {
   try {
     const includeNegotiation = req.query.includeNegotiation === '1';
-    if (includeNegotiation && req.query.preferNegotiation === '1') {
-      const job = fleamarketNegotiation.claim(db.raw, accountScope.context());
+    const includePriceCheck = req.query.includePriceCheck === '1';
+    const includeFleamarket = includeNegotiation || includePriceCheck;
+    const preferFleamarket = req.query.preferNegotiation === '1';
+    const claimFleamarketJob = () =>
+      (includePriceCheck && fleamarketPriceCheck.claim(db.raw, accountScope.context())) ||
+      (includeNegotiation && fleamarketNegotiation.claim(db.raw, accountScope.context()));
+    if (includeFleamarket && preferFleamarket) {
+      const job = claimFleamarketJob();
       if (job) return res.json({ success: true, jobs: [job] });
     }
-    const result = await getYahooMessageJobs(db, includeNegotiation ? 1 : req.query.limit || 3);
-    if (includeNegotiation && !result.jobs.length && req.query.preferNegotiation !== '1') {
-      const job = fleamarketNegotiation.claim(db.raw, accountScope.context());
+    const result = await getYahooMessageJobs(db, includeFleamarket ? 1 : req.query.limit || 3);
+    if (includeFleamarket && !result.jobs.length && !preferFleamarket) {
+      const job = claimFleamarketJob();
       if (job) return res.json({ success: true, jobs: [job] });
     }
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'message jobs failed' });
+  }
+});
+
+router.post('/fleamarket-price-check/status', (req, res) => {
+  try {
+    res.json(fleamarketPriceCheck.update(db.raw, accountScope.context(), req.body || {}));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 

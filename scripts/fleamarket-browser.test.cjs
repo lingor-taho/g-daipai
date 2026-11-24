@@ -37,6 +37,8 @@ const { chromium } = require('playwright');
       const submitted = []; const detailRequests = []; const batchRequests = [];
       const offers = [];
       let offerStatus = { state: 'available' };
+      let priceCheck = { state: 'pending' };
+      const priceCheckId = 'test-price-check';
       let fleamarketLocked = false;
       await page.route('**/api/**', async route => {
         const request = route.request(); const target = new URL(request.url());
@@ -59,6 +61,9 @@ const { chromium } = require('playwright');
             return route.fulfill({ status: 202, json: offerStatus });
           }
           data = target.pathname.endsWith(product.auctionId) ? offerStatus : { state: 'available' };
+        }
+        if (target.pathname.startsWith('/api/proxy/fleamarket-price-check/')) {
+          data = request.method() === 'POST' ? { requestId: priceCheckId, state: 'pending' } : priceCheck;
         }
         if (target.pathname === '/api/task/batch-submit') {
           batchRequests.push(request.postDataJSON()); data = { success: true, count: request.postDataJSON().text.trim().split('\n').length, batch_id: batchRequests.length };
@@ -224,6 +229,27 @@ const { chromium } = require('playwright');
       await knife.click();
       await page.getByText('23,760 円', { exact: true }).waitFor();
       assert.equal(await offer.count(), 0);
+      await page.getByRole('button', { name: '核验价格', exact: true }).click();
+      await page.getByRole('button', { name: '核验中…', exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: '提交任务', exact: true }).isDisabled(), true);
+      await input.fill(normalProduct.standardUrl);
+      await fetch.click();
+      await page.getByRole('button', { name: normalProduct.title, exact: true }).waitFor();
+      priceCheck = { state: 'verified', requestId: priceCheckId, price: 23500, expiresAt: Date.now() + 300000 };
+      assert.equal(await page.getByText(/当前价格: 23,500円/).count(), 0);
+      await input.fill(url);
+      await fetch.click();
+      await knife.click();
+      priceCheck = { state: 'pending' };
+      await page.getByRole('button', { name: '核验价格', exact: true }).click();
+      await page.getByRole('button', { name: '核验中…', exact: true }).waitFor();
+      priceCheck = { state: 'verified', requestId: priceCheckId, price: 23500, expiresAt: Date.now() + 300000 };
+      await page.getByText(/当前价格: 23,500円/).waitFor();
+      await page.getByText(/即決价格: 23,500円/).waitFor();
+      await page.getByText(/当前合计金额：\s*23,500円/).waitFor();
+      await page.getByText('已核验 Yahoo 现价', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: '核验价格', exact: true }).count(), 0);
+      assert.equal(submitted.length, 0);
       await page.screenshot({ path: `.test-artifacts/fleamarket-negotiation-${width}.png`, fullPage: true });
       const inputBeforeLock = await input.inputValue();
       fleamarketLocked = true;
@@ -239,7 +265,9 @@ const { chromium } = require('playwright');
       assert.equal(submitted.length, 1);
       assert.equal(submitted[0].product_url, url);
       assert.equal(submitted[0].bid_mode, 'buyout'); assert.equal(submitted[0].strategy, 'direct');
-      assert.equal(submitted[0].max_price, 29700); assert.equal(submitted[0].product_type, 'fleamarket');
+      assert.equal(submitted[0].max_price, 23500); assert.equal(submitted[0].product_type, 'fleamarket');
+      assert.equal(submitted[0].price_check_id, priceCheckId);
+      assert.equal(submitted[0].buyout_price, 29700, 'public snapshot price is kept separate');
       await page.waitForFunction(() => document.querySelector('input')?.value === '');
       // Ordinary auction products still expose their original submission form.
       await input.fill('x1234567890'); await fetch.click();
