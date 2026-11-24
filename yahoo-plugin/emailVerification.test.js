@@ -2,6 +2,7 @@ const assert = require('assert/strict');
 const { loadBackgroundForTest } = require('./background.test');
 
 const emailUrl = 'https://login.yahoo.co.jp/config/login?src=auc&require_auth=1';
+const secondEmailUrl = 'https://login.yahoo.co.jp/config/login?.cpt=opaque-test-token';
 const mask = 'do*******@g********';
 const emailPage = { email: true, maskedAddress: mask };
 
@@ -56,7 +57,7 @@ function createAttemptFixture(options = {}) {
           pinReady = Boolean(options.pinAfterSubmit) && (!options.captchaBetween || captchaPassed) &&
             (fills > (options.emailLoops || 0) || alternativeStage === 'pin');
           yahooUrl = (pinReady || options.emailLoops) && (!options.captchaBetween || captchaPassed)
-            ? emailUrl : 'https://login.yahoo.co.jp/ncaptcha?fido=1';
+            ? (options.captchaBetween && !pinReady ? secondEmailUrl : emailUrl) : 'https://login.yahoo.co.jp/ncaptcha?fido=1';
         }
         if (id === 91 && options.newTabPin) return { id, url: emailUrl, status: 'complete' };
         return { id, url: yahooUrl, status: 'complete' };
@@ -115,7 +116,10 @@ function createAttemptFixture(options = {}) {
       }
     }
   });
-  return { api, advance: ms => { now += ms; }, counts: () => ({ reloads, fills, removed, elapsed: now - start, submittedElapsed: now - submittedAt }), scripts, alternativeClicks };
+  return { api, advance: ms => { now += ms; }, counts: () => ({
+    reloads, fills, removed, elapsed: now - start, submittedElapsed: now - submittedAt,
+    captchaElapsed: now - captchaSubmittedAt
+  }), scripts, alternativeClicks };
 }
 
 async function testOneRefreshOneSubmitAndSeparateTimeouts() {
@@ -255,7 +259,7 @@ function testFreshMailSelectionRejectsOldOtherAccountAndWrongSender() {
 async function testEmailDetectionOverridesPinUrlUsingActualPageScript() {
   const input = { placeholder: '確認コード', name: '', type: 'text', disabled: false, offsetWidth: 200, getAttribute: () => '', getClientRects: () => [1] };
   const document = {
-    body: { innerText: 'do*******@g******** に届いた確認コードを入力してください。' },
+    body: { innerText: 'do*******@g******** に届いた確認コ\nードを入力してください。' },
     querySelectorAll(selector) { return selector === 'input' ? [input] : []; }
   };
   const api = loadBackgroundForTest({ disableAutoStart: true, document,
@@ -269,6 +273,9 @@ async function testEmailDetectionOverridesPinUrlUsingActualPageScript() {
     } }
   });
   assert.equal((await api.detectManualEmailPage({ id: 7, url: emailUrl })).maskedAddress, mask);
+  assert.equal((await api.detectManualEmailPage({ id: 7, url: secondEmailUrl }))?.maskedAddress, mask,
+    'Yahoo uses a leading dot in the cpt parameter on the email return page');
+  assert.equal(await api.detectManualEmailPage({ id: 7, url: secondEmailUrl.replace('?.cpt=', '?other=1#&.cpt=') }), null);
   assert.equal(await api.detectManualPinPage({ id: 7, url: emailUrl }), false);
   document.body.innerText = 'ログイン';
   assert.equal(await api.detectManualPinPage({ id: 7, url: emailUrl }), false);
@@ -575,7 +582,7 @@ async function testSecondEmailContinuesViaPasskeyAfterCaptcha(late = false) {
   const waiting = new Promise(resolve => { notifyWaiting = resolve; });
   const posted = [];
   const fixture = createAttemptFixture({ emailLoops: 1, captchaBetween: true, delayedSecondEmail: true,
-    redirectDelay: late ? 30000 : undefined, pinAfterSubmit: true, finishPin: true,
+    redirectDelay: late ? 65000 : undefined, pinAfterSubmit: true, finishPin: true,
     fetch: async (url, request = {}) => {
       if (String(url).includes('/current')) return { async json() { return late && challenge ? { ...challenge, found: true } : { found: false }; } };
       if (String(url).includes('/challenge')) {
@@ -595,7 +602,7 @@ async function testSecondEmailContinuesViaPasskeyAfterCaptcha(late = false) {
   if (late) {
     await assert.rejects(flow, /日文验证码已提交，等待 Yahoo 后续验证页面/);
     assert.deepEqual(posted.map(challenge => challenge.type), ['email', 'captcha']);
-    fixture.advance(15000);
+    fixture.advance(50000);
     await fixture.api.pauseIdleWorkForOpenManualPin();
     await fixture.api.pauseIdleWorkForOpenManualPin();
     assert.equal(challenge.message, '第二次邮箱验证');
@@ -603,6 +610,10 @@ async function testSecondEmailContinuesViaPasskeyAfterCaptcha(late = false) {
   }
   await Promise.race([waiting, flow.then(() => assert.fail('expected second continue before PIN'))]);
   assert.deepEqual(posted.map(challenge => challenge.type), ['email', 'captcha', 'email']);
+  assert.equal(challenge.pageUrl, secondEmailUrl);
+  assert.equal(challenge.phase, 'waiting');
+  if (!late) assert.ok(fixture.counts().captchaElapsed < 10000,
+    'a recognizable email page must publish the second button before the handoff timeout');
   assert.equal(fixture.counts().fills, 1);
   assert.equal(fixture.counts().reloads, 1);
   assert.deepEqual(fixture.alternativeClicks, []);

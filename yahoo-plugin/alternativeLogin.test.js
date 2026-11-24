@@ -125,6 +125,25 @@ async function testActualPageScript() {
     assert.equal(await page.evaluate(() => window.sms || 0), 0);
     await page.setContent(html + '<input placeholder="確認コード">');
     assert.equal(await api.getManualAlternativeLoginState(tab), null, 'email/code entry remains with original flow');
+
+    const returnedEmailTab = { id: 7, url: 'https://login.yahoo.co.jp/config/login?.cpt=opaque-test-token' };
+    await page.route(returnedEmailTab.url, route => route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: `<p>do*******@g******** に届いた確認コ<br>ードを入力してください。</p>
+      <input placeholder="確認コード">
+      <button onclick="window.emailSubmitted=1">ログイン</button>
+      <button onclick="window.emailResent=1">確認コードを再送信する</button>
+      ${html.slice(html.indexOf('<a href'))}`
+    }));
+    await page.goto(returnedEmailTab.url);
+    assert.equal((await api.detectManualEmailPage(returnedEmailTab))?.maskedAddress, 'do*******@g********');
+    assert.equal(await api.getManualAlternativeLoginState(returnedEmailTab), null);
+    assert.equal((await api.getManualAlternativeLoginState(returnedEmailTab, 'entry', true)).clicked, true);
+    assert.equal((await api.getManualAlternativeLoginState(returnedEmailTab, 'methods', true)).clicked, true);
+    assert.deepEqual(await page.evaluate(() => [
+      window.emailSubmitted || 0, window.emailResent || 0, window.sms || 0, window.passkey
+    ]), [0, 0, 0, 1]);
+
     await page.setContent('<div>他の方法でログイン パスキー 確認コード（SMS）</div>');
     assert.equal(await api.getManualAlternativeLoginState(tab), null, 'text alone cannot authorize a click');
     assert.equal(await api.getManualAlternativeLoginState({ id: 7, url: 'https://example.com/' }), null);

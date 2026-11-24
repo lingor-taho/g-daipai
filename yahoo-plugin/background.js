@@ -6113,7 +6113,11 @@ function isLikelyManualPinTab(tab) {
   if (!url || isManualCaptchaTab(tab)) return false;
   if (!/:\/\/(?:login|account\.edit)\.yahoo\.co\.jp\//i.test(url)) return false;
   if (isYahooAuthLevelPinUrl(url)) return true;
-  if (/^https:\/\/login\.yahoo\.co\.jp\/config\/login\?/i.test(url) && /[?&]cpt=/i.test(url)) return true;
+  if (/^https:\/\/login\.yahoo\.co\.jp\/config\/login\?/i.test(url)) {
+    // Yahoo uses both cpt and .cpt on its reauthentication page.
+    const keys = new URL(url).searchParams.keys();
+    if ([...keys].some(key => /^\.?cpt$/i.test(key))) return true;
+  }
   return /(?:verify|pin|auth|challenge|confirm|security|code)/i.test(url);
 }
 
