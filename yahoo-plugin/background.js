@@ -5535,7 +5535,7 @@ async function getManualAlternativeLoginState(tab, action = '', fromEmail = fals
       if (!target && methodsVisible) return { stage: 'methods', clicked: false };
       if (!target) {
         const links = all.filter(el => text(el) === '他の方法でログイン');
-        if ((emailEntry && hasCodeInput && /届いた確認コード|メール.{0,60}確認コード/.test(document.body?.innerText || '')) ||
+        if ((emailEntry && hasCodeInput && /届いた確認コード|メール.{0,60}確認コード/.test(String(document.body?.innerText || '').replace(/\s+/g, ''))) ||
             (!emailEntry && all.some(el => text(el) === '確認コードを送信'))) {
           if (links.length !== 1) return { stage: 'entry', clicked: false };
           stage = 'entry'; target = links[0];
@@ -5663,7 +5663,7 @@ async function detectManualEmailPage(tab) {
   const result = await chrome.scripting.executeScript({
     target: { tabId: tab.id }, world: 'MAIN',
     func: () => {
-      const text = String(document.body?.innerText || '').replace(/\s+/g, ' ');
+      const text = String(document.body?.innerText || '').replace(/\s+/g, '');
       const inputs = [...document.querySelectorAll('input')].filter(el => !el.disabled && el.offsetWidth > 0);
       const codeInput = inputs.find(el => /確認コード/.test([el.placeholder, el.name, el.getAttribute('aria-label')].join(' ')));
       const email = text.match(/[a-zA-Z0-9.*_+-]+@[a-zA-Z0-9.*-]+/);
@@ -6832,6 +6832,17 @@ async function waitForManualVerificationPageTransition(tab, timeoutMs = 15000, p
     attempts += 1;
     await sleep(1000);
     current = await findManualVerificationTransitionTab(current, previous, options);
+    if (options.waitForEmailCaptchaHandoff) {
+      // The first kana challenge can redirect through a non-verification tab URL.
+      if (current.status === 'loading' || !isLikelyManualPinTab(current)) continue;
+      if (!await detectManualEmailPage(current) && !await getManualAlternativeLoginState(current) &&
+          !await detectManualPinPage(current)) {
+        const native = await selectManualGooglePasskey(current);
+        if (!native.detected && !native.pinDetected) continue;
+      }
+      await lockAlternativeLoginTab(current, { previousTabId: tab.id, previousTabIds: previous });
+      break;
+    }
     if (options.singleAlternativeTab) {
       await lockAlternativeLoginTab(current, { previousTabId: tab.id, previousTabIds: previous });
     }
@@ -6924,7 +6935,8 @@ async function handleManualVerificationIfPresent(tab, context = {}) {
       if (!fillResult?.success) throw new Error(fillResult?.error || 'manual captcha fill failed');
       if (pinAnswer) canReusePinAfterCaptcha = true;
       current = await waitForManualVerificationPageTransition(current, 20000, beforeVerificationTabIds, { preferPin: true,
-        singleAlternativeTab: Boolean(context.alternativeSession.attempts || context.emailSession.submissions) });
+        singleAlternativeTab: Boolean(context.alternativeSession.attempts || context.emailSession.submissions),
+        waitForEmailCaptchaHandoff: context.emailSession.submissions === 1 && !context.emailSession.captchaCompleted });
       rememberManualVerificationTab(current);
       if (!isManualCaptchaTab(current)) {
         if (context.emailSession.submissions === 1 && isManualVerificationTab(current)) {

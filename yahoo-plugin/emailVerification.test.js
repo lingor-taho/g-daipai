@@ -15,6 +15,7 @@ function createAttemptFixture(options = {}) {
   let pinReady = false;
   let pinFinished = false;
   let captchaPassed = false;
+  let captchaSubmittedAt = 0;
   let alternativeStage = 'entry';
   const alternativeClicks = [];
   const removed = [];
@@ -42,8 +43,12 @@ function createAttemptFixture(options = {}) {
       async update(id, props) { return { id, url: id === 7 ? yahooUrl : props.url, status: 'complete' }; },
       async get(id) {
         if (pinFinished) return { id, url: 'https://auctions.yahoo.co.jp/', status: 'complete' };
+        if (options.delayedSecondEmail && captchaPassed && now - captchaSubmittedAt < 3500) {
+          return { id, url: 'https://login.yahoo.co.jp/config/login', status: 'complete' };
+        }
         if (id === 7 && !options.newTabCaptcha && !options.newTabPin && submittedAt && options.transitionAfter !== null && now - submittedAt >= (options.transitionAfter || 0)) {
-          pinReady = Boolean(options.pinAfterSubmit) && (fills > (options.emailLoops || 0) || alternativeStage === 'pin');
+          pinReady = Boolean(options.pinAfterSubmit) && (!options.captchaBetween || captchaPassed) &&
+            (fills > (options.emailLoops || 0) || alternativeStage === 'pin');
           yahooUrl = (pinReady || options.emailLoops) && (!options.captchaBetween || captchaPassed)
             ? emailUrl : 'https://login.yahoo.co.jp/ncaptcha?fido=1';
         }
@@ -66,6 +71,7 @@ function createAttemptFixture(options = {}) {
         if (options.captchaBetween && String(payload.func).includes('captchaAnswer')) {
           assert.equal(payload.args[0], 'あいう');
           captchaPassed = true;
+          captchaSubmittedAt = now;
           return [{ result: { success: true } }];
         }
         if (String(payload.func).includes('loginAction')) {
@@ -530,6 +536,7 @@ async function testRealReaderOpensRowsWithoutListMessageIdAndSubmitsFreshCode(ex
 
 async function run() {
   await testSecondEmailContinuesViaPasskeyAfterCaptcha();
+  await testDirectPinAfterCaptchaRedirect();
   await testThirdEmailAfterWorkerRestartNeverReadsOrSubmits();
   await testLockedEmailTabClosesDuplicateLoginPages();
   await testRepeatedEmailBeforeCaptchaStops();
@@ -590,6 +597,21 @@ async function testSecondEmailContinuesViaPasskeyAfterCaptcha() {
   assert.equal(fixture.counts().fills, 1);
   assert.deepEqual(fixture.counts().removed, [90], 'Gmail was opened only once');
   assert.equal(fixture.counts().reloads, 2, 'only the first email and original PIN refresh');
+}
+
+async function testDirectPinAfterCaptchaRedirect() {
+  const posted = [];
+  const fixture = createAttemptFixture({ captchaBetween: true, delayedSecondEmail: true, pinAfterSubmit: true, finishPin: true,
+    fetch: async (url, request = {}) => {
+      if (String(url).includes('/challenge')) posted.push(JSON.parse(request.body).type);
+      const answers = { email: 'continue', captcha: 'あいう', pin: '765432' };
+      return { async json() { return { success: true, answered: true, answer: answers[posted.at(-1)], claimed: true }; } };
+    }
+  });
+  const result = await fixture.api.handleManualVerificationIfPresent({ id: 7, url: emailUrl });
+  assert.equal(result.tab.url, 'https://auctions.yahoo.co.jp/');
+  assert.deepEqual(posted, ['email', 'captcha', 'pin']);
+  assert.deepEqual(fixture.alternativeClicks, []);
 }
 
 async function testThirdEmailAfterWorkerRestartNeverReadsOrSubmits() {
