@@ -9356,7 +9356,7 @@ async function renewBidRetryClaim(task) {
 }
 
 // Executed only in this task's own PayPay item/checkout tab. No auction DOM code is used.
-function fleamarketPageStep(productId, action = '', maxPrice = 0) {
+function fleamarketPageStep(productId, action = '', confirmedItemPrice = 0) {
   const id = String(productId).toLowerCase();
   const url = new URL(location.href);
   const item = url.origin === 'https://paypayfleamarket.yahoo.co.jp' && url.pathname === `/item/${id}`;
@@ -9433,7 +9433,7 @@ function fleamarketPageStep(productId, action = '', maxPrice = 0) {
   }
   const itemPrice = state === 'confirm' ? productPrice(confirmationDialog) : null;
   if (action && action === state && target && !target.disabled && target.getAttribute('aria-disabled') !== 'true') {
-    if (state === 'confirm' && (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 || itemPrice !== maxPrice)) return {state:'invalid-price'};
+    if (state === 'confirm' && (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 || itemPrice !== confirmedItemPrice)) return {state:'invalid-price'};
     const key = `__gdaipaiFleamarket_${id}_${state}`;
     if (!window[key]) {
       window[key] = true;
@@ -9527,7 +9527,10 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
       if (!armed && snapshot?.ready && ['item','placement','review','confirm'].includes(state) && !acted.has(state)) {
         if (state === 'confirm') {
           if (!Number.isSafeInteger(snapshot.itemPrice)) throw new Error('フリマ确认页商品价格读取失败，未点击购买确认');
-          if (snapshot.itemPrice <= 0 || snapshot.itemPrice !== Number(task.max_price)) throw new Error(`フリマ商品价格 ${snapshot.itemPrice}円 与提交价格 ${Number(task.max_price)}円 不一致`);
+          const maxPrice = Number(task.max_price);
+          if (!Number.isSafeInteger(maxPrice) || snapshot.itemPrice <= 0 || snapshot.itemPrice > maxPrice) {
+            throw new Error(`フリマ商品价格 ${snapshot.itemPrice}円 无效或超过任务价格 ${maxPrice}円`);
+          }
           // Treat even a lost response as uncertain; never resend the purchase click.
           armed = true;
           try { await request('begin',{itemPrice:snapshot.itemPrice}); }
@@ -9535,7 +9538,7 @@ async function executeFleamarketPurchaseTask(task, options = {}) {
         }
         acted.add(state);
         try {
-          const results = await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketPageStep,args:[id,state,Number(task.max_price)]});
+          const results = await chrome.scripting.executeScript({target:{tabId:tab.id},func:fleamarketPageStep,args:[id,state,snapshot.itemPrice ?? 0]});
           if (results?.[0]?.result?.state === 'invalid-price') throw new Error('購入确认商品价格已改变');
         } catch (error) {
           if (!isContentScriptTargetGoneError(error) && !/frame|context|navigation/i.test(error.message || '')) throw error;

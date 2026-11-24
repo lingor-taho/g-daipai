@@ -129,8 +129,10 @@ async function domTests() {
   } finally {await browser.close();}
 }
 
-async function executorTest({placement=false,child=false,loseBegin=false,rejectBegin=false,loseLease=false,timeout=false,navigation=false,wrongPrice=false,missingPrice=false,discountPrice=false,appliedDiscount=false,loseComplete=false,recoveryOnly=false,recoveryMissing=false,unavailable=false,pinPage=false,nativePin=false}={}) {
+async function executorTest({placement=false,child=false,loseBegin=false,rejectBegin=false,loseLease=false,timeout=false,navigation=false,wrongPrice=false,lowerPrice=false,priceChanged=false,missingPrice=false,discountPrice=false,appliedDiscount=false,loseComplete=false,recoveryOnly=false,recoveryMissing=false,unavailable=false,pinPage=false,nativePin=false}={}) {
   let clock=0,state=recoveryOnly?(recoveryMissing?'confirm':'success'):'item',begin=0,complete=0,created=0,closed=0,released=0,finalClicks=0;
+  const itemPrice = missingPrice ? null : wrongPrice ? 301 : lowerPrice ? 2500 : 300;
+  const maxPrice = lowerPrice ? 3000 : 300;
   const actions=[],statuses=[],owned=new Map(); let pinFailures=0;
   const verificationTabs=[];
   class TestDate extends Date {static now(){return clock;}}
@@ -152,7 +154,7 @@ async function executorTest({placement=false,child=false,loseBegin=false,rejectB
       return {pinDetected:true};
     },
     async apiFetch(url,options){
-      if(url.endsWith('/begin')){assert.equal(JSON.parse(options.body).itemPrice,300);begin++;if(loseBegin)throw Error('lost begin response');if(rejectBegin)return {ok:false,status:409,async json(){return {error:'already purchased'};}};}
+      if(url.endsWith('/begin')){assert.equal(JSON.parse(options.body).itemPrice,itemPrice);begin++;if(loseBegin)throw Error('lost begin response');if(rejectBegin)return {ok:false,status:409,async json(){return {error:'already purchased'};}};}
       if(url.endsWith('/complete')){complete++;if(loseComplete && complete===1)throw Error('lost completion response');}
       if(url.endsWith('/pin-failed'))pinFailures++;
       return {ok:true,async json(){return {success:true};}};
@@ -172,28 +174,33 @@ async function executorTest({placement=false,child=false,loseBegin=false,rejectB
           return [{result:{state:pinPage?'pin':'auth'}}];
         }
         if(state==='processing'&&!timeout)state='success';
-        return [{result:state==='success'?{state,doneUrl,successText:'購入が完了しました',paidAmount:300}:{state,ready:!unavailable,itemPrice:missingPrice?null:wrongPrice?301:300,paidAmount:discountPrice?200:300,discountApplied:appliedDiscount}}];
+        return [{result:state==='success'?{state,doneUrl,successText:'購入が完了しました',paidAmount:300}:{state,ready:!unavailable,itemPrice,paidAmount:discountPrice?200:300,discountApplied:appliedDiscount}}];
       }
       actions.push(action);
       if(action==='item')state=placement?'placement':'review';
       else if(action==='placement')state='review';
       else if(action==='review')state='confirm';
-      else if(action==='confirm'){finalClicks++;state='processing';if(navigation)throw Error('Execution context was destroyed during navigation');}
+      else if(action==='confirm'){
+        assert.equal(args[2],itemPrice,'click rechecks the authorized Yahoo item price');
+        if (priceChanged) return [{result:{state:'invalid-price'}}];
+        finalClicks++;state='processing';if(navigation)throw Error('Execution context was destroyed during navigation');
+      }
       return [{result:{state,clicked:true}}];
     }}}
   };
   vm.runInNewContext(`${implementation}\nthis.execute=executeFleamarketPurchaseTask`,sandbox);
-  await sandbox.execute({id:9,product_id:id,product_url:itemUrl,max_price:300,bid_mode:'buyout',strategy:'direct',claim_token:'claim',fleamarket_recovery_only:recoveryOnly},{alreadyClaimed:true});
+  await sandbox.execute({id:9,product_id:id,product_url:itemUrl,max_price:maxPrice,bid_mode:'buyout',strategy:'direct',claim_token:'claim',fleamarket_recovery_only:recoveryOnly},{alreadyClaimed:true});
   assert.equal(created,1);assert.equal(sandbox.activeBidRuns.size,0);
   if(pinPage||nativePin){assert.equal(pinFailures,1);assert.equal(begin,0);assert.equal(finalClicks,0);assert.equal(closed,0);assert.equal(released,1);assert.deepEqual(verificationTabs,[2]);assert.equal(statuses.length,0);}
   else if(recoveryOnly){assert.equal(begin,0);assert.equal(finalClicks,0);assert.equal(actions.length,0);assert.equal(closed,1);assert.equal(complete,recoveryMissing?0:1);if(recoveryMissing)assert.equal(statuses[0].extra.result_unknown,true);}
   else if(unavailable){assert.equal(actions.length,0);assert.equal(begin,0);assert.equal(complete,0);assert.equal(closed,1);assert.equal(statuses[0].status,'failed');assert.equal(statuses[0].extra.result_unknown,false);}
   else if(rejectBegin){assert.equal(finalClicks,0);assert.equal(closed,1);assert.equal(statuses[0].extra.result_unknown,false);}
+  else if(priceChanged){assert.equal(begin,1);assert.equal(finalClicks,0);assert.equal(complete,0);assert.match(statuses[0].error,/商品价格已改变/);}
   else if(loseBegin||timeout){assert.equal(released,1);assert.equal(closed,0);assert.equal(complete,0);assert.equal(statuses[0].extra.result_unknown,true);}
   else if(loseLease||wrongPrice||missingPrice){assert.equal(finalClicks,0);assert.equal(begin,0);assert.equal(closed,1);assert.equal(statuses[0].status,'failed');assert.equal(statuses[0].extra.result_unknown,false);}
   else {assert.equal(begin,1);assert.equal(finalClicks,1);assert.equal(complete,loseComplete?2:1);assert.equal(closed,1);assert.equal(statuses.length,0);}
   if(missingPrice)assert.match(statuses[0].error,/商品价格读取失败/);
-  if(wrongPrice)assert.match(statuses[0].error,/301円.*300円.*不一致/);
+  if(wrongPrice)assert.match(statuses[0].error,/301円.*超过任务价格 300円/);
   if(loseBegin)assert.equal(finalClicks,0);
   if(timeout)assert.equal(finalClicks,1,'processing timeout never clicks OK again');
   if(placement)assert(actions.includes('placement'));
@@ -238,7 +245,7 @@ async function negotiationExecutorTest(mode, expected) {
   await negotiationExecutorTest('sold', ['close','failed']);
   await negotiationExecutorTest('rejected', ['begin','click','close','failed']);
   await negotiationExecutorTest('unknown', ['begin','click','close','failed']);
-  for(const options of [{},{unavailable:true},{placement:true,child:true},{navigation:true},{loseBegin:true},{rejectBegin:true},{loseLease:true},{wrongPrice:true},{missingPrice:true},{discountPrice:true},{appliedDiscount:true},{timeout:true},{loseComplete:true},{recoveryOnly:true},{recoveryOnly:true,recoveryMissing:true},{pinPage:true},{nativePin:true}])await executorTest(options);
+  for(const options of [{},{unavailable:true},{placement:true,child:true},{navigation:true},{loseBegin:true},{rejectBegin:true},{loseLease:true},{wrongPrice:true},{lowerPrice:true},{lowerPrice:true,priceChanged:true},{missingPrice:true},{discountPrice:true},{appliedDiscount:true},{timeout:true},{loseComplete:true},{recoveryOnly:true},{recoveryOnly:true,recoveryMissing:true},{pinPage:true},{nativePin:true}])await executorTest(options);
   assert.match(source,/if \(isFleamarketManualImportItem\(task\)\) return executeFleamarketPurchaseTask/);
   console.log('Fleamarket executor, child tab, lost-response, navigation and no-repeat tests passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

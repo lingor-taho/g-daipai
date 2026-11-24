@@ -40,6 +40,13 @@ const parse = html => proxy.parseProductHtml(html, id, url);
   const binding = {
     'X-Yahoo-Account': String(account.id), 'X-Yahoo-Token': account.binding_token, 'X-Yahoo-Instance': context.instanceId
   };
+  const backupId = accounts.save(db, {
+    account_name: '报价测试备用号', yahoo_id: 'offer-backup', profile_dir: 'offer-backup', priority: 2
+  }).id;
+  const backup = accounts.list(db, Date.now(), true).find(account => account.id === backupId);
+  const backupBinding = {
+    'X-Yahoo-Account': String(backupId), 'X-Yahoo-Token': backup.binding_token, 'X-Yahoo-Instance': 'negotiation-backup-01'
+  };
   const app = express();
   app.use(express.json());
   app.use('/proxy', proxy);
@@ -67,8 +74,15 @@ const parse = html => proxy.parseProductHtml(html, id, url);
     assert.deepEqual(simultaneous.map(value => value.status).sort(), [202, 409]);
     assert.equal(simultaneous.find(value => value.status === 409).body.error, '该商品已经提交过砍价了！');
     assert.deepEqual((await request(route, user(2))).body, { state: 'pending' });
-    assert.deepEqual((await request('/plugin/yahoo-messages/jobs?limit=1', binding)).body.jobs, []);
     const sharedQueue = '/plugin/yahoo-messages/jobs?limit=1&includeNegotiation=1';
+    assert.equal(accounts.list(db).find(item => item.id === account.id).online, false);
+    for (const url of [sharedQueue, sharedQueue + '&preferNegotiation=1']) {
+      const result = await request(url, backupBinding);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.jobs, [], 'a backup account never claims a pending negotiation');
+    }
+    assert.deepEqual((await request(route, user(2))).body, { state: 'pending' });
+    assert.deepEqual((await request('/plugin/yahoo-messages/jobs?limit=1', binding)).body.jobs, []);
     const [job] = (await request(sharedQueue, binding)).body.jobs;
     assert.deepEqual({ ...job, claimToken: Boolean(job.claimToken) }, { jobType: 'negotiate', productId: id, price: 23760, claimToken: true });
     assert.equal((await report('begin', 'wrong-claim')).status, 409);

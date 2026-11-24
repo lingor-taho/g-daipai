@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   account_attempts TEXT NOT NULL DEFAULT '[]',
   account_route TEXT NOT NULL DEFAULT '[]',
   execution_unknown INTEGER NOT NULL DEFAULT 0,
+  fleamarket_confirmed_item_price INTEGER,
   force_orders_resync INTEGER DEFAULT 0,
   buyout_auto_paid INTEGER DEFAULT 0,
   error_msg TEXT,

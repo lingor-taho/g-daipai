@@ -64,9 +64,12 @@ function beginPurchase(raw, id, context, claim, evidence) {
         raw.prepare("SELECT 1 FROM tasks WHERE product_id=? AND status='processing' AND execution_unknown=1 AND id<>?").get(task.product_id,id) ||
         raw.prepare('SELECT 1 FROM orders WHERE product_id=?').get(task.product_id)) fail('已有成交或正在确认购买，请勿重复购买');
     const itemPrice = evidence?.itemPrice;
-    if (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 || itemPrice !== Number(task.max_price)) fail('フリマ确认商品价格必须等于任务提交价格');
-    // Persist BEFORE the irreversible click. An interrupted worker must never buy again.
-    raw.prepare('UPDATE tasks SET execution_unknown=1,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(id);
+    const maxPrice = Number(task.max_price);
+    if (!Number.isSafeInteger(itemPrice) || itemPrice <= 0 ||
+        !Number.isSafeInteger(maxPrice) || itemPrice > maxPrice) fail('フリマ确认商品价格不得超过任务提交价格');
+    // Record the verified merchandise price before the click, including for read-only recovery.
+    raw.prepare('UPDATE tasks SET execution_unknown=1,fleamarket_confirmed_item_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .run(itemPrice, id);
     return { success: true };
   })();
 }
@@ -110,10 +113,9 @@ function completePurchase(raw, id, context, claim, evidence) {
       fail('该商品已有其他订单，拒绝覆盖');
     }
     if (!['processing', 'failed'].includes(task.status) || !task.execution_unknown) fail('购买任务状态已改变');
-    // P orders settle at the submitted product price, already verified before
-    // final confirmation. Coupons/points and the actual payment are irrelevant.
-    const amount = Number(task.max_price);
-    if (!Number.isSafeInteger(amount) || amount <= 0) fail('フリマ任务商品价格无效');
+    // Older purchase attempts required exact equality and have no recorded confirmation price.
+    const amount = Number(task.fleamarket_confirmed_item_price ?? task.max_price);
+    if (!Number.isSafeInteger(amount) || amount <= 0) fail('フリマ确认商品价格无效');
     const transactionUrl = `https://paypayfleamarket-sec.yahoo.co.jp/item/${productId}/trade/buyer`;
     const now = new Date();
     const japan = new Date(now.getTime() + 9 * 3600000);

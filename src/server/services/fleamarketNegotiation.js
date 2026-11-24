@@ -66,8 +66,13 @@ function enqueue(raw, productId, price, now = Date.now()) {
   }).immediate();
 }
 
+function isEnabledPrimary(raw, accountId) {
+  return Boolean(raw.prepare('SELECT 1 FROM yahoo_accounts WHERE id=? AND is_primary=1 AND enabled=1').get(accountId));
+}
+
 function claim(raw, context, now = Date.now()) {
   return raw.transaction(() => {
+    if (!isEnabledPrimary(raw, context.accountId)) return null;
     removeExpired(raw, QUEUE_PREFIX + '*', now);
     const row = raw.prepare(`SELECT key,value FROM config WHERE key GLOB ?
       AND json_extract(value,'$.state')='queued'
@@ -93,6 +98,7 @@ function update(raw, context, { productId, claimToken, action }, now = Date.now(
         job.instanceId !== context.instanceId || job.leaseUntil <= now) fail('砍价领取已失效');
 
     if (action === 'begin' && job.state === 'claimed') {
+      if (!isEnabledPrimary(raw, context.accountId)) fail('仅主 Yahoo 账号可以提交 P 商品砍价');
       write(raw, key, { ...job, state: 'sending', leaseUntil: now + LEASE_MS });
     } else if (action === 'success' && job.state === 'sending') {
       write(raw, HISTORY_PREFIX + id, { productId: id, submittedAt: new Date(now).toISOString(), price: job.price });

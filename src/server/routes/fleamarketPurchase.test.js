@@ -62,7 +62,7 @@ const adminRouter = require('./admin');
     await assert.rejects(duplicateSubmit('z705860836'),/已有待执行任务/);
     await call(1,'fleamarket/complete',evidence('z705860836'),409);
     await call(1,'fleamarket/begin',{},409,{...headers,'X-Yahoo-Claim':'stale'});
-    for (const itemPrice of [null,0,200,301,'300']) await call(1,'fleamarket/begin',{itemPrice},409);
+    for (const itemPrice of [null,0,-1,299.5,301,'300']) await call(1,'fleamarket/begin',{itemPrice},409);
     await call(1,'fleamarket/begin',{},409);
     assert.equal(raw.prepare('SELECT execution_unknown FROM tasks WHERE id=1').get().execution_unknown,0);
     await call(1,'fleamarket/begin');
@@ -156,7 +156,7 @@ const adminRouter = require('./admin');
       await call(taskId,'fleamarket/begin',{itemPrice:11700});
       const result=await call(taskId,'fleamarket/complete',{...evidence(product),paidAmount,discountApplied:true});
       const created=raw.prepare('SELECT final_price,order_status FROM orders WHERE id=?').get(result.orderId);
-      assert.equal(created.final_price,11700,'order stores submitted product price, never discounted payment');
+      assert.equal(created.final_price,11700,'order stores the verified product price, never discounted payment');
       assert.equal(created.order_status,'pending_shipment');
     }
     // P receipt uses the unchanged, claimed original status endpoint after sheet eligibility.
@@ -171,7 +171,9 @@ const adminRouter = require('./admin');
       assert.equal(response.status,200,JSON.stringify(await response.json()));
       assert.equal(raw.prepare('SELECT order_status FROM orders WHERE id=?').get(order.id).order_status,'completed');
     }
-    seed(7,'z705860839','processing',1);
+    seed(7,'z705860839');
+    raw.prepare('UPDATE tasks SET max_price=3000 WHERE id=7').run();
+    await call(7,'fleamarket/begin',{itemPrice:2500});
     raw.prepare("UPDATE tasks SET updated_at=datetime('now','-3 minutes') WHERE id=7").run();
     seed(8,'z705860840','failed',1);
     seed(12,'z705860843','failed',1);
@@ -201,8 +203,10 @@ const adminRouter = require('./admin');
     await call(7,'fleamarket/complete',evidence('z705860839'),409,headers);
     const observerHeaders = {...recoveryHeaders,'X-Yahoo-Claim':recovered[0].claim_token};
     await call(7,'fleamarket/begin',{},409,observerHeaders);
-    await call(7,'fleamarket/complete',evidence('z705860839'),200,observerHeaders);
+    const lowerPriceOrder = await call(7,'fleamarket/complete',{...evidence('z705860839'),itemPrice:1,paidAmount:2000},200,observerHeaders);
     assert.equal(raw.prepare('SELECT status FROM tasks WHERE id=7').get().status,'success');
+    assert.equal(raw.prepare('SELECT final_price FROM orders WHERE id=?').get(lowerPriceOrder.orderId).final_price,2500,
+      'recovery uses the pre-click price, never the maximum, the paid amount or a price supplied to completion');
     assert.equal(raw.prepare('SELECT status FROM tasks WHERE id=9').get().status,'processing','other account recovery stays isolated');
     assert.equal(raw.prepare('SELECT status FROM tasks WHERE id=10').get().status,'failed','ordinary p unknown task is not a P recovery');
     seed(11,'z705860842','processing',1);

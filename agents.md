@@ -19,6 +19,8 @@
 
 ## 项目概述
 
+2026-11-24 P 商品砍价只由启用的 Yahoo 主号领取和开始发送，主号不可用时保留排队，不交备用号。P 商品最终确认金额为正整数且不超过任务价即可购买，结账前保存已核验商品价，成功及只读恢复均按该金额写订单；旧确认记录沿用原任务价。优惠券／积分后的实付不参与核对，购买账号分配及销售后续流程沿用原规则。需更新 API 并重启（自动补任务价格证据列）、更新插件并 reload，无两端 dist 变更，未部署或操作真实购买，详见 0bb。
+
 2026-11-24 Yahoo 第二次邮箱地址兼容带点的 `?.cpt=` 参数。插件识别该地址上的邮箱表单后，后台从「服务器确认中」切到「第二次パスキー验证 继续」。只更新并重载插件，生产页面待验收。
 
 2026-11-24 补齐第一轮邮箱后的假名交接。假名提交后立即按标签保存进度，超过原 20 秒仍保留当前验证；同一标签迟到的邮箱页由插件轮询恢复「第二次パスキー验证 继续」。仅需更新并重载插件，真实 Yahoo 页面待验收。
@@ -306,6 +308,13 @@ orders.task_id      N --- 0/1 tasks.id
 
 ## 当前主计划
 
+### 0bb. P 商品主号砍价与购买价格上限
+
+- 仅启用的主账号可领取和开始发送砍价工作；主号离线不由备用号接手，原留言队列、报价历史和去重保持。购买任务仍沿原商品归属和账号分配。
+- 购买确认弹窗内的商品价不超过任务价即可购买。比如任务 3,000 円、商品价 2,500 円，按 2,500 円确认并入库；超过任务价或金额不可读仍拒绝。最终点击前再次核对弹窗价与本次已经授权的商品价一致，避免价格变化时用旧金额入库。
+- API 保存确认前核验的商品价与购买意图，完成或只读恢复按保存值建单。旧领取缺价格证据时沿原等价规则取任务价。无需变更用户提交价格规则、商品快照、优惠券／积分使用或支付合计计算。
+- 更新 API 并重启，启动自动增加任务列 fleamarket_confirmed_item_price；更新各账号插件 background.js 并 reload。无用户端／后台 dist 变更，详见验证命令，未部署。
+
 ### 0ba. P 商品砍价缓存日常清理
 
 - 后台新增独立设置，默认保留 1 天、每天 3 点、自动关闭。开启后按原调度用服务器本地时间每天运行一次；保留期以实际执行时间往前计算，不是逐条到期即删。手动执行采用表单填写的保留天数。
@@ -589,6 +598,8 @@ Orders和MessageRead原商品ID后已有普通／商城Tag，新增fleamarket分
 验证：`node src/admin/src/Orders.display.test.js`、`node src/admin/src/MessageRead.display.test.js`、`npm run build --prefix src/admin`、`node scripts/admin-table-mobile.browser.test.cjs`、编码与diff检查。浏览器360／390／1200在同一订单表核对普通／商城／P标签与原横向滚动和单行布局。仅需部署后台dist，未部署生产。
 
 ### 0t. P 商品原价核对与成交金额
+
+本节记录旧核价口径。2026-11-24 起，任务价作为上限、成交金额取已核验的实际商品价，见 0bb；商品摘要的取价范围及优惠券／积分边界沿用。
 
 用户最新规则取代此前优惠券／积分禁用及实付金额等价校验。最终确认弹窗内仅读取含商品图片的唯一商品摘要li，在其中定位“送料無料”文字并向上找与右侧商品价组成的完整价格行；不取支付方式、支付合计或弹窗外商品价格。金额读取失败／原价不等于任务提交价仍在begin与最终OK之前拒绝；优惠券、积分、支付合计缺失或实付0元均不影响购买，程序不修改Yahoo现有付款／抵扣选择。
 
@@ -1411,6 +1422,10 @@ GET /api/plugin/diagnostics?type=trusted_input
 ---
 
 ## 最近重要变更摘要
+
+### 2026-11-24 P 商品主号砍价与低价成交
+
+砍价只由主号提交；购买按任务价作为上限，订单保存核验的商品金额，详见 0bb。
 
 ### 2026-11-24 Yahoo 带点的邮箱回跳参数识别
 
@@ -2999,6 +3014,18 @@ npm run regression
 ---
 
 ## 常用验证命令
+
+P 商品主号砍价和购买限价（0bb）：
+
+```bash
+node scripts/run-isolated-regression.cjs src/server/routes/fleamarketNegotiation.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.test.js
+node scripts/run-isolated-regression.cjs src/server/routes/fleamarketPurchase.time.test.js
+node yahoo-plugin/fleamarketPurchase.test.js
+node yahoo-plugin/fleamarketMessages.test.js
+npm run encoding:guard
+git diff --check
+```
 
 P 商品砍价缓存日常清理（0ba）：
 
