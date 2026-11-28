@@ -5,15 +5,22 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../models');
 const task = require('./task');
+const { productService } = require('./proxy');
 const accounts = require('../services/yahooAccounts');
 const { checkProducts, policyKey } = require('../services/agentProductPolicy');
 const { createBatchTaskQueue } = require('../services/batchTaskQueue');
 const { fork } = require('child_process');
 
+function cacheListing(input) {
+  productService.cacheProduct({auctionId:input.product_url,productType:input.product_type,
+    title:input.product_title,currentPrice:input.current_price,endTime:input.end_time});
+}
+
 (async () => {
   if (process.argv[2] === 'race-worker') {
     const request = await new Promise(resolve=>{process.once('message',resolve);process.send({ready:true});});
     try {
+      cacheListing(request.input);
       const result=await task.submitAuctionTask({user:{id:request.user},actingUser:{id:request.user}},request.input,{database:db});
       process.send({status:200,data:result});
     } catch(error) {process.send({status:error.statusCode||500,data:{error:error.message}});}
@@ -36,10 +43,12 @@ const { fork } = require('child_process');
     product_image_url:'https://example.com/policy.jpg',current_price:1000,bid_count:0,
     tax_type:'tax_zero',product_type:'normal',shipping_fee_text:'580円',end_time:'2099-01-01T00:00:00+09:00'});
   async function post(user,product,{acting,requestId,extra={},path='/submit'}={}) {
+    const input={...body(product),client_request_id:requestId||`policy-submit-${++sequence}`,...extra};
+    cacheListing(input);
     const response=await fetch(url+path,{method:'POST',headers:{'Content-Type':'application/json',
       Authorization:`Bearer ${jwt.sign({id:user,role:'user',user_level:3},process.env.JWT_SECRET)}`,
       ...(acting?{'X-Acting-User-Id':String(acting)}:{})},
-      body:JSON.stringify({...body(product),client_request_id:requestId||`policy-submit-${++sequence}`,...extra})});
+      body:JSON.stringify(input)});
     return {status:response.status,data:await response.json()};
   }
   const setPolicy=policy=>db.raw.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(policyKey(9400),policy);

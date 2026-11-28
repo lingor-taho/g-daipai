@@ -179,6 +179,7 @@ export default function MessageReadPage() {
       const productId = String(values.productId || '').trim();
       const productTitle = String(values.productTitle || '').trim();
       const orderStatus = String(values.orderStatus || '').trim();
+      const trackingNumber = String(values.trackingNumber || '').trim();
       const range = values.wonRange || [];
       if (username) params.set('username', username);
       if (productId) params.set('productId', productId);
@@ -186,6 +187,7 @@ export default function MessageReadPage() {
       if (range[0]) params.set('wonFrom', formatDateOnly(range[0]));
       if (range[1]) params.set('wonTo', formatDateOnly(range[1]));
       if (orderStatus) params.set('orderStatus', orderStatus);
+      if (trackingNumber) params.set('trackingNumber', trackingNumber);
       const data = await fetchAdminJson(`/api/admin/messages?${params.toString()}`, { signal: controller.signal });
       if (sequence !== loadSequence.current) return;
       const nextItems = data.items || [];
@@ -338,6 +340,16 @@ export default function MessageReadPage() {
             placeholder="全部"
             options={ORDER_STATUS_OPTIONS}
             style={{ width: 130 }}
+          />
+        </Form.Item>
+        <Form.Item name="trackingNumber" label="追踪号">
+          <Input
+            allowClear
+            placeholder="支持输入部分单号"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            style={{ width: 160 }}
           />
         </Form.Item>
         <Form.Item>

@@ -1055,6 +1055,51 @@ async function testUsesCacheAfterFetchersFail() {
   assert.equal(result.data.title, 'Cached Product');
 }
 
+async function testRejectsNonProductPagesWithoutUsingCachedData() {
+  const id = '253585279';
+  const notFoundHtml = `<html><head>
+    <title>日本最大級のネットオークション・フリマアプリ</title>
+    <meta property="og:image" content="https://img.example/site-logo.png">
+    </head><body><main><p>指定されたページは存在しません</p></main></body></html>`;
+  for (const [fetchers, expectedCalls] of [
+    [[async () => notFoundHtml], 1],
+    [[async () => { throw Object.assign(new Error('missing'), { upstreamStatus: 404 }); }], 1],
+    [[async () => { throw new Error('blocked'); }, async () => notFoundHtml], 2]
+  ]) {
+    let calls = 0;
+    const cache = new Map();
+    const service = createProductService({
+      cache,
+      httpFetcher: async () => { calls++; return fetchers[0](); },
+      playwrightFetcher: async () => { calls++; return fetchers[1](); }
+    });
+    service.cacheProduct({ auctionId: id, productType: 'normal', title: 'Cached listing', currentPrice: 1000 });
+    for (const type of ['normal', 'store']) cache.set(`admin:${type}:${id}`, { productType: type });
+    await assert.rejects(service.fetchProduct(id), { statusCode: 404, message: /商品不存在或已删除/ });
+    assert.equal(cache.size, 0);
+    assert.equal(calls, expectedCalls);
+  }
+
+  const otherListing = arrivalProductHtml({ auctionId: 'e1253585279' });
+  const cache = new Map();
+  const service = createProductService({
+    cache,
+    httpFetcher: async () => notFoundHtml.replace('指定されたページは存在しません', '一時的にアクセスできません'),
+    playwrightFetcher: async () => otherListing
+  });
+  await assert.rejects(service.fetchProduct(id), { statusCode: 502 });
+  assert.equal(cache.size, 0);
+
+  const realEnded = createProductService({
+    httpFetcher: async () => `<div id="itemTitle">Real archived listing</div>
+      <dl><dt>現在</dt><dd>1,000円</dd></dl><div id="itemStatus">オークションは終了しました</div>
+      <div id="description">指定されたページは存在しません</div>`
+  });
+  const result = await realEnded.fetchProduct(id);
+  assert.equal(result.data.auctionStatus, 'closed');
+  assert.equal(result.data.currentPrice, 1000);
+}
+
 function testExtractsUniqueAuctionIdFromProductsListOnly() {
   const ids = extractAuctionIdsFromSearchHtml(`
     <a href="https://auctions.yahoo.co.jp/jp/auction/z999999999">outside</a>
@@ -1405,6 +1450,7 @@ async function run() {
   await testFetchDoesNotRenderGenericShippingWithoutShipmentApi();
   await testFetchStopsAfterSingleFailedShipmentLookupForGenericShipping();
   await testUsesCacheAfterFetchersFail();
+  await testRejectsNonProductPagesWithoutUsingCachedData();
   testExtractsUniqueAuctionIdFromProductsListOnly();
   testExtractsMultipleAuctionIdsFromProductsList();
   testBuildsYahooSearchUrlWithKeyword();

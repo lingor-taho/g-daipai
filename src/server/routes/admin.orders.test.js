@@ -203,6 +203,45 @@ function testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus() {
   assert.equal(query.pagination.pageSize, 25);
 }
 
+function testAdminMessagesTrackingNumberFilter() {
+  const raw = new (require('better-sqlite3'))(':memory:');
+  try {
+    const schema = require('node:path').join(__dirname, '../../db/init.sql');
+    raw.exec(require('node:fs').readFileSync(schema, 'utf8'));
+    raw.exec(`
+      INSERT INTO users (id, username, password_hash) VALUES (1, 'stone', 'test');
+      INSERT INTO yahoo_accounts (id, account_name, email) VALUES (1, 'test', 'test');
+      INSERT INTO products (product_id, product_title) VALUES ('m1233870776', 'ゲームボーイ');
+      INSERT INTO tasks (id, account_id, user_id, product_id, max_price, status)
+      VALUES (1, 1, 1, 'm1233870776', 1000, 'success');
+      INSERT INTO orders (id, task_id, order_status, won_at, tracking_number) VALUES
+        (1, 1, 'pending_receipt', '2026-06-24', '00123686586'),
+        (2, 1, 'pending_receipt', '2026-06-25', 'AB686586-CD'),
+        (3, 1, 'completed',       '2026-06-25', '437400686586'),
+        (4, 1, 'pending_receipt', '2026-06-25', NULL),
+        (5, 1, 'pending_receipt', '2026-06-25', 'AB%_686586');
+    `);
+    const search = filters => {
+      const { rows, count } = buildAdminMessagesListQuery(filters);
+      return {
+        ids: raw.prepare(rows.sql).all(...rows.params).map(row => row.order_id),
+        total: raw.prepare(count.sql).get(...count.params).total
+      };
+    };
+    const filters = {
+      trackingNumber: ' 686586 ', orderStatus: 'pending_receipt', username: 'stone',
+      productId: 'M1233870776', productTitle: 'ゲームボーイ', wonFrom: '2026-06-24', wonTo: '2026-06-25', pageSize: 2
+    };
+    assert.deepEqual(search(filters), { ids: [5, 2], total: 3 });
+    assert.deepEqual(search({ ...filters, current: 2 }), { ids: [1], total: 3 });
+    assert.deepEqual(search({ trackingNumber: '00123686586' }), { ids: [1], total: 1 });
+    assert.deepEqual(search({ trackingNumber: '%_' }), { ids: [5], total: 1 });
+    assert.equal(search({ trackingNumber: ' ' }).total, 5);
+  } finally {
+    raw.close();
+  }
+}
+
 function testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas() {
   assert.deepEqual(
     parseStoreBundleChildProductIds('s123456789，S123456780, https://auctions.yahoo.co.jp/jp/auction/s123456781, s123456789'),
@@ -1474,6 +1513,7 @@ testBuildTrustedInputReportQueries();
 testBuildBidFailureReportQueries();
 testBuildRecentTaskFailureUserReportQuery();
 testBuildAdminMessagesListQueryFiltersWonOrdersAndMessageStatus();
+testAdminMessagesTrackingNumberFilter();
 testParseStoreBundleChildProductIdsAcceptsFullAndHalfCommas();
 testParseNormalBundleRepairProductIdsKeepsFirstAsMain();
   testManualOrderImportSummarySeparatesEmptyReadyBatches();

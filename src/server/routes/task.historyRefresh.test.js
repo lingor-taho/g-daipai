@@ -2,6 +2,7 @@ const assert = require('assert/strict');
 if (!process.env.DATABASE_URL?.includes('gdaipai-regression-')) throw new Error('Use isolated regression runner');
 const db = require('../models');
 const { submitAuctionTask } = require('./task');
+const { productService } = require('./proxy');
 const { processPendingFollowupTasks } = require('./plugin');
 const { upsertProductSnapshot } = require('../services/productRepository');
 const history = require('../services/auctionHistory');
@@ -17,6 +18,7 @@ const history = require('../services/auctionHistory');
   const base = {max_price:24000,strategy:'direct',product_title:'relisted',product_image_url:'https://example.com/image.jpg',current_price:20000,tax_type:'tax_zero',product_type:'normal',shipping_fee_text:'580円',end_time:future};
   function seed(id,type='normal') {
     db.raw.prepare('INSERT INTO products(product_id,product_type,end_time,current_price,auction_history_html,auction_history_data) VALUES(?,?,?,1000,?,?)').run(id,type,past,'OLD HTML','OLD JSON');
+    productService.cacheProduct({auctionId:id,productType:type,title:base.product_title,currentPrice:base.current_price,endTime:future});
   }
   const fields = id => db.raw.prepare('SELECT auction_history_html,auction_history_data FROM products WHERE product_id=?').get(id);
   const empty = {auction_history_html:null,auction_history_data:null};

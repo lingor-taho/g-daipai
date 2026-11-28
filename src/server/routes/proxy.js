@@ -956,11 +956,34 @@ function hasNextYahooSearchPage(html, page = 1) {
   return false;
 }
 
-function isUsefulProduct(product, auctionId) {
-  return Boolean(
-    product &&
-    (product.title && product.title !== '商品 ' + auctionId || product.imageUrl || Number(product.currentPrice) > 0)
-  );
+function productNotFound() {
+  const error = new Error('商品不存在或已删除，请检查商品 ID 或链接');
+  error.statusCode = 404;
+  return error;
+}
+
+function parseFetchedProduct(html, auctionId, standardUrl, savedType) {
+  if (savedType ? savedType === 'fleamarket' : auctionId.startsWith('z')) {
+    return parseFleamarketProductHtml(html, auctionId, standardUrl);
+  }
+
+  const pageText = normalizePageTextWithoutProductDescription(html);
+  const notFoundText = '指定されたページは存在しません';
+  if (pageText.replace(/\s+/g, '').includes(notFoundText) &&
+      removeProductTitleText(pageText, html).replace(/\s+/g, '').includes(notFoundText)) {
+    throw productNotFound();
+  }
+
+  const data = parseProductHtml(html, auctionId, standardUrl, savedType);
+  const nextItem = extractNextDataItem(html);
+  const pageItem = extractPageDataItems(html);
+  const reportedIds = [nextItem?.auctionId, nextItem?.auctionID, pageItem?.auctionId, pageItem?.auctionID].filter(Boolean);
+  if (reportedIds.some(id => String(id).toLowerCase() !== auctionId)) return null;
+
+  const hasStructuredDetail = [nextItem, pageItem].some(item => item && Object.keys(item).length > 0);
+  const hasListingSummary = extractProductSummaryHtml(html) &&
+    (data.currentPrice > 0 || data.buyoutPrice > 0 || data.endTime || /closed|ended|sold|cancel|suspend/.test(data.auctionStatus));
+  return hasStructuredDetail || hasListingSummary ? data : null;
 }
 
 function httpFetchHtml(url, timeoutMs = 10000) {
@@ -982,7 +1005,9 @@ function httpFetchHtml(url, timeoutMs = 10000) {
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         response.resume();
-        reject(new Error(`Yahoo returned ${response.statusCode}`));
+        const error = new Error(`Yahoo returned ${response.statusCode}`);
+        error.upstreamStatus = response.statusCode;
+        reject(error);
         return;
       }
 
@@ -1025,7 +1050,9 @@ async function playwrightFetchHtml(url) {
       locale: 'ja-JP',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const status = response?.status();
+    if (status === 404 || status === 410) throw productNotFound();
     await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     return await page.content();
   } finally {
@@ -1068,6 +1095,11 @@ function createProductService({
     return product;
   }
 
+  function getCachedAuctionProduct(auctionId, productType) {
+    const product = cache.get(`admin:${productType}:${auctionId}`) || cache.get(auctionId);
+    return ['normal', 'store'].includes(product?.productType) ? product : null;
+  }
+
   async function fetchProduct(url, { adminProductType, recordedProductType } = {}) {
     const parsed = normalizeAuctionUrl(url);
     if (!parsed) {
@@ -1084,16 +1116,13 @@ function createProductService({
       ? `https://paypayfleamarket.yahoo.co.jp/item/${parsed.auctionId}`
       : `https://auctions.yahoo.co.jp/jp/auction/${parsed.auctionId}`;
     const cacheKey = savedType ? `admin:${savedType}:${parsed.auctionId}` : parsed.auctionId;
-    const cached = cache.get(cacheKey);
-
-    try {
-      const html = await httpFetcher(parsed.standardUrl);
-      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl, savedType);
-      const prefCode = await getYahooShippingPrefCode();
-      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId, prefCode);
-      const attemptedShipmentLookup = shipmentUrls.length > 0;
-      if (attemptedShipmentLookup) {
-        for (const shipmentUrl of shipmentUrls) {
+    for (const [source, fetchHtml] of [['http', httpFetcher], ['playwright', playwrightFetcher]]) {
+      try {
+        const html = await fetchHtml(parsed.standardUrl);
+        const data = parseFetchedProduct(html, parsed.auctionId, parsed.standardUrl, savedType);
+        if (!data) continue;
+        const prefCode = await getYahooShippingPrefCode();
+        for (const shipmentUrl of buildYahooShipmentUrls(html, parsed.auctionId, prefCode)) {
           try {
             const shipmentJson = await httpFetcher(shipmentUrl);
             const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
@@ -1103,34 +1132,18 @@ function createProductService({
             }
           } catch (_) {}
         }
-      }
-      if (isUsefulProduct(data, parsed.auctionId)) {
         if (savedType) cache.set(cacheKey, data); else cacheProduct(data);
-        return { success: true, data, source: 'http' };
+        return { success: true, data, source };
+      } catch (error) {
+        if (error.statusCode !== 404 && error.upstreamStatus !== 404 && error.upstreamStatus !== 410) continue;
+        const types = parsed.standardUrl.startsWith('https://auctions.yahoo.co.jp/') ? ['normal', 'store'] : ['fleamarket'];
+        if (types.includes(cache.get(parsed.auctionId)?.productType)) cache.delete(parsed.auctionId);
+        for (const type of types) cache.delete(`admin:${type}:${parsed.auctionId}`);
+        throw productNotFound();
       }
-    } catch (_) {}
+    }
 
-    try {
-      const html = await playwrightFetcher(parsed.standardUrl);
-      const data = parseProductHtml(html, parsed.auctionId, parsed.standardUrl, savedType);
-      const prefCode = await getYahooShippingPrefCode();
-      const shipmentUrls = buildYahooShipmentUrls(html, parsed.auctionId, prefCode);
-      for (const shipmentUrl of shipmentUrls) {
-        try {
-          const shipmentJson = await httpFetcher(shipmentUrl);
-          const resolvedShipping = extractShippingFeeTextFromShipmentJson(shipmentJson);
-          if (resolvedShipping) {
-            data.shippingFeeText = resolvedShipping;
-            break;
-          }
-        } catch (_) {}
-      }
-      if (isUsefulProduct(data, parsed.auctionId)) {
-        if (savedType) cache.set(cacheKey, data); else cacheProduct(data);
-        return { success: true, data, source: 'playwright' };
-      }
-    } catch (_) {}
-
+    const cached = cache.get(cacheKey);
     if (cached) {
       return { success: true, data: cached, source: 'cache-fallback' };
     }
@@ -1191,7 +1204,7 @@ function createProductService({
     };
   }
 
-  return { cacheProduct, fetchProduct, fetchProductByKeyword, searchProducts };
+  return { cacheProduct, getCachedAuctionProduct, fetchProduct, fetchProductByKeyword, searchProducts };
 }
 
 const productService = createProductService();

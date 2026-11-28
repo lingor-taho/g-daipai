@@ -12,6 +12,11 @@ const {chromium}=require('playwright');
     let end='2026-01-01T10:00:00+09:00';let submissions=0;
     await page.route('**/api/**',async route=>{
       const url=new URL(route.request().url());let data={success:true,data:[],total:0};
+      if(url.pathname.endsWith('/proxy/fetch') && url.searchParams.get('url')==='253585279') {
+        await route.fulfill({status:404,contentType:'application/json',
+          body:JSON.stringify({error:'商品不存在或已删除，请检查商品 ID 或链接'})});
+        return;
+      }
       if(url.pathname.includes('/proxy/'))data={success:true,data:{auctionId:'n1247281943',title:'截止时间展示测试商品',imageUrl:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="136" height="136"><rect width="136" height="136" fill="lightblue"/></svg>',currentPrice:20000,buyoutPrice:24000,bidCount:5,taxType:'tax_zero',productType:'normal',shippingFeeText:'580円',endTime:end}};
       if(url.pathname.includes('website-rate'))data={success:true,rate:0.05};
       if(url.pathname.includes('bid-config'))data={success:true,data:{multiBidStartHours:12,multiBidIntervalMinutes:5,multiBidMinPrice:5000}};
@@ -44,7 +49,16 @@ const {chromium}=require('playwright');
     await page.locator('[data-auction-ended]').waitFor();
     assert.equal(await page.getByRole('button',{name:'提交任务',exact:true}).count(),0);
     assert.equal(submissions,0);
-    console.log(`${width}px: ended badge/form only determined at read time; deadline/focus preserve display, refetch updates it`);
+    end='2099-01-01T10:00:00+09:00';await fetchButton.click();
+    await page.getByRole('button',{name:'提交任务',exact:true}).waitFor();
+    await input.fill('253585279');await fetchButton.click();
+    await page.getByText('商品不存在或已删除，请检查商品 ID 或链接',{exact:true}).waitFor();
+    for(const label of ['截止时间展示测试商品','最高出价','出价策略']) {
+      assert.equal(await page.getByText(label,{exact:true}).count(),0);
+    }
+    assert.equal(await page.getByRole('button',{name:'提交任务',exact:true}).count(),0);
+    assert.equal(submissions,0);
+    console.log(`${width}px: ended and missing product responses hide bidding controls; invalid input cannot submit`);
     await page.close();
   }}finally{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

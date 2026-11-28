@@ -28,6 +28,7 @@ sheets.appendRows = async payload => {
 };
 const plugin = require('./plugin');
 const taskRouter = require('./task');
+const { productService } = require('./proxy');
 const {submitAuctionTask} = taskRouter;
 const adminRouter = require('./admin');
 
@@ -303,6 +304,8 @@ const adminRouter = require('./admin');
       assert.equal((await rejected.json()).error,'paypay商品暂时锁定，请联系管理员！');
     }
     assert.equal(raw.prepare("SELECT count(*) AS n FROM tasks WHERE product_id='z765432101'").get().n,0);
+    productService.cacheProduct({auctionId:'c765432104',productType:'normal',title:'Auction test',
+      currentPrice:300,endTime:'2099-01-01T00:00:00+09:00'});
     assert.equal((await userRequest('/api/task/submit',{...newPurchase,product_url:'https://auctions.yahoo.co.jp/jp/auction/c765432104',
       product_type:'normal',bid_mode:'bid',end_time:'2099-01-01T00:00:00+09:00'})).status,200);
     assert.equal((await userRequest('/api/admin/fleamarket-pin-lock/501/reopen',{})).status,403);

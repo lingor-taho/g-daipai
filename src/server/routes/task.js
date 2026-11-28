@@ -571,7 +571,7 @@ async function fetchBatchProduct(fetchProduct, url, timeoutMs = 75000) {
       })
     ]);
   } catch (error) {
-    if (error.statusCode === 504) throw error;
+    if (error.statusCode === 404 || error.statusCode === 504) throw error;
     throw submitError('无法获取商品信息，商品可能不存在或 Yahoo 暂时不可访问，请核对后重试', 502);
   } finally { clearTimeout(timer); }
 }
@@ -702,11 +702,24 @@ async function submitAuctionTask(context, body, {
       if ((verifiedBuyoutPrice ?? Number(productInfo.buyoutPrice)) !== input.maxPrice) {
         throw submitError(priceCheckId ? '任务价格与核验价不一致，请重新核验' : '商品即决价格已变化，请重新获取商品信息后提交');
       }
-    } else if (!end_time || !product_title || !product_image_url || !current_price || !tax_type || !product_type || !shipping_fee_text) {
-      try {
+    } else {
+      if (isAuctionEnded(end_time)) throw submitError('商品已结束，不能提交任务');
+      const completeSnapshot = end_time && product_title && product_image_url && Number(current_price) > 0 &&
+        tax_type && product_type && shipping_fee_text;
+      productInfo = completeSnapshot ? productService.getCachedAuctionProduct(input.productId, savedType || product_type) : null;
+      if (!productInfo) {
         const result = await fetchProduct(input.standardUrl, {recordedProductType:savedType || undefined});
-        productInfo = result.data || null;
-      } catch (_) {}
+        productInfo = result?.data;
+      }
+      if (isAuctionEnded(productInfo?.endTime) || /closed|ended|sold|cancel|suspend/.test(productInfo?.auctionStatus || '')) {
+        throw submitError('商品已结束，不能提交任务');
+      }
+      if (productInfo?.auctionId !== input.productId ||
+          !['normal', 'store'].includes(productInfo.productType) ||
+          !productInfo.title || productInfo.title === `商品 ${input.productId}` ||
+          !(Number(productInfo.currentPrice) > 0 || Number(productInfo.buyoutPrice) > 0)) {
+        throw submitError('无法确认商品信息，请重新获取后提交');
+      }
     }
     const endTime = fleamarketProduct ? productInfo?.endTime || null : end_time || productInfo?.endTime || null;
     if (isAuctionEnded(endTime) || isAuctionEnded(productInfo?.endTime)) throw submitError('商品已结束，不能提交任务');

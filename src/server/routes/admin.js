@@ -728,6 +728,11 @@ function buildAdminMessagesListQuery(filters = {}) {
     where.push('o.order_status = ?');
     params.push(orderStatus);
   }
+  const trackingNumber = String(filters.trackingNumber || '').trim();
+  if (trackingNumber) {
+    where.push("o.tracking_number LIKE ? ESCAPE '\\'");
+    params.push(`%${escapeSqlLike(trackingNumber)}%`);
+  }
   const fromSql = `FROM orders o
      INNER JOIN tasks t ON o.task_id = t.id
      LEFT JOIN users u ON u.id = t.user_id
